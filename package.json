@@ -1,5 +1,5 @@
 {
-  "name": "nansen-cli",
+  "name": "@nansen/cli",
   "version": "1.0.0",
   "description": "Command-line interface for Nansen API - designed for AI agents",
   "main": "src/index.js",
@@ -20,10 +20,26 @@
     "blockchain",
     "api",
     "cli",
-    "ai-agent"
+    "ai-agent",
+    "smart-money",
+    "onchain",
+    "defi",
+    "solana",
+    "ethereum"
   ],
-  "author": "Nansen",
+  "author": "Nansen <dev@nansen.ai>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nansen-ai/nansen-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nansen-ai/nansen-cli/issues"
+  },
+  "homepage": "https://github.com/nansen-ai/nansen-cli#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.0.18",
     "vitest": "^4.0.18"

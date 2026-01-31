@@ -1,21 +1,36 @@
 # Nansen CLI
 
+[![npm version](https://img.shields.io/npm/v/@nansen/cli.svg)](https://www.npmjs.com/package/@nansen/cli)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Tests](https://img.shields.io/badge/tests-138%20passing-brightgreen.svg)]()
+
 Command-line interface for the [Nansen API](https://docs.nansen.ai). Designed for AI agents with structured JSON output.
 
 ## Installation
 
 ```bash
-# Clone and install
+# Install globally via npm
+npm install -g @nansen/cli
+
+# Or run directly with npx
+npx @nansen/cli help
+
+# Or clone and install locally
+git clone https://github.com/nansen-ai/nansen-cli.git
 cd nansen-cli
 npm install
-
-# Make it globally available (optional)
 npm link
 ```
 
 ## Configuration
 
-Create a `config.json` file (gitignored):
+Set your API key via environment variable (recommended):
+
+```bash
+export NANSEN_API_KEY=your-api-key
+```
+
+Or create a `config.json` file in the project root:
 
 ```json
 {
@@ -24,42 +39,22 @@ Create a `config.json` file (gitignored):
 }
 ```
 
-Or set environment variables:
-```bash
-export NANSEN_API_KEY=your-api-key
-```
+Get your API key at [nansen.ai](https://nansen.ai).
 
-## Usage
-
-All output is JSON by default. Use `--pretty` for human-readable formatting.
+## Quick Start
 
 ```bash
-# Show help
-nansen help
+# Get trending tokens on Solana
+nansen token screener --chain solana --timeframe 24h --pretty
 
-# Get Smart Money netflow on Solana
+# Check Smart Money activity
 nansen smart-money netflow --chain solana --pretty
 
-# Get Smart Money DEX trades from Funds only
-nansen smart-money dex-trades --chain ethereum --labels Fund
-
-# Get wallet balance
-nansen profiler balance --address 0x28c6c06298d514db089934071355e5743bf21d60 --chain ethereum
-
-# Get wallet labels
-nansen profiler labels --address 0x28c6c06298d514db089934071355e5743bf21d60 --chain ethereum
+# Profile a wallet
+nansen profiler balance --address 0x28c6c06298d514db089934071355e5743bf21d60 --chain ethereum --pretty
 
 # Search for an entity
-nansen profiler search --query "Vitalik Buterin"
-
-# Get token screener (trending tokens)
-nansen token screener --chain solana --timeframe 24h --smart-money
-
-# Get token holders
-nansen token holders --token So11111111111111111111111111111111111111112 --chain solana
-
-# Get DeFi portfolio holdings
-nansen portfolio defi --wallet 0x4062b997279de7213731dbe00485722a26718892
+nansen profiler search --query "Vitalik Buterin" --pretty
 ```
 
 ## Commands
@@ -75,7 +70,7 @@ Track trading and holding activity of sophisticated market participants.
 | `perp-trades` | Perpetual trading on Hyperliquid |
 | `holdings` | Aggregated token balances |
 | `dcas` | DCA strategies on Jupiter |
-| `historical-holdings` | Historical holdings over time (use `--days`) |
+| `historical-holdings` | Historical holdings over time |
 
 **Smart Money Labels:**
 - `Fund` - Institutional investment funds
@@ -96,12 +91,12 @@ Detailed information about any blockchain address.
 | `transactions` | Transaction history |
 | `pnl` | PnL and trade performance |
 | `search` | Search for entities by name |
-| `historical-balances` | Historical balances over time (use `--days`) |
+| `historical-balances` | Historical balances over time |
 | `related-wallets` | Find wallets related to an address |
-| `counterparties` | Top counterparties by volume (use `--days`) |
-| `pnl-summary` | Summarized PnL metrics (use `--days`) |
+| `counterparties` | Top counterparties by volume |
+| `pnl-summary` | Summarized PnL metrics |
 | `perp-positions` | Current perpetual positions |
-| `perp-trades` | Perpetual trading history (use `--days`) |
+| `perp-trades` | Perpetual trading history |
 
 ### `token` - Token God Mode
 
@@ -112,19 +107,17 @@ Deep analytics for any token.
 | `screener` | Discover and filter tokens |
 | `holders` | Token holder analysis |
 | `flows` | Token flow metrics |
-| `dex-trades` | DEX trading activity (use `--days`) |
-| `pnl` | PnL leaderboard (use `--days`) |
+| `dex-trades` | DEX trading activity |
+| `pnl` | PnL leaderboard |
 | `who-bought-sold` | Recent buyers and sellers |
 | `flow-intelligence` | Detailed flow intelligence by label |
-| `transfers` | Token transfer history (use `--days`) |
+| `transfers` | Token transfer history |
 | `jup-dca` | Jupiter DCA orders for token |
-| `perp-trades` | Perp trades by token symbol (use `--symbol`, `--days`) |
-| `perp-positions` | Open perp positions by token symbol (use `--symbol`) |
-| `perp-pnl-leaderboard` | Perp PnL leaderboard by token (use `--symbol`, `--days`) |
+| `perp-trades` | Perp trades by token symbol |
+| `perp-positions` | Open perp positions by token symbol |
+| `perp-pnl-leaderboard` | Perp PnL leaderboard by token |
 
 ### `portfolio` - Portfolio Analytics
-
-Track DeFi positions and holdings.
 
 | Subcommand | Description |
 |------------|-------------|
@@ -138,29 +131,29 @@ Track DeFi positions and holdings.
 | `--chain <chain>` | Blockchain to query |
 | `--chains <json>` | Multiple chains as JSON array |
 | `--limit <n>` | Number of results |
+| `--days <n>` | Date range in days (default: 30) |
+| `--symbol <sym>` | Token symbol for perp endpoints (e.g., BTC, ETH) |
 | `--filters <json>` | Filter criteria as JSON |
 | `--order-by <json>` | Sort order as JSON array |
 | `--labels <label>` | Smart Money label filter |
 | `--smart-money` | Filter for Smart Money only |
 | `--timeframe <tf>` | Time window (5m, 10m, 1h, 6h, 24h, 7d, 30d) |
-| `--days <n>` | Date range in days (default: 30 for most endpoints) |
-| `--symbol <sym>` | Token symbol (for perp endpoints, e.g., BTC, ETH) |
 
 ## Supported Chains
 
 `ethereum`, `solana`, `base`, `bnb`, `arbitrum`, `polygon`, `optimism`, `avalanche`, `linea`, `scroll`, `zksync`, `mantle`, `ronin`, `sei`, `plasma`, `sonic`, `unichain`, `monad`, `hyperevm`, `iotaevm`
 
-## AI Agent Usage
+## AI Agent Integration
 
-The CLI is designed for AI agents:
+The CLI is designed for AI agents and automation:
 
-1. **Structured Output**: All responses are JSON with consistent schema
-2. **Error Handling**: Errors include status codes and details
-3. **Composable**: Commands can be chained with shell pipes
-4. **Discoverable**: `help` commands at every level
+- **Structured Output**: All responses are JSON with consistent schema
+- **Error Handling**: Errors include status codes and actionable details
+- **Composable**: Commands can be chained with shell pipes
+- **Discoverable**: `help` commands at every level
 
-Example response structure:
 ```json
+// Success response
 {
   "success": true,
   "data": {
@@ -168,10 +161,8 @@ Example response structure:
     "pagination": {...}
   }
 }
-```
 
-Error response:
-```json
+// Error response
 {
   "success": false,
   "error": "API error message",
@@ -180,38 +171,50 @@ Error response:
 }
 ```
 
-## Testing
+## Examples
 
 ```bash
-# Run all tests (mocked)
+# Get Smart Money DEX trades from Funds only
+nansen smart-money dex-trades --chain ethereum --labels Fund
+
+# Get token holders with Smart Money filter
+nansen token holders --token So11111111111111111111111111111111111111112 --chain solana --smart-money
+
+# Get historical holdings for the past 7 days
+nansen smart-money historical-holdings --chain solana --days 7
+
+# Get BTC perpetual positions on Hyperliquid
+nansen token perp-positions --symbol BTC --pretty
+
+# Get top PnL traders for a token
+nansen token pnl --token JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN --chain solana --days 30
+```
+
+## Development
+
+```bash
+# Run tests (mocked, no API key needed)
 npm test
 
 # Run with coverage
 npm run test:coverage
 
-# Run against live API (requires NANSEN_API_KEY)
-npm run test:live
-
-# Watch mode
-npm run test:watch
+# Run against live API
+NANSEN_API_KEY=your-key npm run test:live
 ```
 
-### Test Coverage
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 
-| Category | Implemented | Total | Coverage |
-|----------|-------------|-------|----------|
-| Smart Money | 6 | 6 | 100% |
-| Profiler | 11 | 11 | 100% |
-| Token God Mode | 12 | 12 | 100% |
-| Portfolio | 1 | 1 | 100% |
-| **Total** | **30** | **30** | **100%** |
+## API Coverage
 
-### Test Structure
-
-- `api.test.js` - API client unit tests with mocks
-- `cli.test.js` - CLI command parsing and execution tests
-- `coverage.test.js` - Endpoint coverage verification
+| Category | Endpoints | Coverage |
+|----------|-----------|----------|
+| Smart Money | 6 | 100% |
+| Profiler | 11 | 100% |
+| Token God Mode | 12 | 100% |
+| Portfolio | 1 | 100% |
+| **Total** | **30** | **100%** |
 
 ## License
 
-MIT
+[MIT](LICENSE) © [Nansen](https://nansen.ai)
