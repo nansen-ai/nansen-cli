@@ -177,6 +177,7 @@ async function prompt(question, hidden = false) {
 const commands = {
   'login': async (args, api, flags) => {
     console.log('Nansen CLI Login\n');
+    console.log('Get your API key at: https://app.nansen.ai/api\n');
     
     const apiKey = await prompt('Enter your API key: ', true);
     

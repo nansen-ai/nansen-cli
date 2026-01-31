@@ -36,7 +36,7 @@ nansen login
 export NANSEN_API_KEY=your-api-key
 ```
 
-Get your API key at [nansen.ai](https://nansen.ai).
+Get your API key at [app.nansen.ai/api](https://app.nansen.ai/api).
 
 ## Quick Start
 
