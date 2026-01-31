@@ -24,19 +24,16 @@ npm link
 
 ## Configuration
 
-Set your API key via environment variable (recommended):
-
+**Option 1: Interactive login (recommended)**
 ```bash
-export NANSEN_API_KEY=your-api-key
+nansen login
+# Enter your API key when prompted
+# ✓ Saved to ~/.nansen/config.json
 ```
 
-Or create a `config.json` file in the project root:
-
-```json
-{
-  "apiKey": "your-api-key-here",
-  "baseUrl": "https://api.nansen.ai"
-}
+**Option 2: Environment variable**
+```bash
+export NANSEN_API_KEY=your-api-key
 ```
 
 Get your API key at [nansen.ai](https://nansen.ai).

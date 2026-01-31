@@ -9,7 +9,8 @@
  * Use --pretty for human-readable formatting.
  */
 
-import { NansenAPI } from './api.js';
+import { NansenAPI, saveConfig, deleteConfig, getConfigFile } from './api.js';
+import * as readline from 'readline';
 
 // Parse command line arguments
 function parseArgs(args) {
@@ -75,6 +76,8 @@ USAGE:
   nansen <command> [subcommand] [options]
 
 COMMANDS:
+  login          Save your API key (interactive)
+  logout         Remove saved API key
   smart-money    Smart Money analytics (netflow, dex-trades, holdings, dcas, historical-holdings)
   profiler       Wallet profiling (balance, labels, transactions, pnl, perp-positions, perp-trades)
   token          Token God Mode (screener, holders, flows, trades, pnl, perp-trades, perp-positions)
@@ -123,7 +126,96 @@ For more info: https://docs.nansen.ai
 `;
 
 // Command handlers
+// Helper to prompt for input
+async function prompt(question, hidden = false) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  
+  return new Promise((resolve) => {
+    if (hidden && process.stdout.isTTY) {
+      process.stdout.write(question);
+      let input = '';
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+      process.stdin.setEncoding('utf8');
+      
+      const onData = (char) => {
+        if (char === '\n' || char === '\r') {
+          process.stdin.setRawMode(false);
+          process.stdin.pause();
+          process.stdin.removeListener('data', onData);
+          process.stdout.write('\n');
+          rl.close();
+          resolve(input);
+        } else if (char === '\u0003') {
+          // Ctrl+C
+          process.exit();
+        } else if (char === '\u007F' || char === '\b') {
+          // Backspace
+          if (input.length > 0) {
+            input = input.slice(0, -1);
+            process.stdout.write('\b \b');
+          }
+        } else {
+          input += char;
+          process.stdout.write('*');
+        }
+      };
+      
+      process.stdin.on('data', onData);
+    } else {
+      rl.question(question, (answer) => {
+        rl.close();
+        resolve(answer);
+      });
+    }
+  });
+}
+
 const commands = {
+  'login': async (args, api, flags) => {
+    console.log('Nansen CLI Login\n');
+    
+    const apiKey = await prompt('Enter your API key: ', true);
+    
+    if (!apiKey || apiKey.trim().length === 0) {
+      console.log('\n❌ No API key provided');
+      process.exit(1);
+    }
+    
+    // Validate the key with a test request
+    console.log('\nValidating API key...');
+    try {
+      const testApi = new NansenAPI(apiKey.trim());
+      await testApi.tokenScreener({ chains: ['solana'], pagination: { page: 1, per_page: 1 } });
+      
+      // Save the config
+      saveConfig({ 
+        apiKey: apiKey.trim(), 
+        baseUrl: 'https://api.nansen.ai' 
+      });
+      
+      console.log('✓ API key validated');
+      console.log(`✓ Saved to ${getConfigFile()}\n`);
+      console.log('You can now use the Nansen CLI. Try:');
+      console.log('  nansen token screener --chain solana --pretty');
+    } catch (error) {
+      console.log(`\n❌ Invalid API key: ${error.message}`);
+      process.exit(1);
+    }
+  },
+
+  'logout': async (args, api, flags) => {
+    const deleted = deleteConfig();
+    if (deleted) {
+      console.log(`✓ Removed ${getConfigFile()}`);
+    } else {
+      console.log('No saved credentials found');
+    }
+  },
+
   'help': async (args, api, flags) => {
     console.log(HELP);
   },
@@ -289,6 +381,14 @@ async function main() {
       available: Object.keys(commands)
     }, pretty);
     process.exit(1);
+  }
+
+  // Commands that don't require API authentication
+  const noAuthCommands = ['login', 'logout', 'help'];
+  
+  if (noAuthCommands.includes(command)) {
+    await commands[command](subArgs, null, flags, options);
+    return;
   }
 
   try {

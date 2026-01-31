@@ -9,6 +9,46 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// ============= Config Paths =============
+
+const CONFIG_DIR = path.join(process.env.HOME || process.env.USERPROFILE || '', '.nansen');
+const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+
+/**
+ * Get the config directory path
+ */
+export function getConfigDir() {
+  return CONFIG_DIR;
+}
+
+/**
+ * Get the config file path
+ */
+export function getConfigFile() {
+  return CONFIG_FILE;
+}
+
+/**
+ * Save config to ~/.nansen/config.json
+ */
+export function saveConfig(config) {
+  if (!fs.existsSync(CONFIG_DIR)) {
+    fs.mkdirSync(CONFIG_DIR, { mode: 0o700, recursive: true });
+  }
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
+}
+
+/**
+ * Delete config file (logout)
+ */
+export function deleteConfig() {
+  if (fs.existsSync(CONFIG_FILE)) {
+    fs.unlinkSync(CONFIG_FILE);
+    return true;
+  }
+  return false;
+}
+
 // ============= Address Validation =============
 
 const ADDRESS_PATTERNS = {
@@ -65,16 +105,35 @@ export function validateTokenAddress(tokenAddress, chain = 'solana') {
 }
 
 function loadConfig() {
-  // Try config file first
-  const configPath = path.join(__dirname, '..', 'config.json');
-  if (fs.existsSync(configPath)) {
-    return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  // Priority: 1. Environment variables, 2. ~/.nansen/config.json, 3. Local config.json
+  
+  // Check environment variables first (highest priority)
+  if (process.env.NANSEN_API_KEY) {
+    return {
+      apiKey: process.env.NANSEN_API_KEY,
+      baseUrl: process.env.NANSEN_BASE_URL || 'https://api.nansen.ai'
+    };
   }
   
-  // Fall back to environment variables
+  // Check ~/.nansen/config.json (from `nansen login`)
+  if (fs.existsSync(CONFIG_FILE)) {
+    try {
+      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    } catch (e) {
+      // Ignore parse errors, continue to next option
+    }
+  }
+  
+  // Check local config.json (for development)
+  const localConfig = path.join(__dirname, '..', 'config.json');
+  if (fs.existsSync(localConfig)) {
+    return JSON.parse(fs.readFileSync(localConfig, 'utf8'));
+  }
+  
+  // No config found
   return {
-    apiKey: process.env.NANSEN_API_KEY,
-    baseUrl: process.env.NANSEN_BASE_URL || 'https://api.nansen.ai'
+    apiKey: null,
+    baseUrl: 'https://api.nansen.ai'
   };
 }
 
@@ -83,7 +142,7 @@ const config = loadConfig();
 export class NansenAPI {
   constructor(apiKey = config.apiKey, baseUrl = config.baseUrl) {
     if (!apiKey) {
-      throw new Error('API key required. Set NANSEN_API_KEY env var or create config.json');
+      throw new Error('API key required. Run `nansen login` or set NANSEN_API_KEY environment variable.');
     }
     this.apiKey = apiKey;
     this.baseUrl = baseUrl;
