@@ -125,13 +125,15 @@ Deep analytics for any token.
 | Option | Description |
 |--------|-------------|
 | `--pretty` | Format JSON output for readability |
+| `--table` | Format output as human-readable table |
 | `--chain <chain>` | Blockchain to query |
 | `--chains <json>` | Multiple chains as JSON array |
 | `--limit <n>` | Number of results |
 | `--days <n>` | Date range in days (default: 30) |
+| `--sort <field:dir>` | Sort results (e.g., `--sort value_usd:desc`) |
 | `--symbol <sym>` | Token symbol for perp endpoints (e.g., BTC, ETH) |
 | `--filters <json>` | Filter criteria as JSON |
-| `--order-by <json>` | Sort order as JSON array |
+| `--order-by <json>` | Sort order as JSON array (advanced) |
 | `--labels <label>` | Smart Money label filter |
 | `--smart-money` | Filter for Smart Money only |
 | `--timeframe <tf>` | Time window (5m, 10m, 1h, 6h, 24h, 7d, 30d) |
@@ -171,8 +173,11 @@ The CLI is designed for AI agents and automation:
 ## Examples
 
 ```bash
+# Get trending tokens as a table, sorted by volume
+nansen token screener --chain solana --sort buy_volume:desc --table
+
 # Get Smart Money DEX trades from Funds only
-nansen smart-money dex-trades --chain ethereum --labels Fund
+nansen smart-money dex-trades --chain ethereum --labels Fund --table
 
 # Get token holders with Smart Money filter
 nansen token holders --token So11111111111111111111111111111111111111112 --chain solana --smart-money
@@ -183,8 +188,8 @@ nansen smart-money historical-holdings --chain solana --days 7
 # Get BTC perpetual positions on Hyperliquid
 nansen token perp-positions --symbol BTC --pretty
 
-# Get top PnL traders for a token
-nansen token pnl --token JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN --chain solana --days 30
+# Get top PnL traders for a token, sorted by realized PnL
+nansen token pnl --token JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN --chain solana --days 30 --sort pnl_usd:desc --table
 ```
 
 ## Development
