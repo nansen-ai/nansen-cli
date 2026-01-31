@@ -156,6 +156,22 @@ function errorOutput(error, pretty = false, table = false) {
   process.exit(1);
 }
 
+// Parse simple sort syntax: "field:direction" or "field" (defaults to DESC)
+function parseSort(sortOption, orderByOption) {
+  // If --order-by is provided, use it (full JSON control)
+  if (orderByOption) return orderByOption;
+  
+  // If no --sort, return undefined
+  if (!sortOption) return undefined;
+  
+  // Parse --sort field:direction or --sort field
+  const parts = sortOption.split(':');
+  const field = parts[0];
+  const direction = (parts[1] || 'desc').toUpperCase();
+  
+  return [{ field, direction }];
+}
+
 // Help text
 const HELP = `
 Nansen CLI - Command-line interface for Nansen API
@@ -180,7 +196,8 @@ GLOBAL OPTIONS:
   --chains       Multiple chains as JSON array
   --limit        Number of results (shorthand for pagination)
   --filters      JSON object with filters
-  --order-by     JSON array with sort order
+  --sort         Sort by field (e.g., --sort value_usd:desc)
+  --order-by     JSON array with sort order (advanced)
   --days         Date range in days (default: 30 for most endpoints)
   --symbol       Token symbol (for perp endpoints)
 
@@ -316,7 +333,7 @@ const commands = {
     const chain = options.chain || 'solana';
     const chains = options.chains || [chain];
     const filters = options.filters || {};
-    const orderBy = options['order-by'];
+    const orderBy = parseSort(options.sort, options['order-by']);
     const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
 
     // Add smart money label filter if specified
@@ -355,7 +372,7 @@ const commands = {
     const entityName = options.entity || options['entity-name'];
     const chain = options.chain || 'ethereum';
     const filters = options.filters || {};
-    const orderBy = options['order-by'];
+    const orderBy = parseSort(options.sort, options['order-by']);
     const pagination = options.limit ? { page: 1, recordsPerPage: options.limit } : undefined;
     const days = options.days ? parseInt(options.days) : 30;
 
@@ -393,7 +410,7 @@ const commands = {
     const chains = options.chains || [chain];
     const timeframe = options.timeframe || '24h';
     const filters = options.filters || {};
-    const orderBy = options['order-by'];
+    const orderBy = parseSort(options.sort, options['order-by']);
     const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
     const days = options.days ? parseInt(options.days) : 30;
 
