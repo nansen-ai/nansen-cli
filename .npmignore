@@ -1,0 +1,20 @@
+# Tests
+src/__tests__/
+*.test.js
+vitest.config.js
+coverage/
+
+# Dev configs
+.github/
+.gitignore
+.eslintrc*
+.prettierrc*
+
+# Docs (keep README)
+CONTRIBUTING.md
+CHANGELOG.md
+
+# Local
+config.json
+.env
+.DS_Store
