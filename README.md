@@ -2,8 +2,8 @@
 
 [![npm version](https://img.shields.io/npm/v/nansen-cli.svg)](https://www.npmjs.com/package/nansen-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-323%20passing-brightgreen.svg)]()
-[![Coverage](https://img.shields.io/badge/coverage-80%25-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-325%20passing-brightgreen.svg)]()
+[![Coverage](https://img.shields.io/badge/coverage-83%25-brightgreen.svg)]()
 
 > **Built by agents, for agents.** We prioritize the best possible AI agent experience.
 
