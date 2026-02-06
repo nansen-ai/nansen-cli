@@ -169,6 +169,7 @@ This CLI is built specifically for AI agents. Every design decision prioritizes 
 {
   "success": false,
   "error": "API error message",
+  "code": "UNAUTHORIZED",
   "status": 401,
   "details": {...}
 }
@@ -176,7 +177,7 @@ This CLI is built specifically for AI agents. Every design decision prioritizes 
 
 **Roadmap** (see [TODO.md](TODO.md)):
 - Rate limit handling with auto-retry
-- Structured error codes for programmatic handling
+- ~~Structured error codes for programmatic handling~~ ✅
 - Schema discovery endpoint (`nansen schema`)
 - Field filtering to reduce response size
 - Response caching and batch queries

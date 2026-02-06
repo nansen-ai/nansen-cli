@@ -149,8 +149,9 @@ function errorOutput(error, pretty = false, table = false) {
   const errorData = {
     success: false,
     error: error.message,
-    status: error.status,
-    details: error.data
+    code: error.code || 'UNKNOWN',
+    status: error.status || null,
+    details: error.data || null
   };
   output(errorData, pretty, table);
   process.exit(1);

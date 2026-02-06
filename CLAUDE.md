@@ -102,8 +102,30 @@ const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().spl
 { "success": true, "data": { ... } }
 
 // Error
-{ "success": false, "error": "message", "status": 401, "details": { ... } }
+{ "success": false, "error": "message", "code": "ERROR_CODE", "status": 401, "details": { ... } }
 ```
+
+### Error Codes
+Structured error codes for programmatic handling:
+
+| Code | Description |
+|------|-------------|
+| `UNAUTHORIZED` | Invalid or missing API key (401) |
+| `FORBIDDEN` | Valid key but insufficient permissions (403) |
+| `RATE_LIMITED` | Too many requests (429) |
+| `INVALID_ADDRESS` | Address format validation failed |
+| `INVALID_TOKEN` | Token address validation failed |
+| `INVALID_CHAIN` | Unsupported or invalid chain |
+| `INVALID_PARAMS` | Generic parameter validation error |
+| `MISSING_PARAM` | Required parameter not provided |
+| `NOT_FOUND` | Resource not found (404) |
+| `TOKEN_NOT_FOUND` | Token doesn't exist |
+| `ADDRESS_NOT_FOUND` | Address has no data |
+| `SERVER_ERROR` | Nansen API internal error (500+) |
+| `SERVICE_UNAVAILABLE` | API temporarily down (503) |
+| `NETWORK_ERROR` | Connection failed |
+| `TIMEOUT` | Request timed out |
+| `UNKNOWN` | Unclassified error |
 
 ## API Reference
 

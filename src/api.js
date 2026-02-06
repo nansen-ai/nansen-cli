@@ -9,6 +9,102 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// ============= Error Codes =============
+
+/**
+ * Structured error codes for programmatic handling by AI agents
+ */
+export const ErrorCode = {
+  // Authentication & Authorization
+  UNAUTHORIZED: 'UNAUTHORIZED',           // 401 - Invalid or missing API key
+  FORBIDDEN: 'FORBIDDEN',                 // 403 - Valid key but insufficient permissions
+  
+  // Rate Limiting
+  RATE_LIMITED: 'RATE_LIMITED',           // 429 - Too many requests
+  
+  // Validation Errors
+  INVALID_ADDRESS: 'INVALID_ADDRESS',     // Address format validation failed
+  INVALID_TOKEN: 'INVALID_TOKEN',         // Token address validation failed
+  INVALID_CHAIN: 'INVALID_CHAIN',         // Unsupported or invalid chain
+  INVALID_PARAMS: 'INVALID_PARAMS',       // Generic parameter validation error
+  MISSING_PARAM: 'MISSING_PARAM',         // Required parameter not provided
+  
+  // Resource Errors
+  NOT_FOUND: 'NOT_FOUND',                 // 404 - Resource not found
+  TOKEN_NOT_FOUND: 'TOKEN_NOT_FOUND',     // Token doesn't exist
+  ADDRESS_NOT_FOUND: 'ADDRESS_NOT_FOUND', // Address has no data
+  
+  // Server Errors
+  SERVER_ERROR: 'SERVER_ERROR',           // 500+ - Nansen API internal error
+  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE', // 503 - API temporarily down
+  
+  // Client Errors
+  NETWORK_ERROR: 'NETWORK_ERROR',         // Connection failed
+  TIMEOUT: 'TIMEOUT',                     // Request timed out
+  
+  // Generic
+  UNKNOWN: 'UNKNOWN',                     // Unclassified error
+};
+
+/**
+ * Custom error class with structured error codes
+ */
+export class NansenError extends Error {
+  constructor(message, code = ErrorCode.UNKNOWN, status = null, data = null) {
+    super(message);
+    this.name = 'NansenError';
+    this.code = code;
+    this.status = status;
+    this.data = data;
+  }
+
+  toJSON() {
+    return {
+      error: this.message,
+      code: this.code,
+      status: this.status,
+      details: this.data,
+    };
+  }
+}
+
+/**
+ * Map HTTP status codes to error codes
+ */
+function statusToErrorCode(status, data = {}) {
+  const message = data?.message || data?.error || '';
+  const messageLower = message.toLowerCase();
+  
+  switch (status) {
+    case 400:
+      if (messageLower.includes('address')) return ErrorCode.INVALID_ADDRESS;
+      if (messageLower.includes('token')) return ErrorCode.INVALID_TOKEN;
+      if (messageLower.includes('chain')) return ErrorCode.INVALID_CHAIN;
+      return ErrorCode.INVALID_PARAMS;
+    case 401:
+      return ErrorCode.UNAUTHORIZED;
+    case 403:
+      return ErrorCode.FORBIDDEN;
+    case 404:
+      if (messageLower.includes('token')) return ErrorCode.TOKEN_NOT_FOUND;
+      if (messageLower.includes('address') || messageLower.includes('wallet')) return ErrorCode.ADDRESS_NOT_FOUND;
+      return ErrorCode.NOT_FOUND;
+    case 429:
+      return ErrorCode.RATE_LIMITED;
+    case 500:
+    case 502:
+      return ErrorCode.SERVER_ERROR;
+    case 503:
+      return ErrorCode.SERVICE_UNAVAILABLE;
+    case 504:
+      return ErrorCode.TIMEOUT;
+    default:
+      if (status >= 500) return ErrorCode.SERVER_ERROR;
+      if (status >= 400) return ErrorCode.INVALID_PARAMS;
+      return ErrorCode.UNKNOWN;
+  }
+}
+
 // ============= Config Paths =============
 
 const CONFIG_DIR = path.join(process.env.HOME || process.env.USERPROFILE || '', '.nansen');
@@ -70,26 +166,26 @@ const EVM_CHAINS = [
  * Validate address format for a given chain
  * @param {string} address - The address to validate
  * @param {string} chain - The blockchain (ethereum, solana, etc.)
- * @returns {{valid: boolean, error?: string}}
+ * @returns {{valid: boolean, error?: string, code?: string}}
  */
 export function validateAddress(address, chain = 'ethereum') {
   if (!address || typeof address !== 'string') {
-    return { valid: false, error: 'Address is required' };
+    return { valid: false, error: 'Address is required', code: ErrorCode.MISSING_PARAM };
   }
 
   const trimmed = address.trim();
   
   if (EVM_CHAINS.includes(chain)) {
     if (!ADDRESS_PATTERNS.evm.test(trimmed)) {
-      return { valid: false, error: `Invalid EVM address format. Expected 0x followed by 40 hex characters.` };
+      return { valid: false, error: `Invalid EVM address format. Expected 0x followed by 40 hex characters.`, code: ErrorCode.INVALID_ADDRESS };
     }
   } else if (chain === 'solana') {
     if (!ADDRESS_PATTERNS.solana.test(trimmed)) {
-      return { valid: false, error: `Invalid Solana address format. Expected Base58 string (32-44 chars).` };
+      return { valid: false, error: `Invalid Solana address format. Expected Base58 string (32-44 chars).`, code: ErrorCode.INVALID_ADDRESS };
     }
   } else if (chain === 'bitcoin') {
     if (!ADDRESS_PATTERNS.bitcoin.test(trimmed)) {
-      return { valid: false, error: `Invalid Bitcoin address format.` };
+      return { valid: false, error: `Invalid Bitcoin address format.`, code: ErrorCode.INVALID_ADDRESS };
     }
   }
   // For unknown chains, allow any non-empty string (API will validate)
@@ -142,7 +238,10 @@ const config = loadConfig();
 export class NansenAPI {
   constructor(apiKey = config.apiKey, baseUrl = config.baseUrl) {
     if (!apiKey) {
-      throw new Error('API key required. Run `nansen login` or set NANSEN_API_KEY environment variable.');
+      throw new NansenError(
+        'API key required. Run `nansen login` or set NANSEN_API_KEY environment variable.',
+        ErrorCode.UNAUTHORIZED
+      );
     }
     this.apiKey = apiKey;
     this.baseUrl = baseUrl;
@@ -151,23 +250,44 @@ export class NansenAPI {
   async request(endpoint, body = {}, options = {}) {
     const url = `${this.baseUrl}${endpoint}`;
     
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': this.apiKey,
-        ...options.headers
-      },
-      body: JSON.stringify(body)
-    });
+    let response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': this.apiKey,
+          ...options.headers
+        },
+        body: JSON.stringify(body)
+      });
+    } catch (err) {
+      // Network-level errors (DNS, connection refused, etc.)
+      throw new NansenError(
+        `Network error: ${err.message}`,
+        ErrorCode.NETWORK_ERROR,
+        null,
+        { originalError: err.message }
+      );
+    }
 
-    const data = await response.json();
+    let data;
+    try {
+      data = await response.json();
+    } catch (err) {
+      // Non-JSON response (rare, usually server errors)
+      throw new NansenError(
+        `Invalid response from API (status ${response.status})`,
+        response.status >= 500 ? ErrorCode.SERVER_ERROR : ErrorCode.UNKNOWN,
+        response.status,
+        { body: await response.text().catch(() => null) }
+      );
+    }
 
     if (!response.ok) {
-      const error = new Error(data.message || data.error || `API error: ${response.status}`);
-      error.status = response.status;
-      error.data = data;
-      throw error;
+      const message = data.message || data.error || `API error: ${response.status}`;
+      const code = statusToErrorCode(response.status, data);
+      throw new NansenError(message, code, response.status, data);
     }
 
     return data;
@@ -242,7 +362,7 @@ export class NansenAPI {
     const { address, entityName, chain = 'ethereum', hideSpamToken = true, filters = {}, orderBy } = params;
     if (address) {
       const validation = validateAddress(address, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     return this.request('/api/v1/profiler/address/current-balance', {
       address,
@@ -258,7 +378,7 @@ export class NansenAPI {
     const { address, chain = 'ethereum', pagination = { page: 1, recordsPerPage: 100 } } = params;
     if (address) {
       const validation = validateAddress(address, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     return this.request('/api/beta/profiler/address/labels', {
       parameters: { address, chain },
@@ -270,7 +390,7 @@ export class NansenAPI {
     const { address, chain = 'ethereum', filters = {}, orderBy, pagination } = params;
     if (address) {
       const validation = validateAddress(address, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     return this.request('/api/v1/profiler/address/transactions', {
       address,
@@ -285,7 +405,7 @@ export class NansenAPI {
     const { address, chain = 'ethereum' } = params;
     if (address) {
       const validation = validateAddress(address, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     return this.request('/api/v1/profiler/address/pnl-and-trade-performance', {
       address,
@@ -305,7 +425,7 @@ export class NansenAPI {
     const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30 } = params;
     if (address) {
       const validation = validateAddress(address, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     const to = new Date().toISOString().split('T')[0];
     const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -323,7 +443,7 @@ export class NansenAPI {
     const { address, chain = 'ethereum', filters = {}, orderBy, pagination } = params;
     if (address) {
       const validation = validateAddress(address, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     return this.request('/api/v1/profiler/address/related-wallets', {
       address,
@@ -338,7 +458,7 @@ export class NansenAPI {
     const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30 } = params;
     if (address) {
       const validation = validateAddress(address, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     const to = new Date().toISOString().split('T')[0];
     const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -356,7 +476,7 @@ export class NansenAPI {
     const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30 } = params;
     if (address) {
       const validation = validateAddress(address, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     const to = new Date().toISOString().split('T')[0];
     const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -411,7 +531,7 @@ export class NansenAPI {
     const { tokenAddress, chain = 'solana', labelType = 'all_holders', filters = {}, orderBy, pagination } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     return this.request('/api/v1/tgm/holders', {
       token_address: tokenAddress,
@@ -427,7 +547,7 @@ export class NansenAPI {
     const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     return this.request('/api/v1/tgm/flows', {
       token_address: tokenAddress,
@@ -442,7 +562,7 @@ export class NansenAPI {
     const { tokenAddress, chain = 'solana', onlySmartMoney = false, filters = {}, orderBy, pagination, days = 7 } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     const to = new Date().toISOString().split('T')[0];
     const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -467,7 +587,7 @@ export class NansenAPI {
     const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination, days = 30 } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     const to = new Date().toISOString().split('T')[0];
     const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -485,7 +605,7 @@ export class NansenAPI {
     const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     return this.request('/api/v1/tgm/who-bought-sold', {
       token_address: tokenAddress,
@@ -500,7 +620,7 @@ export class NansenAPI {
     const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     return this.request('/api/v1/tgm/flow-intelligence', {
       token_address: tokenAddress,
@@ -515,7 +635,7 @@ export class NansenAPI {
     const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination, days = 7 } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     const to = new Date().toISOString().split('T')[0];
     const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -534,7 +654,7 @@ export class NansenAPI {
     // JUP DCA is Solana-only
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, 'solana');
-      if (!validation.valid) throw new Error(validation.error);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
     return this.request('/api/v1/tgm/jup-dca', {
       token_address: tokenAddress,

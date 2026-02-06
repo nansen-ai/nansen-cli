@@ -10,10 +10,10 @@
 - [ ] Add `--retry` flag (or make it default)
 - [ ] Surface rate limit headers in response metadata
 
-### Structured Error Codes
-- [ ] Define error code enum: `RATE_LIMITED`, `INVALID_ADDRESS`, `TOKEN_NOT_FOUND`, `UNAUTHORIZED`, `INVALID_CHAIN`, etc.
-- [ ] Return `errorCode` field in all error responses
-- [ ] Document error codes in CLAUDE.md
+### ~~Structured Error Codes~~ ✅
+- [x] Define error code enum: `RATE_LIMITED`, `INVALID_ADDRESS`, `TOKEN_NOT_FOUND`, `UNAUTHORIZED`, `INVALID_CHAIN`, etc.
+- [x] Return `code` field in all error responses
+- [x] Document error codes in CLAUDE.md
 
 ### Schema Discovery
 - [ ] Add `nansen schema` command

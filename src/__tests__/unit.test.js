@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { validateAddress, validateTokenAddress, saveConfig, deleteConfig, getConfigFile, getConfigDir } from '../api.js';
+import { validateAddress, validateTokenAddress, saveConfig, deleteConfig, getConfigFile, getConfigDir, ErrorCode, NansenError } from '../api.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -390,5 +390,93 @@ describe('Error Messages', () => {
   it('should provide helpful error for missing address', () => {
     const result = validateAddress('', 'ethereum');
     expect(result.error).toContain('required');
+  });
+});
+
+// =================== Error Codes ===================
+
+describe('Error Codes', () => {
+  describe('ErrorCode enum', () => {
+    it('should define all expected error codes', () => {
+      expect(ErrorCode.UNAUTHORIZED).toBe('UNAUTHORIZED');
+      expect(ErrorCode.FORBIDDEN).toBe('FORBIDDEN');
+      expect(ErrorCode.RATE_LIMITED).toBe('RATE_LIMITED');
+      expect(ErrorCode.INVALID_ADDRESS).toBe('INVALID_ADDRESS');
+      expect(ErrorCode.INVALID_TOKEN).toBe('INVALID_TOKEN');
+      expect(ErrorCode.INVALID_CHAIN).toBe('INVALID_CHAIN');
+      expect(ErrorCode.INVALID_PARAMS).toBe('INVALID_PARAMS');
+      expect(ErrorCode.MISSING_PARAM).toBe('MISSING_PARAM');
+      expect(ErrorCode.NOT_FOUND).toBe('NOT_FOUND');
+      expect(ErrorCode.TOKEN_NOT_FOUND).toBe('TOKEN_NOT_FOUND');
+      expect(ErrorCode.ADDRESS_NOT_FOUND).toBe('ADDRESS_NOT_FOUND');
+      expect(ErrorCode.SERVER_ERROR).toBe('SERVER_ERROR');
+      expect(ErrorCode.SERVICE_UNAVAILABLE).toBe('SERVICE_UNAVAILABLE');
+      expect(ErrorCode.NETWORK_ERROR).toBe('NETWORK_ERROR');
+      expect(ErrorCode.TIMEOUT).toBe('TIMEOUT');
+      expect(ErrorCode.UNKNOWN).toBe('UNKNOWN');
+    });
+  });
+
+  describe('NansenError class', () => {
+    it('should create error with all properties', () => {
+      const error = new NansenError('Test error', ErrorCode.INVALID_ADDRESS, 400, { field: 'address' });
+      
+      expect(error.message).toBe('Test error');
+      expect(error.code).toBe('INVALID_ADDRESS');
+      expect(error.status).toBe(400);
+      expect(error.data).toEqual({ field: 'address' });
+      expect(error.name).toBe('NansenError');
+    });
+
+    it('should default to UNKNOWN error code', () => {
+      const error = new NansenError('Unknown error');
+      expect(error.code).toBe('UNKNOWN');
+      expect(error.status).toBeNull();
+      expect(error.data).toBeNull();
+    });
+
+    it('should serialize to JSON correctly', () => {
+      const error = new NansenError('Test error', ErrorCode.RATE_LIMITED, 429, { retry_after: 60 });
+      const json = error.toJSON();
+      
+      expect(json).toEqual({
+        error: 'Test error',
+        code: 'RATE_LIMITED',
+        status: 429,
+        details: { retry_after: 60 }
+      });
+    });
+  });
+
+  describe('Validation error codes', () => {
+    it('should return INVALID_ADDRESS code for bad EVM address', () => {
+      const result = validateAddress('invalid', 'ethereum');
+      expect(result.valid).toBe(false);
+      expect(result.code).toBe('INVALID_ADDRESS');
+    });
+
+    it('should return INVALID_ADDRESS code for bad Solana address', () => {
+      const result = validateAddress('short', 'solana');
+      expect(result.valid).toBe(false);
+      expect(result.code).toBe('INVALID_ADDRESS');
+    });
+
+    it('should return MISSING_PARAM code for empty address', () => {
+      const result = validateAddress('', 'ethereum');
+      expect(result.valid).toBe(false);
+      expect(result.code).toBe('MISSING_PARAM');
+    });
+
+    it('should return MISSING_PARAM code for null address', () => {
+      const result = validateAddress(null, 'ethereum');
+      expect(result.valid).toBe(false);
+      expect(result.code).toBe('MISSING_PARAM');
+    });
+
+    it('should not include code for valid addresses', () => {
+      const result = validateAddress('0x28c6c06298d514db089934071355e5743bf21d60', 'ethereum');
+      expect(result.valid).toBe(true);
+      expect(result.code).toBeUndefined();
+    });
   });
 });

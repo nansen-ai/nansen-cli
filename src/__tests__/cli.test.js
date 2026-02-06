@@ -166,19 +166,21 @@ describe('CLI', () => {
       expect(parsed.data.commands).toContain('netflow');
     });
 
-    it('should output error as JSON with success:false', () => {
+    it('should output error as JSON with success:false and error code', () => {
+      // Use invalid API key to trigger auth error
       const { stdout, stderr, exitCode } = runCLI('smart-money netflow', { 
-        env: { NANSEN_API_KEY: '' } 
+        env: { NANSEN_API_KEY: 'invalid-key-for-testing' } 
       });
       
       const combined = stdout + (stderr || '');
       const parsed = JSON.parse(combined);
       
-      // Either success with data, or failure with error
-      if (parsed.success === false) {
-        expect(parsed).toHaveProperty('error');
-        expect(typeof parsed.error).toBe('string');
-      }
+      // Should fail with auth error
+      expect(parsed.success).toBe(false);
+      expect(parsed).toHaveProperty('error');
+      expect(parsed).toHaveProperty('code');
+      expect(typeof parsed.error).toBe('string');
+      expect(typeof parsed.code).toBe('string');
     });
   });
 
