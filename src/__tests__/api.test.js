@@ -1375,6 +1375,242 @@ describe('NansenAPI', () => {
     });
   });
 
+  // =================== P2: Non-JSON Error Responses ===================
+
+  describe('Non-JSON Error Responses', () => {
+    it('should handle HTML error page (502 Bad Gateway)', async () => {
+      if (LIVE_TEST) return;
+      
+      const htmlResponse = {
+        ok: false,
+        status: 502,
+        headers: new Map(),
+        json: async () => { throw new Error('Unexpected token < in JSON'); },
+        text: async () => '<html><body><h1>502 Bad Gateway</h1></body></html>'
+      };
+      htmlResponse.headers.get = () => null;
+      
+      vi.useFakeTimers();
+      
+      mockFetch
+        .mockResolvedValueOnce(htmlResponse)
+        .mockResolvedValueOnce(htmlResponse)
+        .mockResolvedValueOnce(htmlResponse)
+        .mockResolvedValueOnce(htmlResponse);
+
+      let thrownError;
+      const promise = api.smartMoneyNetflow({}).catch(e => { thrownError = e; });
+      await vi.runAllTimersAsync();
+      await promise;
+      
+      expect(thrownError).toBeDefined();
+      expect(thrownError.status).toBe(502);
+      vi.useRealTimers();
+    });
+
+    it('should handle plain text error response', async () => {
+      if (LIVE_TEST) return;
+      
+      const textResponse = {
+        ok: false,
+        status: 500,
+        headers: new Map(),
+        json: async () => { throw new Error('Not JSON'); },
+        text: async () => 'Internal Server Error'
+      };
+      textResponse.headers.get = () => null;
+      
+      vi.useFakeTimers();
+      
+      mockFetch
+        .mockResolvedValueOnce(textResponse)
+        .mockResolvedValueOnce(textResponse)
+        .mockResolvedValueOnce(textResponse)
+        .mockResolvedValueOnce(textResponse);
+
+      let thrownError;
+      const promise = api.smartMoneyNetflow({}).catch(e => { thrownError = e; });
+      await vi.runAllTimersAsync();
+      await promise;
+      
+      expect(thrownError).toBeDefined();
+      expect(thrownError.status).toBe(500);
+      vi.useRealTimers();
+    });
+
+    it('should handle empty response body', async () => {
+      if (LIVE_TEST) return;
+      
+      const emptyResponse = {
+        ok: false,
+        status: 503,
+        headers: new Map(),
+        json: async () => { throw new Error('Unexpected end of JSON input'); },
+        text: async () => ''
+      };
+      emptyResponse.headers.get = () => null;
+      
+      vi.useFakeTimers();
+      
+      mockFetch
+        .mockResolvedValueOnce(emptyResponse)
+        .mockResolvedValueOnce(emptyResponse)
+        .mockResolvedValueOnce(emptyResponse)
+        .mockResolvedValueOnce(emptyResponse);
+
+      let thrownError;
+      const promise = api.smartMoneyNetflow({}).catch(e => { thrownError = e; });
+      await vi.runAllTimersAsync();
+      await promise;
+      
+      expect(thrownError).toBeDefined();
+      expect(thrownError.status).toBe(503);
+      vi.useRealTimers();
+    });
+  });
+
+  // =================== P2: HTTP Date Retry-After Header ===================
+
+  describe('HTTP Date Retry-After Header', () => {
+    it('should parse retry-after as seconds', async () => {
+      if (LIVE_TEST) return;
+      
+      vi.useFakeTimers();
+      
+      const rateLimitResponse = {
+        ok: false,
+        status: 429,
+        headers: new Map([['retry-after', '5']]),
+        json: async () => ({ error: 'Rate limited' })
+      };
+      rateLimitResponse.headers.get = (name) => {
+        if (name.toLowerCase() === 'retry-after') return '5';
+        return null;
+      };
+      
+      const successResponse = {
+        ok: true,
+        json: async () => ({ data: [] })
+      };
+      
+      mockFetch
+        .mockResolvedValueOnce(rateLimitResponse)
+        .mockResolvedValueOnce(successResponse);
+
+      let result;
+      const promise = api.smartMoneyNetflow({ chains: ['solana'] }).then(r => { result = r; });
+      await vi.runAllTimersAsync();
+      await promise;
+      
+      expect(result).toBeDefined();
+      vi.useRealTimers();
+    });
+
+    it('should parse retry-after as HTTP date', async () => {
+      if (LIVE_TEST) return;
+      
+      vi.useFakeTimers();
+      const now = new Date();
+      const futureDate = new Date(now.getTime() + 5000); // 5 seconds from now
+      const httpDate = futureDate.toUTCString(); // e.g., "Thu, 06 Feb 2025 05:10:00 GMT"
+      
+      const rateLimitResponse = {
+        ok: false,
+        status: 429,
+        headers: new Map([['retry-after', httpDate]]),
+        json: async () => ({ error: 'Rate limited' })
+      };
+      rateLimitResponse.headers.get = (name) => {
+        if (name.toLowerCase() === 'retry-after') return httpDate;
+        return null;
+      };
+      
+      const successResponse = {
+        ok: true,
+        json: async () => ({ data: [] })
+      };
+      
+      mockFetch
+        .mockResolvedValueOnce(rateLimitResponse)
+        .mockResolvedValueOnce(successResponse);
+
+      let result;
+      const promise = api.smartMoneyNetflow({ chains: ['solana'] }).then(r => { result = r; });
+      await vi.runAllTimersAsync();
+      await promise;
+      
+      expect(result).toBeDefined();
+      vi.useRealTimers();
+    });
+
+    it('should handle invalid retry-after header gracefully', async () => {
+      if (LIVE_TEST) return;
+      
+      vi.useFakeTimers();
+      
+      const rateLimitResponse = {
+        ok: false,
+        status: 429,
+        headers: new Map([['retry-after', 'invalid-value']]),
+        json: async () => ({ error: 'Rate limited' })
+      };
+      rateLimitResponse.headers.get = (name) => {
+        if (name.toLowerCase() === 'retry-after') return 'invalid-value';
+        return null;
+      };
+      
+      const successResponse = {
+        ok: true,
+        json: async () => ({ data: [] })
+      };
+      
+      mockFetch
+        .mockResolvedValueOnce(rateLimitResponse)
+        .mockResolvedValueOnce(successResponse);
+
+      let result;
+      const promise = api.smartMoneyNetflow({ chains: ['solana'] }).then(r => { result = r; });
+      await vi.runAllTimersAsync();
+      await promise;
+      
+      // Should succeed after retry (fallback to default delay)
+      expect(result).toBeDefined();
+      vi.useRealTimers();
+    });
+
+    it('should handle missing retry-after header', async () => {
+      if (LIVE_TEST) return;
+      
+      vi.useFakeTimers();
+      
+      const rateLimitResponse = {
+        ok: false,
+        status: 429,
+        headers: new Map(),
+        json: async () => ({ error: 'Rate limited' })
+      };
+      rateLimitResponse.headers.get = () => null;
+      
+      const successResponse = {
+        ok: true,
+        json: async () => ({ data: [] })
+      };
+      
+      mockFetch
+        .mockResolvedValueOnce(rateLimitResponse)
+        .mockResolvedValueOnce(successResponse);
+
+      let result;
+      const promise = api.smartMoneyNetflow({ chains: ['solana'] }).then(r => { result = r; });
+      await vi.runAllTimersAsync();
+      await promise;
+      
+      // Should succeed using default backoff
+      expect(result).toBeDefined();
+      vi.useRealTimers();
+    });
+  });
+
   // =================== Address Validation in API Methods ===================
 
   describe('Address Validation in API Methods', () => {

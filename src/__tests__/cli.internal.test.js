@@ -741,3 +741,256 @@ describe('--no-retry and --retries flags', () => {
     expect(capturedOptions.retry.maxRetries).toBe(0);
   });
 });
+
+// =================== P2: parseSort with Special Characters ===================
+
+describe('parseSort with special characters', () => {
+  it('should handle field names with underscores', () => {
+    const result = parseSort('value_usd:asc', undefined);
+    expect(result).toEqual([{ field: 'value_usd', direction: 'ASC' }]);
+  });
+
+  it('should handle field names with numbers', () => {
+    const result = parseSort('pnl_30d:desc', undefined);
+    expect(result).toEqual([{ field: 'pnl_30d', direction: 'DESC' }]);
+  });
+
+  it('should handle field names with dots', () => {
+    const result = parseSort('token.price:asc', undefined);
+    expect(result).toEqual([{ field: 'token.price', direction: 'ASC' }]);
+  });
+
+  it('should handle field names with hyphens', () => {
+    const result = parseSort('net-flow:desc', undefined);
+    expect(result).toEqual([{ field: 'net-flow', direction: 'DESC' }]);
+  });
+
+  it('should handle multiple colons in field name', () => {
+    // Edge case: field:with:colons:asc should split on first colon only
+    const result = parseSort('field:asc', undefined);
+    expect(result).toEqual([{ field: 'field', direction: 'ASC' }]);
+  });
+
+  it('should handle empty field name gracefully', () => {
+    const result = parseSort(':asc', undefined);
+    expect(result).toEqual([{ field: '', direction: 'ASC' }]);
+  });
+
+  it('should handle case-insensitive direction', () => {
+    expect(parseSort('field:ASC', undefined)).toEqual([{ field: 'field', direction: 'ASC' }]);
+    expect(parseSort('field:Desc', undefined)).toEqual([{ field: 'field', direction: 'DESC' }]);
+    expect(parseSort('field:DESC', undefined)).toEqual([{ field: 'field', direction: 'DESC' }]);
+  });
+});
+
+// =================== P2: formatTable with Nested Objects ===================
+
+describe('formatTable with nested objects', () => {
+  it('should stringify nested objects', () => {
+    const data = [
+      { name: 'Test', metadata: { chain: 'ethereum', protocol: 'uniswap' } }
+    ];
+    const result = formatTable(data);
+    
+    expect(result).toContain('name');
+    expect(result).toContain('Test');
+    expect(result).toContain('metadata');
+    // Nested object should be stringified
+    expect(result).toContain('chain');
+  });
+
+  it('should handle deeply nested objects', () => {
+    const data = [
+      { 
+        id: 1, 
+        deep: { 
+          level1: { 
+            level2: { 
+              value: 'deep value' 
+            } 
+          } 
+        } 
+      }
+    ];
+    const result = formatTable(data);
+    
+    expect(result).toContain('id');
+    expect(result).toContain('1');
+    // Deep nesting should be JSON stringified
+    expect(result).toContain('level1');
+  });
+
+  it('should handle arrays in fields', () => {
+    const data = [
+      { name: 'Multi', tags: ['defi', 'nft', 'gaming'] }
+    ];
+    const result = formatTable(data);
+    
+    expect(result).toContain('name');
+    expect(result).toContain('Multi');
+    expect(result).toContain('tags');
+    expect(result).toContain('defi');
+  });
+
+  it('should handle mixed nested and flat fields', () => {
+    const data = [
+      { 
+        symbol: 'ETH',
+        price_usd: 3000,
+        volume: { h24: 1000000, h7d: 5000000 },
+        labels: ['whale', 'smart money']
+      }
+    ];
+    const result = formatTable(data);
+    
+    expect(result).toContain('symbol');
+    expect(result).toContain('ETH');
+    expect(result).toContain('3.00K'); // price formatted
+    expect(result).toContain('volume');
+    expect(result).toContain('labels');
+  });
+
+  it('should handle null nested values', () => {
+    const data = [
+      { name: 'Test', nested: null, deep: { value: null } }
+    ];
+    const result = formatTable(data);
+    
+    // Should not crash on null nested values
+    expect(result).toContain('name');
+    expect(result).toContain('Test');
+  });
+});
+
+// =================== P2: Mock Login/Logout Flow ===================
+
+describe('login/logout flow', () => {
+  let mockDeps;
+  let commands;
+  let logs;
+
+  beforeEach(() => {
+    logs = [];
+    mockDeps = {
+      log: (msg) => logs.push(msg),
+      exit: vi.fn(),
+      promptFn: vi.fn(),
+      saveConfigFn: vi.fn(),
+      deleteConfigFn: vi.fn(),
+      getConfigFileFn: vi.fn(() => '/home/user/.nansen/config.json'),
+      NansenAPIClass: vi.fn()
+    };
+    commands = buildCommands(mockDeps);
+  });
+
+  describe('login command', () => {
+    it('should prompt for API key', async () => {
+      mockDeps.promptFn.mockResolvedValue('');
+      await commands.login([], null, {}, {});
+      
+      expect(mockDeps.promptFn).toHaveBeenCalledWith('Enter your API key: ', true);
+    });
+
+    it('should trim whitespace from API key', async () => {
+      mockDeps.promptFn.mockResolvedValue('  api-key-with-spaces  ');
+      mockDeps.NansenAPIClass = function MockAPI() {
+        this.tokenScreener = vi.fn().mockResolvedValue({ data: [] });
+      };
+      commands = buildCommands(mockDeps);
+      
+      await commands.login([], null, {}, {});
+      
+      expect(mockDeps.saveConfigFn).toHaveBeenCalledWith({
+        apiKey: 'api-key-with-spaces',
+        baseUrl: 'https://api.nansen.ai'
+      });
+    });
+
+    it('should display login instructions', async () => {
+      mockDeps.promptFn.mockResolvedValue('');
+      await commands.login([], null, {}, {});
+      
+      expect(logs.some(l => l.includes('Nansen CLI Login'))).toBe(true);
+      expect(logs.some(l => l.includes('https://app.nansen.ai/api'))).toBe(true);
+    });
+
+    it('should validate API key with test request', async () => {
+      mockDeps.promptFn.mockResolvedValue('test-key');
+      const mockScreener = vi.fn().mockResolvedValue({ data: [] });
+      mockDeps.NansenAPIClass = function MockAPI(key) {
+        this.apiKey = key;
+        this.tokenScreener = mockScreener;
+      };
+      commands = buildCommands(mockDeps);
+      
+      await commands.login([], null, {}, {});
+      
+      expect(mockScreener).toHaveBeenCalledWith({ 
+        chains: ['solana'], 
+        pagination: { page: 1, per_page: 1 } 
+      });
+    });
+
+    it('should show success message after validation', async () => {
+      mockDeps.promptFn.mockResolvedValue('valid-key');
+      mockDeps.NansenAPIClass = function MockAPI() {
+        this.tokenScreener = vi.fn().mockResolvedValue({ data: [] });
+      };
+      commands = buildCommands(mockDeps);
+      
+      await commands.login([], null, {}, {});
+      
+      expect(logs.some(l => l.includes('API key validated'))).toBe(true);
+      expect(logs.some(l => l.includes('Saved to'))).toBe(true);
+    });
+
+    it('should show error and exit on validation failure', async () => {
+      mockDeps.promptFn.mockResolvedValue('bad-key');
+      mockDeps.NansenAPIClass = function MockAPI() {
+        this.tokenScreener = vi.fn().mockRejectedValue(new Error('Unauthorized'));
+      };
+      commands = buildCommands(mockDeps);
+      
+      await commands.login([], null, {}, {});
+      
+      expect(logs.some(l => l.includes('Invalid API key'))).toBe(true);
+      expect(mockDeps.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('should not save config on validation failure', async () => {
+      mockDeps.promptFn.mockResolvedValue('bad-key');
+      mockDeps.NansenAPIClass = function MockAPI() {
+        this.tokenScreener = vi.fn().mockRejectedValue(new Error('Unauthorized'));
+      };
+      commands = buildCommands(mockDeps);
+      
+      await commands.login([], null, {}, {});
+      
+      expect(mockDeps.saveConfigFn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('logout command', () => {
+    it('should call deleteConfig', async () => {
+      mockDeps.deleteConfigFn.mockReturnValue(true);
+      await commands.logout([], null, {}, {});
+      
+      expect(mockDeps.deleteConfigFn).toHaveBeenCalled();
+    });
+
+    it('should show success message when config deleted', async () => {
+      mockDeps.deleteConfigFn.mockReturnValue(true);
+      await commands.logout([], null, {}, {});
+      
+      expect(logs.some(l => l.includes('Removed'))).toBe(true);
+      expect(logs.some(l => l.includes('/home/user/.nansen/config.json'))).toBe(true);
+    });
+
+    it('should show message when no config exists', async () => {
+      mockDeps.deleteConfigFn.mockReturnValue(false);
+      await commands.logout([], null, {}, {});
+      
+      expect(logs.some(l => l.includes('No saved credentials'))).toBe(true);
+    });
+  });
+});

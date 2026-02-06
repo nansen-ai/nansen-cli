@@ -55,12 +55,12 @@
 - [x] Test `--no-retry` flag actually disables retry
 - [x] Test `--retries N` custom retry count (+ fixed bug: `--retries 0` now works)
 
-### P2 - Medium Priority  
-- [ ] Test `parseSort` with special characters in field names
-- [ ] Test `formatTable` with deeply nested objects
-- [ ] Mock login/logout flow (readline + stdin)
-- [ ] Test non-JSON error responses (HTML 502 pages)
-- [ ] Test HTTP date format in retry-after header
+### ~~P2 - Medium Priority~~ ✅
+- [x] Test `parseSort` with special characters in field names
+- [x] Test `formatTable` with deeply nested objects
+- [x] Mock login/logout flow (readline + stdin)
+- [x] Test non-JSON error responses (HTML 502 pages)
+- [x] Test HTTP date format in retry-after header
 
 ### P3 - Nice to Have
 - [ ] Add snapshot tests for `--help` output
