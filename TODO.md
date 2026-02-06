@@ -4,11 +4,6 @@
 
 ## P0 - High Impact
 
-### Batch Queries
-- [ ] Support multiple addresses: `--addresses '[...]'`
-- [ ] Support multiple tokens: `--tokens '[...]'`
-- [ ] Reduce N calls to 1 call
-
 ### Response Caching  
 - [ ] Add optional local cache (SQLite or file-based)
 - [ ] Configurable TTL (default 60-300s)
