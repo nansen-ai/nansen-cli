@@ -455,6 +455,17 @@ export function parseSort(sortOption, orderByOption) {
   return [{ field, direction }];
 }
 
+// ASCII Art Banner
+export const BANNER = `
+ ███╗   ██╗ █████╗ ███╗   ██╗███████╗███████╗███╗   ██╗
+ ████╗  ██║██╔══██╗████╗  ██║██╔════╝██╔════╝████╗  ██║
+ ██╔██╗ ██║███████║██╔██╗ ██║███████╗█████╗  ██╔██╗ ██║
+ ██║╚██╗██║██╔══██║██║╚██╗██║╚════██║██╔══╝  ██║╚██╗██║
+ ██║ ╚████║██║  ██║██║ ╚████║███████║███████╗██║ ╚████║
+ ╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═══╝
+                   Surface The Signal
+`;
+
 // Help text
 export const HELP = `
 Nansen CLI - Command-line interface for Nansen API
@@ -848,7 +859,7 @@ export async function runCLI(rawArgs, deps = {}) {
   const commands = { ...buildCommands(deps), ...commandOverrides };
 
   if (command === 'help' || flags.help || flags.h) {
-    output(HELP);
+    output(BANNER + HELP);
     return { type: 'help' };
   }
 
