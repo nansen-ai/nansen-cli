@@ -50,10 +50,10 @@
 - [x] Add fake timers to retry tests (was 8s each, now instant)
 
 ### P1 - High Priority
-- [ ] Test `--table` output formatting
-- [ ] Test config priority chain (ENV > ~/.nansen > local config.json)
-- [ ] Test `--no-retry` flag actually disables retry
-- [ ] Test `--retries N` custom retry count
+- [x] Test `--table` output formatting
+- [ ] Test config priority chain (ENV > ~/.nansen > local config.json) — needs `loadConfig()` exported
+- [x] Test `--no-retry` flag actually disables retry
+- [x] Test `--retries N` custom retry count (+ fixed bug: `--retries 0` now works)
 
 ### P2 - Medium Priority  
 - [ ] Test `parseSort` with special characters in field names
