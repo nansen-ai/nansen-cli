@@ -15,7 +15,10 @@ import {
   buildCommands,
   runCLI,
   NO_AUTH_COMMANDS,
-  HELP
+  HELP,
+  SCHEMA,
+  filterFields,
+  parseFields
 } from '../cli.js';
 
 describe('parseArgs', () => {
@@ -992,5 +995,318 @@ describe('login/logout flow', () => {
       
       expect(logs.some(l => l.includes('No saved credentials'))).toBe(true);
     });
+  });
+});
+
+// =================== Schema Command ===================
+
+describe('SCHEMA', () => {
+  it('should have version number', () => {
+    expect(SCHEMA.version).toBeDefined();
+    expect(SCHEMA.version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it('should define all main commands', () => {
+    expect(SCHEMA.commands['smart-money']).toBeDefined();
+    expect(SCHEMA.commands['profiler']).toBeDefined();
+    expect(SCHEMA.commands['token']).toBeDefined();
+    expect(SCHEMA.commands['portfolio']).toBeDefined();
+  });
+
+  it('should define subcommands for smart-money', () => {
+    const sm = SCHEMA.commands['smart-money'];
+    expect(sm.subcommands['netflow']).toBeDefined();
+    expect(sm.subcommands['dex-trades']).toBeDefined();
+    expect(sm.subcommands['holdings']).toBeDefined();
+    expect(sm.subcommands['perp-trades']).toBeDefined();
+    expect(sm.subcommands['dcas']).toBeDefined();
+    expect(sm.subcommands['historical-holdings']).toBeDefined();
+  });
+
+  it('should define subcommands for profiler', () => {
+    const profiler = SCHEMA.commands['profiler'];
+    expect(profiler.subcommands['balance']).toBeDefined();
+    expect(profiler.subcommands['labels']).toBeDefined();
+    expect(profiler.subcommands['transactions']).toBeDefined();
+    expect(profiler.subcommands['pnl']).toBeDefined();
+    expect(profiler.subcommands['search']).toBeDefined();
+  });
+
+  it('should define subcommands for token', () => {
+    const token = SCHEMA.commands['token'];
+    expect(token.subcommands['screener']).toBeDefined();
+    expect(token.subcommands['holders']).toBeDefined();
+    expect(token.subcommands['flows']).toBeDefined();
+    expect(token.subcommands['pnl']).toBeDefined();
+    expect(token.subcommands['perp-trades']).toBeDefined();
+  });
+
+  it('should include option definitions with types', () => {
+    const netflow = SCHEMA.commands['smart-money'].subcommands['netflow'];
+    expect(netflow.options.chain.type).toBe('string');
+    expect(netflow.options.chain.default).toBe('solana');
+    expect(netflow.options.limit.type).toBe('number');
+  });
+
+  it('should include required flag for required options', () => {
+    const balance = SCHEMA.commands['profiler'].subcommands['balance'];
+    expect(balance.options.address.required).toBe(true);
+  });
+
+  it('should include return field definitions', () => {
+    const netflow = SCHEMA.commands['smart-money'].subcommands['netflow'];
+    expect(netflow.returns).toContain('token_symbol');
+    expect(netflow.returns).toContain('net_flow_usd');
+  });
+
+  it('should define global options', () => {
+    expect(SCHEMA.globalOptions.pretty).toBeDefined();
+    expect(SCHEMA.globalOptions.table).toBeDefined();
+    expect(SCHEMA.globalOptions.fields).toBeDefined();
+    expect(SCHEMA.globalOptions['no-retry']).toBeDefined();
+  });
+
+  it('should list supported chains', () => {
+    expect(SCHEMA.chains).toContain('ethereum');
+    expect(SCHEMA.chains).toContain('solana');
+    expect(SCHEMA.chains).toContain('base');
+    expect(SCHEMA.chains.length).toBeGreaterThan(10);
+  });
+
+  it('should list smart money labels', () => {
+    expect(SCHEMA.smartMoneyLabels).toContain('Fund');
+    expect(SCHEMA.smartMoneyLabels).toContain('Smart Trader');
+  });
+});
+
+describe('schema command', () => {
+  let outputs;
+  let mockDeps;
+
+  beforeEach(() => {
+    outputs = [];
+    mockDeps = {
+      output: (msg) => outputs.push(msg),
+      errorOutput: (msg) => outputs.push(msg),
+      exit: vi.fn()
+    };
+  });
+
+  it('should return full schema without subcommand', async () => {
+    const result = await runCLI(['schema'], mockDeps);
+    
+    expect(result.type).toBe('schema');
+    expect(result.data.version).toBeDefined();
+    expect(result.data.commands).toBeDefined();
+  });
+
+  it('should return specific command schema', async () => {
+    const commands = buildCommands({});
+    const result = await commands.schema(['smart-money'], null, {}, {});
+    
+    expect(result.command).toBe('smart-money');
+    expect(result.subcommands).toBeDefined();
+    expect(result.globalOptions).toBeDefined();
+  });
+
+  it('should return full schema for unknown command', async () => {
+    const commands = buildCommands({});
+    const result = await commands.schema(['unknown'], null, {}, {});
+    
+    // Returns full schema when command not found
+    expect(result.version).toBeDefined();
+    expect(result.commands).toBeDefined();
+  });
+
+  it('should output JSON', async () => {
+    await runCLI(['schema'], mockDeps);
+    
+    const output = outputs[0];
+    expect(() => JSON.parse(output)).not.toThrow();
+    const parsed = JSON.parse(output);
+    expect(parsed.version).toBeDefined();
+  });
+
+  it('should output pretty JSON with --pretty', async () => {
+    await runCLI(['schema', '--pretty'], mockDeps);
+    
+    const output = outputs[0];
+    expect(output).toContain('\n'); // Pretty JSON has newlines
+  });
+
+  it('should be in NO_AUTH_COMMANDS', () => {
+    expect(NO_AUTH_COMMANDS).toContain('schema');
+  });
+});
+
+// =================== Field Filtering ===================
+
+describe('parseFields', () => {
+  it('should parse comma-separated fields', () => {
+    const result = parseFields('address,value_usd,pnl_usd');
+    expect(result).toEqual(['address', 'value_usd', 'pnl_usd']);
+  });
+
+  it('should trim whitespace', () => {
+    const result = parseFields('address , value_usd , pnl_usd');
+    expect(result).toEqual(['address', 'value_usd', 'pnl_usd']);
+  });
+
+  it('should filter empty fields', () => {
+    const result = parseFields('address,,value_usd,');
+    expect(result).toEqual(['address', 'value_usd']);
+  });
+
+  it('should return null for undefined input', () => {
+    expect(parseFields(undefined)).toBeNull();
+  });
+
+  it('should return null for empty string', () => {
+    expect(parseFields('')).toBeNull();
+  });
+
+  it('should handle single field', () => {
+    const result = parseFields('address');
+    expect(result).toEqual(['address']);
+  });
+});
+
+describe('filterFields', () => {
+  it('should filter object to specified fields', () => {
+    const data = { address: '0x123', value_usd: 1000, pnl_usd: 50, extra: 'ignored' };
+    const result = filterFields(data, ['address', 'value_usd']);
+    
+    expect(result).toEqual({ address: '0x123', value_usd: 1000 });
+    expect(result.extra).toBeUndefined();
+    expect(result.pnl_usd).toBeUndefined();
+  });
+
+  it('should filter array of objects', () => {
+    const data = [
+      { address: '0x1', value: 100, extra: 'a' },
+      { address: '0x2', value: 200, extra: 'b' }
+    ];
+    const result = filterFields(data, ['address', 'value']);
+    
+    expect(result).toEqual([
+      { address: '0x1', value: 100 },
+      { address: '0x2', value: 200 }
+    ]);
+  });
+
+  it('should handle nested objects', () => {
+    const data = {
+      results: [
+        { address: '0x1', value: 100 },
+        { address: '0x2', value: 200 }
+      ],
+      pagination: { page: 1 }
+    };
+    const result = filterFields(data, ['address', 'value']);
+    
+    expect(result.results).toBeDefined();
+    expect(result.results[0].address).toBe('0x1');
+    expect(result.results[0].value).toBe(100);
+  });
+
+  it('should return original data when fields is empty', () => {
+    const data = { a: 1, b: 2 };
+    expect(filterFields(data, [])).toEqual(data);
+  });
+
+  it('should return original data when fields is null', () => {
+    const data = { a: 1, b: 2 };
+    expect(filterFields(data, null)).toEqual(data);
+  });
+
+  it('should handle null values', () => {
+    const data = { address: '0x1', value: null };
+    const result = filterFields(data, ['address', 'value']);
+    expect(result).toEqual({ address: '0x1', value: null });
+  });
+
+  it('should handle deeply nested structures', () => {
+    const data = {
+      data: {
+        results: [
+          { token_symbol: 'ETH', price_usd: 3000, ignored: true }
+        ]
+      }
+    };
+    const result = filterFields(data, ['token_symbol', 'price_usd']);
+    
+    expect(result.data.results[0].token_symbol).toBe('ETH');
+    expect(result.data.results[0].price_usd).toBe(3000);
+    expect(result.data.results[0].ignored).toBeUndefined();
+  });
+});
+
+describe('--fields flag integration', () => {
+  let outputs;
+  let exitCode;
+
+  const mockDeps = () => ({
+    output: (msg) => outputs.push(msg),
+    errorOutput: (msg) => outputs.push(msg),
+    exit: (code) => { exitCode = code; }
+  });
+
+  beforeEach(() => {
+    outputs = [];
+    exitCode = null;
+  });
+
+  it('should filter response fields', async () => {
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI() {
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue([
+          { token_symbol: 'SOL', value_usd: 1000, extra_field: 'ignored', chain: 'solana' }
+        ]);
+      }
+    };
+    
+    await runCLI(['smart-money', 'netflow', '--fields', 'token_symbol,value_usd'], deps);
+    
+    const output = JSON.parse(outputs[0]);
+    expect(output.success).toBe(true);
+    expect(output.data[0].token_symbol).toBe('SOL');
+    expect(output.data[0].value_usd).toBe(1000);
+    expect(output.data[0].extra_field).toBeUndefined();
+    expect(output.data[0].chain).toBeUndefined();
+  });
+
+  it('should work with nested response data', async () => {
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI() {
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue({
+          results: [
+            { symbol: 'BTC', price: 50000, volume: 1000000 }
+          ],
+          meta: { page: 1 }
+        });
+      }
+    };
+    
+    await runCLI(['smart-money', 'netflow', '--fields', 'symbol,price'], deps);
+    
+    const output = JSON.parse(outputs[0]);
+    expect(output.data.results[0].symbol).toBe('BTC');
+    expect(output.data.results[0].price).toBe(50000);
+    expect(output.data.results[0].volume).toBeUndefined();
+  });
+
+  it('should work with --pretty flag', async () => {
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI() {
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue([{ symbol: 'ETH' }]);
+      }
+    };
+    
+    await runCLI(['smart-money', 'netflow', '--fields', 'symbol', '--pretty'], deps);
+    
+    expect(outputs[0]).toContain('\n'); // Pretty formatting
   });
 });

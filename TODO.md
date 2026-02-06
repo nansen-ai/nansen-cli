@@ -2,19 +2,6 @@
 
 > **Built by agents, for agents.** We prioritize improvements that create the best possible AI agent experience.
 
-## High Priority
-
-### Schema Discovery
-- [ ] Add `nansen schema` command
-- [ ] Output JSON schema for all commands and parameters
-- [ ] Include parameter types, defaults, and valid values
-- [ ] Enable agent introspection without parsing docs
-
-### Field Filtering
-- [ ] Add `--fields` flag to select output fields
-- [ ] Example: `--fields address,value_usd,pnl_usd`
-- [ ] Reduce response size / tokens for agents to process
-
 ## Medium Priority
 
 ### Response Caching
