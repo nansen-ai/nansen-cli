@@ -508,15 +508,45 @@ describe('NansenAPI', () => {
 
       it('should pass orderBy to API', async () => {
         setupMock(MOCK_RESPONSES.addressTransactions);
-        
+
         await api.addressTransactions({
           address: TEST_DATA.ethereum.address,
           chain: 'ethereum',
           orderBy: [{ column: 'timestamp', order: 'desc' }]
         });
-        
+
         const body = expectFetchCalledWith('/api/v1/profiler/address/transactions');
         expect(body.order_by).toEqual([{ column: 'timestamp', order: 'desc' }]);
+      });
+
+      it('should include date range with default days', async () => {
+        setupMock(MOCK_RESPONSES.addressTransactions);
+
+        await api.addressTransactions({
+          address: TEST_DATA.ethereum.address,
+          chain: 'ethereum'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/transactions');
+        expect(body.date).toBeDefined();
+        expect(body.date.from).toBeDefined();
+        expect(body.date.to).toBeDefined();
+      });
+
+      it('should calculate correct date range for custom days', async () => {
+        setupMock(MOCK_RESPONSES.addressTransactions);
+
+        await api.addressTransactions({
+          address: TEST_DATA.ethereum.address,
+          chain: 'ethereum',
+          days: 14
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/transactions');
+        const from = new Date(body.date.from);
+        const to = new Date(body.date.to);
+        const diffDays = Math.round((to - from) / (1000 * 60 * 60 * 24));
+        expect(diffDays).toBe(14);
       });
     });
 
@@ -592,18 +622,30 @@ describe('NansenAPI', () => {
     describe('addressRelatedWallets', () => {
       it('should fetch related wallets with correct endpoint', async () => {
         setupMock(MOCK_RESPONSES.addressRelatedWallets);
-        
+
         const result = await api.addressRelatedWallets({
           address: TEST_DATA.ethereum.address,
           chain: 'ethereum'
         });
-        
+
         const body = expectFetchCalledWith('/api/v1/profiler/address/related-wallets');
         expect(body.address).toBe(TEST_DATA.ethereum.address);
         expect(body.chain).toBe('ethereum');
-        
+
         expect(result.wallets).toBeInstanceOf(Array);
         expect(result.wallets[0]).toHaveProperty('relationship', 'funding_source');
+      });
+
+      it('should not send empty filters in body', async () => {
+        setupMock(MOCK_RESPONSES.addressRelatedWallets);
+
+        await api.addressRelatedWallets({
+          address: TEST_DATA.ethereum.address,
+          chain: 'ethereum'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/related-wallets');
+        expect(body.filters).toBeUndefined();
       });
     });
 
@@ -780,18 +822,35 @@ describe('NansenAPI', () => {
     describe('tokenFlows', () => {
       it('should fetch token flows with correct endpoint', async () => {
         setupMock(MOCK_RESPONSES.tokenFlows);
-        
+
         const result = await api.tokenFlows({
           tokenAddress: TEST_DATA.solana.token,
           chain: 'solana'
         });
-        
+
         const body = expectFetchCalledWith('/api/v1/tgm/flows');
         expect(body.token_address).toBe(TEST_DATA.solana.token);
         expect(body.chain).toBe('solana');
-        
+        expect(body.date).toBeDefined();
+
         expect(result.inflows).toBe(1000000);
         expect(result.outflows).toBe(500000);
+      });
+
+      it('should calculate correct date range for custom days', async () => {
+        setupMock(MOCK_RESPONSES.tokenFlows);
+
+        await api.tokenFlows({
+          tokenAddress: TEST_DATA.solana.token,
+          chain: 'solana',
+          days: 14
+        });
+
+        const body = expectFetchCalledWith('/api/v1/tgm/flows');
+        const from = new Date(body.date.from);
+        const to = new Date(body.date.to);
+        const diffDays = Math.round((to - from) / (1000 * 60 * 60 * 24));
+        expect(diffDays).toBe(14);
       });
     });
 
@@ -866,38 +925,72 @@ describe('NansenAPI', () => {
     describe('tokenWhoBoughtSold', () => {
       it('should fetch buyers and sellers with correct endpoint', async () => {
         setupMock(MOCK_RESPONSES.tokenWhoBoughtSold);
-        
+
         const result = await api.tokenWhoBoughtSold({
           tokenAddress: TEST_DATA.solana.token,
           chain: 'solana'
         });
-        
+
         const body = expectFetchCalledWith('/api/v1/tgm/who-bought-sold');
         expect(body.token_address).toBe(TEST_DATA.solana.token);
         expect(body.chain).toBe('solana');
-        
+        expect(body.date).toBeDefined();
+
         expect(result.buyers).toBeInstanceOf(Array);
         expect(result.sellers).toBeInstanceOf(Array);
         expect(result.buyers[0]).toHaveProperty('amount_usd', 1000);
         expect(result.sellers[0]).toHaveProperty('amount_usd', 500);
+      });
+
+      it('should calculate correct date range for custom days', async () => {
+        setupMock(MOCK_RESPONSES.tokenWhoBoughtSold);
+
+        await api.tokenWhoBoughtSold({
+          tokenAddress: TEST_DATA.solana.token,
+          chain: 'solana',
+          days: 14
+        });
+
+        const body = expectFetchCalledWith('/api/v1/tgm/who-bought-sold');
+        const from = new Date(body.date.from);
+        const to = new Date(body.date.to);
+        const diffDays = Math.round((to - from) / (1000 * 60 * 60 * 24));
+        expect(diffDays).toBe(14);
       });
     });
 
     describe('tokenFlowIntelligence', () => {
       it('should fetch flow intelligence with correct endpoint', async () => {
         setupMock(MOCK_RESPONSES.tokenFlowIntelligence);
-        
+
         const result = await api.tokenFlowIntelligence({
           tokenAddress: TEST_DATA.solana.token,
           chain: 'solana'
         });
-        
+
         const body = expectFetchCalledWith('/api/v1/tgm/flow-intelligence');
         expect(body.token_address).toBe(TEST_DATA.solana.token);
-        
+        expect(body.date).toBeDefined();
+
         expect(result.flows).toBeInstanceOf(Array);
         expect(result.flows[0]).toHaveProperty('label', 'Smart Money');
         expect(result.flows[0]).toHaveProperty('net_flow_usd', 500000);
+      });
+
+      it('should calculate correct date range for custom days', async () => {
+        setupMock(MOCK_RESPONSES.tokenFlowIntelligence);
+
+        await api.tokenFlowIntelligence({
+          tokenAddress: TEST_DATA.solana.token,
+          chain: 'solana',
+          days: 14
+        });
+
+        const body = expectFetchCalledWith('/api/v1/tgm/flow-intelligence');
+        const from = new Date(body.date.from);
+        const to = new Date(body.date.to);
+        const diffDays = Math.round((to - from) / (1000 * 60 * 60 * 24));
+        expect(diffDays).toBe(14);
       });
     });
 
@@ -1642,6 +1735,50 @@ describe('NansenAPI', () => {
       });
       
       expect(mockFetch).toHaveBeenCalled();
+    });
+  });
+
+  // =================== Body Cleaning ===================
+
+  describe('Body Cleaning', () => {
+    it('should strip empty filters from request body', async () => {
+      setupMock(MOCK_RESPONSES.addressRelatedWallets);
+
+      await api.addressRelatedWallets({
+        address: TEST_DATA.ethereum.address,
+        chain: 'ethereum'
+      });
+
+      const body = expectFetchCalledWith('/api/v1/profiler/address/related-wallets');
+      expect(body.filters).toBeUndefined();
+      expect(body.order_by).toBeUndefined();
+      expect(body.pagination).toBeUndefined();
+    });
+
+    it('should preserve non-empty filters', async () => {
+      setupMock(MOCK_RESPONSES.addressRelatedWallets);
+
+      await api.addressRelatedWallets({
+        address: TEST_DATA.ethereum.address,
+        chain: 'ethereum',
+        filters: { only_smart_money: true }
+      });
+
+      const body = expectFetchCalledWith('/api/v1/profiler/address/related-wallets');
+      expect(body.filters).toEqual({ only_smart_money: true });
+    });
+
+    it('should strip undefined values from body', async () => {
+      setupMock(MOCK_RESPONSES.tokenFlows);
+
+      await api.tokenFlows({
+        tokenAddress: TEST_DATA.solana.token,
+        chain: 'solana'
+      });
+
+      const body = expectFetchCalledWith('/api/v1/tgm/flows');
+      expect(body.order_by).toBeUndefined();
+      expect(body.pagination).toBeUndefined();
     });
   });
 

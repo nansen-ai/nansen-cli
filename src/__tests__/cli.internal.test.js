@@ -448,9 +448,55 @@ describe('buildCommands', () => {
         tokenHolders: vi.fn().mockResolvedValue({ data: [] })
       };
       await commands['token'](['holders'], mockApi, {}, { token: '0xabc' });
-      
+
       expect(mockApi.tokenHolders).toHaveBeenCalledWith(
         expect.objectContaining({ tokenAddress: '0xabc' })
+      );
+    });
+
+    it('should pass days to flows handler', async () => {
+      const mockApi = {
+        tokenFlows: vi.fn().mockResolvedValue({ data: [] })
+      };
+      await commands['token'](['flows'], mockApi, {}, { token: '0xabc', days: '7' });
+
+      expect(mockApi.tokenFlows).toHaveBeenCalledWith(
+        expect.objectContaining({ days: 7 })
+      );
+    });
+
+    it('should pass days to who-bought-sold handler', async () => {
+      const mockApi = {
+        tokenWhoBoughtSold: vi.fn().mockResolvedValue({ data: [] })
+      };
+      await commands['token'](['who-bought-sold'], mockApi, {}, { token: '0xabc', days: '7' });
+
+      expect(mockApi.tokenWhoBoughtSold).toHaveBeenCalledWith(
+        expect.objectContaining({ days: 7 })
+      );
+    });
+
+    it('should pass days to flow-intelligence handler', async () => {
+      const mockApi = {
+        tokenFlowIntelligence: vi.fn().mockResolvedValue({ data: [] })
+      };
+      await commands['token'](['flow-intelligence'], mockApi, {}, { token: '0xabc', days: '7' });
+
+      expect(mockApi.tokenFlowIntelligence).toHaveBeenCalledWith(
+        expect.objectContaining({ days: 7 })
+      );
+    });
+  });
+
+  describe('profiler command - days passthrough', () => {
+    it('should pass days to transactions handler', async () => {
+      const mockApi = {
+        addressTransactions: vi.fn().mockResolvedValue({ data: [] })
+      };
+      await commands['profiler'](['transactions'], mockApi, {}, { address: '0x123', days: '7' });
+
+      expect(mockApi.addressTransactions).toHaveBeenCalledWith(
+        expect.objectContaining({ days: 7 })
       );
     });
   });

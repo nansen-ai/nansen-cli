@@ -392,6 +392,15 @@ export class NansenAPI {
     };
   }
 
+  static cleanBody(body) {
+    return Object.fromEntries(
+      Object.entries(body).filter(([_, v]) =>
+        v !== undefined && v !== null &&
+        !(typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0)
+      )
+    );
+  }
+
   async request(endpoint, body = {}, options = {}) {
     const url = `${this.baseUrl}${endpoint}`;
     const { maxRetries, baseDelayMs, maxDelayMs, retryOnStatus } = this.retryOptions;
@@ -420,7 +429,7 @@ export class NansenAPI {
             'apikey': this.apiKey,
             ...options.headers
           },
-          body: JSON.stringify(body)
+          body: JSON.stringify(NansenAPI.cleanBody(body))
         });
       } catch (err) {
         // Network-level errors - retry these too
@@ -592,14 +601,17 @@ export class NansenAPI {
   }
 
   async addressTransactions(params = {}) {
-    const { address, chain = 'ethereum', filters = {}, orderBy, pagination } = params;
+    const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30 } = params;
     if (address) {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/profiler/address/transactions', {
       address,
       chain,
+      date: { from, to },
       filters,
       order_by: orderBy,
       pagination
@@ -749,14 +761,17 @@ export class NansenAPI {
   }
 
   async tokenFlows(params = {}) {
-    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination } = params;
+    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination, days = 30 } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/tgm/flows', {
       token_address: tokenAddress,
       chain,
+      date: { from, to },
       filters,
       order_by: orderBy,
       pagination
@@ -807,14 +822,17 @@ export class NansenAPI {
   }
 
   async tokenWhoBoughtSold(params = {}) {
-    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination } = params;
+    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination, days = 30 } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/tgm/who-bought-sold', {
       token_address: tokenAddress,
       chain,
+      date: { from, to },
       filters,
       order_by: orderBy,
       pagination
@@ -822,14 +840,17 @@ export class NansenAPI {
   }
 
   async tokenFlowIntelligence(params = {}) {
-    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination } = params;
+    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination, days = 30 } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/tgm/flow-intelligence', {
       token_address: tokenAddress,
       chain,
+      date: { from, to },
       filters,
       order_by: orderBy,
       pagination
