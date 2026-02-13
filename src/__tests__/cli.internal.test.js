@@ -12,6 +12,7 @@ import {
   formatOutput,
   formatError,
   formatStream,
+  formatCsv,
   parseSort,
   buildCommands,
   runCLI,
@@ -19,7 +20,10 @@ import {
   HELP,
   SCHEMA,
   filterFields,
-  parseFields
+  parseFields,
+  batchProfile,
+  traceCounterparties,
+  compareWallets
 } from '../cli.js';
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir } from '../api.js';
 import * as fs from 'fs';
@@ -1707,5 +1711,516 @@ describe('--stream flag integration', () => {
     const record = JSON.parse(outputs[0]);
     expect(record.success).toBeUndefined();
     expect(record.a).toBe(1);
+  });
+});
+
+// =================== --from/--to Filters on Token Transfers ===================
+
+describe('--from/--to filters on token transfers', () => {
+  it('should inject --from into filters', async () => {
+    const mockApi = {
+      tokenTransfers: vi.fn().mockResolvedValue({ transfers: [] })
+    };
+    const commands = buildCommands({});
+    await commands['token'](['transfers'], mockApi, {}, { token: '0xabc', from: '0xsender' });
+
+    expect(mockApi.tokenTransfers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filters: expect.objectContaining({ from_address: '0xsender' })
+      })
+    );
+  });
+
+  it('should inject --to into filters', async () => {
+    const mockApi = {
+      tokenTransfers: vi.fn().mockResolvedValue({ transfers: [] })
+    };
+    const commands = buildCommands({});
+    await commands['token'](['transfers'], mockApi, {}, { token: '0xabc', to: '0xrecipient' });
+
+    expect(mockApi.tokenTransfers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filters: expect.objectContaining({ to_address: '0xrecipient' })
+      })
+    );
+  });
+
+  it('should inject both --from and --to into filters', async () => {
+    const mockApi = {
+      tokenTransfers: vi.fn().mockResolvedValue({ transfers: [] })
+    };
+    const commands = buildCommands({});
+    await commands['token'](['transfers'], mockApi, {}, { token: '0xabc', from: '0xA', to: '0xB' });
+
+    expect(mockApi.tokenTransfers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filters: expect.objectContaining({ from_address: '0xA', to_address: '0xB' })
+      })
+    );
+  });
+
+  it('should appear in SCHEMA for token.transfers', () => {
+    const transfers = SCHEMA.commands['token'].subcommands['transfers'];
+    expect(transfers.options.from).toBeDefined();
+    expect(transfers.options.to).toBeDefined();
+  });
+});
+
+// =================== profiler batch ===================
+
+describe('profiler batch command', () => {
+  it('should appear in SCHEMA', () => {
+    const batch = SCHEMA.commands['profiler'].subcommands['batch'];
+    expect(batch).toBeDefined();
+    expect(batch.options.addresses).toBeDefined();
+    expect(batch.options.file).toBeDefined();
+    expect(batch.options.include).toBeDefined();
+  });
+
+  it('should parse comma-separated addresses', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['batch'], mockApi, {}, {
+      addresses: '0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002',
+      chain: 'ethereum',
+      delay: '0'
+    });
+
+    expect(result.total).toBe(2);
+    expect(mockApi.addressLabels).toHaveBeenCalledTimes(2);
+    expect(mockApi.addressBalance).toHaveBeenCalledTimes(2);
+  });
+
+  it('should parse custom include parameter', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressPnl: vi.fn().mockResolvedValue({ pnl: 0 }),
+    };
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['batch'], mockApi, {}, {
+      addresses: '0x0000000000000000000000000000000000000001',
+      include: 'labels,pnl',
+      delay: '0'
+    });
+
+    expect(result.total).toBe(1);
+    expect(mockApi.addressLabels).toHaveBeenCalled();
+    expect(mockApi.addressPnl).toHaveBeenCalled();
+  });
+
+  it('should be listed in profiler help', async () => {
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['help'], null, {}, {});
+    expect(result.commands).toContain('batch');
+  });
+});
+
+// =================== profiler trace ===================
+
+describe('profiler trace command', () => {
+  it('should appear in SCHEMA', () => {
+    const trace = SCHEMA.commands['profiler'].subcommands['trace'];
+    expect(trace).toBeDefined();
+    expect(trace.options.address.required).toBe(true);
+    expect(trace.options.depth).toBeDefined();
+    expect(trace.options.width).toBeDefined();
+  });
+
+  it('should call traceCounterparties with correct params', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+    };
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['trace'], mockApi, {}, {
+      address: '0x0000000000000000000000000000000000000001',
+      chain: 'ethereum',
+      depth: '3',
+      width: '5',
+      delay: '0'
+    });
+
+    expect(result.root).toBe('0x0000000000000000000000000000000000000001');
+    expect(result.depth).toBe(3);
+  });
+
+  it('should clamp depth to 1-5 range', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+    };
+    const commands = buildCommands({});
+
+    const result1 = await commands['profiler'](['trace'], mockApi, {}, {
+      address: '0x0000000000000000000000000000000000000001',
+      depth: '10',
+      delay: '0'
+    });
+    expect(result1.depth).toBe(5);
+
+    const result2 = await commands['profiler'](['trace'], mockApi, {}, {
+      address: '0x0000000000000000000000000000000000000001',
+      depth: '0',
+      delay: '0'
+    });
+    expect(result2.depth).toBe(1);
+  });
+
+  it('should be listed in profiler help', async () => {
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['help'], null, {}, {});
+    expect(result.commands).toContain('trace');
+  });
+});
+
+// =================== profiler compare ===================
+
+describe('profiler compare command', () => {
+  it('should appear in SCHEMA', () => {
+    const compare = SCHEMA.commands['profiler'].subcommands['compare'];
+    expect(compare).toBeDefined();
+    expect(compare.options.addresses.required).toBe(true);
+  });
+
+  it('should parse two comma-separated addresses', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['compare'], mockApi, {}, {
+      addresses: '0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002',
+      chain: 'ethereum',
+      delay: '0'
+    });
+
+    expect(result.addresses).toHaveLength(2);
+    expect(mockApi.addressCounterparties).toHaveBeenCalledTimes(2);
+    expect(mockApi.addressBalance).toHaveBeenCalledTimes(2);
+  });
+
+  it('should be listed in profiler help', async () => {
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['help'], null, {}, {});
+    expect(result.commands).toContain('compare');
+  });
+});
+
+// =================== --enrich Flag ===================
+
+describe('--enrich flag on token transfers', () => {
+  it('should appear in SCHEMA for token.transfers', () => {
+    const transfers = SCHEMA.commands['token'].subcommands['transfers'];
+    expect(transfers.options.enrich).toBeDefined();
+    expect(transfers.options.enrich.type).toBe('boolean');
+  });
+
+  it('should enrich transfers with labels when --enrich flag is set', async () => {
+    const mockApi = {
+      tokenTransfers: vi.fn().mockResolvedValue({
+        transfers: [
+          { from: '0xaaa', to: '0xbbb', amount_usd: 1000 }
+        ]
+      }),
+      addressLabels: vi.fn().mockResolvedValue({ labels: ['Smart Trader'] })
+    };
+    const commands = buildCommands({});
+    const result = await commands['token'](['transfers'], mockApi, { enrich: true }, { token: '0xabc' });
+
+    expect(mockApi.addressLabels).toHaveBeenCalled();
+    expect(result.transfers[0].from_labels).toEqual(['Smart Trader']);
+    expect(result.transfers[0].to_labels).toEqual(['Smart Trader']);
+  });
+
+  it('should not enrich when --enrich flag is not set', async () => {
+    const mockApi = {
+      tokenTransfers: vi.fn().mockResolvedValue({
+        transfers: [{ from: '0xaaa', to: '0xbbb', amount_usd: 1000 }]
+      }),
+      addressLabels: vi.fn()
+    };
+    const commands = buildCommands({});
+    await commands['token'](['transfers'], mockApi, {}, { token: '0xabc' });
+
+    expect(mockApi.addressLabels).not.toHaveBeenCalled();
+  });
+});
+
+// =================== --format csv ===================
+
+describe('formatCsv', () => {
+  it('should produce CSV with header row', () => {
+    const data = [
+      { name: 'Alice', value: 100 },
+      { name: 'Bob', value: 200 }
+    ];
+    const result = formatCsv(data);
+    const lines = result.split('\n');
+    expect(lines[0]).toBe('name,value');
+    expect(lines[1]).toBe('Alice,100');
+    expect(lines[2]).toBe('Bob,200');
+  });
+
+  it('should quote values containing commas', () => {
+    const data = [{ name: 'Hello, World', value: 1 }];
+    const result = formatCsv(data);
+    expect(result).toContain('"Hello, World"');
+  });
+
+  it('should escape double quotes', () => {
+    const data = [{ name: 'Say "hello"', value: 1 }];
+    const result = formatCsv(data);
+    expect(result).toContain('"Say ""hello"""');
+  });
+
+  it('should handle null/undefined values', () => {
+    const data = [{ name: null, value: undefined }];
+    const result = formatCsv(data);
+    const lines = result.split('\n');
+    expect(lines[1]).toBe(',');
+  });
+
+  it('should stringify objects', () => {
+    const data = [{ meta: { chain: 'eth' } }];
+    const result = formatCsv(data);
+    expect(result).toContain('chain');
+  });
+
+  it('should extract from nested response', () => {
+    const response = { data: [{ x: 1 }, { x: 2 }] };
+    const result = formatCsv(response);
+    const lines = result.split('\n');
+    expect(lines).toHaveLength(3);
+  });
+
+  it('should return empty string for empty data', () => {
+    expect(formatCsv([])).toBe('');
+  });
+});
+
+describe('--format csv integration', () => {
+  let outputs;
+  let exitCode;
+
+  const mockDeps = () => ({
+    output: (msg) => outputs.push(msg),
+    errorOutput: (msg) => outputs.push(msg),
+    exit: (code) => { exitCode = code; }
+  });
+
+  beforeEach(() => {
+    outputs = [];
+    exitCode = null;
+  });
+
+  it('should output CSV when --format csv is used', async () => {
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI() {
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue([
+          { symbol: 'SOL', value: 100 },
+          { symbol: 'ETH', value: 200 }
+        ]);
+      }
+    };
+
+    const result = await runCLI(['smart-money', 'netflow', '--format', 'csv'], deps);
+
+    expect(result.type).toBe('csv');
+    const lines = outputs[0].split('\n');
+    expect(lines[0]).toContain('symbol');
+    expect(lines[1]).toContain('SOL');
+    expect(lines[2]).toContain('ETH');
+  });
+});
+
+// =================== Composite Functions ===================
+
+describe('batchProfile', () => {
+  it('should call labels and balance for each address', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: ['Fund'] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [{ token_symbol: 'ETH', balance_usd: 100 }] }),
+    };
+
+    const result = await batchProfile(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      include: ['labels', 'balance'],
+      delayMs: 0,
+    });
+
+    expect(result.total).toBe(2);
+    expect(result.completed).toBe(2);
+    expect(result.results).toHaveLength(2);
+    expect(result.results[0].labels).toBeDefined();
+    expect(result.results[0].balance).toBeDefined();
+  });
+
+  it('should capture individual errors without failing batch', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockRejectedValue(new Error('Not found')),
+    };
+
+    const result = await batchProfile(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001'],
+      chain: 'ethereum',
+      include: ['labels'],
+      delayMs: 0,
+    });
+
+    expect(result.total).toBe(1);
+    expect(result.results[0].error).toBeDefined();
+  });
+
+  it('should skip invalid addresses with validation error', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+    };
+
+    const result = await batchProfile(mockApi, {
+      addresses: ['not-an-address'],
+      chain: 'ethereum',
+      include: ['labels'],
+      delayMs: 0,
+    });
+
+    expect(result.total).toBe(1);
+    expect(result.completed).toBe(0);
+    expect(result.results[0].error).toContain('Invalid');
+    expect(mockApi.addressLabels).not.toHaveBeenCalled();
+  });
+
+  it('should include pnl when requested', async () => {
+    const mockApi = {
+      addressPnl: vi.fn().mockResolvedValue({ pnl: 100 }),
+    };
+
+    const result = await batchProfile(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001'],
+      chain: 'ethereum',
+      include: ['pnl'],
+      delayMs: 0,
+    });
+
+    expect(result.results[0].pnl).toBeDefined();
+    expect(mockApi.addressPnl).toHaveBeenCalled();
+  });
+});
+
+describe('traceCounterparties', () => {
+  it('should return graph structure', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn()
+        .mockResolvedValueOnce({
+          counterparties: [
+            { counterparty_address: '0x0000000000000000000000000000000000000002', volume_usd: 5000, transaction_count: 10 }
+          ]
+        })
+        .mockResolvedValueOnce({ counterparties: [] }),
+    };
+
+    const result = await traceCounterparties(mockApi, {
+      address: '0x0000000000000000000000000000000000000001',
+      chain: 'ethereum',
+      depth: 2,
+      width: 5,
+      days: 30,
+      delayMs: 0,
+    });
+
+    expect(result.root).toBe('0x0000000000000000000000000000000000000001');
+    expect(result.nodes).toContain('0x0000000000000000000000000000000000000001');
+    expect(result.nodes).toContain('0x0000000000000000000000000000000000000002');
+    expect(result.edges.length).toBeGreaterThanOrEqual(1);
+    expect(result.stats.nodes_visited).toBeGreaterThanOrEqual(2);
+  });
+
+  it('should detect cycles', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValueOnce({
+        counterparties: [
+          { counterparty_address: '0x0000000000000000000000000000000000000001', volume_usd: 100, transaction_count: 1 }
+        ]
+      }),
+    };
+
+    const result = await traceCounterparties(mockApi, {
+      address: '0x0000000000000000000000000000000000000001',
+      chain: 'ethereum',
+      depth: 3,
+      delayMs: 0,
+    });
+
+    const rootCount = result.nodes.filter(n => n === '0x0000000000000000000000000000000000000001').length;
+    expect(rootCount).toBe(1);
+  });
+
+  it('should clamp depth to max 5', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+    };
+
+    const result = await traceCounterparties(mockApi, {
+      address: '0x0000000000000000000000000000000000000001',
+      chain: 'ethereum',
+      depth: 10,
+      delayMs: 0,
+    });
+
+    expect(result.depth).toBe(5);
+  });
+
+  it('should reject missing address', async () => {
+    const mockApi = {};
+    await expect(traceCounterparties(mockApi, { chain: 'ethereum' }))
+      .rejects.toThrow('address is required');
+  });
+
+  it('should reject invalid address', async () => {
+    const mockApi = {};
+    await expect(traceCounterparties(mockApi, { address: 'bad', chain: 'ethereum' }))
+      .rejects.toThrow('Invalid');
+  });
+});
+
+describe('compareWallets', () => {
+  it('should require exactly 2 addresses', async () => {
+    const mockApi = {};
+    await expect(compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001'],
+      chain: 'ethereum',
+    })).rejects.toThrow('Exactly 2 addresses');
+  });
+
+  it('should reject invalid addresses', async () => {
+    const mockApi = {};
+    await expect(compareWallets(mockApi, {
+      addresses: ['bad-addr', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+    })).rejects.toThrow('Invalid');
+  });
+
+  it('should return comparison data', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn()
+        .mockResolvedValueOnce({ counterparties: [{ counterparty_address: '0x0000000000000000000000000000000000000003', volume_usd: 100 }] })
+        .mockResolvedValueOnce({ counterparties: [{ counterparty_address: '0x0000000000000000000000000000000000000003', volume_usd: 200 }] }),
+      addressBalance: vi.fn()
+        .mockResolvedValueOnce({ balances: [{ token_symbol: 'ETH', balance_usd: 1000 }] })
+        .mockResolvedValueOnce({ balances: [{ token_symbol: 'ETH', balance_usd: 2000 }] }),
+    };
+
+    const result = await compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    });
+
+    expect(result.addresses).toHaveLength(2);
+    expect(result.shared_counterparties).toContain('0x0000000000000000000000000000000000000003');
+    expect(result.shared_tokens).toContain('ETH');
+    expect(result.balances).toHaveLength(2);
   });
 });

@@ -3,7 +3,8 @@
  * Extracted from index.js for coverage
  */
 
-import { NansenAPI, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir } from './api.js';
+import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
+import fs from 'fs';
 import { getUpdateNotification, scheduleUpdateCheck } from './update-check.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
@@ -126,6 +127,38 @@ export const SCHEMA = {
           description: 'Perpetual trading history',
           options: { address: { type: 'string', required: true }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
           returns: ['symbol', 'side', 'size', 'price', 'value_usd', 'pnl_usd', 'timestamp']
+        },
+        'batch': {
+          description: 'Batch profile multiple addresses',
+          options: {
+            addresses: { type: 'string', description: 'Comma-separated addresses' },
+            file: { type: 'string', description: 'File with one address per line' },
+            chain: { type: 'string', default: 'ethereum' },
+            include: { type: 'string', default: 'labels,balance', description: 'Comma-separated: labels,balance,pnl' },
+            delay: { type: 'number', default: 1000, description: 'Delay between requests in ms' }
+          },
+          returns: ['address', 'chain', 'labels', 'balance', 'pnl', 'error']
+        },
+        'trace': {
+          description: 'Multi-hop counterparty trace (BFS)',
+          options: {
+            address: { type: 'string', required: true },
+            chain: { type: 'string', default: 'ethereum' },
+            depth: { type: 'number', default: 2, description: 'Max hops (1-5)' },
+            width: { type: 'number', default: 10, description: 'Top N counterparties per hop' },
+            days: { type: 'number', default: 30 },
+            delay: { type: 'number', default: 1000, description: 'Delay between requests in ms' }
+          },
+          returns: ['root', 'chain', 'depth', 'nodes', 'edges', 'stats']
+        },
+        'compare': {
+          description: 'Compare two wallets (shared counterparties, tokens)',
+          options: {
+            addresses: { type: 'string', required: true, description: 'Two comma-separated addresses' },
+            chain: { type: 'string', default: 'ethereum' },
+            days: { type: 'number', default: 30 }
+          },
+          returns: ['addresses', 'chain', 'shared_counterparties', 'shared_tokens', 'balances']
         }
       }
     },
@@ -176,7 +209,7 @@ export const SCHEMA = {
         },
         'transfers': {
           description: 'Token transfer history',
-          options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
+          options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 }, limit: { type: 'number' }, from: { type: 'string', description: 'Filter by sender address' }, to: { type: 'string', description: 'Filter by recipient address' }, enrich: { type: 'boolean', description: 'Enrich addresses with Nansen labels' } },
           returns: ['tx_hash', 'from', 'to', 'amount', 'value_usd', 'timestamp']
         },
         'jup-dca': {
@@ -217,7 +250,8 @@ export const SCHEMA = {
     table: { type: 'boolean', description: 'Format output as human-readable table' },
     fields: { type: 'string', description: 'Comma-separated list of fields to include in output' },
     'no-retry': { type: 'boolean', description: 'Disable automatic retry on rate limits/errors' },
-    retries: { type: 'number', default: 3, description: 'Max retry attempts' }
+    retries: { type: 'number', default: 3, description: 'Max retry attempts' },
+    format: { type: 'string', enum: ['json', 'csv'], description: 'Output format (default: json)' }
   },
   chains: ['ethereum', 'solana', 'base', 'bnb', 'arbitrum', 'polygon', 'optimism', 'avalanche', 'linea', 'scroll', 'zksync', 'mantle', 'ronin', 'sei', 'plasma', 'sonic', 'unichain', 'monad', 'hyperevm', 'iotaevm'],
   smartMoneyLabels: ['Fund', 'Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader', 'Smart HL Perps Trader']
@@ -283,7 +317,7 @@ export function parseArgs(args) {
       const key = arg.slice(2);
       const next = args[i + 1];
       
-      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream') {
+      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich') {
         result.flags[key] = true;
       } else if (next && !next.startsWith('-')) {
         // Try to parse as JSON first
@@ -389,9 +423,53 @@ export function formatTable(data) {
   return lines.join('\n');
 }
 
+/**
+ * Format data as CSV with header row
+ */
+export function formatCsv(data) {
+  // Extract array of records from various response shapes
+  let records = [];
+  if (Array.isArray(data)) {
+    records = data;
+  } else if (data?.data && Array.isArray(data.data)) {
+    records = data.data;
+  } else if (data?.results && Array.isArray(data.results)) {
+    records = data.results;
+  } else if (data?.data?.results && Array.isArray(data.data.results)) {
+    records = data.data.results;
+  } else if (typeof data === 'object' && data !== null) {
+    records = [data];
+  }
+
+  if (records.length === 0) return '';
+
+  const columns = [...new Set(records.flatMap(r => Object.keys(r)))];
+
+  const escape = (val) => {
+    if (val === null || val === undefined) return '';
+    const s = typeof val === 'object' ? JSON.stringify(val) : String(val);
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  };
+
+  const lines = [columns.join(',')];
+  for (const record of records) {
+    lines.push(columns.map(col => escape(record[col])).join(','));
+  }
+  return lines.join('\n');
+}
+
 // Format output data (returns string, does not print)
-export function formatOutput(data, { pretty = false, table = false } = {}) {
-  if (table) {
+export function formatOutput(data, { pretty = false, table = false, csv = false } = {}) {
+  if (csv) {
+    if (data.success === false) {
+      return { type: 'error', text: `Error: ${data.error}` };
+    }
+    const csvData = data.data || data;
+    return { type: 'csv', text: formatCsv(csvData) };
+  } else if (table) {
     if (data.success === false) {
       return { type: 'error', text: `Error: ${data.error}` };
     } else {
@@ -460,6 +538,191 @@ export function parseSort(sortOption, orderByOption) {
   return [{ field, direction }];
 }
 
+// Enrich transfers with Nansen labels for from/to addresses
+async function enrichTransfers(result, apiInstance, chain) {
+  const transfers = result?.data?.results || result?.transfers || result?.data || [];
+  if (!Array.isArray(transfers) || transfers.length === 0) return result;
+
+  // Collect unique addresses (cap at 50)
+  const addrs = new Set();
+  for (const t of transfers) {
+    if (t.from) addrs.add(t.from);
+    if (t.to) addrs.add(t.to);
+    if (addrs.size >= 50) break;
+  }
+
+  // Batch lookup labels
+  const labelMap = {};
+  for (const addr of addrs) {
+    try {
+      const labelsResult = await apiInstance.addressLabels({ address: addr, chain });
+      labelMap[addr] = labelsResult?.labels || labelsResult?.data?.results || [];
+    } catch {
+      labelMap[addr] = [];
+    }
+  }
+
+  // Merge labels into transfers
+  for (const t of transfers) {
+    if (t.from && labelMap[t.from]) t.from_labels = labelMap[t.from];
+    if (t.to && labelMap[t.to]) t.to_labels = labelMap[t.to];
+  }
+
+  return result;
+}
+
+// ============= Composite Functions =============
+
+export async function batchProfile(api, params = {}) {
+  const { addresses = [], chain = 'ethereum', include = ['labels', 'balance'], delayMs = 1000 } = params;
+  const results = [];
+  for (let i = 0; i < addresses.length; i++) {
+    const address = addresses[i].trim();
+    const entry = { address, chain };
+    const validation = validateAddress(address, chain);
+    if (!validation.valid) {
+      entry.error = validation.error;
+      results.push(entry);
+      if (i < addresses.length - 1) await sleep(delayMs);
+      continue;
+    }
+    try {
+      if (include.includes('labels')) {
+        entry.labels = await api.addressLabels({ address, chain });
+      }
+      if (include.includes('balance')) {
+        entry.balance = await api.addressBalance({ address, chain });
+      }
+      if (include.includes('pnl')) {
+        entry.pnl = await api.addressPnl({ address, chain });
+      }
+    } catch (err) {
+      entry.error = err.message;
+    }
+    results.push(entry);
+    if (i < addresses.length - 1) await sleep(delayMs);
+  }
+  return { results, total: addresses.length, completed: results.filter(r => !r.error).length };
+}
+
+export async function traceCounterparties(api, params = {}) {
+  const { address, chain = 'ethereum', depth = 2, width = 10, days = 30, delayMs = 1000 } = params;
+  if (!address) {
+    throw new NansenError('address is required for trace', ErrorCode.MISSING_PARAM);
+  }
+  const validation = validateAddress(address, chain);
+  if (!validation.valid) {
+    throw new NansenError(validation.error, ErrorCode.INVALID_ADDRESS);
+  }
+  const clampedDepth = Math.max(1, Math.min(depth, 5));
+  const visited = new Set();
+  const nodes = [];
+  const edges = [];
+  const queue = [{ addr: address, hop: 0 }];
+  visited.add(address);
+  nodes.push(address);
+
+  while (queue.length > 0) {
+    const { addr, hop } = queue.shift();
+    if (hop >= clampedDepth) continue;
+
+    try {
+      const result = await api.addressCounterparties({
+        address: addr, chain, days,
+        pagination: { page: 1, per_page: width },
+      });
+
+      const counterparties = result?.data?.results || result?.counterparties || result?.data || [];
+      const items = Array.isArray(counterparties) ? counterparties.slice(0, width) : [];
+
+      for (const cp of items) {
+        const cpAddr = cp.counterparty_address || cp.address || cp.counterparty;
+        if (!cpAddr) continue;
+
+        edges.push({
+          from: addr, to: cpAddr,
+          volume_usd: cp.volume_usd || cp.total_volume_usd || 0,
+          tx_count: cp.transaction_count || cp.tx_count || 0,
+          hop: hop + 1,
+        });
+
+        if (!visited.has(cpAddr)) {
+          visited.add(cpAddr);
+          nodes.push(cpAddr);
+          queue.push({ addr: cpAddr, hop: hop + 1 });
+        }
+      }
+    } catch (err) {
+      // Skip addresses that fail (404, etc) but continue the traversal
+    }
+
+    if (queue.length > 0) await sleep(delayMs);
+  }
+
+  return {
+    root: address, chain, depth: clampedDepth,
+    nodes, edges,
+    stats: { nodes_visited: nodes.length, edges_found: edges.length, max_depth_reached: Math.max(0, ...edges.map(e => e.hop)) },
+  };
+}
+
+export async function compareWallets(api, params = {}) {
+  const { addresses = [], chain = 'ethereum', days = 30, delayMs = 1000 } = params;
+  if (addresses.length !== 2) {
+    throw new NansenError('Exactly 2 addresses are required for comparison', ErrorCode.INVALID_PARAMS);
+  }
+  const [addr1, addr2] = addresses;
+  for (const addr of [addr1, addr2]) {
+    const validation = validateAddress(addr, chain);
+    if (!validation.valid) {
+      throw new NansenError(validation.error, ErrorCode.INVALID_ADDRESS);
+    }
+  }
+
+  // Fetch counterparties and balances for both addresses
+  const [cp1, cp2] = await Promise.all([
+    api.addressCounterparties({ address: addr1, chain, days }).catch(() => null),
+    api.addressCounterparties({ address: addr2, chain, days }).catch(() => null),
+  ]);
+  await sleep(delayMs);
+  const [bal1, bal2] = await Promise.all([
+    api.addressBalance({ address: addr1, chain }).catch(() => null),
+    api.addressBalance({ address: addr2, chain }).catch(() => null),
+  ]);
+
+  // Extract counterparty addresses
+  const extractCps = (result) => {
+    const list = result?.data?.results || result?.counterparties || result?.data || [];
+    return Array.isArray(list) ? list : [];
+  };
+  const cps1 = extractCps(cp1);
+  const cps2 = extractCps(cp2);
+  const cpAddrs1 = new Set(cps1.map(c => c.counterparty_address || c.address || c.counterparty).filter(Boolean));
+  const cpAddrs2 = new Set(cps2.map(c => c.counterparty_address || c.address || c.counterparty).filter(Boolean));
+  const sharedCpAddrs = [...cpAddrs1].filter(a => cpAddrs2.has(a));
+
+  // Extract token holdings
+  const extractTokens = (result) => {
+    const list = result?.data?.results || result?.balances || result?.data || [];
+    return Array.isArray(list) ? list : [];
+  };
+  const tokens1 = extractTokens(bal1);
+  const tokens2 = extractTokens(bal2);
+  const tokenSyms1 = new Set(tokens1.map(t => t.token_symbol).filter(Boolean));
+  const tokenSyms2 = new Set(tokens2.map(t => t.token_symbol).filter(Boolean));
+  const sharedTokens = [...tokenSyms1].filter(s => tokenSyms2.has(s));
+
+  return {
+    addresses: [addr1, addr2], chain,
+    shared_counterparties: sharedCpAddrs,
+    shared_tokens: sharedTokens,
+    balances: [
+      { address: addr1, total_usd: tokens1.reduce((sum, t) => sum + (t.balance_usd || 0), 0) },
+      { address: addr2, total_usd: tokens2.reduce((sum, t) => sum + (t.balance_usd || 0), 0) },
+    ],
+  };
+}
+
 // ASCII Art Banner
 export const BANNER = `
  ███╗   ██╗ █████╗ ███╗   ██╗███████╗███████╗███╗   ██╗
@@ -485,7 +748,7 @@ COMMANDS:
   schema         Output JSON schema for all commands (for agent introspection)
   cache          Cache management (clear)
   smart-money    Smart Money analytics (netflow, dex-trades, holdings, dcas, historical-holdings)
-  profiler       Wallet profiling (balance, labels, transactions, pnl, perp-positions, perp-trades)
+  profiler       Wallet profiling (balance, labels, pnl, batch, trace, compare, counterparties)
   token          Token God Mode (screener, holders, flows, trades, pnl, perp-trades, perp-positions)
   portfolio      Portfolio analytics (defi-holdings)
   help           Show this help message
@@ -508,6 +771,7 @@ GLOBAL OPTIONS:
   --no-cache     Disable cache for this request
   --cache-ttl <s> Cache TTL in seconds (default: 300)
   --stream       Output as JSON lines (NDJSON) for incremental processing
+  --format csv   Output as CSV with header row
 
 EXAMPLES:
   # Get Smart Money netflow on Solana
@@ -758,8 +1022,45 @@ export function buildCommands(deps = {}) {
         'pnl-summary': () => apiInstance.addressPnlSummary({ address, chain, filters, orderBy, pagination, days }),
         'perp-positions': () => apiInstance.addressPerpPositions({ address, filters, orderBy, pagination }),
         'perp-trades': () => apiInstance.addressPerpTrades({ address, filters, orderBy, pagination, days }),
+        'batch': () => {
+          let addresses = [];
+          if (options.addresses) {
+            addresses = options.addresses.split(',').map(a => a.trim()).filter(Boolean);
+          } else if (options.file) {
+            const content = fs.readFileSync(options.file, 'utf8');
+            try {
+              const parsed = JSON.parse(content);
+              if (!Array.isArray(parsed)) {
+                throw new NansenError('File must contain a JSON array of address strings or one address per line', ErrorCode.INVALID_PARAMS);
+              }
+              if (!parsed.every(item => typeof item === 'string')) {
+                throw new NansenError('File must contain a JSON array of address strings or one address per line', ErrorCode.INVALID_PARAMS);
+              }
+              addresses = parsed.map(a => a.trim()).filter(Boolean);
+            } catch (e) {
+              if (e instanceof NansenError) throw e;
+              addresses = content.split('\n').map(a => a.trim()).filter(Boolean);
+            }
+          }
+          if (addresses.length > 100) {
+            throw new NansenError('Batch is limited to 100 addresses', ErrorCode.INVALID_PARAMS);
+          }
+          const include = options.include ? options.include.split(',').map(s => s.trim()) : ['labels', 'balance'];
+          const delayMs = options.delay ? parseInt(options.delay) : 1000;
+          return batchProfile(apiInstance, { addresses, chain, include, delayMs });
+        },
+        'trace': () => {
+          const depth = options.depth ? Math.max(1, Math.min(parseInt(options.depth), 5)) : 2;
+          const width = options.width ? parseInt(options.width) : 10;
+          const delayMs = options.delay ? parseInt(options.delay) : 1000;
+          return traceCounterparties(apiInstance, { address, chain, depth, width, days, delayMs });
+        },
+        'compare': () => {
+          const addrs = (options.addresses || '').split(',').map(a => a.trim()).filter(Boolean);
+          return compareWallets(apiInstance, { addresses: addrs, chain, days });
+        },
         'help': () => ({
-          commands: ['balance', 'labels', 'transactions', 'pnl', 'search', 'historical-balances', 'related-wallets', 'counterparties', 'pnl-summary', 'perp-positions', 'perp-trades'],
+          commands: ['balance', 'labels', 'transactions', 'pnl', 'search', 'historical-balances', 'related-wallets', 'counterparties', 'pnl-summary', 'perp-positions', 'perp-trades', 'batch', 'trace', 'compare'],
           description: 'Wallet profiling endpoints',
           example: 'nansen profiler balance --address 0x123... --chain ethereum'
         })
@@ -798,7 +1099,12 @@ export function buildCommands(deps = {}) {
         'pnl': () => apiInstance.tokenPnlLeaderboard({ tokenAddress, chain, filters, orderBy, pagination, days }),
         'who-bought-sold': () => apiInstance.tokenWhoBoughtSold({ tokenAddress, chain, filters, orderBy, pagination, days }),
         'flow-intelligence': () => apiInstance.tokenFlowIntelligence({ tokenAddress, chain, filters, orderBy, days }),
-        'transfers': () => apiInstance.tokenTransfers({ tokenAddress, chain, filters, orderBy, pagination, days }),
+        'transfers': () => {
+          // Inject --from/--to into filters
+          if (options.from) filters.from_address = options.from;
+          if (options.to) filters.to_address = options.to;
+          return apiInstance.tokenTransfers({ tokenAddress, chain, filters, orderBy, pagination, days });
+        },
         'jup-dca': () => apiInstance.tokenJupDca({ tokenAddress, filters, orderBy, pagination }),
         'perp-trades': () => apiInstance.tokenPerpTrades({ tokenSymbol, filters, orderBy, pagination, days }),
         'perp-positions': () => apiInstance.tokenPerpPositions({ tokenSymbol, filters, orderBy, pagination }),
@@ -814,7 +1120,14 @@ export function buildCommands(deps = {}) {
         return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
       }
 
-      return handlers[subcommand]();
+      let result = await handlers[subcommand]();
+
+      // Enrich transfers with Nansen labels for from/to addresses
+      if (subcommand === 'transfers' && (options.enrich || flags.enrich)) {
+        result = await enrichTransfers(result, apiInstance, chain);
+      }
+
+      return result;
     },
 
     'portfolio': async (args, apiInstance, flags, options) => {
@@ -860,6 +1173,7 @@ export async function runCLI(rawArgs, deps = {}) {
   const pretty = flags.pretty || flags.p;
   const table = flags.table || flags.t;
   const stream = flags.stream || flags.s;
+  const csv = options.format === 'csv';
 
   // Update check (read cached result + schedule background refresh)
   const updateNotification = getUpdateNotification(VERSION);
@@ -940,13 +1254,13 @@ export async function runCLI(rawArgs, deps = {}) {
     }
 
     const successData = { success: true, data: result };
-    const formatted = formatOutput(successData, { pretty, table });
+    const formatted = formatOutput(successData, { pretty, table, csv });
     output(formatted.text);
     notify();
-    return { type: 'success', data: result };
+    return { type: csv ? 'csv' : 'success', data: result };
   } catch (error) {
     const errorData = formatError(error);
-    const formatted = formatOutput(errorData, { pretty, table });
+    const formatted = formatOutput(errorData, { pretty, table, csv });
     errorOutput(formatted.text);
     notify();
     exit(1);

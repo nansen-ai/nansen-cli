@@ -334,7 +334,7 @@ const DEFAULT_RETRY_OPTIONS = {
 /**
  * Sleep for a given number of milliseconds
  */
-function sleep(ms) {
+export function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 

@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { NansenAPI } from '../api.js';
+import { batchProfile, traceCounterparties, compareWallets } from '../cli.js';
 
 // All documented endpoints from Nansen API
 const DOCUMENTED_ENDPOINTS = {
@@ -43,6 +44,11 @@ const DOCUMENTED_ENDPOINTS = {
     { name: 'perp-trades', method: 'tokenPerpTrades', endpoint: '/api/v1/tgm/perp-trades' },
     { name: 'perp-positions', method: 'tokenPerpPositions', endpoint: '/api/v1/tgm/perp-positions' },
     { name: 'perp-pnl-leaderboard', method: 'tokenPerpPnlLeaderboard', endpoint: '/api/v1/tgm/perp-pnl-leaderboard' },
+  ],
+  composite: [
+    { name: 'batch-profile', fn: batchProfile, endpoint: 'composite' },
+    { name: 'trace-counterparties', fn: traceCounterparties, endpoint: 'composite' },
+    { name: 'compare-wallets', fn: compareWallets, endpoint: 'composite' },
   ],
   portfolio: [
     { name: 'defi-holdings', method: 'portfolioDefiHoldings', endpoint: '/api/v1/portfolio/defi-holdings' },
@@ -83,6 +89,14 @@ describe('API Endpoint Coverage', () => {
     }
   });
 
+  describe('Composite Methods', () => {
+    for (const ep of DOCUMENTED_ENDPOINTS.composite) {
+      it(`should have ${ep.name} as exported function from cli.js`, () => {
+        expect(typeof ep.fn).toBe('function');
+      });
+    }
+  });
+
   describe('Portfolio Endpoints', () => {
     for (const ep of DOCUMENTED_ENDPOINTS.portfolio) {
       it(`should have ${ep.name} method`, () => {
@@ -97,6 +111,7 @@ describe('API Endpoint Coverage', () => {
         ...DOCUMENTED_ENDPOINTS.smartMoney,
         ...DOCUMENTED_ENDPOINTS.profiler,
         ...DOCUMENTED_ENDPOINTS.tokenGodMode,
+        ...DOCUMENTED_ENDPOINTS.composite,
         ...DOCUMENTED_ENDPOINTS.portfolio,
       ];
       
