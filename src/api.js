@@ -18,6 +18,7 @@ export const ErrorCode = {
   // Authentication & Authorization
   UNAUTHORIZED: 'UNAUTHORIZED',           // 401 - Invalid or missing API key
   FORBIDDEN: 'FORBIDDEN',                 // 403 - Valid key but insufficient permissions
+  CREDITS_EXHAUSTED: 'CREDITS_EXHAUSTED', // 403 - Insufficient API credits
   
   // Rate Limiting
   RATE_LIMITED: 'RATE_LIMITED',           // 429 - Too many requests
@@ -28,6 +29,7 @@ export const ErrorCode = {
   INVALID_CHAIN: 'INVALID_CHAIN',         // Unsupported or invalid chain
   INVALID_PARAMS: 'INVALID_PARAMS',       // Generic parameter validation error
   MISSING_PARAM: 'MISSING_PARAM',         // Required parameter not provided
+  UNSUPPORTED_FILTER: 'UNSUPPORTED_FILTER', // Filter not supported for this token/chain
   
   // Resource Errors
   NOT_FOUND: 'NOT_FOUND',                 // 404 - Resource not found
@@ -77,6 +79,8 @@ function statusToErrorCode(status, data = {}) {
   
   switch (status) {
     case 400:
+    case 422:
+      if (messageLower.includes('field') && messageLower.includes('not recognized')) return ErrorCode.UNSUPPORTED_FILTER;
       if (messageLower.includes('address')) return ErrorCode.INVALID_ADDRESS;
       if (messageLower.includes('token')) return ErrorCode.INVALID_TOKEN;
       if (messageLower.includes('chain')) return ErrorCode.INVALID_CHAIN;
@@ -84,6 +88,7 @@ function statusToErrorCode(status, data = {}) {
     case 401:
       return ErrorCode.UNAUTHORIZED;
     case 403:
+      if (messageLower.includes('credit') || messageLower.includes('insufficient')) return ErrorCode.CREDITS_EXHAUSTED;
       return ErrorCode.FORBIDDEN;
     case 404:
       if (messageLower.includes('token')) return ErrorCode.TOKEN_NOT_FOUND;
@@ -470,10 +475,17 @@ export class NansenAPI {
       }
 
       if (!response.ok) {
-        const message = data.message || data.error || `API error: ${response.status}`;
+        let message = data.message || data.error || `API error: ${response.status}`;
         const code = statusToErrorCode(response.status, data);
         const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'));
-        
+
+        // Enhance messages for specific error codes
+        if (code === ErrorCode.UNSUPPORTED_FILTER) {
+          message = message.replace(/\.+$/, '') + '. This filter is not supported for this token/chain combination. Do not retry.';
+        } else if (code === ErrorCode.CREDITS_EXHAUSTED) {
+          message = message.replace(/\.+$/, '') + '. No retry will help. Check your Nansen dashboard for credit balance.';
+        }
+
         lastError = new NansenError(message, code, response.status, {
           ...data,
           attempt: attempt + 1,

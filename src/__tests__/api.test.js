@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { NansenAPI } from '../api.js';
+import { NansenAPI, ErrorCode } from '../api.js';
 
 const LIVE_TEST = process.env.NANSEN_LIVE_TEST === '1';
 const API_KEY = process.env.NANSEN_API_KEY || 'test-key';
@@ -1300,6 +1300,58 @@ describe('NansenAPI', () => {
       // Check that original error data is included (with retry metadata added)
       expect(thrownError.data.error).toEqual(errorData.error);
       expect(thrownError.data.details).toEqual(errorData.details);
+    });
+
+    it('should map "Field not recognized" to UNSUPPORTED_FILTER error code', async () => {
+      if (LIVE_TEST) return;
+
+      const errorResponse = {
+        ok: false,
+        status: 422,
+        headers: new Map(),
+        json: async () => ({ message: "Field 'only_smart_money' is not recognized. Please check the API documentation for valid request fields." })
+      };
+      errorResponse.headers.get = () => null;
+
+      mockFetch.mockResolvedValueOnce(errorResponse);
+
+      let thrownError;
+      try {
+        await api.tokenHolders({ tokenAddress: TEST_DATA.solana.token, chain: 'solana' });
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError).toBeDefined();
+      expect(thrownError.code).toBe(ErrorCode.UNSUPPORTED_FILTER);
+      expect(thrownError.status).toBe(422);
+      expect(thrownError.message).toContain('not supported for this token/chain');
+    });
+
+    it('should map "Insufficient credits" to CREDITS_EXHAUSTED error code', async () => {
+      if (LIVE_TEST) return;
+
+      const errorResponse = {
+        ok: false,
+        status: 403,
+        headers: new Map(),
+        json: async () => ({ message: 'Insufficient credits' })
+      };
+      errorResponse.headers.get = () => null;
+
+      mockFetch.mockResolvedValueOnce(errorResponse);
+
+      let thrownError;
+      try {
+        await api.smartMoneyNetflow({});
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError).toBeDefined();
+      expect(thrownError.code).toBe(ErrorCode.CREDITS_EXHAUSTED);
+      expect(thrownError.status).toBe(403);
+      expect(thrownError.message).toContain('No retry will help');
     });
 
     it('should succeed after retry on transient failure', async () => {

@@ -136,12 +136,14 @@ Structured error codes for programmatic handling:
 |------|-------------|
 | `UNAUTHORIZED` | Invalid or missing API key (401) |
 | `FORBIDDEN` | Valid key but insufficient permissions (403) |
+| `CREDITS_EXHAUSTED` | Insufficient API credits (403) — do not retry |
 | `RATE_LIMITED` | Too many requests (429) |
 | `INVALID_ADDRESS` | Address format validation failed |
 | `INVALID_TOKEN` | Token address validation failed |
 | `INVALID_CHAIN` | Unsupported or invalid chain |
 | `INVALID_PARAMS` | Generic parameter validation error |
 | `MISSING_PARAM` | Required parameter not provided |
+| `UNSUPPORTED_FILTER` | Filter not supported for this token/chain (400) |
 | `NOT_FOUND` | Resource not found (404) |
 | `TOKEN_NOT_FOUND` | Token doesn't exist |
 | `ADDRESS_NOT_FOUND` | Address has no data |
