@@ -970,27 +970,24 @@ describe('NansenAPI', () => {
 
         const body = expectFetchCalledWith('/api/v1/tgm/flow-intelligence');
         expect(body.token_address).toBe(TEST_DATA.solana.token);
-        expect(body.date).toBeDefined();
+        expect(body.date).toBeUndefined();
 
         expect(result.flows).toBeInstanceOf(Array);
         expect(result.flows[0]).toHaveProperty('label', 'Smart Money');
         expect(result.flows[0]).toHaveProperty('net_flow_usd', 500000);
       });
 
-      it('should calculate correct date range for custom days', async () => {
+      it('should not send date or filters fields', async () => {
         setupMock(MOCK_RESPONSES.tokenFlowIntelligence);
 
         await api.tokenFlowIntelligence({
           tokenAddress: TEST_DATA.solana.token,
-          chain: 'solana',
-          days: 14
+          chain: 'solana'
         });
 
         const body = expectFetchCalledWith('/api/v1/tgm/flow-intelligence');
-        const from = new Date(body.date.from);
-        const to = new Date(body.date.to);
-        const diffDays = Math.round((to - from) / (1000 * 60 * 60 * 24));
-        expect(diffDays).toBe(14);
+        expect(body.date).toBeUndefined();
+        expect(body.filters).toBeUndefined();
       });
     });
 
@@ -1807,17 +1804,16 @@ describe('NansenAPI', () => {
       expect(body.pagination).toBeUndefined();
     });
 
-    it('should preserve non-empty filters', async () => {
+    it('should not send filters for related-wallets', async () => {
       setupMock(MOCK_RESPONSES.addressRelatedWallets);
 
       await api.addressRelatedWallets({
         address: TEST_DATA.ethereum.address,
-        chain: 'ethereum',
-        filters: { only_smart_money: true }
+        chain: 'ethereum'
       });
 
       const body = expectFetchCalledWith('/api/v1/profiler/address/related-wallets');
-      expect(body.filters).toEqual({ only_smart_money: true });
+      expect(body.filters).toBeUndefined();
     });
 
     it('should strip undefined values from body', async () => {

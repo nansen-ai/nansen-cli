@@ -42,22 +42,22 @@ export const SCHEMA = {
             sort: { type: 'string' },
             filters: { type: 'object' }
           },
-          returns: ['tx_hash', 'wallet_address', 'token_address', 'token_symbol', 'side', 'amount', 'value_usd', 'timestamp']
+          returns: ['chain', 'block_timestamp', 'transaction_hash', 'trader_address', 'trader_address_label', 'token_bought_address', 'token_sold_address', 'token_bought_amount', 'token_sold_amount', 'token_bought_symbol', 'token_sold_symbol', 'trade_value_usd']
         },
         'perp-trades': {
           description: 'Perpetual trading on Hyperliquid',
           options: { limit: { type: 'number' }, sort: { type: 'string' }, filters: { type: 'object' } },
-          returns: ['wallet_address', 'symbol', 'side', 'size', 'price', 'value_usd', 'pnl_usd', 'timestamp']
+          returns: ['trader_address', 'trader_address_label', 'token_symbol', 'side', 'action', 'token_amount', 'price_usd', 'value_usd', 'type', 'block_timestamp', 'transaction_hash']
         },
         'holdings': {
           description: 'Aggregated token balances',
           options: { chain: { type: 'string', default: 'solana' }, chains: { type: 'array' }, limit: { type: 'number' }, labels: { type: 'string|array' } },
-          returns: ['token_address', 'token_symbol', 'chain', 'balance', 'balance_usd', 'holder_count']
+          returns: ['chain', 'token_address', 'token_symbol', 'token_sectors', 'value_usd', 'balance_24h_percent_change', 'holders_count', 'share_of_holdings_percent', 'token_age_days', 'market_cap_usd']
         },
         'dcas': {
           description: 'DCA strategies on Jupiter',
           options: { limit: { type: 'number' }, filters: { type: 'object' } },
-          returns: ['wallet_address', 'input_token', 'output_token', 'total_input', 'total_output', 'avg_price']
+          returns: ['dca_created_at', 'dca_updated_at', 'trader_address', 'trader_address_label', 'dca_vault_address', 'input_token_address', 'output_token_address', 'deposit_token_amount', 'token_spent_amount', 'output_token_redeemed_amount', 'dca_status', 'input_token_symbol', 'output_token_symbol', 'deposit_value_usd']
         },
         'historical-holdings': {
           description: 'Historical holdings over time',
@@ -76,7 +76,7 @@ export const SCHEMA = {
             chain: { type: 'string', default: 'ethereum' },
             entity: { type: 'string', description: 'Entity name instead of address' }
           },
-          returns: ['token_address', 'token_symbol', 'token_name', 'balance', 'balance_usd', 'price_usd']
+          returns: ['chain', 'address', 'token_address', 'token_symbol', 'token_name', 'token_amount', 'price_usd', 'value_usd']
         },
         'labels': {
           description: 'Behavioral and entity labels',
@@ -85,8 +85,8 @@ export const SCHEMA = {
         },
         'transactions': {
           description: 'Transaction history',
-          options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, limit: { type: 'number' }, days: { type: 'number', default: 30 } },
-          returns: ['tx_hash', 'block_number', 'timestamp', 'from', 'to', 'value', 'value_usd', 'method']
+          options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, date: { type: 'string', required: true, description: 'Date or date range (YYYY-MM-DD or {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"})' }, limit: { type: 'number' }, days: { type: 'number', default: 30 } },
+          returns: ['chain', 'method', 'tokens_sent', 'tokens_received', 'volume_usd', 'block_timestamp', 'transaction_hash']
         },
         'pnl': {
           description: 'PnL and trade performance',
@@ -96,7 +96,7 @@ export const SCHEMA = {
         'search': {
           description: 'Search for entities by name',
           options: { query: { type: 'string', required: true, description: 'Search query' }, limit: { type: 'number' } },
-          returns: ['entity_name', 'address', 'chain', 'labels']
+          returns: ['entity_name']
         },
         'historical-balances': {
           description: 'Historical balances over time',
@@ -106,17 +106,17 @@ export const SCHEMA = {
         'related-wallets': {
           description: 'Find wallets related to an address',
           options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, limit: { type: 'number' } },
-          returns: ['address', 'relationship', 'transaction_count', 'volume_usd']
+          returns: ['address', 'address_label', 'relation', 'transaction_hash', 'block_timestamp', 'order', 'chain']
         },
         'counterparties': {
           description: 'Top counterparties by volume',
           options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } },
-          returns: ['counterparty_address', 'counterparty_label', 'transaction_count', 'volume_usd']
+          returns: ['counterparty_address', 'counterparty_address_label', 'interaction_count', 'total_volume_usd', 'volume_in_usd', 'volume_out_usd', 'tokens_info']
         },
         'pnl-summary': {
           description: 'Summarized PnL metrics',
           options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } },
-          returns: ['total_realized_pnl', 'total_unrealized_pnl', 'win_rate', 'total_trades']
+          returns: ['top5_tokens', 'traded_token_count', 'traded_times', 'realized_pnl_usd', 'realized_pnl_percent', 'win_rate']
         },
         'perp-positions': {
           description: 'Current perpetual positions',
@@ -180,12 +180,12 @@ export const SCHEMA = {
         'holders': {
           description: 'Token holder analysis',
           options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, 'smart-money': { type: 'boolean' }, limit: { type: 'number' } },
-          returns: ['wallet_address', 'balance', 'balance_usd', 'pct_supply', 'labels']
+          returns: ['address', 'address_label', 'token_amount', 'total_outflow', 'total_inflow', 'balance_change_24h', 'balance_change_7d', 'balance_change_30d', 'ownership_percentage', 'value_usd']
         },
         'flows': {
           description: 'Token flow metrics',
-          options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
-          returns: ['label', 'inflow', 'outflow', 'net_flow', 'wallet_count']
+          options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, date: { type: 'string', required: true, description: 'Date or date range (YYYY-MM-DD or {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"})' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
+          returns: ['date', 'price_usd', 'token_amount', 'value_usd', 'holders_count', 'total_inflows_count', 'total_outflows_count']
         },
         'dex-trades': {
           description: 'DEX trading activity',
@@ -199,13 +199,13 @@ export const SCHEMA = {
         },
         'who-bought-sold': {
           description: 'Recent buyers and sellers',
-          options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
-          returns: ['wallet_address', 'side', 'amount', 'value_usd', 'timestamp', 'labels']
+          options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, date: { type: 'string', required: true, description: 'Date or date range (YYYY-MM-DD or {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"})' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
+          returns: ['address', 'address_label', 'bought_token_volume', 'sold_token_volume', 'token_trade_volume', 'bought_volume_usd', 'sold_volume_usd', 'trade_volume_usd']
         },
         'flow-intelligence': {
           description: 'Detailed flow intelligence by label',
           options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 } },
-          returns: ['label', 'inflow_usd', 'outflow_usd', 'net_flow_usd', 'unique_wallets']
+          returns: ['public_figure_net_flow_usd', 'public_figure_wallet_count', 'top_pnl_net_flow_usd', 'top_pnl_wallet_count', 'whale_net_flow_usd', 'whale_wallet_count', 'smart_trader_net_flow_usd', 'smart_trader_wallet_count', 'exchange_net_flow_usd', 'exchange_wallet_count', 'fresh_wallets_net_flow_usd', 'fresh_wallets_wallet_count']
         },
         'transfers': {
           description: 'Token transfer history',
@@ -253,7 +253,7 @@ export const SCHEMA = {
     retries: { type: 'number', default: 3, description: 'Max retry attempts' },
     format: { type: 'string', enum: ['json', 'csv'], description: 'Output format (default: json)' }
   },
-  chains: ['ethereum', 'solana', 'base', 'bnb', 'arbitrum', 'polygon', 'optimism', 'avalanche', 'linea', 'scroll', 'zksync', 'mantle', 'ronin', 'sei', 'plasma', 'sonic', 'unichain', 'monad', 'hyperevm', 'iotaevm'],
+  chains: ['ethereum', 'solana', 'base', 'bnb', 'arbitrum', 'polygon', 'optimism', 'avalanche', 'linea', 'scroll', 'mantle', 'ronin', 'sei', 'plasma', 'sonic', 'monad', 'hyperevm', 'iotaevm'],
   smartMoneyLabels: ['Fund', 'Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader', 'Smart HL Perps Trader']
 };
 
@@ -520,6 +520,32 @@ export function formatStream(data) {
 
   // Output each record as a separate JSON line
   return records.map(record => JSON.stringify(record)).join('\n');
+}
+
+/**
+ * Parse --date option into {from, to} object.
+ * Accepts: "YYYY-MM-DD" (single date → from=date, to=date),
+ *          '{"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}' (JSON object),
+ *          or already-parsed object {from, to}.
+ * Falls back to days-based range if no date provided.
+ */
+export function parseDateOption(dateOption, days = 30) {
+  if (dateOption) {
+    if (typeof dateOption === 'object' && dateOption.from) {
+      return dateOption;
+    }
+    if (typeof dateOption === 'string') {
+      // Simple date string: use as both from and to
+      const dateMatch = dateOption.match(/^\d{4}-\d{2}-\d{2}$/);
+      if (dateMatch) {
+        return { from: dateOption, to: dateOption };
+      }
+    }
+  }
+  // Default: use days-based range
+  const to = new Date().toISOString().split('T')[0];
+  const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  return { from, to };
 }
 
 // Parse simple sort syntax: "field:direction" or "field" (defaults to DESC)
@@ -790,7 +816,7 @@ EXAMPLES:
   nansen profiler search --query "Vitalik"
 
   # Get token holders with filters
-  nansen token holders --token 0x123... --filters '{"only_smart_money":true}'
+  nansen token holders --token 0x123... --smart-money
 
 SMART MONEY LABELS:
   Fund, Smart Trader, 30D Smart Trader, 90D Smart Trader, 
@@ -798,8 +824,8 @@ SMART MONEY LABELS:
 
 SUPPORTED CHAINS:
   ethereum, solana, base, bnb, arbitrum, polygon, optimism,
-  avalanche, linea, scroll, zksync, mantle, ronin, sei,
-  plasma, sonic, unichain, monad, hyperevm, iotaevm
+  avalanche, linea, scroll, mantle, ronin, sei,
+  plasma, sonic, monad, hyperevm, iotaevm
 
 For more info: https://docs.nansen.ai
 `;
@@ -1013,13 +1039,16 @@ export function buildCommands(deps = {}) {
       const handlers = {
         'balance': () => apiInstance.addressBalance({ address, entityName, chain, filters, orderBy }),
         'labels': () => apiInstance.addressLabels({ address, chain, pagination }),
-        'transactions': () => apiInstance.addressTransactions({ address, chain, filters, orderBy, pagination, days }),
+        'transactions': () => {
+          const date = parseDateOption(options.date, days);
+          return apiInstance.addressTransactions({ address, chain, filters, orderBy, pagination, days, date });
+        },
         'pnl': () => apiInstance.addressPnl({ address, chain }),
         'search': () => apiInstance.entitySearch({ query: options.query }),
         'historical-balances': () => apiInstance.addressHistoricalBalances({ address, chain, filters, orderBy, pagination, days }),
-        'related-wallets': () => apiInstance.addressRelatedWallets({ address, chain, filters, orderBy, pagination }),
+        'related-wallets': () => apiInstance.addressRelatedWallets({ address, chain, orderBy, pagination }),
         'counterparties': () => apiInstance.addressCounterparties({ address, chain, filters, orderBy, pagination, days }),
-        'pnl-summary': () => apiInstance.addressPnlSummary({ address, chain, filters, orderBy, pagination, days }),
+        'pnl-summary': () => apiInstance.addressPnlSummary({ address, chain, orderBy, pagination, days }),
         'perp-positions': () => apiInstance.addressPerpPositions({ address, filters, orderBy, pagination }),
         'perp-trades': () => apiInstance.addressPerpTrades({ address, filters, orderBy, pagination, days }),
         'batch': () => {
@@ -1088,17 +1117,24 @@ export function buildCommands(deps = {}) {
       // Convenience filter for smart money only
       const onlySmartMoney = options['smart-money'] || flags['smart-money'] || false;
       if (onlySmartMoney) {
-        filters.only_smart_money = true;
+        filters.include_smart_money_labels = filters.include_smart_money_labels || 
+          ['Fund', 'Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader'];
       }
 
       const handlers = {
         'screener': () => apiInstance.tokenScreener({ chains, timeframe, filters, orderBy, pagination }),
-        'holders': () => apiInstance.tokenHolders({ tokenAddress, chain, filters, orderBy, pagination }),
-        'flows': () => apiInstance.tokenFlows({ tokenAddress, chain, filters, orderBy, pagination, days }),
+        'holders': () => apiInstance.tokenHolders({ tokenAddress, chain, labelType: onlySmartMoney ? 'smart_money' : 'all_holders', filters, orderBy, pagination }),
+        'flows': () => {
+          const date = parseDateOption(options.date, days);
+          return apiInstance.tokenFlows({ tokenAddress, chain, filters, orderBy, pagination, days, date });
+        },
         'dex-trades': () => apiInstance.tokenDexTrades({ tokenAddress, chain, onlySmartMoney, filters, orderBy, pagination, days }),
         'pnl': () => apiInstance.tokenPnlLeaderboard({ tokenAddress, chain, filters, orderBy, pagination, days }),
-        'who-bought-sold': () => apiInstance.tokenWhoBoughtSold({ tokenAddress, chain, filters, orderBy, pagination, days }),
-        'flow-intelligence': () => apiInstance.tokenFlowIntelligence({ tokenAddress, chain, filters, orderBy, days }),
+        'who-bought-sold': () => {
+          const date = parseDateOption(options.date, days);
+          return apiInstance.tokenWhoBoughtSold({ tokenAddress, chain, filters, orderBy, pagination, days, date });
+        },
+        'flow-intelligence': () => apiInstance.tokenFlowIntelligence({ tokenAddress, chain, days }),
         'transfers': () => {
           // Inject --from/--to into filters
           if (options.from) filters.from_address = options.from;

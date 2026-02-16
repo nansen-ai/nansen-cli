@@ -443,7 +443,7 @@ describe('buildCommands', () => {
       await commands['token'](['screener'], mockApi, { 'smart-money': true }, {});
       
       expect(mockApi.tokenScreener).toHaveBeenCalledWith(
-        expect.objectContaining({ filters: { only_smart_money: true } })
+        expect.objectContaining({ filters: { include_smart_money_labels: ['Fund', 'Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader'] } })
       );
     });
 

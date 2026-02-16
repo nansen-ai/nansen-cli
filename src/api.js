@@ -250,8 +250,8 @@ const ADDRESS_PATTERNS = {
 
 const EVM_CHAINS = [
   'ethereum', 'arbitrum', 'base', 'bnb', 'polygon', 'optimism',
-  'avalanche', 'linea', 'scroll', 'zksync', 'mantle', 'ronin',
-  'sei', 'plasma', 'sonic', 'unichain', 'monad', 'hyperevm', 'iotaevm'
+  'avalanche', 'linea', 'scroll', 'mantle', 'ronin',
+  'sei', 'plasma', 'sonic', 'monad', 'hyperevm', 'iotaevm'
 ];
 
 /**
@@ -613,17 +613,20 @@ export class NansenAPI {
   }
 
   async addressTransactions(params = {}) {
-    const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30 } = params;
+    const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30, date } = params;
     if (address) {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const dateRange = date || (() => {
+      const to = new Date().toISOString().split('T')[0];
+      const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      return { from, to };
+    })();
     return this.request('/api/v1/profiler/address/transactions', {
       address,
       chain,
-      date: { from, to },
+      date: dateRange,
       filters,
       order_by: orderBy,
       pagination
@@ -668,7 +671,7 @@ export class NansenAPI {
   }
 
   async addressRelatedWallets(params = {}) {
-    const { address, chain = 'ethereum', filters = {}, orderBy, pagination } = params;
+    const { address, chain = 'ethereum', orderBy, pagination } = params;
     if (address) {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
@@ -676,7 +679,6 @@ export class NansenAPI {
     return this.request('/api/v1/profiler/address/related-wallets', {
       address,
       chain,
-      filters,
       order_by: orderBy,
       pagination
     });
@@ -701,7 +703,7 @@ export class NansenAPI {
   }
 
   async addressPnlSummary(params = {}) {
-    const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30 } = params;
+    const { address, chain = 'ethereum', orderBy, pagination, days = 30 } = params;
     if (address) {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
@@ -712,20 +714,19 @@ export class NansenAPI {
       address,
       chain,
       date: { from, to },
-      filters,
       order_by: orderBy,
       pagination
     });
   }
 
   async addressPerpPositions(params = {}) {
-    const { address, filters = {}, orderBy, pagination } = params;
+    const { address, filters = {}, orderBy } = params;
     // Perp positions work with HL addresses (not validated)
+    // Note: This endpoint does NOT support pagination parameter
     return this.request('/api/v1/profiler/perp-positions', {
       address,
       filters,
-      order_by: orderBy,
-      pagination
+      order_by: orderBy
     });
   }
 
@@ -772,17 +773,20 @@ export class NansenAPI {
   }
 
   async tokenFlows(params = {}) {
-    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination, days = 30 } = params;
+    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination, days = 30, date } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const dateRange = date || (() => {
+      const to = new Date().toISOString().split('T')[0];
+      const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      return { from, to };
+    })();
     return this.request('/api/v1/tgm/flows', {
       token_address: tokenAddress,
       chain,
-      date: { from, to },
+      date: dateRange,
       filters,
       order_by: orderBy,
       pagination
@@ -833,17 +837,20 @@ export class NansenAPI {
   }
 
   async tokenWhoBoughtSold(params = {}) {
-    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination, days = 30 } = params;
+    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination, days = 30, date } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const dateRange = date || (() => {
+      const to = new Date().toISOString().split('T')[0];
+      const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      return { from, to };
+    })();
     return this.request('/api/v1/tgm/who-bought-sold', {
       token_address: tokenAddress,
       chain,
-      date: { from, to },
+      date: dateRange,
       filters,
       order_by: orderBy,
       pagination
@@ -851,19 +858,14 @@ export class NansenAPI {
   }
 
   async tokenFlowIntelligence(params = {}) {
-    const { tokenAddress, chain = 'solana', filters = {}, orderBy, days = 30 } = params;
+    const { tokenAddress, chain = 'solana' } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/tgm/flow-intelligence', {
       token_address: tokenAddress,
-      chain,
-      date: { from, to },
-      filters,
-      order_by: orderBy
+      chain
     });
   }
 
