@@ -165,6 +165,15 @@ export const SCHEMA = {
     'token': {
       description: 'Token God Mode - deep analytics for any token',
       subcommands: {
+        'info': {
+          description: 'Get detailed information for a specific token',
+          options: {
+            token: { type: 'string', required: true, description: 'Token address' },
+            chain: { type: 'string', default: 'solana' },
+            timeframe: { type: 'string', default: '24h', enum: ['5m', '10m', '1h', '6h', '24h', '7d', '30d'] }
+          },
+          returns: ['token_address', 'token_symbol', 'token_name', 'chain', 'price_usd', 'volume_usd', 'market_cap', 'holder_count', 'liquidity_usd']
+        },
         'screener': {
           description: 'Discover and filter tokens',
           options: {
@@ -242,6 +251,44 @@ export const SCHEMA = {
           description: 'DeFi holdings across protocols',
           options: { wallet: { type: 'string', required: true, description: 'Wallet address' } },
           returns: ['protocol', 'chain', 'position_type', 'token_symbol', 'balance', 'balance_usd']
+        }
+      }
+    },
+    'perp': {
+      description: 'Perpetual futures analytics',
+      subcommands: {
+        'screener': {
+          description: 'Screen perpetual futures contracts',
+          options: {
+            days: { type: 'number', default: 30 },
+            limit: { type: 'number' },
+            sort: { type: 'string' },
+            filters: { type: 'object' }
+          },
+          returns: ['token_symbol', 'volume_usd', 'open_interest', 'funding_rate', 'price_change_24h']
+        },
+        'leaderboard': {
+          description: 'Perpetual futures PnL leaderboard',
+          options: {
+            days: { type: 'number', default: 30 },
+            limit: { type: 'number' },
+            sort: { type: 'string' },
+            filters: { type: 'object' }
+          },
+          returns: ['address', 'address_label', 'realized_pnl', 'unrealized_pnl', 'total_pnl', 'trade_count', 'win_rate']
+        }
+      }
+    },
+    'points': {
+      description: 'Nansen Points analytics',
+      subcommands: {
+        'leaderboard': {
+          description: 'Points leaderboard',
+          options: {
+            tier: { type: 'string', description: 'Filter by tier' },
+            limit: { type: 'number' }
+          },
+          returns: ['rank', 'address', 'address_label', 'points', 'tier']
         }
       }
     }
@@ -778,10 +825,12 @@ COMMANDS:
   profiler       Wallet profiling (balance, labels, transactions, pnl, pnl-summary, search,
                    historical-balances, related-wallets, counterparties, perp-positions, perp-trades,
                    batch, trace, compare)
-  token          Token God Mode (screener, holders, flows, dex-trades, pnl, who-bought-sold,
+  token          Token God Mode (info, screener, holders, flows, dex-trades, pnl, who-bought-sold,
                    flow-intelligence, transfers, jup-dca, perp-trades, perp-positions,
                    perp-pnl-leaderboard)
   portfolio      Portfolio analytics (defi)
+  perp           Perpetual futures analytics (screener, leaderboard)
+  points         Nansen Points analytics (leaderboard)
   help           Show this help message
 
 GLOBAL OPTIONS:
@@ -1130,6 +1179,7 @@ export function buildCommands(deps = {}) {
       }
 
       const handlers = {
+        'info': () => apiInstance.tokenInformation({ tokenAddress, chain, timeframe }),
         'screener': async () => {
           const result = await apiInstance.tokenScreener({ chains, timeframe, filters, orderBy, pagination });
           // Client-side search filter (API doesn't support server-side search)
@@ -1167,7 +1217,7 @@ export function buildCommands(deps = {}) {
         'perp-positions': () => apiInstance.tokenPerpPositions({ tokenSymbol, filters, orderBy, pagination }),
         'perp-pnl-leaderboard': () => apiInstance.tokenPerpPnlLeaderboard({ tokenSymbol, filters, orderBy, pagination, days }),
         'help': () => ({
-          commands: ['screener', 'holders', 'flows', 'dex-trades', 'pnl', 'who-bought-sold', 'flow-intelligence', 'transfers', 'jup-dca', 'perp-trades', 'perp-positions', 'perp-pnl-leaderboard'],
+          commands: ['info', 'screener', 'holders', 'flows', 'dex-trades', 'pnl', 'who-bought-sold', 'flow-intelligence', 'transfers', 'jup-dca', 'perp-trades', 'perp-positions', 'perp-pnl-leaderboard'],
           description: 'Token God Mode endpoints',
           example: 'nansen token screener --chain solana --timeframe 24h --smart-money'
         })
@@ -1198,6 +1248,51 @@ export function buildCommands(deps = {}) {
           commands: ['defi', 'defi-holdings'],
           description: 'Portfolio analytics endpoints',
           example: 'nansen portfolio defi --wallet 0x123...'
+        })
+      };
+
+      if (!handlers[subcommand]) {
+        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+      }
+
+      return handlers[subcommand]();
+    },
+
+    'perp': async (args, apiInstance, flags, options) => {
+      const subcommand = args[0] || 'help';
+      const filters = options.filters || {};
+      const orderBy = parseSort(options.sort, options['order-by']);
+      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+      const days = options.days ? parseInt(options.days) : 30;
+
+      const handlers = {
+        'screener': () => apiInstance.perpScreener({ filters, orderBy, pagination, days }),
+        'leaderboard': () => apiInstance.perpLeaderboard({ filters, orderBy, pagination, days }),
+        'help': () => ({
+          commands: ['screener', 'leaderboard'],
+          description: 'Perpetual futures analytics endpoints',
+          example: 'nansen perp screener --days 7 --limit 20'
+        })
+      };
+
+      if (!handlers[subcommand]) {
+        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+      }
+
+      return handlers[subcommand]();
+    },
+
+    'points': async (args, apiInstance, flags, options) => {
+      const subcommand = args[0] || 'help';
+      const tier = options.tier;
+      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+
+      const handlers = {
+        'leaderboard': () => apiInstance.pointsLeaderboard({ tier, pagination }),
+        'help': () => ({
+          commands: ['leaderboard'],
+          description: 'Nansen Points analytics endpoints',
+          example: 'nansen points leaderboard --limit 100'
         })
       };
 

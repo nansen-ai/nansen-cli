@@ -947,6 +947,55 @@ export class NansenAPI {
     });
   }
 
+  async tokenInformation(params = {}) {
+    const { tokenAddress, chain = 'solana', timeframe = '24h' } = params;
+    if (tokenAddress) {
+      const validation = validateTokenAddress(tokenAddress, chain);
+      if (!validation.valid) throw new NansenError(validation.error, validation.code);
+    }
+    return this.request('/api/v1/tgm/token-information', {
+      token_address: tokenAddress,
+      chain,
+      timeframe
+    });
+  }
+
+  // ============= Perp Endpoints =============
+
+  async perpScreener(params = {}) {
+    const { filters = {}, orderBy, pagination, days = 30 } = params;
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    return this.request('/api/v1/perp-screener', {
+      date: { from, to },
+      filters,
+      order_by: orderBy,
+      pagination
+    });
+  }
+
+  async perpLeaderboard(params = {}) {
+    const { filters = {}, orderBy, pagination, days = 30 } = params;
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    return this.request('/api/v1/perp-leaderboard', {
+      date: { from, to },
+      filters,
+      order_by: orderBy,
+      pagination
+    });
+  }
+
+  // ============= Points Endpoints =============
+
+  async pointsLeaderboard(params = {}) {
+    const { tier, pagination } = params;
+    return this.request('/api/v1/points/leaderboard', {
+      tier,
+      pagination
+    });
+  }
+
   // ============= Portfolio Endpoints =============
 
   async portfolioDefiHoldings(params = {}) {
