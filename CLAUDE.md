@@ -178,14 +178,38 @@ Structured error codes for programmatic handling:
 - **Beta endpoints** (`/api/beta/...`) may have different pagination
 - **EVM vs Solana addresses** — validation auto-detects based on chain param
 
-## Changesets
+## Publishing (npm)
 
-Every PR that changes user-facing behavior must include a changeset:
-```bash
-npx changeset
+**⚠️ DO NOT manually run `npm version` or `npm publish`. CI handles everything.**
+
+### How it works:
+
+1. **Add a changeset** for user-facing changes:
+   ```bash
+   npx changeset
+   # Or manually create .changeset/<name>.md
+   ```
+
+2. **Push to main** — CI runs tests
+
+3. **CI creates a "Version Packages" PR** — This bumps version + updates CHANGELOG
+
+4. **Merge the Version PR** — CI auto-publishes to npm
+
+### Changeset format:
+```markdown
+---
+"nansen-cli": minor
+---
+
+Description of changes (appears in CHANGELOG)
 ```
-Choose `patch` for bug fixes, `minor` for new features, `major` for breaking changes.
-CI will not publish without a changeset.
+
+Choose: `patch` (bug fixes), `minor` (new features), `major` (breaking changes)
+
+### If you mess up:
+- Accidentally bumped version manually? `git revert` and add a changeset instead
+- CI publish failed? Check GitHub Actions logs, likely needs `NPM_TOKEN` secret refresh
 
 ## PR Checklist
 
