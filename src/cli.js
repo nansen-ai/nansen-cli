@@ -1181,16 +1181,26 @@ export function buildCommands(deps = {}) {
       const handlers = {
         'info': () => apiInstance.tokenInformation({ tokenAddress, chain, timeframe }),
         'screener': async () => {
-          const result = await apiInstance.tokenScreener({ chains, timeframe, filters, orderBy, pagination });
-          // Client-side search filter (API doesn't support server-side search)
           const search = options.search;
-          if (search && result?.data) {
+          // When searching, fetch more results to filter from (API has no server-side search)
+          const searchPagination = search 
+            ? { page: 1, per_page: Math.max(500, pagination?.per_page || 0) }
+            : pagination;
+          const result = await apiInstance.tokenScreener({ chains, timeframe, filters, orderBy, pagination: searchPagination });
+          if (search) {
             const q = search.toLowerCase();
-            const filtered = result.data.filter(t => 
+            const requestedLimit = pagination?.per_page || 100;
+            const filterArr = (arr) => arr.filter(t => 
               (t.token_symbol && t.token_symbol.toLowerCase().includes(q)) ||
-              (t.token_name && t.token_name.toLowerCase().includes(q))
-            );
-            return { ...result, data: filtered };
+              (t.token_name && t.token_name.toLowerCase().includes(q)) ||
+              (t.token_address && t.token_address.toLowerCase() === q)
+            ).slice(0, requestedLimit);
+            // Handle nested response shapes: {data: [...]} or {data: {data: [...]}}
+            if (Array.isArray(result?.data)) {
+              return { ...result, data: filterArr(result.data) };
+            } else if (result?.data?.data && Array.isArray(result.data.data)) {
+              return { ...result, data: { ...result.data, data: filterArr(result.data.data) } };
+            }
           }
           return result;
         },

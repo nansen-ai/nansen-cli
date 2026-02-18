@@ -464,7 +464,7 @@ describe('buildCommands', () => {
       );
     });
 
-    it('should filter screener results by search option (client-side)', async () => {
+    it('should filter screener results by search option (client-side, flat)', async () => {
       const mockApi = {
         tokenScreener: vi.fn().mockResolvedValue({ data: [
           { token_symbol: 'PEPE', token_name: 'Pepe', price_usd: 0.001 },
@@ -477,6 +477,21 @@ describe('buildCommands', () => {
       expect(result.data).toHaveLength(2);
       expect(result.data[0].token_symbol).toBe('PEPE');
       expect(result.data[1].token_symbol).toBe('PEPEFORK');
+    });
+
+    it('should filter screener results by search option (client-side, nested)', async () => {
+      const mockApi = {
+        tokenScreener: vi.fn().mockResolvedValue({ data: { data: [
+          { token_symbol: 'PEPE', price_usd: 0.001 },
+          { token_symbol: 'USDC', price_usd: 1.0 },
+          { token_symbol: 'PEPEFORK', price_usd: 0.0001 },
+        ], pagination: { page: 1 } } })
+      };
+      const result = await commands['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: 'PEPE' });
+      
+      expect(result.data.data).toHaveLength(2);
+      expect(result.data.data[0].token_symbol).toBe('PEPE');
+      expect(result.data.pagination.page).toBe(1);
     });
 
     it('should call holders with token address', async () => {
