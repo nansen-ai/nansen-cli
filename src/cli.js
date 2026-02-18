@@ -1308,6 +1308,120 @@ export function buildCommands(deps = {}) {
 // Commands that don't require API authentication
 export const NO_AUTH_COMMANDS = ['login', 'logout', 'help', 'schema', 'cache'];
 
+// Command aliases for convenience
+export const COMMAND_ALIASES = {
+  'tgm': 'token',           // Token God Mode
+  'sm': 'smart-money',      // Smart Money
+  'prof': 'profiler',       // Profiler
+  'port': 'portfolio'       // Portfolio
+};
+
+// Generate help text for a specific subcommand using SCHEMA
+export function generateSubcommandHelp(command, subcommand) {
+  const cmdSchema = SCHEMA.commands[command];
+  if (!cmdSchema) return null;
+  
+  const subSchema = cmdSchema.subcommands?.[subcommand];
+  if (!subSchema) return null;
+
+  const lines = [];
+  lines.push(`\n${command} ${subcommand} - ${subSchema.description || 'No description'}\n`);
+  
+  // Usage
+  const requiredOpts = [];
+  const optionalOpts = [];
+  
+  if (subSchema.options) {
+    for (const [name, opt] of Object.entries(subSchema.options)) {
+      if (opt.required) {
+        requiredOpts.push(name);
+      } else {
+        optionalOpts.push(name);
+      }
+    }
+  }
+  
+  let usage = `USAGE:\n  nansen ${command} ${subcommand}`;
+  if (requiredOpts.length) {
+    usage += ' ' + requiredOpts.map(o => `--${o} <value>`).join(' ');
+  }
+  if (optionalOpts.length) {
+    usage += ' [options]';
+  }
+  lines.push(usage);
+  
+  // Required options
+  if (requiredOpts.length) {
+    lines.push('\nREQUIRED:');
+    for (const name of requiredOpts) {
+      const opt = subSchema.options[name];
+      const desc = opt.description || `${opt.type}`;
+      lines.push(`  --${name.padEnd(16)} ${desc}`);
+    }
+  }
+  
+  // Optional options
+  if (optionalOpts.length) {
+    lines.push('\nOPTIONS:');
+    for (const name of optionalOpts) {
+      const opt = subSchema.options[name];
+      const defaultStr = opt.default !== undefined ? ` (default: ${opt.default})` : '';
+      const desc = (opt.description || opt.type) + defaultStr;
+      lines.push(`  --${name.padEnd(16)} ${desc}`);
+    }
+  }
+  
+  // Return fields
+  if (subSchema.returns && subSchema.returns.length) {
+    lines.push('\nRETURNS:');
+    lines.push(`  ${subSchema.returns.join(', ')}`);
+  }
+  
+  // Examples
+  lines.push('\nEXAMPLES:');
+  const chain = subSchema.options?.chain?.default || 'solana';
+  
+  // Example values for common required options
+  const exampleValues = {
+    address: '0x123...',
+    token: '0x123...',
+    query: '"search term"',
+    symbol: 'BTC',
+    date: '2024-01-01'
+  };
+  
+  // Build example based on required options
+  let example = `  nansen ${command} ${subcommand}`;
+  for (const name of requiredOpts) {
+    const value = exampleValues[name] || '<value>';
+    example += ` --${name} ${value}`;
+  }
+  if (subSchema.options?.chain && !requiredOpts.includes('chain')) {
+    example += ` --chain ${chain}`;
+  }
+  example += ' --pretty';
+  lines.push(example);
+  
+  // Add a filtered example if filters are supported
+  if (subSchema.options?.filters || subSchema.options?.labels) {
+    let filterExample = `  nansen ${command} ${subcommand}`;
+    for (const name of requiredOpts) {
+      const value = exampleValues[name] || '<value>';
+      filterExample += ` --${name} ${value}`;
+    }
+    if (subSchema.options?.chain && !requiredOpts.includes('chain')) {
+      filterExample += ` --chain ${chain}`;
+    }
+    if (subSchema.options?.labels) {
+      filterExample += ' --labels "Smart Trader"';
+    }
+    filterExample += ' --limit 10 --table';
+    lines.push(filterExample);
+  }
+  
+  return lines.join('\n');
+}
+
 // Run CLI with given args (returns result, allows custom output/exit handlers)
 export async function runCLI(rawArgs, deps = {}) {
   const {
@@ -1320,8 +1434,11 @@ export async function runCLI(rawArgs, deps = {}) {
 
   const { _: positional, flags, options } = parseArgs(rawArgs);
 
-  const command = positional[0] || 'help';
+  // Resolve command aliases
+  const rawCommand = positional[0] || 'help';
+  const command = COMMAND_ALIASES[rawCommand] || rawCommand;
   const subArgs = positional.slice(1);
+  const subcommand = subArgs[0];
   const pretty = flags.pretty || flags.p;
   const table = flags.table || flags.t;
   const stream = flags.stream || flags.s;
@@ -1340,6 +1457,32 @@ export async function runCLI(rawArgs, deps = {}) {
   }
 
   if (command === 'help' || flags.help || flags.h) {
+    // Check for subcommand-specific help: nansen <command> <subcommand> --help
+    if (flags.help || flags.h) {
+      // First try subcommand help
+      if (command && subcommand) {
+        const subHelp = generateSubcommandHelp(command, subcommand);
+        if (subHelp) {
+          output(subHelp);
+          notify();
+          return { type: 'subcommand-help', command, subcommand };
+        }
+      }
+      // Then try command-level help (list subcommands)
+      if (command && SCHEMA.commands[command]) {
+        const cmdSchema = SCHEMA.commands[command];
+        const lines = [`\n${command} - ${cmdSchema.description}\n`];
+        lines.push('SUBCOMMANDS:');
+        for (const [sub, subSchema] of Object.entries(cmdSchema.subcommands || {})) {
+          lines.push(`  ${sub.padEnd(20)} ${subSchema.description || ''}`);
+        }
+        lines.push(`\nFor detailed help: nansen ${command} <subcommand> --help`);
+        output(lines.join('\n'));
+        notify();
+        return { type: 'command-help', command };
+      }
+    }
+    // Fallback to main help
     output(BANNER + HELP);
     notify();
     return { type: 'help' };
