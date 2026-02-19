@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.1
+
+### Patch Changes
+
+- [#14](https://github.com/nansen-ai/nansen-cli/pull/14) [`bde43ae`](https://github.com/nansen-ai/nansen-cli/commit/bde43aedba6b5d113fe6da01e39744c0214704b3) Thanks [@TimNooren](https://github.com/TimNooren)! - Allow requests without an API key. Unauthenticated requests now reach the API and return x402 payment options instead of failing immediately.
+
 ## 1.5.0
 
 ### Minor Changes
