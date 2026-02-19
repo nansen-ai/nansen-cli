@@ -19,6 +19,7 @@ export const ErrorCode = {
   UNAUTHORIZED: 'UNAUTHORIZED',           // 401 - Invalid or missing API key
   FORBIDDEN: 'FORBIDDEN',                 // 403 - Valid key but insufficient permissions
   CREDITS_EXHAUSTED: 'CREDITS_EXHAUSTED', // 403 - Insufficient API credits
+  PAYMENT_REQUIRED: 'PAYMENT_REQUIRED',   // 402 - x402 payment required
   
   // Rate Limiting
   RATE_LIMITED: 'RATE_LIMITED',           // 429 - Too many requests
@@ -87,6 +88,8 @@ function statusToErrorCode(status, data = {}) {
       return ErrorCode.INVALID_PARAMS;
     case 401:
       return ErrorCode.UNAUTHORIZED;
+    case 402:
+      return ErrorCode.PAYMENT_REQUIRED;
     case 403:
       if (messageLower.includes('credit') || messageLower.includes('insufficient')) return ErrorCode.CREDITS_EXHAUSTED;
       return ErrorCode.FORBIDDEN;
@@ -484,6 +487,16 @@ export class NansenAPI {
           message = message.replace(/\.+$/, '') + '. This filter is not supported for this token/chain combination. Do not retry.';
         } else if (code === ErrorCode.CREDITS_EXHAUSTED) {
           message = message.replace(/\.+$/, '') + '. No retry will help. Check your Nansen dashboard for credit balance.';
+        } else if (code === ErrorCode.PAYMENT_REQUIRED) {
+          message = 'Payment required (x402). This endpoint requires on-chain payment.';
+          const paymentHeader = response.headers.get('payment-required');
+          if (paymentHeader) {
+            try {
+              data.paymentRequirements = JSON.parse(atob(paymentHeader));
+            } catch {
+              data.paymentRequiredRaw = paymentHeader;
+            }
+          }
         }
 
         lastError = new NansenError(message, code, response.status, {

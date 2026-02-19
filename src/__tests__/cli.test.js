@@ -113,7 +113,7 @@ describe('CLI Smoke Tests', () => {
     const output = stdout || stderr;
     const result = JSON.parse(output);
     expect(result.success).toBe(false);
-    expect(result.code).toBe('UNAUTHORIZED');
+    expect(['UNAUTHORIZED', 'PAYMENT_REQUIRED']).toContain(result.code);
   });
 
   // =================== Error Handling ===================
