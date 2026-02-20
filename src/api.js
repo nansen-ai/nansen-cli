@@ -668,6 +668,20 @@ export class NansenAPI {
     });
   }
 
+  async generalSearch(params = {}) {
+    const { query, resultType = 'any', chain, limit = 25 } = params;
+    if (!query) {
+      throw new NansenError('Search query is required', ErrorCode.MISSING_PARAM);
+    }
+    const body = {
+      search_query: query,
+      result_type: resultType,
+      limit
+    };
+    if (chain) body.chain = chain;
+    return this.request('/api/v1/search/general', body);
+  }
+
   async addressHistoricalBalances(params = {}) {
     const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30 } = params;
     if (address) {
