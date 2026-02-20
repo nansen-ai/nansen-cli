@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.0
+
+### Minor Changes
+
+- [#21](https://github.com/nansen-ai/nansen-cli/pull/21) [`558dd02`](https://github.com/nansen-ai/nansen-cli/commit/558dd02e60bd83e40e00231bf86d2dd4f414cbdc) Thanks [@TimNooren](https://github.com/TimNooren)! - Add general search command for tokens and entities
+
+- [#25](https://github.com/nansen-ai/nansen-cli/pull/25) [`e4dcfee`](https://github.com/nansen-ai/nansen-cli/commit/e4dcfee1becae89643a94c26879754cf17fee443) Thanks [@TimNooren](https://github.com/TimNooren)! - Add token indicators command for Nansen Score risk/reward indicators
+
+- [#23](https://github.com/nansen-ai/nansen-cli/pull/23) [`9c0940b`](https://github.com/nansen-ai/nansen-cli/commit/9c0940b64d25c15f1f4d9edc10c92a323ef83b24) Thanks [@TimNooren](https://github.com/TimNooren)! - Add --x402-payment-signature flag for passing pre-signed x402 payment signatures
+
 ## 1.5.1
 
 ### Patch Changes
