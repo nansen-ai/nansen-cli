@@ -388,10 +388,11 @@ export class NansenAPI {
     this.apiKey = apiKey || null;
     this.baseUrl = baseUrl;
     this.retryOptions = { ...DEFAULT_RETRY_OPTIONS, ...options.retry };
-    this.cacheOptions = { 
+    this.cacheOptions = {
       enabled: options.cache?.enabled ?? false,
       ttl: options.cache?.ttl ?? DEFAULT_CACHE_TTL
     };
+    this.defaultHeaders = options.defaultHeaders || {};
   }
 
   static cleanBody(body) {
@@ -429,6 +430,7 @@ export class NansenAPI {
           headers: {
             'Content-Type': 'application/json',
             ...(this.apiKey ? { 'apikey': this.apiKey } : {}),
+            ...this.defaultHeaders,
             ...options.headers
           },
           body: JSON.stringify(NansenAPI.cleanBody(body))
@@ -482,7 +484,7 @@ export class NansenAPI {
         } else if (code === ErrorCode.CREDITS_EXHAUSTED) {
           message = message.replace(/\.+$/, '') + '. No retry will help. Check your Nansen dashboard for credit balance.';
         } else if (code === ErrorCode.PAYMENT_REQUIRED) {
-          message = 'Payment required (x402). This endpoint requires on-chain payment.';
+          message = 'Payment required (x402). Sign the paymentRequirements below per https://docs.x402.org and pass the result with --x402-payment-signature <value>.';
           const paymentHeader = response.headers.get('payment-required');
           if (paymentHeader) {
             try {
