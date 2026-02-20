@@ -3,7 +3,7 @@
  * Extracted from index.js for coverage
  */
 
-import { NansenAPI, NansenError, ErrorCode, awalCommand, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
+import { NansenAPI, NansenError, ErrorCode, PrivyAPI, awalCommand, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
 import fs from 'fs';
 import { getUpdateNotification, scheduleUpdateCheck } from './update-check.js';
 import { createRequire } from 'module';
@@ -280,58 +280,79 @@ export const SCHEMA = {
       }
     },
     'wallet': {
-      description: 'Coinbase agentic wallet — auth, send USDC, trade tokens, x402 payments',
+      description: 'Agentic wallet — supports Coinbase (awal) and Privy providers',
       subcommands: {
+        'setup': {
+          description: 'Choose wallet provider (coinbase or privy)',
+          options: {
+            provider: { type: 'string', required: true, enum: ['coinbase', 'privy'], description: 'Wallet provider' }
+          },
+          returns: ['provider', 'message']
+        },
         'status': {
-          description: 'Check wallet server health and auth status',
+          description: 'Check wallet status and auth',
           options: {},
-          returns: ['status', 'authenticated', 'email', 'address']
+          returns: ['provider', 'status', 'authenticated']
         },
         'login': {
-          description: 'Start wallet authentication (sends OTP to email)',
-          options: {
-            email: { type: 'string', required: true, description: 'Email address for wallet auth' }
-          },
+          description: '[Coinbase] Start email OTP login',
+          options: { email: { type: 'string', required: true } },
           returns: ['flowId', 'message']
         },
         'verify': {
-          description: 'Complete auth with OTP code',
-          options: {
-            'flow-id': { type: 'string', required: true, description: 'Flow ID from login step' },
-            otp: { type: 'string', required: true, description: '6-digit verification code' }
-          },
+          description: '[Coinbase] Complete OTP verification',
+          options: { 'flow-id': { type: 'string', required: true }, otp: { type: 'string', required: true } },
           returns: ['success', 'email']
         },
-        'balance': {
-          description: 'Get USDC wallet balance',
+        'create': {
+          description: '[Privy] Create a new wallet',
           options: {
-            chain: { type: 'string', default: 'base', description: 'Chain: base or base-sepolia' }
+            'chain-type': { type: 'string', default: 'ethereum', description: 'ethereum, solana, etc.' },
+            policy: { type: 'string', description: 'Policy ID to attach' }
           },
-          returns: ['balance', 'currency', 'chain']
+          returns: ['id', 'address', 'chain_type']
+        },
+        'list': {
+          description: '[Privy] List wallets',
+          options: { 'chain-type': { type: 'string' }, limit: { type: 'number', default: 100 } },
+          returns: ['id', 'address', 'chain_type']
+        },
+        'balance': {
+          description: 'Get wallet balance',
+          options: {
+            id: { type: 'string', description: '[Privy] Wallet ID' },
+            chain: { type: 'string', description: '[Coinbase] Chain: base or base-sepolia' }
+          },
+          returns: ['balance']
         },
         'address': {
-          description: 'Get wallet address',
+          description: '[Coinbase] Get wallet address',
           options: {},
           returns: ['address']
         },
         'send': {
-          description: 'Send USDC to an address or ENS name',
+          description: '[Coinbase] Send USDC',
           options: {
-            amount: { type: 'string', required: true, description: 'Amount to send (e.g., 1.00, $5)' },
-            to: { type: 'string', required: true, description: 'Recipient address or ENS name' },
-            chain: { type: 'string', default: 'base', description: 'Chain: base or base-sepolia' }
+            amount: { type: 'string', required: true },
+            to: { type: 'string', required: true, description: 'Address or ENS name' },
+            chain: { type: 'string', default: 'base' }
           },
           returns: ['txHash', 'amount', 'recipient']
         },
         'trade': {
-          description: 'Trade tokens on Base',
+          description: '[Coinbase] Trade tokens on Base',
           options: {
-            amount: { type: 'string', required: true, description: 'Amount to trade' },
-            from: { type: 'string', required: true, description: 'Source token (usdc, eth, weth, or address)' },
-            to: { type: 'string', required: true, description: 'Destination token' },
-            slippage: { type: 'number', description: 'Slippage in basis points (100 = 1%)' }
+            amount: { type: 'string', required: true },
+            from: { type: 'string', required: true },
+            to: { type: 'string', required: true },
+            slippage: { type: 'number', description: 'Basis points (100 = 1%)' }
           },
-          returns: ['txHash', 'amountIn', 'amountOut', 'fromToken', 'toToken']
+          returns: ['txHash', 'amountIn', 'amountOut']
+        },
+        'create-policy': {
+          description: '[Privy] Create spending policy',
+          options: { name: { type: 'string', required: true }, 'chain-type': { type: 'string', default: 'ethereum' }, rules: { type: 'object' } },
+          returns: ['id', 'name', 'rules']
         }
       }
     },
@@ -1361,65 +1382,150 @@ export function buildCommands(deps = {}) {
     'wallet': async (args, apiInstance, flags, options) => {
       const subcommand = args[0] || 'help';
 
+      // Load wallet provider from config
+      const configFile = getConfigFile();
+      let config = {};
+      try { config = JSON.parse(fs.readFileSync(configFile, 'utf8')); } catch {}
+      const provider = options.provider || config.walletProvider;
+
       if (subcommand === 'help') {
         return {
-          commands: ['status', 'login', 'verify', 'balance', 'address', 'send', 'trade'],
-          description: 'Coinbase agentic wallet (powered by awal CLI)',
+          provider: provider || 'not configured',
+          commands: {
+            shared: ['setup', 'status', 'balance', 'help'],
+            coinbase: ['login', 'verify', 'address', 'send', 'trade'],
+            privy: ['create', 'list', 'create-policy']
+          },
           examples: [
+            'nansen wallet setup --provider coinbase',
+            'nansen wallet setup --provider privy',
             'nansen wallet status',
-            'nansen wallet login --email user@example.com',
-            'nansen wallet verify --flow-id abc123 --otp 123456',
-            'nansen wallet balance',
-            'nansen wallet send --amount 1.00 --to vitalik.eth',
-            'nansen wallet trade --amount $5 --from usdc --to eth'
+            'nansen wallet balance'
           ],
-          setup: 'Requires awal CLI: npx awal@latest status'
+          hint: provider ? `Current provider: ${provider}` : 'Run "nansen wallet setup --provider <coinbase|privy>" first'
         };
       }
 
-      const handlers = {
-        'status': () => awalCommand(['status']),
-        'login': () => {
-          const email = options.email || args[1];
-          if (!email) return { error: 'Email required. Usage: nansen wallet login --email user@example.com' };
-          return awalCommand(['auth', 'login', email]);
-        },
-        'verify': () => {
-          const flowId = options['flow-id'] || args[1];
-          const otp = options.otp || args[2];
-          if (!flowId || !otp) return { error: 'Flow ID and OTP required. Usage: nansen wallet verify --flow-id <id> --otp <code>' };
-          return awalCommand(['auth', 'verify', flowId, otp]);
-        },
-        'balance': () => {
-          const cmdArgs = ['balance'];
-          if (options.chain) cmdArgs.push('--chain', options.chain);
-          return awalCommand(cmdArgs);
-        },
-        'address': () => awalCommand(['address']),
-        'send': () => {
-          const amount = options.amount || args[1];
-          const to = options.to || args[2];
-          if (!amount || !to) return { error: 'Amount and recipient required. Usage: nansen wallet send --amount 1.00 --to vitalik.eth' };
-          const cmdArgs = ['send', amount, to];
-          if (options.chain) cmdArgs.push('--chain', options.chain);
-          return awalCommand(cmdArgs);
-        },
-        'trade': () => {
-          const amount = options.amount || args[1];
-          const from = options.from || args[2];
-          const to = options.to || args[3];
-          if (!amount || !from || !to) return { error: 'Amount, from, and to required. Usage: nansen wallet trade --amount $5 --from usdc --to eth' };
-          const cmdArgs = ['trade', amount, from, to];
-          if (options.slippage) cmdArgs.push('--slippage', String(options.slippage));
-          return awalCommand(cmdArgs);
+      // Setup: save provider choice
+      if (subcommand === 'setup') {
+        const p = options.provider || args[1];
+        if (!p || !['coinbase', 'privy'].includes(p)) {
+          return { error: 'Provider required: coinbase or privy', usage: 'nansen wallet setup --provider coinbase' };
         }
-      };
-
-      if (!handlers[subcommand]) {
-        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+        config.walletProvider = p;
+        saveConfig(config);
+        return { provider: p, message: `Wallet provider set to ${p}. Run "nansen wallet status" to check.` };
       }
 
-      return handlers[subcommand]();
+      // Require provider for all other commands
+      if (!provider) {
+        return {
+          error: 'No wallet provider configured',
+          hint: 'Run "nansen wallet setup --provider <coinbase|privy>" to choose',
+          providers: {
+            coinbase: 'Email OTP auth, send USDC, trade on Base. No API keys needed.',
+            privy: 'Programmatic wallets with policy guardrails. Needs PRIVY_APP_ID + PRIVY_APP_SECRET.'
+          }
+        };
+      }
+
+      // ---- Coinbase (awal) handlers ----
+      if (provider === 'coinbase') {
+        const coinbaseHandlers = {
+          'status': () => awalCommand(['status']),
+          'login': () => {
+            const email = options.email || args[1];
+            if (!email) return { error: 'Email required. Usage: nansen wallet login --email user@example.com' };
+            return awalCommand(['auth', 'login', email]);
+          },
+          'verify': () => {
+            const flowId = options['flow-id'] || args[1];
+            const otp = options.otp || args[2];
+            if (!flowId || !otp) return { error: 'Flow ID and OTP required. Usage: nansen wallet verify --flow-id <id> --otp <code>' };
+            return awalCommand(['auth', 'verify', flowId, otp]);
+          },
+          'balance': () => {
+            const cmdArgs = ['balance'];
+            if (options.chain) cmdArgs.push('--chain', options.chain);
+            return awalCommand(cmdArgs);
+          },
+          'address': () => awalCommand(['address']),
+          'send': () => {
+            const amount = options.amount || args[1];
+            const to = options.to || args[2];
+            if (!amount || !to) return { error: 'Amount and recipient required. Usage: nansen wallet send --amount 1.00 --to vitalik.eth' };
+            const cmdArgs = ['send', amount, to];
+            if (options.chain) cmdArgs.push('--chain', options.chain);
+            return awalCommand(cmdArgs);
+          },
+          'trade': () => {
+            const amount = options.amount || args[1];
+            const from = options.from || args[2];
+            const to = options.to || args[3];
+            if (!amount || !from || !to) return { error: 'Amount, from, and to required. Usage: nansen wallet trade --amount $5 --from usdc --to eth' };
+            const cmdArgs = ['trade', amount, from, to];
+            if (options.slippage) cmdArgs.push('--slippage', String(options.slippage));
+            return awalCommand(cmdArgs);
+          }
+        };
+
+        if (!coinbaseHandlers[subcommand]) {
+          return { error: `Unknown coinbase wallet command: ${subcommand}`, available: Object.keys(coinbaseHandlers) };
+        }
+        return coinbaseHandlers[subcommand]();
+      }
+
+      // ---- Privy handlers ----
+      if (provider === 'privy') {
+        let privy;
+        try {
+          privy = new PrivyAPI();
+        } catch (e) {
+          return { error: e.message, hint: 'Set PRIVY_APP_ID and PRIVY_APP_SECRET env vars. Get them from https://dashboard.privy.io' };
+        }
+
+        const walletId = options.id || args[1];
+
+        const privyHandlers = {
+          'status': async () => {
+            const wallets = await privy.listWallets({ limit: 5 });
+            return { provider: 'privy', authenticated: true, wallets: wallets?.data || wallets };
+          },
+          'create': () => privy.createWallet({
+            chainType: options['chain-type'] || 'ethereum',
+            policyIds: options.policy ? [options.policy] : undefined
+          }),
+          'list': () => privy.listWallets({
+            chainType: options['chain-type'],
+            limit: options.limit ? parseInt(options.limit) : 100
+          }),
+          'balance': () => {
+            if (!walletId) return { error: 'Wallet ID required. Usage: nansen wallet balance --id <wallet_id>' };
+            return privy.getBalance(walletId);
+          },
+          'create-policy': () => privy.createPolicy({
+            name: options.name,
+            chainType: options['chain-type'] || 'ethereum',
+            rules: options.rules || []
+          }),
+          'get-policy': () => {
+            const policyId = options.id || args[1];
+            if (!policyId) return { error: 'Policy ID required.' };
+            return privy.getPolicy(policyId);
+          },
+          'delete': () => {
+            if (!walletId) return { error: 'Wallet ID required.' };
+            return privy.deleteWallet(walletId);
+          }
+        };
+
+        if (!privyHandlers[subcommand]) {
+          return { error: `Unknown privy wallet command: ${subcommand}`, available: Object.keys(privyHandlers) };
+        }
+        return privyHandlers[subcommand]();
+      }
+
+      return { error: `Unknown provider: ${provider}`, hint: 'Run "nansen wallet setup --provider <coinbase|privy>"' };
     },
 
     'search': async (args, apiInstance, flags, options) => {

@@ -1027,6 +1027,105 @@ export class NansenAPI {
   }
 }
 
+// ============= Privy Wallet API =============
+
+export class PrivyAPI {
+  constructor(appId, appSecret) {
+    this.appId = appId || process.env.PRIVY_APP_ID;
+    this.appSecret = appSecret || process.env.PRIVY_APP_SECRET;
+    this.baseUrl = 'https://api.privy.io';
+
+    if (!this.appId || !this.appSecret) {
+      throw new NansenError(
+        'Privy credentials required. Set PRIVY_APP_ID and PRIVY_APP_SECRET environment variables.',
+        ErrorCode.UNAUTHORIZED
+      );
+    }
+  }
+
+  get authHeaders() {
+    const encoded = Buffer.from(`${this.appId}:${this.appSecret}`).toString('base64');
+    return {
+      'Authorization': `Basic ${encoded}`,
+      'privy-app-id': this.appId,
+      'Content-Type': 'application/json'
+    };
+  }
+
+  async request(method, path, body = null) {
+    const url = `${this.baseUrl}${path}`;
+    const options = { method, headers: this.authHeaders };
+    if (body && (method === 'POST' || method === 'PATCH')) {
+      options.body = JSON.stringify(body);
+    }
+
+    const response = await fetch(url, options);
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      throw new NansenError(
+        data?.message || data?.error || `Privy API error (${response.status})`,
+        statusToErrorCode(response.status, data),
+        response.status,
+        data
+      );
+    }
+    return data;
+  }
+
+  async createWallet(params = {}) {
+    const { chainType = 'ethereum', policyIds } = params;
+    const body = { chain_type: chainType };
+    if (policyIds && policyIds.length > 0) body.policy_ids = policyIds;
+    return this.request('POST', '/v1/wallets', body);
+  }
+
+  async listWallets(params = {}) {
+    const { chainType, limit = 100, cursor } = params;
+    const qs = new URLSearchParams();
+    if (chainType) qs.set('chain_type', chainType);
+    if (limit) qs.set('limit', String(limit));
+    if (cursor) qs.set('cursor', cursor);
+    const query = qs.toString();
+    return this.request('GET', `/v1/wallets${query ? '?' + query : ''}`);
+  }
+
+  async getWallet(walletId) {
+    return this.request('GET', `/v1/wallets/${walletId}`);
+  }
+
+  async getBalance(walletId) {
+    return this.request('GET', `/v1/wallets/${walletId}/balance`);
+  }
+
+  async deleteWallet(walletId) {
+    return this.request('DELETE', `/v1/wallets/${walletId}`);
+  }
+
+  async createPolicy(params = {}) {
+    const { name, chainType = 'ethereum', rules = [] } = params;
+    return this.request('POST', '/v1/policies', {
+      version: '1.0',
+      name,
+      chain_type: chainType,
+      rules
+    });
+  }
+
+  async getPolicy(policyId) {
+    return this.request('GET', `/v1/policies/${policyId}`);
+  }
+
+  async sendTransaction(params = {}) {
+    const { walletId, method = 'eth_sendTransaction', caip2, transaction } = params;
+    return this.request('POST', `/v1/wallets/${walletId}/rpc`, {
+      method,
+      caip2,
+      params: { transaction }
+    });
+  }
+}
+
 // ============= Coinbase Agentic Wallet (awal CLI) =============
 
 import { execFile } from 'child_process';
