@@ -222,18 +222,6 @@ export const SCHEMA = {
           options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 }, limit: { type: 'number' }, from: { type: 'string', description: 'Filter by sender address' }, to: { type: 'string', description: 'Filter by recipient address' }, enrich: { type: 'boolean', description: 'Enrich addresses with Nansen labels' } },
           returns: ['tx_hash', 'from', 'to', 'amount', 'value_usd', 'timestamp']
         },
-        'ohlcv': {
-          description: 'OHLCV price candles (open, high, low, close, volume)',
-          options: {
-            token: { type: 'string', required: true, description: 'Token address' },
-            chain: { type: 'string', default: 'solana' },
-            resolution: { type: 'string', default: '1h', description: 'Candle resolution: 1m, 5m, 10m, 15m, 30m, 1h, 2h, 4h, 6h, 12h, day, week, month, year' },
-            from: { type: 'string', description: 'Start date (ISO-8601 or YYYY-MM-DD)' },
-            to: { type: 'string', description: 'End date (ISO-8601 or YYYY-MM-DD)' },
-            days: { type: 'number', default: 7, description: 'Lookback days (used if --from not set)' }
-          },
-          returns: ['intervalStart', 'open', 'high', 'low', 'close', 'volume', 'volumeUsd', 'openMcap', 'highMcap', 'lowMcap', 'closeMcap']
-        },
         'jup-dca': {
           description: 'Jupiter DCA orders for token',
           options: { token: { type: 'string', required: true }, limit: { type: 'number' } },
@@ -1244,20 +1232,12 @@ export function buildCommands(deps = {}) {
           if (options.to) filters.to_address = options.to;
           return apiInstance.tokenTransfers({ tokenAddress, chain, filters, orderBy, pagination, days });
         },
-        'ohlcv': () => apiInstance.tokenOhlcv({
-          tokenAddress,
-          chain,
-          resolution: options.resolution || '1h',
-          from: options.from,
-          to: options.to,
-          days
-        }),
         'jup-dca': () => apiInstance.tokenJupDca({ tokenAddress, filters, orderBy, pagination }),
         'perp-trades': () => apiInstance.tokenPerpTrades({ tokenSymbol, filters, orderBy, pagination, days }),
         'perp-positions': () => apiInstance.tokenPerpPositions({ tokenSymbol, filters, orderBy, pagination }),
         'perp-pnl-leaderboard': () => apiInstance.tokenPerpPnlLeaderboard({ tokenSymbol, filters, orderBy, pagination, days }),
         'help': () => ({
-          commands: ['info', 'screener', 'holders', 'flows', 'dex-trades', 'pnl', 'who-bought-sold', 'flow-intelligence', 'transfers', 'ohlcv', 'jup-dca', 'perp-trades', 'perp-positions', 'perp-pnl-leaderboard'],
+          commands: ['info', 'screener', 'holders', 'flows', 'dex-trades', 'pnl', 'who-bought-sold', 'flow-intelligence', 'transfers', 'jup-dca', 'perp-trades', 'perp-positions', 'perp-pnl-leaderboard'],
           description: 'Token God Mode endpoints',
           example: 'nansen token screener --chain solana --timeframe 24h --smart-money'
         })

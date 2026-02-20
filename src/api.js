@@ -981,65 +981,6 @@ export class NansenAPI {
     });
   }
 
-  // ============= OHLCV Endpoints =============
-
-  async tokenOhlcv(params = {}) {
-    const { tokenAddress, chain = 'solana', from, to, resolution = '1h', days = 7 } = params;
-    if (tokenAddress) {
-      const validation = validateTokenAddress(tokenAddress, chain);
-      if (!validation.valid) throw new NansenError(validation.error, validation.code);
-    }
-    if (!tokenAddress) {
-      throw new NansenError('Token address is required', ErrorCode.MISSING_PARAM);
-    }
-
-    // Calculate date range
-    const toDate = to ? new Date(to) : new Date();
-    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - days * 24 * 60 * 60 * 1000);
-
-    const dateRange = {
-      from: fromDate.toISOString(),
-      to: toDate.toISOString()
-    };
-
-    // Determine if low or high timeframe based on resolution
-    const highTimeframeTypes = ['day', 'week', 'month', 'year'];
-    const lowTimeframeMinutes = {
-      '1m': 1, '5m': 5, '10m': 10, '15m': 15, '30m': 30,
-      '1h': 60, '2h': 120, '4h': 240, '6h': 360, '12h': 720
-    };
-
-    if (highTimeframeTypes.includes(resolution)) {
-      // High timeframe: day, week, month, year
-      return this.request('/api/beta/tgm/prices/high-timeframe', {
-        parameters: {
-          tokenAddress,
-          chain,
-          date: dateRange,
-          inputResolutionType: resolution,
-          inputResolution: 1
-        }
-      });
-    } else {
-      // Low timeframe: minutes-based
-      const minutes = lowTimeframeMinutes[resolution];
-      if (!minutes) {
-        throw new NansenError(
-          `Invalid resolution: ${resolution}. Use: ${Object.keys(lowTimeframeMinutes).join(', ')}, day, week, month, year`,
-          ErrorCode.INVALID_PARAMS
-        );
-      }
-      return this.request('/api/beta/tgm/prices/low-timeframe', {
-        parameters: {
-          tokenAddress,
-          chain,
-          date: dateRange,
-          minutesResolution: minutes
-        }
-      });
-    }
-  }
-
   // ============= Perp Endpoints =============
 
   async perpScreener(params = {}) {
