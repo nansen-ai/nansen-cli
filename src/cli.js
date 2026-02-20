@@ -3,7 +3,7 @@
  * Extracted from index.js for coverage
  */
 
-import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
+import { NansenAPI, NansenError, ErrorCode, PrivyAPI, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
 import fs from 'fs';
 import { getUpdateNotification, scheduleUpdateCheck } from './update-check.js';
 import { createRequire } from 'module';
@@ -276,6 +276,64 @@ export const SCHEMA = {
             filters: { type: 'object' }
           },
           returns: ['address', 'address_label', 'realized_pnl', 'unrealized_pnl', 'total_pnl', 'trade_count', 'win_rate']
+        }
+      }
+    },
+    'wallet': {
+      description: 'Privy agentic wallet management — create and manage agent-controlled wallets',
+      subcommands: {
+        'create': {
+          description: 'Create a new agent wallet',
+          options: {
+            'chain-type': { type: 'string', default: 'ethereum', description: 'Chain type: ethereum, solana, cosmos, sui, aptos, ton, etc.' },
+            'policy': { type: 'string', description: 'Policy ID to attach' }
+          },
+          returns: ['id', 'address', 'chain_type', 'policy_ids', 'created_at']
+        },
+        'list': {
+          description: 'List all agent wallets',
+          options: {
+            'chain-type': { type: 'string', description: 'Filter by chain type' },
+            limit: { type: 'number', default: 100 }
+          },
+          returns: ['id', 'address', 'chain_type', 'policy_ids', 'created_at']
+        },
+        'get': {
+          description: 'Get wallet details',
+          options: {
+            id: { type: 'string', required: true, description: 'Wallet ID' }
+          },
+          returns: ['id', 'address', 'chain_type', 'policy_ids', 'created_at']
+        },
+        'balance': {
+          description: 'Get wallet balance',
+          options: {
+            id: { type: 'string', required: true, description: 'Wallet ID' }
+          },
+          returns: ['balance', 'currency']
+        },
+        'delete': {
+          description: 'Delete a wallet',
+          options: {
+            id: { type: 'string', required: true, description: 'Wallet ID' }
+          },
+          returns: ['success']
+        },
+        'create-policy': {
+          description: 'Create a spending policy for wallets',
+          options: {
+            name: { type: 'string', required: true, description: 'Policy name' },
+            'chain-type': { type: 'string', default: 'ethereum', description: 'Chain type' },
+            rules: { type: 'object', description: 'Policy rules as JSON array' }
+          },
+          returns: ['id', 'name', 'chain_type', 'rules']
+        },
+        'get-policy': {
+          description: 'Get policy details',
+          options: {
+            id: { type: 'string', required: true, description: 'Policy ID' }
+          },
+          returns: ['id', 'name', 'chain_type', 'rules']
         }
       }
     },
@@ -1302,6 +1360,72 @@ export function buildCommands(deps = {}) {
       return handlers[subcommand]();
     },
 
+    'wallet': async (args, apiInstance, flags, options) => {
+      const subcommand = args[0] || 'help';
+
+      if (subcommand === 'help') {
+        return {
+          commands: ['create', 'list', 'get', 'balance', 'delete', 'create-policy', 'get-policy'],
+          description: 'Privy agentic wallet management',
+          example: 'nansen wallet create --chain-type ethereum',
+          setup: 'Requires PRIVY_APP_ID and PRIVY_APP_SECRET env vars. Get them from https://dashboard.privy.io'
+        };
+      }
+
+      let privy;
+      try {
+        privy = new PrivyAPI();
+      } catch (e) {
+        return { error: e.message, hint: 'Set PRIVY_APP_ID and PRIVY_APP_SECRET environment variables. Get them from https://dashboard.privy.io' };
+      }
+
+      const walletId = options.id || args[1];
+
+      const handlers = {
+        'create': () => privy.createWallet({
+          chainType: options['chain-type'] || 'ethereum',
+          policyIds: options.policy ? [options.policy] : undefined
+        }),
+        'list': () => privy.listWallets({
+          chainType: options['chain-type'],
+          limit: options.limit ? parseInt(options.limit) : 100
+        }),
+        'get': () => {
+          if (!walletId) return { error: 'Wallet ID required. Usage: nansen wallet get --id <wallet_id>' };
+          return privy.getWallet(walletId);
+        },
+        'balance': () => {
+          if (!walletId) return { error: 'Wallet ID required. Usage: nansen wallet balance --id <wallet_id>' };
+          return privy.getBalance(walletId);
+        },
+        'delete': () => {
+          if (!walletId) return { error: 'Wallet ID required. Usage: nansen wallet delete --id <wallet_id>' };
+          return privy.deleteWallet(walletId);
+        },
+        'create-policy': () => privy.createPolicy({
+          name: options.name,
+          chainType: options['chain-type'] || 'ethereum',
+          rules: options.rules || []
+        }),
+        'get-policy': () => {
+          const policyId = options.id || args[1];
+          if (!policyId) return { error: 'Policy ID required. Usage: nansen wallet get-policy --id <policy_id>' };
+          return privy.getPolicy(policyId);
+        },
+        'help': () => ({
+          commands: ['create', 'list', 'get', 'balance', 'delete', 'create-policy', 'get-policy'],
+          description: 'Privy agentic wallet management',
+          example: 'nansen wallet create --chain-type ethereum'
+        })
+      };
+
+      if (!handlers[subcommand]) {
+        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+      }
+
+      return handlers[subcommand]();
+    },
+
     'search': async (args, apiInstance, flags, options) => {
       const query = args[0] || options.query;
       if (!query) {
@@ -1339,7 +1463,7 @@ export function buildCommands(deps = {}) {
 }
 
 // Commands that don't require API authentication
-export const NO_AUTH_COMMANDS = ['login', 'logout', 'help', 'schema', 'cache'];
+export const NO_AUTH_COMMANDS = ['login', 'logout', 'help', 'schema', 'cache', 'wallet'];
 
 // Command aliases for convenience
 export const COMMAND_ALIASES = {
@@ -1537,12 +1661,12 @@ export async function runCLI(rawArgs, deps = {}) {
   if (NO_AUTH_COMMANDS.includes(command)) {
     const result = await commands[command](subArgs, null, flags, options);
     
-    // Schema command returns data that should be output
-    if (command === 'schema' && result) {
+    // Schema and wallet commands return data that should be output
+    if ((command === 'schema' || command === 'wallet') && result) {
       const formatted = formatOutput(result, { pretty, table: false });
       output(formatted.text);
       notify();
-      return { type: 'schema', data: result };
+      return { type: command, data: result };
     }
 
     notify();
