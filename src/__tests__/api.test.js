@@ -231,6 +231,8 @@ describe('NansenAPI', () => {
     // Verify method and headers
     expect(options.method).toBe('POST');
     expect(options.headers['Content-Type']).toBe('application/json');
+    expect(options.headers['X-Client-Type']).toBe('nansen-cli');
+    expect(options.headers['X-Client-Version']).toMatch(/^\d+\.\d+\.\d+/);
     expect(options.headers['apikey']).toBe('test-api-key');
     
     // Verify body contains expected fields

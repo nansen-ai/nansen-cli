@@ -9,6 +9,10 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const { version: packageVersion } = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')
+);
+
 // ============= Error Codes =============
 
 /**
@@ -428,6 +432,8 @@ export class NansenAPI {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'X-Client-Type': 'nansen-cli',
+            'X-Client-Version': packageVersion,
             ...(this.apiKey ? { 'apikey': this.apiKey } : {}),
             ...options.headers
           },
