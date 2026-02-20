@@ -53,6 +53,9 @@ const DOCUMENTED_ENDPOINTS = {
   portfolio: [
     { name: 'defi-holdings', method: 'portfolioDefiHoldings', endpoint: '/api/v1/portfolio/defi-holdings' },
   ],
+  search: [
+    { name: 'general-search', method: 'generalSearch', endpoint: '/api/v1/search/general' },
+  ],
 };
 
 // Endpoints that are documented but return 404 (confirmed non-existent)
@@ -105,6 +108,14 @@ describe('API Endpoint Coverage', () => {
     }
   });
 
+  describe('Search Endpoints', () => {
+    for (const ep of DOCUMENTED_ENDPOINTS.search) {
+      it(`should have ${ep.name} method`, () => {
+        expect(typeof api[ep.method]).toBe('function');
+      });
+    }
+  });
+
   describe('Coverage Summary', () => {
     it('should report implemented endpoints', () => {
       const implemented = [
@@ -113,6 +124,7 @@ describe('API Endpoint Coverage', () => {
         ...DOCUMENTED_ENDPOINTS.tokenGodMode,
         ...DOCUMENTED_ENDPOINTS.composite,
         ...DOCUMENTED_ENDPOINTS.portfolio,
+        ...DOCUMENTED_ENDPOINTS.search,
       ];
       
       console.log(`\n📊 API Coverage Summary:`);

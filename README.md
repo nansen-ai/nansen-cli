@@ -123,6 +123,21 @@ Deep analytics for any token.
 |------------|-------------|
 | `defi` | DeFi holdings across protocols |
 
+### `search` - Search
+
+Search for tokens and entities across Nansen.
+
+```bash
+nansen search "uniswap" --pretty
+nansen search "uniswap" --type token --chain ethereum
+```
+
+| Option | Description |
+|--------|-------------|
+| `--type` | Filter by result type: `token`, `entity`, or `any` (default) |
+| `--chain` | Filter by chain |
+| `--limit` | Max results, 1-50 (default: 25) |
+
 ### `schema` - Schema Discovery
 
 Output JSON schema for agent introspection. No API key required.
@@ -258,7 +273,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 | Profiler | 11 | 100% |
 | Token God Mode | 12 | 100% |
 | Portfolio | 1 | 100% |
-| **Total** | **30** | **100%** |
+| Search | 1 | 100% |
+| **Total** | **31** | **100%** |
 
 ## License
 

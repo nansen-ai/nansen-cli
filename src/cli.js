@@ -279,6 +279,16 @@ export const SCHEMA = {
         }
       }
     },
+    'search': {
+      description: 'Search for tokens and entities across Nansen',
+      options: {
+        query: { type: 'string', required: true, description: 'Search query (token name, symbol, address, or entity)' },
+        type: { type: 'string', default: 'any', enum: ['token', 'entity', 'any'], description: 'Result type filter' },
+        chain: { type: 'string', description: 'Filter by chain (e.g., ethereum, solana)' },
+        limit: { type: 'number', default: 25, description: 'Max results (1-50)' }
+      },
+      returns: ['tokens[name, symbol, chain, address, price, volume_24h, market_cap, rank]', 'entities[name, tags, rank]', 'total_results']
+    },
     'points': {
       description: 'Nansen Points analytics',
       subcommands: {
@@ -1292,6 +1302,15 @@ export function buildCommands(deps = {}) {
       }
 
       return handlers[subcommand]();
+    },
+
+    'search': async (args, apiInstance, flags, options) => {
+      return apiInstance.generalSearch({
+        query: args[0] || options.query,
+        resultType: options.type,
+        chain: options.chain,
+        limit: options.limit
+      });
     },
 
     'points': async (args, apiInstance, flags, options) => {
