@@ -296,36 +296,35 @@ export function validateTokenAddress(tokenAddress, chain = 'solana') {
 }
 
 function loadConfig() {
-  // Priority: 1. Environment variables, 2. ~/.nansen/config.json, 3. Local config.json
-  
-  // Check environment variables first (highest priority)
-  if (process.env.NANSEN_API_KEY) {
-    return {
-      apiKey: process.env.NANSEN_API_KEY,
-      baseUrl: process.env.NANSEN_BASE_URL || 'https://api.nansen.ai'
-    };
-  }
-  
-  // Check ~/.nansen/config.json (from `nansen login`)
+  // Base config from files, then env vars override individual fields
+  let config = null;
+
+  // ~/.nansen/config.json (from `nansen login`)
   if (fs.existsSync(CONFIG_FILE)) {
-    try {
-      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-    } catch (e) {
-      // Ignore parse errors, continue to next option
+    try { config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (e) {}
+  }
+
+  // Local config.json (for development)
+  if (!config) {
+    const localConfig = path.join(__dirname, '..', 'config.json');
+    if (fs.existsSync(localConfig)) {
+      config = JSON.parse(fs.readFileSync(localConfig, 'utf8'));
     }
   }
-  
-  // Check local config.json (for development)
-  const localConfig = path.join(__dirname, '..', 'config.json');
-  if (fs.existsSync(localConfig)) {
-    return JSON.parse(fs.readFileSync(localConfig, 'utf8'));
+
+  if (!config) {
+    config = { apiKey: null, baseUrl: 'https://api.nansen.ai' };
   }
-  
-  // No config found
-  return {
-    apiKey: null,
-    baseUrl: 'https://api.nansen.ai'
-  };
+
+  // Env vars override individual fields
+  if (process.env.NANSEN_API_KEY) {
+    config.apiKey = process.env.NANSEN_API_KEY;
+  }
+  if (process.env.NANSEN_BASE_URL) {
+    config.baseUrl = process.env.NANSEN_BASE_URL;
+  }
+
+  return config;
 }
 
 const config = loadConfig();
