@@ -20,7 +20,7 @@ function getWalletConfigPath() {
 }
 
 // Encryption parameters
-const SCRYPT_N = 16384;
+const SCRYPT_N = 131072;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const SCRYPT_KEYLEN = 32;
@@ -174,6 +174,7 @@ function deriveKey(password, salt) {
     N: SCRYPT_N,
     r: SCRYPT_R,
     p: SCRYPT_P,
+    maxmem: 256 * 1024 * 1024, // 256MB — needed for N=131072
   });
 }
 
@@ -253,10 +254,15 @@ export function generateEvmWallet() {
       : addressHex[i];
   }
 
-  return {
+  const result = {
     privateKey: privateKey.toString('hex'),
     address: checksummed,
   };
+
+  // Zero sensitive buffers (strings remain in heap — JS limitation)
+  privateKey.fill(0);
+
+  return result;
 }
 
 /**
@@ -293,10 +299,20 @@ function ensureWalletsDir() {
   }
 }
 
+function warnIfInsecurePerms(filePath) {
+  try {
+    const mode = fs.statSync(filePath).mode & 0o777;
+    if (mode & 0o077) { // group or other has any access
+      console.error(`⚠️  Warning: ${filePath} has insecure permissions (${mode.toString(8)}). Run: chmod 600 ${filePath}`);
+    }
+  } catch { /* ignore stat errors */ }
+}
+
 function getWalletConfig() {
   if (!fs.existsSync(getWalletConfigPath())) {
     return { defaultWallet: null, passwordHash: null };
   }
+  warnIfInsecurePerms(getWalletConfigPath());
   return JSON.parse(fs.readFileSync(getWalletConfigPath(), 'utf8'));
 }
 
@@ -305,7 +321,16 @@ function saveWalletConfig(config) {
   fs.writeFileSync(getWalletConfigPath(), JSON.stringify(config, null, 2), { mode: 0o600 });
 }
 
+const WALLET_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
+function validateWalletName(name) {
+  if (!name || !WALLET_NAME_RE.test(name)) {
+    throw new Error('Wallet name must be 1-64 characters: letters, numbers, hyphens, underscores only');
+  }
+}
+
 function getWalletFile(name) {
+  validateWalletName(name);
   return path.join(getWalletsDir(), `${name}.json`);
 }
 
@@ -316,9 +341,9 @@ export function verifyPassword(password, config) {
   if (!config.passwordHash) return true; // No password set yet
   const { salt, hash } = config.passwordHash;
   const derived = crypto.scryptSync(password, Buffer.from(salt, 'hex'), 32, {
-    N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P,
+    N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P, maxmem: 256 * 1024 * 1024,
   });
-  return derived.toString('hex') === hash;
+  return crypto.timingSafeEqual(derived, Buffer.from(hash, 'hex'));
 }
 
 /**
@@ -327,7 +352,7 @@ export function verifyPassword(password, config) {
 function hashPassword(password) {
   const salt = crypto.randomBytes(16);
   const hash = crypto.scryptSync(password, salt, 32, {
-    N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P,
+    N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P, maxmem: 256 * 1024 * 1024,
   });
   return { salt: salt.toString('hex'), hash: hash.toString('hex') };
 }
@@ -570,9 +595,9 @@ export function buildWalletCommands(deps = {}) {
       const handlers = {
         'create': async () => {
           const name = options.name || args[1] || 'default';
-          const password = options.password || await promptPassword('Enter wallet password: ', deps);
-          if (!password || password.length < 8) {
-            log('❌ Password must be at least 8 characters');
+          const password = process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps);
+          if (!password || password.length < 12) {
+            log('❌ Password must be at least 12 characters');
             exit(1);
             return;
           }
@@ -647,7 +672,7 @@ export function buildWalletCommands(deps = {}) {
             exit(1);
             return;
           }
-          const password = options.password || await promptPassword('Enter wallet password: ', deps);
+          const password = process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps);
           try {
             const result = exportWallet(name, password);
             log(`\n⚠️  Private keys for "${result.name}" — do not share!\n`);
@@ -689,7 +714,7 @@ export function buildWalletCommands(deps = {}) {
             exit(1);
             return;
           }
-          const password = options.password || await promptPassword('Enter wallet password: ', deps);
+          const password = process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps);
           try {
             const result = deleteWallet(name, password);
             log(`✓ Wallet "${result.deleted}" deleted`);
@@ -720,7 +745,9 @@ COMMANDS:
 
 OPTIONS:
   --name <label>             Wallet name (default: "default")
-  --password <pass>          Password (or enter interactively)
+
+ENVIRONMENT:
+  NANSEN_WALLET_PASSWORD     Password for non-interactive use (e.g. CI/scripts)
 
 EXAMPLES:
   nansen wallet create --name trading

@@ -177,7 +177,7 @@ describe('Solana keypair integrity', () => {
 });
 
 describe('wallet CRUD', () => {
-  const PASSWORD = 'test-password-123';
+  const PASSWORD = 'test-password-123!!';
 
   it('should create a wallet', () => {
     const result = createWallet('my-wallet', PASSWORD);
@@ -226,6 +226,13 @@ describe('wallet CRUD', () => {
     const result = deleteWallet('to-delete', PASSWORD);
     expect(result.deleted).toBe('to-delete');
     expect(listWallets().wallets).toHaveLength(0);
+  });
+
+  it('should reject path traversal in wallet names', () => {
+    expect(() => createWallet('../../etc/evil', PASSWORD)).toThrow('Wallet name must be');
+    expect(() => createWallet('foo/bar', PASSWORD)).toThrow('Wallet name must be');
+    expect(() => createWallet('', PASSWORD)).toThrow('Wallet name must be');
+    expect(() => createWallet('.hidden', PASSWORD)).toThrow('Wallet name must be');
   });
 
   it('should reject duplicate wallet names', () => {
