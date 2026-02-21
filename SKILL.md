@@ -12,6 +12,10 @@ compatibility: Requires Node.js 18+. Needs NANSEN_API_KEY environment variable o
 
 Command-line interface for the [Nansen API](https://docs.nansen.ai) - onchain analytics for crypto investors and AI agents.
 
+## CLI vs Direct API
+
+If your agent has HTTP access (curl, fetch), you can skip the CLI and hit the [Nansen REST API](https://docs.nansen.ai) directly with `apiKey` header auth. The CLI is most useful for terminal-native agents (Claude Code, Codex, Cursor) that benefit from `--pretty`, `--table`, `--fields`, built-in retries, and schema introspection.
+
 ## Setup
 
 ```bash

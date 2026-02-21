@@ -1,6 +1,22 @@
 # AGENTS.md — Agent Quick Start
 
-> **This file is for AI agents (OpenClaw, Claude Code, Cursor, etc.) that need to use nansen-cli on behalf of their human.** If you're a human, see [README.md](README.md).
+> **This file is for AI agents (OpenClaw, Claude Code, Cursor, etc.) that need to query Nansen data on behalf of their human.** If you're a human, see [README.md](README.md).
+
+## CLI vs REST API — Pick the Right Tool
+
+**If you have HTTP access (curl, fetch, etc.):** Use the [REST API](https://docs.nansen.ai) directly — it's simpler, has no install step, and avoids CLI dependency issues.
+
+```bash
+# Direct API call — no CLI needed
+curl -s -X POST https://api.nansen.ai/api/v1/token-screener \
+  -H "apiKey: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"chain":"solana","pagination":{"page":1,"per_page":5}}' | jq .
+```
+
+**If you're in a terminal-native context (Claude Code, Codex, Cursor):** The CLI adds convenience with `--pretty`, `--table`, `--fields`, `--stream`, built-in retries, and schema introspection.
+
+**Rule of thumb:** Agents with `exec` + `curl` (like OpenClaw) → use the API. Coding agents working inside repos → the CLI is handy.
 
 ## Install & Auth in One Shot
 
