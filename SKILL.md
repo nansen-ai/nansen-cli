@@ -12,20 +12,39 @@ compatibility: Requires Node.js 18+. Needs NANSEN_API_KEY environment variable o
 
 Command-line interface for the [Nansen API](https://docs.nansen.ai) - onchain analytics for crypto investors and AI agents.
 
+## CLI vs Direct API
+
+If your agent has HTTP access (curl, fetch), you can skip the CLI and hit the [Nansen REST API](https://docs.nansen.ai) directly with `apiKey` header auth. The CLI is most useful for terminal-native agents (Claude Code, Codex, Cursor) that benefit from `--pretty`, `--table`, `--fields`, built-in retries, and schema introspection.
+
 ## Setup
 
 ```bash
 # Install globally
 npm install -g nansen-cli
 
-# Authenticate (interactive)
-nansen login
+# Authenticate — pick the method that works for your context:
 
-# Or set environment variable
+# Option A: Non-interactive (best for agents — no prompts, no wasted credits)
+mkdir -p ~/.nansen && echo '{"apiKey":"YOUR_KEY","baseUrl":"https://api.nansen.ai"}' > ~/.nansen/config.json && chmod 600 ~/.nansen/config.json
+
+# Option B: Environment variable (good for CI/scripts)
 export NANSEN_API_KEY=your-api-key
+
+# Option C: Interactive login (burns 1 credit to validate)
+nansen login
 ```
 
 Get your API key at [app.nansen.ai/api](https://app.nansen.ai/api).
+
+### Verify Installation
+
+```bash
+# Free check (no API key needed):
+nansen schema | head -1
+
+# Full check (uses 1 credit):
+nansen token screener --chain solana --limit 1
+```
 
 ## Commands
 
@@ -95,6 +114,16 @@ Get the full API schema for programmatic use:
 nansen schema --pretty
 nansen schema smart-money --pretty
 ```
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| `command not found: nansen` | Run `npm install -g nansen-cli` or use `npx nansen-cli` |
+| `UNAUTHORIZED` after login | Check `cat ~/.nansen/config.json` — key may not have saved. Write it directly. |
+| Login hangs or fails | Skip `nansen login`, write config directly (see Setup Option A above) |
+| Huge JSON response | Use `--fields` to select only needed columns |
+| Perp endpoints empty | Use `--symbol BTC` not `--token`. Perps are Hyperliquid-only. |
 
 ## Known Endpoint Issues
 

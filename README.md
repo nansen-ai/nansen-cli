@@ -263,6 +263,8 @@ NANSEN_API_KEY=your-key npm run test:live
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 
+**AI agents:** See [AGENTS.md](AGENTS.md) for the agent quick-start (install, auth, patterns, troubleshooting).
+
 **AI contributors:** See [CLAUDE.md](CLAUDE.md) for agent-specific guidance on contributing to this repo.
 
 ## API Coverage
