@@ -21,7 +21,7 @@ npm install -g nansen-cli
 # Authenticate — pick the method that works for your context:
 
 # Option A: Non-interactive (best for agents — no prompts, no wasted credits)
-mkdir -p ~/.nansen && echo '{"apiKey":"YOUR_KEY","baseUrl":"https://api.nansen.ai"}' > ~/.nansen/config.json
+mkdir -p ~/.nansen && echo '{"apiKey":"YOUR_KEY","baseUrl":"https://api.nansen.ai"}' > ~/.nansen/config.json && chmod 600 ~/.nansen/config.json
 
 # Option B: Environment variable (good for CI/scripts)
 export NANSEN_API_KEY=your-api-key
@@ -36,7 +36,7 @@ Get your API key at [app.nansen.ai/api](https://app.nansen.ai/api).
 
 ```bash
 # Free check (no API key needed):
-nansen schema --pretty | head -3
+nansen schema | head -1
 
 # Full check (uses 1 credit):
 nansen token screener --chain solana --limit 1

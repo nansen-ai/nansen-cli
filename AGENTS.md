@@ -16,7 +16,7 @@ nansen login
 export NANSEN_API_KEY=<key>
 
 # Method 3: Config file (write directly — no validation call burned)
-mkdir -p ~/.nansen && echo '{"apiKey":"<key>","baseUrl":"https://api.nansen.ai"}' > ~/.nansen/config.json
+mkdir -p ~/.nansen && echo '{"apiKey":"<key>","baseUrl":"https://api.nansen.ai"}' > ~/.nansen/config.json && chmod 600 ~/.nansen/config.json
 ```
 
 **Get an API key:** [app.nansen.ai/api](https://app.nansen.ai/api)
@@ -35,7 +35,7 @@ mkdir -p ~/.nansen && echo '{"apiKey":"<key>","baseUrl":"https://api.nansen.ai"}
 
 ```bash
 # This is cheap and fast:
-nansen schema --pretty | head -5
+nansen schema | head -1
 # Expected: {"version":"1.x.x","commands":{...}}
 
 # This burns a credit but proves API access:
@@ -91,6 +91,8 @@ nansen token dex-trades --chain solana --limit 100 --stream
 ## Chains Quick Reference
 
 `ethereum` `solana` `base` `bnb` `arbitrum` `polygon` `optimism` `avalanche` `linea` `scroll` `zksync` `mantle` `ronin` `sei` `sonic` `monad` `hyperevm`
+
+> Run `nansen schema` to get the current chain list.
 
 ## When Something Goes Wrong
 
