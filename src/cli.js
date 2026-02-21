@@ -4,6 +4,7 @@
  */
 
 import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
+import { buildWalletCommands } from './wallet.js';
 import fs from 'fs';
 import { getUpdateNotification, scheduleUpdateCheck } from './update-check.js';
 import { createRequire } from 'module';
@@ -839,6 +840,7 @@ COMMANDS:
   login          Save your API key (interactive)
   logout         Remove saved API key
   schema         Output JSON schema for all commands (for agent introspection)
+  wallet         Local wallet management (create, list, show, export, default, delete)
   cache          Cache management (clear)
   smart-money    Smart Money analytics (netflow, dex-trades, perp-trades, holdings, dcas, historical-holdings)
   profiler       Wallet profiling (balance, labels, transactions, pnl, pnl-summary, search,
@@ -1346,7 +1348,7 @@ export function buildCommands(deps = {}) {
 }
 
 // Commands that don't require API authentication
-export const NO_AUTH_COMMANDS = ['login', 'logout', 'help', 'schema', 'cache'];
+export const NO_AUTH_COMMANDS = ['login', 'logout', 'help', 'schema', 'cache', 'wallet'];
 
 // Command aliases for convenience
 export const COMMAND_ALIASES = {
@@ -1489,7 +1491,7 @@ export async function runCLI(rawArgs, deps = {}) {
   scheduleUpdateCheck();
   const notify = () => { if (updateNotification) errorOutput(updateNotification); };
 
-  const commands = { ...buildCommands(deps), ...commandOverrides };
+  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);
