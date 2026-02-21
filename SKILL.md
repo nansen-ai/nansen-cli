@@ -12,20 +12,39 @@ compatibility: Requires Node.js 18+. Needs NANSEN_API_KEY environment variable o
 
 Command-line interface for the [Nansen API](https://docs.nansen.ai) - onchain analytics for crypto investors and AI agents.
 
+## CLI vs Direct API
+
+If your agent has HTTP access (curl, fetch), you can skip the CLI and hit the [Nansen REST API](https://docs.nansen.ai) directly with `apiKey` header auth. The CLI is most useful for terminal-native agents (Claude Code, Codex, Cursor) that benefit from `--pretty`, `--table`, `--fields`, built-in retries, and schema introspection.
+
 ## Setup
 
 ```bash
 # Install globally
 npm install -g nansen-cli
 
-# Authenticate (interactive)
-nansen login
+# Authenticate — pick the method that works for your context:
 
-# Or set environment variable
+# Option A: Non-interactive (best for agents — no prompts, no wasted credits)
+mkdir -p ~/.nansen && echo '{"apiKey":"YOUR_KEY","baseUrl":"https://api.nansen.ai"}' > ~/.nansen/config.json && chmod 600 ~/.nansen/config.json
+
+# Option B: Environment variable (good for CI/scripts)
 export NANSEN_API_KEY=your-api-key
+
+# Option C: Interactive login (burns 1 credit to validate)
+nansen login
 ```
 
 Get your API key at [app.nansen.ai/api](https://app.nansen.ai/api).
+
+### Verify Installation
+
+```bash
+# Free check (no API key needed):
+nansen schema | head -1
+
+# Full check (uses 1 credit):
+nansen token screener --chain solana --limit 1
+```
 
 ## Commands
 
@@ -82,7 +101,7 @@ nansen portfolio defi --wallet 0x123...
 
 ## Supported Chains
 
-ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, linea, scroll, zksync, mantle, ronin, sei, sonic, monad, hyperevm
+ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, linea, scroll, mantle, ronin, sei, plasma, sonic, monad, hyperevm, iotaevm
 
 ## Smart Money Labels
 
@@ -96,24 +115,9 @@ nansen schema --pretty
 nansen schema smart-money --pretty
 ```
 
-## Known Endpoint Issues
+## Troubleshooting
 
-### Chain/Token-Specific Limitations
-- `token holders --smart-money` — Fails with `UNSUPPORTED_FILTER` for tokens without smart money tracking (e.g., WCT on Optimism). Not all tokens have smart money data. Do not retry.
-- `token flow-intelligence` — May return all-zero flows for tokens without significant smart money activity. This is normal, not an error.
-
-### Credit Management
-- `profiler labels` and `profiler balance` consume credits. Budget ~20 calls per session.
-- `Insufficient credits` (403, code `CREDITS_EXHAUSTED`) is a hard stop — no retry will help.
-- Check your Nansen dashboard for credit balance: [app.nansen.ai](https://app.nansen.ai).
-- Run balance checks in batches of 3-4 to avoid burning credits on rate-limit retries.
-
-### Error Codes to Watch
-| Code | Meaning | Action |
-|------|---------|--------|
-| `UNSUPPORTED_FILTER` | Filter not available for this token/chain | Remove the filter and retry, or skip this token |
-| `CREDITS_EXHAUSTED` | API credits depleted | Stop all API calls. Check dashboard. |
-| `RATE_LIMITED` | Too many requests (429) | Wait and retry (automatic with default retry) |
+See [AGENTS.md — Troubleshooting](AGENTS.md#troubleshooting) for the full troubleshooting guide, including error codes, known endpoint quirks, and pagination gotchas.
 
 ## Examples
 
