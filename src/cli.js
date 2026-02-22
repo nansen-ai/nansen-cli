@@ -309,6 +309,80 @@ export const SCHEMA = {
           returns: ['rank', 'address', 'address_label', 'points', 'tier']
         }
       }
+    },
+    'wallet': {
+      description: 'Privy agentic wallet management — create, list, balance, send, sign',
+      subcommands: {
+        'create': {
+          description: 'Create a new Privy server wallet',
+          options: {
+            'chain-type': { type: 'string', default: 'ethereum', description: 'Chain type: ethereum or solana' },
+            'policy-id': { type: 'string', description: 'Policy ID to attach (recommended)' }
+          },
+          returns: ['id', 'address', 'chain_type', 'policy_ids']
+        },
+        'list': {
+          description: 'List all Privy wallets',
+          options: {
+            'chain-type': { type: 'string', description: 'Filter by chain type' },
+            limit: { type: 'number', default: 20, description: 'Max results' }
+          },
+          returns: ['id', 'address', 'chain_type', 'policy_ids']
+        },
+        'show': {
+          description: 'Show wallet details',
+          options: {
+            id: { type: 'string', required: true, description: 'Wallet ID' }
+          },
+          returns: ['id', 'address', 'chain_type', 'policy_ids', 'created_at']
+        },
+        'balance': {
+          description: 'Check wallet balance',
+          options: {
+            id: { type: 'string', required: true, description: 'Wallet ID' }
+          },
+          returns: ['balance']
+        },
+        'delete': {
+          description: 'Delete a wallet',
+          options: {
+            id: { type: 'string', required: true, description: 'Wallet ID' }
+          }
+        },
+        'send': {
+          description: 'Send a transaction from a Privy wallet',
+          options: {
+            id: { type: 'string', required: true, description: 'Wallet ID' },
+            to: { type: 'string', required: true, description: 'Recipient address' },
+            value: { type: 'string', required: true, description: 'Amount in wei (ETH) or lamports (SOL)' },
+            chain: { type: 'string', default: 'base', description: 'Chain name (base, ethereum, solana, etc.)' },
+            data: { type: 'string', description: 'Hex-encoded calldata for contract interaction' }
+          },
+          returns: ['hash', 'caip2']
+        },
+        'sign': {
+          description: 'Sign a message with a Privy wallet',
+          options: {
+            id: { type: 'string', required: true, description: 'Wallet ID' },
+            message: { type: 'string', required: true, description: 'Message to sign (hex-encoded)' }
+          },
+          returns: ['signature']
+        },
+        'policy-create': {
+          description: 'Create a spending policy for wallets',
+          options: {
+            name: { type: 'string', required: true, description: 'Policy name' },
+            'chain-type': { type: 'string', default: 'ethereum', description: 'Chain type' },
+            'max-value': { type: 'string', description: 'Max transaction value in wei (spending limit)' },
+            'allowed-chain': { type: 'string', description: 'Restrict to specific chain ID (e.g., 8453 for Base)' }
+          },
+          returns: ['id', 'name', 'rules']
+        },
+        'policy-list': {
+          description: 'List all policies',
+          returns: ['id', 'name', 'chain_type', 'rules']
+        }
+      }
     }
   },
   globalOptions: {
@@ -850,6 +924,7 @@ COMMANDS:
   portfolio      Portfolio analytics (defi)
   perp           Perpetual futures analytics (screener, leaderboard)
   points         Nansen Points analytics (leaderboard)
+  wallet         Privy agentic wallet management (create, list, balance, send, sign, policies)
   help           Show this help message
 
 GLOBAL OPTIONS:
@@ -1341,12 +1416,182 @@ export function buildCommands(deps = {}) {
       }
 
       return handlers[subcommand]();
+    },
+
+    'wallet': async (args, apiInstance, flags, options) => {
+      const { PrivyWalletProvider, CHAIN_CAIP2 } = await import('./privy.js');
+      const subcommand = args[0] || 'help';
+
+      let privy;
+      try {
+        privy = new PrivyWalletProvider();
+      } catch (e) {
+        if (subcommand === 'help') {
+          return {
+            commands: ['create', 'list', 'show', 'balance', 'delete', 'send', 'sign', 'policy-create', 'policy-list'],
+            description: 'Privy agentic wallet management',
+            setup: 'Set PRIVY_APP_ID and PRIVY_APP_SECRET from https://dashboard.privy.io',
+            examples: [
+              'nansen wallet create --chain-type ethereum',
+              'nansen wallet create --chain-type solana',
+              'nansen wallet list',
+              'nansen wallet balance --id <wallet_id>',
+              'nansen wallet send --id <wallet_id> --to 0x... --value 1000000 --chain base',
+              'nansen wallet policy-create --name "Agent limits" --max-value 50000000000000000 --allowed-chain 8453'
+            ]
+          };
+        }
+        return { error: e.message };
+      }
+
+      const handlers = {
+        'help': () => ({
+          commands: ['create', 'list', 'show', 'balance', 'delete', 'send', 'sign', 'policy-create', 'policy-list'],
+          description: 'Privy agentic wallet management',
+          examples: [
+            'nansen wallet create --chain-type ethereum',
+            'nansen wallet create --chain-type solana',
+            'nansen wallet list',
+            'nansen wallet balance --id <wallet_id>',
+            'nansen wallet send --id <wallet_id> --to 0x... --value 1000000 --chain base',
+            'nansen wallet policy-create --name "Agent limits" --max-value 50000000000000000 --allowed-chain 8453'
+          ]
+        }),
+
+        'create': async () => {
+          const chainType = options['chain-type'] || 'ethereum';
+          const policyIds = options['policy-id'] ? [options['policy-id']] : undefined;
+          const wallet = await privy.createWallet({ chainType, policyIds });
+          return {
+            id: wallet.id,
+            address: wallet.address,
+            chain_type: wallet.chain_type,
+            policy_ids: wallet.policy_ids || [],
+            hint: !policyIds ? 'Tip: create a policy with "nansen wallet policy-create" and attach it for safety' : undefined
+          };
+        },
+
+        'list': async () => {
+          const result = await privy.listWallets({
+            chainType: options['chain-type'],
+            limit: options.limit ? parseInt(options.limit) : 20
+          });
+          const wallets = result.data || result;
+          return Array.isArray(wallets)
+            ? { count: wallets.length, wallets: wallets.map(w => ({ id: w.id, address: w.address, chain_type: w.chain_type })) }
+            : result;
+        },
+
+        'show': async () => {
+          const id = options.id || args[1];
+          if (!id) return { error: 'Wallet ID required. Usage: nansen wallet show --id <wallet_id>' };
+          return privy.getWallet(id);
+        },
+
+        'balance': async () => {
+          const id = options.id || args[1];
+          if (!id) return { error: 'Wallet ID required. Usage: nansen wallet balance --id <wallet_id>' };
+          return privy.getBalance(id);
+        },
+
+        'delete': async () => {
+          const id = options.id || args[1];
+          if (!id) return { error: 'Wallet ID required. Usage: nansen wallet delete --id <wallet_id>' };
+          await privy.deleteWallet(id);
+          return { deleted: id };
+        },
+
+        'send': async () => {
+          const id = options.id || args[1];
+          const to = options.to;
+          const value = options.value;
+          const chain = options.chain || 'base';
+          const data = options.data;
+
+          if (!id || !to || !value) {
+            return { error: 'Required: --id, --to, --value. Usage: nansen wallet send --id <id> --to 0x... --value 1000000 --chain base' };
+          }
+
+          const caip2 = CHAIN_CAIP2[chain];
+          if (!caip2) {
+            return { error: `Unknown chain: ${chain}`, available: Object.keys(CHAIN_CAIP2) };
+          }
+
+          const transaction = { to, value: String(value) };
+          if (data) transaction.data = data;
+
+          return privy.sendTransaction(id, { caip2, transaction });
+        },
+
+        'sign': async () => {
+          const id = options.id || args[1];
+          const message = options.message;
+          if (!id || !message) {
+            return { error: 'Required: --id, --message. Usage: nansen wallet sign --id <id> --message 0x...' };
+          }
+          return privy.signMessage(id, { message });
+        },
+
+        'policy-create': async () => {
+          const name = options.name;
+          const chainType = options['chain-type'] || 'ethereum';
+          if (!name) return { error: 'Policy name required. Usage: nansen wallet policy-create --name "Agent limits"' };
+
+          const rules = [];
+
+          // Spending limit rule
+          if (options['max-value']) {
+            rules.push({
+              name: 'Spending limit',
+              method: 'eth_sendTransaction',
+              conditions: [{
+                field_source: 'ethereum_transaction',
+                field: 'value',
+                operator: 'lte',
+                value: String(options['max-value'])
+              }],
+              action: 'ALLOW'
+            });
+          }
+
+          // Chain restriction rule
+          if (options['allowed-chain']) {
+            rules.push({
+              name: 'Chain restriction',
+              method: 'eth_sendTransaction',
+              conditions: [{
+                field_source: 'ethereum_transaction',
+                field: 'chain_id',
+                operator: 'eq',
+                value: String(options['allowed-chain'])
+              }],
+              action: 'ALLOW'
+            });
+          }
+
+          if (rules.length === 0) {
+            return { error: 'At least one rule required. Use --max-value and/or --allowed-chain' };
+          }
+
+          return privy.createPolicy({ name, chainType, rules });
+        },
+
+        'policy-list': async () => {
+          return privy.listPolicies();
+        }
+      };
+
+      if (!handlers[subcommand]) {
+        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+      }
+
+      return handlers[subcommand]();
     }
   };
 }
 
 // Commands that don't require API authentication
-export const NO_AUTH_COMMANDS = ['login', 'logout', 'help', 'schema', 'cache'];
+export const NO_AUTH_COMMANDS = ['login', 'logout', 'help', 'schema', 'cache', 'wallet'];
 
 // Command aliases for convenience
 export const COMMAND_ALIASES = {
