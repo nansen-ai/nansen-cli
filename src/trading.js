@@ -648,7 +648,7 @@ EXAMPLES:
         }
 
         log('');
-        return { quoteId, response };
+        return undefined; // Output already printed above
 
       } catch (err) {
         log(`❌ ${err.message}`);
@@ -808,8 +808,7 @@ EXAMPLES:
           if (result.error) log(`    Error:  ${result.error}`);
         }
         log('');
-
-        return result;
+        return undefined; // Output already printed above
 
       } catch (err) {
         log(`❌ ${err.message}`);
