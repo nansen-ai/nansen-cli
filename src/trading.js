@@ -113,9 +113,12 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
     try {
       body = JSON.parse(text);
     } catch {
+      const hint = (res.status === 502 && params.chain && CHAIN_MAP[params.chain]?.type === 'solana')
+        ? ' This often means the transaction failed simulation — check that you have enough SOL for fees (~0.005 SOL minimum).'
+        : '';
       lastError = Object.assign(
-        new Error(`Execute API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`),
-        { code: 'NON_JSON_RESPONSE', status: res.status, details: text.slice(0, 200) }
+        new Error(`Execute API returned non-JSON response (status ${res.status}).${hint || ' This may be a Cloudflare challenge or server error.'}`),
+        { code: 'BROADCAST_FAILED', status: res.status, details: text.slice(0, 200) }
       );
       // Retry on 502/503 (likely transient Cloudflare issues)
       if ((res.status === 502 || res.status === 503) && attempt < retries) continue;
