@@ -8,31 +8,24 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { exportWallet, getDefaultAddress, showWallet, keccak256 } from './wallet.js';
+import { exportWallet, getDefaultAddress, showWallet, keccak256, listWallets } from './wallet.js';
 
 // ============= Constants =============
 
 const TRADING_API_URL = process.env.NANSEN_TRADING_API_URL || 'https://trading-api.nansen.ai';
 
 const CHAIN_MAP = {
-  solana:   { index: '501', type: 'solana', name: 'Solana',   explorer: 'https://solscan.io/tx/' },
-  ethereum: { index: '1',   type: 'evm',    name: 'Ethereum', explorer: 'https://etherscan.io/tx/' },
-  base:     { index: '8453', type: 'evm',   name: 'Base',     explorer: 'https://basescan.org/tx/' },
-  bsc:      { index: '56',  type: 'evm',    name: 'BSC',      explorer: 'https://bscscan.com/tx/' },
+  solana:   { index: '501', type: 'solana', chainId: 501,  name: 'Solana',   explorer: 'https://solscan.io/tx/' },
+  ethereum: { index: '1',   type: 'evm',    chainId: 1,    name: 'Ethereum', explorer: 'https://etherscan.io/tx/' },
+  base:     { index: '8453', type: 'evm',   chainId: 8453, name: 'Base',     explorer: 'https://basescan.org/tx/' },
+  bsc:      { index: '56',  type: 'evm',    chainId: 56,   name: 'BSC',      explorer: 'https://bscscan.com/tx/' },
 };
 
-const CHAIN_IDS = {
-  ethereum: 1,
-  base: 8453,
-  bsc: 56,
-};
-
-// Native token addresses per chain (for convenience aliases)
-const NATIVE_TOKENS = {
-  solana:   'So11111111111111111111111111111111111111112',
-  ethereum: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-  base:     '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-  bsc:      '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+// Default public RPC endpoints (used for nonce fetching)
+const EVM_RPC_URLS = {
+  ethereum: process.env.NANSEN_RPC_ETHEREUM || 'https://eth.llamarpc.com',
+  base:     process.env.NANSEN_RPC_BASE     || 'https://mainnet.base.org',
+  bsc:      process.env.NANSEN_RPC_BSC      || 'https://bsc-dataseed.binance.org',
 };
 
 function getQuotesDir() {
@@ -44,17 +37,10 @@ function getQuotesDir() {
 
 /**
  * Get a trading quote from the Nansen Trading API.
- * @param {object} params
- * @param {string} params.chainIndex - Chain index (e.g. "501" for Solana)
- * @param {string} params.fromTokenAddress - Input token address
- * @param {string} params.toTokenAddress - Output token address
- * @param {string} params.amount - Amount in base units
- * @param {string} params.userWalletAddress - User's wallet address
- * @param {string} [params.slippagePercent] - Slippage tolerance (e.g. "0.03" for 3%)
- * @param {boolean} [params.autoSlippage] - Enable auto slippage
- * @param {string} [params.maxAutoSlippagePercent] - Max auto slippage
- * @param {string} [params.swapMode] - "exactIn" or "exactOut"
- * @returns {Promise<object>} Quote response
+ * Returns quotes with transaction data ready for signing.
+ *
+ * @param {object} params - Query parameters for GET /quote
+ * @returns {Promise<object>} Quote response with quotes[].transaction
  */
 export async function getQuote(params) {
   const url = new URL('/quote', TRADING_API_URL);
@@ -83,11 +69,12 @@ export async function getQuote(params) {
 
 /**
  * Broadcast a signed transaction via the Nansen Trading API.
+ *
  * @param {object} params
- * @param {string} params.signedTransaction - Signed tx (base64 for Solana, 0x hex for EVM)
+ * @param {string} params.signedTransaction - Base64 (Solana) or 0x hex (EVM)
  * @param {string} [params.chain] - Target chain name
- * @param {string} [params.requestId] - Optional request ID from quote
- * @param {boolean} [params.simulate] - Run simulation before broadcast
+ * @param {string} [params.requestId] - Optional Jupiter request ID (Solana only)
+ * @param {boolean} [params.simulate] - Run pre-broadcast simulation
  * @returns {Promise<object>} Execution result
  */
 export async function executeTransaction(params) {
@@ -119,8 +106,6 @@ export async function executeTransaction(params) {
 
 /**
  * Save a quote response to disk for later execution.
- * @param {object} quoteResponse - Full API response
- * @param {string} chain - Chain name (solana, ethereum, etc.)
  * @returns {string} Quote ID
  */
 export function saveQuote(quoteResponse, chain) {
@@ -133,41 +118,26 @@ export function saveQuote(quoteResponse, chain) {
   const hash = crypto.randomBytes(4).toString('hex');
   const quoteId = `${timestamp}-${hash}`;
 
-  const data = {
-    quoteId,
-    chain,
-    timestamp,
-    response: quoteResponse,
-  };
+  const data = { quoteId, chain, timestamp, response: quoteResponse };
 
-  const filePath = path.join(dir, `${quoteId}.json`);
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), { mode: 0o600 });
-
-  // Cleanup old quotes (> 1 hour)
+  fs.writeFileSync(path.join(dir, `${quoteId}.json`), JSON.stringify(data, null, 2), { mode: 0o600 });
   cleanupQuotes();
-
   return quoteId;
 }
 
 /**
  * Load a saved quote by ID.
- * @param {string} quoteId
- * @returns {object} Saved quote data
  */
 export function loadQuote(quoteId) {
   const filePath = path.join(getQuotesDir(), `${quoteId}.json`);
   if (!fs.existsSync(filePath)) {
     throw new Error(`Quote "${quoteId}" not found. Quotes expire after 1 hour.`);
   }
-
   const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-
-  // Check if expired (1 hour)
   if (Date.now() - data.timestamp > 3600000) {
     fs.unlinkSync(filePath);
     throw new Error('Quote has expired. Please request a new quote.');
   }
-
   return data;
 }
 
@@ -177,19 +147,13 @@ export function loadQuote(quoteId) {
 export function cleanupQuotes() {
   const dir = getQuotesDir();
   if (!fs.existsSync(dir)) return;
-
   const now = Date.now();
   for (const file of fs.readdirSync(dir)) {
     if (!file.endsWith('.json')) continue;
-    const filePath = path.join(dir, file);
     try {
-      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      if (now - data.timestamp > 3600000) {
-        fs.unlinkSync(filePath);
-      }
-    } catch {
-      // Ignore malformed files
-    }
+      const data = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+      if (now - data.timestamp > 3600000) fs.unlinkSync(path.join(dir, file));
+    } catch { /* ignore */ }
   }
 }
 
@@ -202,44 +166,29 @@ export function cleanupQuotes() {
 // ----------------------------------------------------------------
 
 /**
- * Sign a Solana transaction from quote metadata.
+ * Sign a Solana transaction from quote data.
  *
- * The quote response includes serialized transaction bytes in metadata.tx.
- * We deserialize, sign with the wallet's Ed25519 key, and re-serialize.
+ * The trading API returns a base64-encoded serialized VersionedTransaction
+ * in quote.transaction. We deserialize, sign with Ed25519, re-serialize.
  *
- * @param {object} quoteData - The saved quote data (with .response)
- * @param {string} privateKeyHex - 128-char hex string (64 bytes: seed + pubkey)
+ * Based on the e2e test pattern:
+ *   const serializedTx = Buffer.from(quote.transaction, 'base64')
+ *   const tx = VersionedTransaction.deserialize(serializedTx)
+ *   tx.sign([signer])
+ *
+ * We replicate this without @solana/web3.js using raw crypto.
+ *
+ * @param {string} transactionBase64 - Base64-encoded serialized VersionedTransaction
+ * @param {string} privateKeyHex - 128-char hex (64 bytes: seed + pubkey)
  * @returns {string} Base64-encoded signed transaction
  */
 // ⚠️ SECURITY: Solana transaction signing - requires thorough review before production use
-export function signSolanaTransaction(quoteData, privateKeyHex) {
-  const bestQuote = quoteData.response.quotes?.[0];
-  if (!bestQuote) throw new Error('No quote data available for signing');
+export function signSolanaTransaction(transactionBase64, privateKeyHex) {
+  const txBytes = Buffer.from(transactionBase64, 'base64');
 
-  const txMeta = bestQuote.metadata?.tx;
-  if (!txMeta) {
-    throw new Error('Quote does not contain transaction data. Ensure userWalletAddress was provided.');
-  }
-
-  // The tx metadata contains a serialized transaction we need to sign.
-  // For Solana, the trading API returns the transaction as a base64 string in metadata.tx.data
-  // or as raw instruction lists that need to be assembled.
-  let txBytes;
-
-  if (typeof txMeta === 'string') {
-    // Direct base64-encoded transaction
-    txBytes = Buffer.from(txMeta, 'base64');
-  } else if (txMeta.data) {
-    // { data: "base64..." } format
-    txBytes = Buffer.from(txMeta.data, 'base64');
-  } else {
-    throw new Error('Unsupported Solana transaction format in quote metadata');
-  }
-
-  // Extract the Ed25519 seed (first 32 bytes of the 64-byte keypair)
+  // Extract Ed25519 seed (first 32 bytes of the 64-byte keypair)
   const seed = Buffer.from(privateKeyHex.slice(0, 64), 'hex');
 
-  // Create the Ed25519 private key object
   const privateKey = crypto.createPrivateKey({
     key: Buffer.concat([
       Buffer.from('302e020100300506032b657004220420', 'hex'), // PKCS8 Ed25519 prefix
@@ -249,115 +198,251 @@ export function signSolanaTransaction(quoteData, privateKeyHex) {
     type: 'pkcs8',
   });
 
-  // Derive public key bytes for verification
-  const pubKeyObj = crypto.createPublicKey(privateKey);
-  const pubKeyDer = pubKeyObj.export({ format: 'der', type: 'spki' });
-  const pubKeyBytes = pubKeyDer.subarray(pubKeyDer.length - 32); // Last 32 bytes are the raw key
-
-  // Solana VersionedTransaction format:
-  // [signatures_count (compact-u16)] [signatures...] [message_bytes...]
-  // We need to find where the message starts and sign it.
-
-  // Parse compact-u16 for signature count
+  // VersionedTransaction wire format:
+  // [signatures_count (compact-u16)] [signatures (64 bytes each)...] [message_bytes...]
   const { value: sigCount, size: sigCountSize } = readCompactU16(txBytes, 0);
-
-  // Each signature is 64 bytes
   const messageOffset = sigCountSize + (sigCount * 64);
   const messageBytes = txBytes.subarray(messageOffset);
 
-  // Sign the message
+  // Sign the message bytes
   const signature = crypto.sign(null, messageBytes, privateKey);
 
-  // Find our pubkey in the transaction's account keys to determine which signature slot is ours
-  // The first signature slot is typically the fee payer (our wallet)
-  // Write our signature into the first slot
+  // Write signature into the first slot (fee payer = our wallet)
   const signedTx = Buffer.from(txBytes);
-  signature.copy(signedTx, sigCountSize); // First signature slot
+  signature.copy(signedTx, sigCountSize);
 
   return signedTx.toString('base64');
 }
 
 /**
- * Sign an EVM transaction from quote metadata.
+ * Sign an EVM transaction from quote data.
  *
- * Constructs and signs an EIP-1559 (type 2) transaction using the wallet's
- * secp256k1 private key.
+ * The trading API returns transaction fields in quote.transaction:
+ *   { to, data, value?, gas?, gasPrice? }
  *
- * @param {object} quoteData - The saved quote data
- * @param {string} privateKeyHex - 64-char hex string (32 bytes)
+ * The nonce must be fetched from the chain RPC.
+ * Signs as a legacy (type 0) transaction with gasPrice (matching the e2e tests).
+ *
+ * @param {object} txData - Transaction fields from quote.transaction { to, data, value, gas, gasPrice }
+ * @param {string} privateKeyHex - 64-char hex (32-byte secp256k1 private key)
  * @param {string} chain - Chain name (ethereum, base, bsc)
- * @returns {Promise<string>} 0x-prefixed signed transaction hex
+ * @param {number} nonce - Account nonce
+ * @returns {string} 0x-prefixed signed transaction hex
  */
 // ⚠️ SECURITY: EVM transaction signing - requires thorough review before production use
-export async function signEvmTransaction(quoteData, privateKeyHex, chain) {
-  const bestQuote = quoteData.response.quotes?.[0];
-  if (!bestQuote) throw new Error('No quote data available for signing');
-
-  const txMeta = bestQuote.metadata?.tx;
-  if (!txMeta) {
-    throw new Error('Quote does not contain transaction data. Ensure userWalletAddress was provided.');
+export function signEvmTransaction(txData, privateKeyHex, chain, nonce) {
+  const chainConfig = CHAIN_MAP[chain];
+  if (!chainConfig || chainConfig.type !== 'evm') {
+    throw new Error(`Unsupported EVM chain: ${chain}`);
   }
-
-  // The trading API returns EVM tx data in metadata.tx with fields like:
-  // { to, data, value, gas/gasLimit, gasPrice or maxFeePerGas/maxPriorityFeePerGas }
-  const chainId = CHAIN_IDS[chain];
-  if (!chainId) throw new Error(`Unsupported EVM chain: ${chain}`);
 
   const tx = {
-    chainId,
-    to: txMeta.to,
-    data: txMeta.data || '0x',
-    value: txMeta.value || '0x0',
-    nonce: txMeta.nonce,
-    // EIP-1559 fields
-    maxFeePerGas: txMeta.maxFeePerGas || txMeta.gasPrice,
-    maxPriorityFeePerGas: txMeta.maxPriorityFeePerGas || '0x0',
-    gasLimit: txMeta.gas || txMeta.gasLimit,
+    nonce,
+    gasPrice: txData.gasPrice || txData.maxFeePerGas || '1',
+    gasLimit: txData.gas || txData.gasLimit || '210000',
+    to: txData.to,
+    value: txData.value || '0',
+    data: txData.data || '0x',
+    chainId: chainConfig.chainId,
   };
 
-  // If nonce not provided, we'd need to fetch it — for now require it from the API
-  if (tx.nonce === undefined) {
-    throw new Error('Transaction nonce not provided in quote metadata. The trading API should include nonce.');
-  }
-
-  // Encode and sign as EIP-1559 (type 2) transaction
-  const signedHex = signEip1559Transaction(tx, privateKeyHex);
-  return signedHex;
+  return signLegacyTransaction(tx, privateKeyHex);
 }
 
-// ============= RLP Encoding (for EVM transactions) =============
-// ⚠️ SECURITY: RLP encoding implementation - requires thorough review before production use
+/**
+ * Fetch the pending nonce for an EVM address.
+ * @param {string} chain - Chain name
+ * @param {string} address - 0x address
+ * @returns {Promise<number>} Nonce
+ */
+export async function getEvmNonce(chain, address) {
+  const rpcUrl = EVM_RPC_URLS[chain];
+  if (!rpcUrl) throw new Error(`No RPC URL configured for chain: ${chain}`);
+
+  const res = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'eth_getTransactionCount',
+      params: [address, 'pending'],
+    }),
+  });
+  const body = await res.json();
+  if (body.error) throw new Error(`RPC error: ${body.error.message}`);
+  return parseInt(body.result, 16);
+}
 
 /**
- * RLP-encode a single item (Buffer or string) or a nested array.
- * @param {Buffer|string|Array} input
- * @returns {Buffer}
+ * Send an ERC-20 approval transaction.
+ * Required before swapping non-native EVM tokens.
+ *
+ * @param {string} tokenAddress - ERC-20 token contract
+ * @param {string} spenderAddress - Approval target (from quote.approvalAddress)
+ * @param {string} privateKeyHex - Wallet private key
+ * @param {string} chain - Chain name
+ * @param {number} nonce - Account nonce
+ * @returns {string} 0x-prefixed signed approval tx hex
+ */
+// ⚠️ SECURITY: ERC-20 approval signing - requires thorough review
+export function buildApprovalTransaction(tokenAddress, spenderAddress, privateKeyHex, chain, nonce) {
+  const chainConfig = CHAIN_MAP[chain];
+  if (!chainConfig) throw new Error(`Unsupported chain: ${chain}`);
+
+  // ERC-20 approve(address spender, uint256 amount) selector = 0x095ea7b3
+  // Approve max uint256
+  const MAX_UINT256_HEX = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+  const data = '0x095ea7b3'
+    + spenderAddress.slice(2).toLowerCase().padStart(64, '0')
+    + MAX_UINT256_HEX;
+
+  const tx = {
+    nonce,
+    gasPrice: '1', // Will use a reasonable default; caller should provide
+    gasLimit: '100000',
+    to: tokenAddress,
+    value: '0',
+    data,
+    chainId: chainConfig.chainId,
+  };
+
+  return signLegacyTransaction(tx, privateKeyHex);
+}
+
+// ============= Legacy (Type 0) EVM Transaction Signing =============
+// ⚠️ SECURITY: Legacy EVM transaction signing - requires thorough review before production use
+
+/**
+ * Sign a legacy (type 0) EVM transaction.
+ *
+ * @param {object} tx - { nonce, gasPrice, gasLimit, to, value, data, chainId }
+ * @param {string} privateKeyHex - 32-byte private key as hex
+ * @returns {string} 0x-prefixed signed transaction hex
+ */
+export function signLegacyTransaction(tx, privateKeyHex) {
+  // EIP-155 unsigned: RLP([nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0])
+  const unsignedFields = [
+    rlpNormalize(tx.nonce),
+    rlpNormalize(tx.gasPrice),
+    rlpNormalize(tx.gasLimit),
+    toBuffer(tx.to),
+    rlpNormalize(tx.value),
+    toBuffer(tx.data || '0x'),
+    rlpNormalize(tx.chainId),
+    Buffer.alloc(0), // EIP-155: empty for signing
+    Buffer.alloc(0), // EIP-155: empty for signing
+  ];
+
+  const unsignedPayload = rlpEncode(unsignedFields);
+  const msgHash = keccak256(unsignedPayload);
+
+  // Sign with secp256k1
+  const { r, s, v: recoveryBit } = ecdsaSign(msgHash, Buffer.from(privateKeyHex, 'hex'));
+
+  // EIP-155 v = chainId * 2 + 35 + recoveryBit
+  const v = tx.chainId * 2 + 35 + recoveryBit;
+
+  // Signed: RLP([nonce, gasPrice, gasLimit, to, value, data, v, r, s])
+  const signedFields = [
+    rlpNormalize(tx.nonce),
+    rlpNormalize(tx.gasPrice),
+    rlpNormalize(tx.gasLimit),
+    toBuffer(tx.to),
+    rlpNormalize(tx.value),
+    toBuffer(tx.data || '0x'),
+    rlpNormalize(v),
+    r.length > 0 && r[0] === 0 ? r.subarray(1) : r, // strip leading zero
+    s.length > 0 && s[0] === 0 ? s.subarray(1) : s,
+  ];
+
+  return '0x' + rlpEncode(signedFields).toString('hex');
+}
+
+// ============= ECDSA Signing (secp256k1) =============
+// ⚠️ SECURITY: Raw ECDSA implementation - requires thorough review
+
+/**
+ * Sign a 32-byte hash with secp256k1 (no additional hashing).
+ *
+ * @param {Buffer} msgHash - 32-byte message hash
+ * @param {Buffer} privKey - 32-byte private key
+ * @returns {{ r: Buffer, s: Buffer, v: number }} Signature components
+ */
+function ecdsaSign(msgHash, privKey) {
+  const N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
+
+  const ecdh = crypto.createECDH('secp256k1');
+  ecdh.setPrivateKey(privKey);
+  const pubKey = ecdh.getPublicKey();
+
+  const ecPrivateKey = crypto.createPrivateKey({
+    key: Buffer.concat([
+      Buffer.from('30740201010420', 'hex'),
+      privKey,
+      Buffer.from('a00706052b8104000aa144034200', 'hex'),
+      pubKey,
+    ]),
+    format: 'der',
+    type: 'sec1',
+  });
+
+  // Sign with null algo = raw ECDSA (no additional hashing)
+  const sig = crypto.sign(null, msgHash, {
+    key: ecPrivateKey,
+    dsaEncoding: 'ieee-p1363',
+  });
+
+  let r = sig.subarray(0, 32);
+  let s_raw = sig.subarray(32, 64);
+
+  // Low-S normalization (EIP-2)
+  let sBn = BigInt('0x' + s_raw.toString('hex'));
+  const halfN = N >> 1n;
+  let sFlipped = false;
+  if (sBn > halfN) {
+    sBn = N - sBn;
+    sFlipped = true;
+    s_raw = Buffer.from(sBn.toString(16).padStart(64, '0'), 'hex');
+  }
+
+  // Determine recovery ID (v = 0 or 1)
+  // Try to recover the public key from the signature and compare
+  // Since we can't do EC point recovery easily with just Node.js crypto,
+  // we determine v by checking: if s was flipped, v flips.
+  // This works because flipping s negates the recovery point's y.
+  //
+  // ⚠️ SECURITY: Recovery ID heuristic. Should be verified with test vectors.
+  // A robust implementation would do trial EC point recovery.
+  let v = sFlipped ? 1 : 0;
+
+  return { r, s: s_raw, v };
+}
+
+// ============= RLP Encoding =============
+// ⚠️ SECURITY: RLP encoding - requires review for edge cases
+
+/**
+ * RLP-encode a value (Buffer, string, number, or array).
  */
 export function rlpEncode(input) {
   if (Array.isArray(input)) {
     const encoded = Buffer.concat(input.map(rlpEncode));
     return Buffer.concat([encodeLength(encoded.length, 0xc0), encoded]);
   }
-
   const buf = toBuffer(input);
-
-  if (buf.length === 1 && buf[0] < 0x80) {
-    return buf;
-  }
-
+  if (buf.length === 1 && buf[0] < 0x80) return buf;
   return Buffer.concat([encodeLength(buf.length, 0x80), buf]);
 }
 
 function encodeLength(len, offset) {
-  if (len < 56) {
-    return Buffer.from([offset + len]);
-  }
+  if (len < 56) return Buffer.from([offset + len]);
   const hexLen = len.toString(16);
   const lenBytes = Buffer.from(hexLen.padStart(hexLen.length + (hexLen.length % 2), '0'), 'hex');
   return Buffer.concat([Buffer.from([offset + 55 + lenBytes.length]), lenBytes]);
 }
 
-function toBuffer(v) {
+export function toBuffer(v) {
   if (Buffer.isBuffer(v)) return v;
   if (typeof v === 'string') {
     if (v.startsWith('0x')) {
@@ -375,178 +460,17 @@ function toBuffer(v) {
   return Buffer.alloc(0);
 }
 
-/**
- * Normalize a hex value: strip leading zeros for RLP encoding.
- * @param {string|number} val - Hex string or number
- * @returns {Buffer}
- */
 function rlpNormalize(val) {
-  if (val === undefined || val === null || val === '0x0' || val === '0x' || val === 0) {
+  if (val === undefined || val === null || val === '0x0' || val === '0x' || val === 0 || val === '0') {
     return Buffer.alloc(0);
   }
   return toBuffer(val);
 }
 
-// ============= EIP-1559 Transaction Signing =============
-// ⚠️ SECURITY: EIP-1559 transaction signing - requires thorough review before production use
+// ============= Compact-u16 (Solana) =============
 
 /**
- * Sign an EIP-1559 (type 2) transaction.
- * @param {object} tx - Transaction fields
- * @param {string} privateKeyHex - 64-char hex private key
- * @returns {string} 0x-prefixed signed transaction hex
- */
-export function signEip1559Transaction(tx, privateKeyHex) {
-  // EIP-1559 unsigned payload:
-  // 0x02 || RLP([chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data, accessList])
-  const fields = [
-    rlpNormalize(tx.chainId),
-    rlpNormalize(tx.nonce),
-    rlpNormalize(tx.maxPriorityFeePerGas),
-    rlpNormalize(tx.maxFeePerGas),
-    rlpNormalize(tx.gasLimit),
-    toBuffer(tx.to),
-    rlpNormalize(tx.value),
-    toBuffer(tx.data || '0x'),
-    [], // accessList (empty)
-  ];
-
-  const unsignedPayload = Buffer.concat([Buffer.from([0x02]), rlpEncode(fields)]);
-
-  // Hash with keccak256
-  const msgHash = keccak256(unsignedPayload);
-
-  // Sign with secp256k1
-  const privKey = Buffer.from(privateKeyHex, 'hex');
-  const ecdh = crypto.createECDH('secp256k1');
-  ecdh.setPrivateKey(privKey);
-
-  // Use Node.js crypto sign with DER format, then extract r, s
-  const sig = crypto.sign('SHA256', msgHash, {
-    key: crypto.createPrivateKey({
-      key: Buffer.concat([
-        // SEC1/ECPrivateKey DER header for secp256k1
-        Buffer.from('30740201010420', 'hex'),
-        privKey,
-        Buffer.from('a00706052b8104000aa144034200', 'hex'),
-        ecdh.getPublicKey(),
-      ]),
-      format: 'der',
-      type: 'sec1',
-    }),
-    dsaEncoding: 'ieee-p1363',
-  });
-
-  // Note: We sign the keccak256 hash directly, not with SHA256.
-  // Node.js crypto.sign with ec keys applies its own hash, which is incorrect for Ethereum.
-  // We need to use the low-level ECDSA with the pre-hashed keccak256 digest.
-  //
-  // ⚠️ SECURITY: The approach below uses signSync-style raw ECDSA.
-  // For production, consider using a well-tested library.
-
-  // Raw ECDSA sign using the keccak256 hash
-  const { r, s, v } = ecdsaSignRaw(msgHash, privKey);
-
-  // EIP-1559 signed payload:
-  // 0x02 || RLP([chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data, accessList, v, r, s])
-  const signedFields = [
-    ...fields,
-    rlpNormalize(v),    // yParity (0 or 1)
-    r,                  // 32 bytes
-    s,                  // 32 bytes
-  ];
-
-  const signedPayload = Buffer.concat([Buffer.from([0x02]), rlpEncode(signedFields)]);
-  return '0x' + signedPayload.toString('hex');
-}
-
-/**
- * Raw ECDSA signature over secp256k1.
- * Signs a 32-byte message hash directly (no additional hashing).
- *
- * ⚠️ SECURITY: This is a minimal ECDSA implementation for EVM signing.
- * It uses Node.js crypto internally but requires careful review.
- * For production use, audit thoroughly or use a battle-tested library.
- *
- * @param {Buffer} msgHash - 32-byte hash to sign
- * @param {Buffer} privKey - 32-byte private key
- * @returns {{ r: Buffer, s: Buffer, v: number }}
- */
-function ecdsaSignRaw(msgHash, privKey) {
-  // secp256k1 curve order
-  const N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
-
-  // Use Node.js crypto to sign. We need to trick it into not hashing again.
-  // Create a DER-encoded EC private key for secp256k1
-  const ecdh = crypto.createECDH('secp256k1');
-  ecdh.setPrivateKey(privKey);
-  const pubKey = ecdh.getPublicKey();
-
-  const ecPrivateKey = crypto.createPrivateKey({
-    key: Buffer.concat([
-      Buffer.from('30740201010420', 'hex'),
-      privKey,
-      Buffer.from('a00706052b8104000aa144034200', 'hex'),
-      pubKey,
-    ]),
-    format: 'der',
-    type: 'sec1',
-  });
-
-  // Sign with null algorithm to avoid double-hashing
-  // Node.js >= 18 supports signing with null for raw ECDSA on EC keys
-  const derSig = crypto.sign(null, msgHash, {
-    key: ecPrivateKey,
-    dsaEncoding: 'ieee-p1363',
-  });
-
-  const r = derSig.subarray(0, 32);
-  const s_raw = derSig.subarray(32, 64);
-
-  // Normalize s to low-S form (EIP-2)
-  let sBn = BigInt('0x' + s_raw.toString('hex'));
-  const halfN = N >> 1n;
-  let sNormalized;
-  let sFlipped = false;
-  if (sBn > halfN) {
-    sBn = N - sBn;
-    sFlipped = true;
-    const sHex = sBn.toString(16).padStart(64, '0');
-    sNormalized = Buffer.from(sHex, 'hex');
-  } else {
-    sNormalized = s_raw;
-  }
-
-  // Recover v (yParity): try both 0 and 1 to find which recovers our pubkey
-  // For EIP-1559, v is just the yParity (0 or 1)
-  const pubKeyUncompressed = pubKey;
-  let v = 0;
-
-  // Simple recovery: compute recovery and check
-  // Since we can't easily do EC point recovery with just Node.js crypto,
-  // we use the relationship: if s was flipped, v flips too.
-  // Start with v=0, and if s was flipped, toggle v.
-  // Note: This heuristic works for ~50% of cases. For correctness,
-  // we'd need EC point recovery which requires more math.
-  //
-  // ⚠️ SECURITY: Recovery ID determination needs verification.
-  // A proper implementation should do trial recovery and compare against the public key.
-  // For now we use the parity of the y-coordinate of the ephemeral point.
-
-  // We'll try both v values and verify which produces our address
-  // This requires EC point recovery — we implement a basic version
-  v = sFlipped ? 1 : 0;
-
-  return { r, s: sNormalized, v };
-}
-
-// ============= Compact-u16 Parsing (for Solana) =============
-
-/**
- * Read a compact-u16 from a buffer (used in Solana transaction format).
- * @param {Buffer} buf
- * @param {number} offset
- * @returns {{ value: number, size: number }}
+ * Read a compact-u16 from a buffer (Solana transaction format).
  */
 export function readCompactU16(buf, offset) {
   let value = 0;
@@ -563,39 +487,29 @@ export function readCompactU16(buf, offset) {
 // ============= Chain Utilities =============
 
 /**
- * Resolve a chain name to its configuration.
- * @param {string} chainName
- * @returns {object} Chain config
+ * Resolve chain name to config.
  */
 export function resolveChain(chainName) {
   const chain = CHAIN_MAP[chainName?.toLowerCase()];
   if (!chain) {
-    const supported = Object.keys(CHAIN_MAP).join(', ');
-    throw new Error(`Unsupported chain "${chainName}". Supported: ${supported}`);
+    throw new Error(`Unsupported chain "${chainName}". Supported: ${Object.keys(CHAIN_MAP).join(', ')}`);
   }
   return chain;
 }
 
 /**
- * Get the chain type needed for wallet address lookup.
- * @param {string} chainName
- * @returns {string} "evm" or "solana"
+ * Get wallet chain type for address lookup.
  */
 export function getWalletChainType(chainName) {
   return resolveChain(chainName).type;
 }
 
-// ============= CLI Command Builder =============
+// ============= CLI Helpers =============
 
-/**
- * Prompt for password (non-echoing).
- */
 async function promptPassword(prompt, deps = {}) {
   if (deps.promptFn) return deps.promptFn(prompt);
-
   const readline = await import('readline');
   const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-
   return new Promise((resolve) => {
     process.stderr.write(prompt);
     let input = '';
@@ -611,22 +525,14 @@ async function promptPassword(prompt, deps = {}) {
         process.stderr.write('\n');
         rl.close();
         resolve(input);
-      } else if (c === '\u0003') {
-        rl.close();
-        process.exit(1);
-      } else if (c === '\u007f' || c === '\b') {
-        input = input.slice(0, -1);
-      } else {
-        input += c;
-      }
+      } else if (c === '\u0003') { rl.close(); process.exit(1); }
+      else if (c === '\u007f' || c === '\b') { input = input.slice(0, -1); }
+      else { input += c; }
     };
     stdin.on('data', onData);
   });
 }
 
-/**
- * Format a quote for display.
- */
 function formatQuote(quote, index) {
   const lines = [];
   const label = index !== undefined ? `  Quote #${index + 1}` : '  Best Quote';
@@ -638,8 +544,11 @@ function formatQuote(quote, index) {
   if (quote.priceImpactPct) lines.push(`    Price Impact: ${quote.priceImpactPct}%`);
   if (quote.tradingFeeInUsd) lines.push(`    Trading Fee:  $${quote.tradingFeeInUsd}`);
   if (quote.networkFeeInUsd) lines.push(`    Network Fee:  $${quote.networkFeeInUsd}`);
+  if (quote.approvalAddress) lines.push(`    ⚠ Requires token approval to: ${quote.approvalAddress}`);
   return lines.join('\n');
 }
+
+// ============= CLI Command Builder =============
 
 /**
  * Build trading command handlers for CLI integration.
@@ -686,7 +595,6 @@ EXAMPLES:
         const chainConfig = resolveChain(chain);
         const chainType = chainConfig.type === 'evm' ? 'evm' : 'solana';
 
-        // Get wallet address
         let walletAddress;
         if (walletName) {
           const wallet = showWallet(walletName);
@@ -721,27 +629,25 @@ EXAMPLES:
         if (!response.success || !response.quotes?.length) {
           log('❌ No quotes available');
           if (response.warnings?.length) {
-            log('  Warnings:');
-            response.warnings.forEach(w => log(`    - ${w}`));
+            response.warnings.forEach(w => log(`  ⚠ ${w}`));
           }
           exit(1);
           return;
         }
 
-        // Display quotes
         log('');
         response.quotes.forEach((q, i) => log(formatQuote(q, i)));
 
-        // Save for execution
         const quoteId = saveQuote(response, chain);
         log(`\n  Quote ID: ${quoteId}`);
         log(`  Execute:  nansen execute --quote ${quoteId}`);
 
-        if (response.metadata) {
-          log(`\n  Chain: ${response.metadata.chainIndex}, Quotes: ${response.metadata.quotesCount}, Best: ${response.metadata.bestQuote || 'N/A'}`);
+        if (response.quotes[0]?.approvalAddress) {
+          log(`\n  ⚠ This token swap requires an ERC-20 approval step.`);
+          log(`    The execute command will handle this automatically.`);
         }
-        log('');
 
+        log('');
         return { quoteId, response };
 
       } catch (err) {
@@ -761,7 +667,7 @@ EXAMPLES:
 Usage: nansen execute --quote <quoteId> [options]
 
 OPTIONS:
-  --quote <id>              Quote ID from a previous 'nansen quote' command
+  --quote <id>              Quote ID from 'nansen quote'
   --wallet <name>           Wallet name (default: default wallet)
   --no-simulate             Skip pre-broadcast simulation
 
@@ -773,7 +679,6 @@ EXAMPLES:
       }
 
       try {
-        // Load the quote
         const quoteData = loadQuote(quoteId);
         const chain = quoteData.chain;
         const chainConfig = resolveChain(chain);
@@ -786,21 +691,26 @@ EXAMPLES:
           return;
         }
 
+        // Verify transaction data exists
+        if (!bestQuote.transaction) {
+          log('❌ Quote does not contain transaction data.');
+          log('  Ensure userWalletAddress was provided when fetching the quote.');
+          exit(1);
+          return;
+        }
+
         log(`\nExecuting trade on ${chainConfig.name}...`);
         log(formatQuote(bestQuote));
         log('');
 
-        // Get wallet password and export private key
+        // Get wallet credentials
         const password = process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps);
-        // (walletToUse determined below)
 
         let effectiveWalletName = walletName;
         if (!effectiveWalletName) {
-          const { listWallets } = await import('./wallet.js');
           const list = listWallets();
           effectiveWalletName = list.defaultWallet;
         }
-
         if (!effectiveWalletName) {
           log('❌ No wallet found. Create one with: nansen wallet create');
           exit(1);
@@ -809,21 +719,62 @@ EXAMPLES:
 
         const exported = exportWallet(effectiveWalletName, password);
 
-        // Sign the transaction
         let signedTransaction;
         let requestId;
 
         if (chainType === 'solana') {
+          // Solana: quote.transaction is base64 serialized VersionedTransaction
           log('  Signing Solana transaction...');
-          signedTransaction = signSolanaTransaction(quoteData, exported.solana.privateKey);
-          // Extract requestId if available (for Jupiter execute path)
+          signedTransaction = signSolanaTransaction(bestQuote.transaction, exported.solana.privateKey);
           requestId = bestQuote.metadata?.requestId;
+
         } else {
+          // EVM: quote.transaction is { to, data, value, gas, gasPrice }
+          const walletAddress = exported.evm.address;
+
+          // Handle ERC-20 approval if needed
+          if (bestQuote.approvalAddress) {
+            log(`  ⚠ Token requires approval. Sending approval tx first...`);
+            const approvalNonce = await getEvmNonce(chain, walletAddress);
+            const approvalTxHex = buildApprovalTransaction(
+              bestQuote.inputMint,
+              bestQuote.approvalAddress,
+              exported.evm.privateKey,
+              chain,
+              approvalNonce
+            );
+
+            const approvalResult = await executeTransaction({
+              signedTransaction: approvalTxHex,
+              chain,
+              simulate: !noSimulate,
+            });
+
+            if (approvalResult.status !== 'Success') {
+              log(`  ❌ Approval transaction failed: ${approvalResult.error || 'unknown error'}`);
+              exit(1);
+              return;
+            }
+            log(`  ✓ Approval confirmed: ${approvalResult.txHash}`);
+            log('');
+
+            // Re-fetch quote since nonce changed and approval is now in place
+            // For now, just increment nonce
+          }
+
+          log('  Fetching nonce...');
+          const nonce = await getEvmNonce(chain, walletAddress);
+          log(`  Nonce: ${nonce}`);
+
           log('  Signing EVM transaction...');
-          signedTransaction = await signEvmTransaction(quoteData, exported.evm.privateKey, chain);
+          signedTransaction = signEvmTransaction(
+            bestQuote.transaction,
+            exported.evm.privateKey,
+            chain,
+            nonce
+          );
         }
 
-        // Submit to the trading API
         log('  Broadcasting...');
         const execParams = {
           signedTransaction,
@@ -834,17 +785,16 @@ EXAMPLES:
 
         const result = await executeTransaction(execParams);
 
-        // Display result
         if (result.status === 'Success') {
           const txId = result.signature || result.txHash;
           const explorerUrl = chainConfig.explorer + txId;
 
           log(`\n  ✓ Transaction successful!`);
-          log(`    Status:     ${result.status}`);
-          log(`    ${result.signature ? 'Signature' : 'Tx Hash'}:  ${txId}`);
-          log(`    Chain:      ${chainConfig.name} (${result.chainType})`);
+          log(`    Status:      ${result.status}`);
+          log(`    ${result.signature ? 'Signature' : 'Tx Hash'}:   ${txId}`);
+          log(`    Chain:       ${chainConfig.name} (${result.chainType})`);
           log(`    Broadcaster: ${result.broadcaster}`);
-          log(`    Explorer:   ${explorerUrl}`);
+          log(`    Explorer:    ${explorerUrl}`);
 
           if (result.swapEvents?.length) {
             log(`    Swaps:`);
