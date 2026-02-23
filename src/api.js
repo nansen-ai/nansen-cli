@@ -6,8 +6,15 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import * as readline from 'readline';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// x402 Solana payment support
+import { parsePaymentRequirements, createSolanaPaymentPayload } from './x402-solana.js';
+
+// Wallet functions for automatic payment
+import { listWallets, exportWallet, verifyPassword } from './wallet.js';
 
 const { version: packageVersion } = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')
@@ -163,6 +170,7 @@ const CACHE_DIR = path.join(CONFIG_DIR, 'cache');
 const DEFAULT_CACHE_TTL = 300; // 5 minutes
 
 import crypto from 'crypto';
+import { shouldAttemptX402Payment, attemptX402Payment } from './x402.js';
 
 /**
  * Generate cache key from endpoint and request body
@@ -386,6 +394,79 @@ function parseRetryAfter(headerValue) {
   return null;
 }
 
+/**
+ * Prompt for wallet password (masked input)
+ */
+async function promptWalletPassword() {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    if (process.stdout.isTTY) {
+      process.stdout.write('Enter wallet password for x402 payment: ');
+      let input = '';
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+      process.stdin.setEncoding('utf8');
+      const onData = (char) => {
+        if (char === '\n' || char === '\r') {
+          process.stdin.setRawMode(false);
+          process.stdin.pause();
+          process.stdin.removeListener('data', onData);
+          process.stdout.write('\n');
+          rl.close();
+          resolve(input);
+        } else if (char === '\u0003') {
+          process.exit();
+        } else if (char === '\u007F' || char === '\b') {
+          input = input.slice(0, -1);
+        } else {
+          input += char;
+          process.stdout.write('*');
+        }
+      };
+      process.stdin.on('data', onData);
+    } else {
+      rl.question('Enter wallet password for x402 payment: ', (answer) => { 
+        rl.close(); 
+        resolve(answer); 
+      });
+    }
+  });
+}
+
+/**
+ * Check if we have a local Solana wallet for x402 payments
+ */
+function hasLocalWallet() {
+  try {
+    const { wallets } = listWallets();
+    return wallets.length > 0 && wallets.some(w => w.solana);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get the default wallet's Solana keypair for x402 payments
+ */
+async function getDefaultSolanaKeypair(password) {
+  try {
+    const { wallets, defaultWallet } = listWallets();
+    if (!defaultWallet || wallets.length === 0) {
+      return null;
+    }
+    
+    const wallet = exportWallet(defaultWallet, password);
+    if (!wallet.solana || !wallet.solana.privateKey) {
+      return null;
+    }
+    
+    return wallet.solana.privateKey;
+  } catch (error) {
+    console.warn('Failed to get Solana keypair:', error.message);
+    return null;
+  }
+}
+
 export class NansenAPI {
   constructor(apiKey = config.apiKey, baseUrl = config.baseUrl, options = {}) {
     this.apiKey = apiKey || null;
@@ -489,6 +570,67 @@ export class NansenAPI {
         } else if (code === ErrorCode.CREDITS_EXHAUSTED) {
           message = message.replace(/\.+$/, '') + '. No retry will help. Check your Nansen dashboard for credit balance.';
         } else if (code === ErrorCode.PAYMENT_REQUIRED) {
+          // Try automatic x402 Solana payment if no API key and we have a local wallet
+          if (!this.apiKey && hasLocalWallet() && attempt === 0) {
+            try {
+              const requirements = parsePaymentRequirements(response);
+              
+              // Check if this is a Solana payment requirement
+              if (requirements && requirements.network && requirements.network.startsWith('solana:')) {
+                console.log('💳 Payment required - attempting automatic Solana payment...');
+                
+                // Get wallet password from env var or prompt
+                let password = process.env.NANSEN_WALLET_PASSWORD;
+                if (!password) {
+                  password = await promptWalletPassword();
+                }
+                
+                // Get Solana keypair
+                const keypairHex = await getDefaultSolanaKeypair(password);
+                if (!keypairHex) {
+                  throw new Error('Failed to access Solana wallet');
+                }
+                
+                // Create payment payload
+                const paymentPayload = createSolanaPaymentPayload(requirements, keypairHex);
+                
+                // Retry the request with payment
+                console.log('🚀 Retrying request with x402 payment...');
+                const retryResponse = await fetch(url, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'X-Client-Type': 'nansen-cli',
+                    'X-Client-Version': packageVersion,
+                    'X-PAYMENT': paymentPayload,
+                    ...this.defaultHeaders,
+                    ...options.headers
+                  },
+                  body: JSON.stringify(NansenAPI.cleanBody(body))
+                });
+                
+                // Handle the retry response
+                if (retryResponse.ok) {
+                  const retryData = await retryResponse.json();
+                  console.log('✅ Payment successful - request completed');
+                  
+                  // Cache successful response if enabled
+                  if (useCache) {
+                    setCachedResponse(endpoint, body, retryData);
+                  }
+                  
+                  return { ...retryData, _meta: { ...(retryData._meta || {}), x402Payment: true } };
+                } else {
+                  // Payment failed - continue with original 402 error
+                  console.log('❌ x402 payment failed - falling back to manual payment');
+                }
+              }
+            } catch (x402Error) {
+              console.log(`❌ x402 auto-payment failed: ${x402Error.message}`);
+              // Continue with original 402 error
+            }
+          }
+          
           message = 'Payment required (x402). Sign the paymentRequirements below per https://docs.x402.org and pass the result with --x402-payment-signature <value>.';
           const paymentHeader = response.headers.get('payment-required');
           if (paymentHeader) {
@@ -505,6 +647,71 @@ export class NansenAPI {
           attempt: attempt + 1,
           retryAfterMs
         });
+        
+        // Check if we should attempt x402 payment
+        if (shouldAttemptX402Payment(response, this.apiKey)) {
+          try {
+            console.log('💳 Attempting automatic x402 payment...');
+            const retryWithPayment = async (paymentHeader) => {
+              return fetch(url, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Client-Type': 'nansen-cli',
+                  'X-Client-Version': packageVersion,
+                  'X-PAYMENT': paymentHeader,
+                  ...this.defaultHeaders,
+                  ...options.headers
+                },
+                body: JSON.stringify(NansenAPI.cleanBody(body))
+              });
+            };
+
+            const paymentResponse = await attemptX402Payment(response, retryWithPayment);
+            
+            // Process the payment response
+            let paymentData;
+            try {
+              paymentData = await paymentResponse.json();
+            } catch (err) {
+              throw new NansenError(
+                `Invalid response after x402 payment (status ${paymentResponse.status})`,
+                paymentResponse.status >= 500 ? ErrorCode.SERVER_ERROR : ErrorCode.UNKNOWN,
+                paymentResponse.status,
+                { body: await paymentResponse.text().catch(() => null) }
+              );
+            }
+
+            if (!paymentResponse.ok) {
+              const message = paymentData.message || paymentData.error || `x402 payment failed: ${paymentResponse.status}`;
+              throw new NansenError(
+                message,
+                statusToErrorCode(paymentResponse.status, paymentData),
+                paymentResponse.status,
+                paymentData
+              );
+            }
+
+            console.log('✓ x402 payment successful');
+            
+            // Add metadata indicating this was paid via x402
+            if (attempt > 0) {
+              paymentData._meta = { ...(paymentData._meta || {}), retriedAttempts: attempt, x402Payment: true };
+            } else {
+              paymentData._meta = { ...(paymentData._meta || {}), x402Payment: true };
+            }
+            
+            // Cache successful response
+            if (useCache) {
+              setCachedResponse(endpoint, body, paymentData);
+            }
+            
+            return paymentData;
+          } catch (x402Error) {
+            console.error('❌ x402 payment failed:', x402Error.message);
+            // Fall through to original error handling
+          }
+        }
         
         // Retry on specific status codes
         if (shouldRetry && attempt < maxRetries && retryOnStatus.includes(response.status)) {
