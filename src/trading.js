@@ -56,7 +56,17 @@ export async function getQuote(params) {
   }
 
   const res = await fetch(url.toString(), { headers });
-  const body = await res.json();
+
+  const text = await res.text();
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw Object.assign(
+      new Error(`Quote API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`),
+      { code: 'NON_JSON_RESPONSE', status: res.status, details: text.slice(0, 200) }
+    );
+  }
 
   if (!res.ok) {
     const code = body.code || 'QUOTE_ERROR';
@@ -91,7 +101,17 @@ export async function executeTransaction(params) {
     headers,
     body: JSON.stringify(params),
   });
-  const body = await res.json();
+
+  const text = await res.text();
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw Object.assign(
+      new Error(`Execute API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`),
+      { code: 'NON_JSON_RESPONSE', status: res.status, details: text.slice(0, 200) }
+    );
+  }
 
   if (!res.ok) {
     const code = body.code || 'EXECUTE_ERROR';

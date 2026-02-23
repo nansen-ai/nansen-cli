@@ -540,7 +540,7 @@ describe('buildTradingCommands', () => {
     const origFetch = global.fetch;
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ success: true, quotes: [{ aggregator: 'test' }] }),
+      text: async () => JSON.stringify({ success: true, quotes: [{ aggregator: 'test' }] }),
     });
 
     const cmds = buildTradingCommands({
@@ -583,14 +583,15 @@ describe('buildTradingCommands', () => {
 describe('API error handling', () => {
   it('should surface INVALID_AMOUNT errors from quote API', async () => {
     const origFetch = global.fetch;
+    const errorBody = JSON.stringify({
+      code: 'INVALID_AMOUNT',
+      message: 'Amount must be a valid numeric string',
+      details: { provided: 'abc' },
+    });
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 400,
-      json: async () => ({
-        code: 'INVALID_AMOUNT',
-        message: 'Amount must be a valid numeric string',
-        details: { provided: 'abc' },
-      }),
+      text: async () => errorBody,
     });
 
     const { getQuote } = await import('../trading.js');
@@ -607,13 +608,14 @@ describe('API error handling', () => {
 
   it('should surface UPSTREAM_BROADCAST_ERROR from execute API', async () => {
     const origFetch = global.fetch;
+    const errorBody = JSON.stringify({
+      code: 'UPSTREAM_BROADCAST_ERROR',
+      message: 'Jupiter Ultra execute failed: transaction simulation failed',
+    });
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 502,
-      json: async () => ({
-        code: 'UPSTREAM_BROADCAST_ERROR',
-        message: 'Jupiter Ultra execute failed: transaction simulation failed',
-      }),
+      text: async () => errorBody,
     });
 
     const { executeTransaction } = await import('../trading.js');
@@ -627,14 +629,15 @@ describe('API error handling', () => {
 
   it('should surface NO_QUOTES_AVAILABLE errors', async () => {
     const origFetch = global.fetch;
+    const errorBody = JSON.stringify({
+      code: 'NO_QUOTES_AVAILABLE',
+      message: 'No quotes available from any aggregator',
+      details: ['Jupiter: insufficient liquidity', 'OKX: pair not supported'],
+    });
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 400,
-      json: async () => ({
-        code: 'NO_QUOTES_AVAILABLE',
-        message: 'No quotes available from any aggregator',
-        details: ['Jupiter: insufficient liquidity', 'OKX: pair not supported'],
-      }),
+      text: async () => errorBody,
     });
 
     const { getQuote } = await import('../trading.js');
@@ -649,12 +652,12 @@ describe('API error handling', () => {
     global.fetch = origFetch;
   });
 
-  it('should handle non-JSON error responses gracefully', async () => {
+  it('should handle non-JSON error responses gracefully (e.g. Cloudflare)', async () => {
     const origFetch = global.fetch;
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 403,
-      json: async () => { throw new SyntaxError('Unexpected token <'); },
+      text: async () => '<!DOCTYPE html><html><body>Cloudflare challenge</body></html>',
     });
 
     const { getQuote } = await import('../trading.js');
