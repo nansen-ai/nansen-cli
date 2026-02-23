@@ -8,181 +8,107 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  issues: read
 
 jobs:
-  code-review:
+  test:
+    runs-on: ubuntu-latest
+    outputs:
+      test_status: ${{ steps.summary.outputs.status }}
+      test_summary: ${{ steps.summary.outputs.summary }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Run tests with coverage
+        id: tests
+        run: |
+          npx vitest run --coverage 2>&1 | tee test-output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Summarize
+        id: summary
+        run: |
+          if [ "${{ steps.tests.outputs.exit_code }}" = "0" ]; then
+            echo "status=✅ All tests passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=❌ Tests failed — see CI logs" >> "$GITHUB_OUTPUT"
+          fi
+          LINES=$(tail -20 test-output.txt | head -10)
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "summary<<$EOF" >> "$GITHUB_OUTPUT"
+          echo "$LINES" >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+
+  review:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Use Node.js 20
-        uses: actions/setup-node@v4
+      - name: Run Claude code review
+        uses: anthropics/claude-code-action@v1
         with:
-          node-version: 20
-          cache: "npm"
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          model: claude-sonnet-4-20250514
+          track_progress: true
+          use_sticky_comment: true
+          claude_args: --allowedTools "Read,Glob,Grep,WebFetch"
+          prompt: |
+            You are a senior code reviewer for nansen-cli, an open-source Node.js CLI for the Nansen blockchain analytics API. Designed for AI agents to query onchain data.
 
-      - name: Install dependencies
-        run: npm ci
+            ## CI Test Results
 
-      - name: Run tests with coverage
-        id: tests
-        run: |
-          npx vitest run --coverage --reporter=json --outputFile=test-results.json 2>&1 | tee test-output.txt
-          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
-        continue-on-error: true
+            ${{ needs.test.outputs.test_status }}
+            ```
+            ${{ needs.test.outputs.test_summary }}
+            ```
 
-      - name: Get PR diff
-        id: diff
-        run: |
-          git diff origin/main...HEAD -- '*.js' '*.json' '*.md' > pr_diff.txt
-          # Cap diff at 100KB to stay within token limits
-          head -c 100000 pr_diff.txt > pr_diff_trimmed.txt
-          echo "size=$(wc -c < pr_diff.txt)" >> "$GITHUB_OUTPUT"
+            ## Instructions
 
-      - name: Run AI code review
-        id: review
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          DIFF=$(cat pr_diff_trimmed.txt)
-          TEST_OUTPUT=$(cat test-output.txt 2>/dev/null || echo "No test output")
-          TESTS_PASSED="${{ steps.tests.outputs.exit_code }}"
+            Read the full source files for context — diffs alone can be misleading.
 
-          # Build the prompt
-          cat > prompt.json << 'PROMPT_EOF'
-          {
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": 4096,
-            "messages": [
-              {
-                "role": "user",
-                "content": "PLACEHOLDER"
-              }
-            ]
-          }
-          PROMPT_EOF
+            Review criteria:
+            1. Code Quality — Readability, naming, structure, DRY, idiomatic JS/Node.js
+            2. Correctness — Logic errors, edge cases, error handling
+            3. Test Coverage — Are new code paths tested? Are tests meaningful?
+            4. API Design — CLI UX, consistent patterns, helpful error messages
+            5. Documentation — Help text, README, comments where needed
+            6. Dependencies — New deps justified and well-maintained?
+            7. Performance — N+1 API calls, blocking operations, unnecessary work
 
-          PROMPT_TEXT=$(cat <<'EOF'
-          You are a senior code reviewer for nansen-cli, an open-source Node.js CLI tool for the Nansen blockchain analytics API. Review this PR diff and provide a structured assessment.
+            ## Incremental Reviews
 
-          ## Review Criteria
+            For subsequent pushes (synchronize events):
+            - Check your previous review comments on this PR
+            - Reuse finding IDs if the same issue persists (even if line numbers changed)
+            - Only report NEW issues or confirm unresolved ones
+            - Note when previously flagged issues are resolved
+            For initial reviews, do a full assessment.
 
-          1. **Code Quality** — Readability, naming, structure, DRY, idiomatic JS/Node.js patterns
-          2. **Correctness** — Logic errors, edge cases, error handling, off-by-ones
-          3. **Test Coverage** — Are new code paths tested? Are tests meaningful (not just smoke)?
-          4. **API Design** — CLI UX, consistent patterns with existing commands, helpful error messages
-          5. **Documentation** — Are changes reflected in help text, README, comments where needed?
-          6. **Dependencies** — Any new deps justified? Are they well-maintained?
-          7. **Performance** — Unnecessary allocations, N+1 API calls, blocking operations?
+            ## Response Format
 
-          ## Output Format
+            **Score: X/10**
+            **Recommendation: MERGE ✅ | REVISE 🔄 | BLOCK ❌**
 
-          Provide your review in this EXACT format:
+            Thresholds: 8-10 = MERGE ✅, 5-7 = REVISE 🔄, 1-4 = BLOCK ❌
 
-          ### Code Review Summary
+            List issues as:
 
-          **Score: X/10**
-          **Recommendation: MERGE ✅ | REVISE 🔄 | BLOCK ❌**
+            #### Issue: Brief description
+            **ID:** {file-slug}-{semantic-slug}-{4char-hash}
+            **File:** path/to/file.ext:line
+            **Severity:** 🔴 Critical | 🟡 Important | 🔵 Nit
+            Explanation + fix.
 
-          Use these thresholds:
-          - **8-10**: MERGE ✅ — Good to go, minor nits at most
-          - **5-7**: REVISE 🔄 — Has issues that should be addressed before merging
-          - **1-4**: BLOCK ❌ — Significant problems, needs rework
-
-          #### What's Good
-          (bullet points)
-
-          #### Issues Found
-          (bullet points with severity: 🔴 Critical, 🟡 Important, 🔵 Nit)
-          For each issue, reference the specific file and line from the diff.
-
-          #### Test Assessment
-          (Are new paths covered? What's missing?)
-
-          ---
-
-          TESTS_PASSED: TESTS_STATUS_PLACEHOLDER
-
-          TEST OUTPUT:
-          ```
-          TEST_OUTPUT_PLACEHOLDER
-          ```
-
-          PR DIFF:
-          ```diff
-          DIFF_PLACEHOLDER
-          ```
-          EOF
-          )
-
-          # Substitute placeholders
-          if [ "$TESTS_PASSED" = "0" ]; then
-            PROMPT_TEXT="${PROMPT_TEXT//TESTS_STATUS_PLACEHOLDER/Yes ✅}"
-          else
-            PROMPT_TEXT="${PROMPT_TEXT//TESTS_STATUS_PLACEHOLDER/No ❌}"
-          fi
-
-          # Use jq to safely inject content (handles escaping)
-          jq --arg prompt "$PROMPT_TEXT" \
-             --arg diff "$DIFF" \
-             --arg test_output "$TEST_OUTPUT" \
-             '.messages[0].content = ($prompt | gsub("DIFF_PLACEHOLDER"; $diff) | gsub("TEST_OUTPUT_PLACEHOLDER"; $test_output))' \
-             prompt.json > request.json
-
-          # Call Claude API
-          HTTP_STATUS=$(curl -s -w "%{http_code}" -o response.json \
-            https://api.anthropic.com/v1/messages \
-            -H "content-type: application/json" \
-            -H "x-api-key: $ANTHROPIC_API_KEY" \
-            -H "anthropic-version: 2023-06-01" \
-            -d @request.json)
-
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "::error::Claude API returned HTTP $HTTP_STATUS"
-            cat response.json
-            exit 1
-          fi
-
-          # Extract review text
-          jq -r '.content[0].text' response.json > review.md
-
-      - name: Post review comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const review = fs.readFileSync('review.md', 'utf8');
-            const diffSize = '${{ steps.diff.outputs.size }}';
-
-            let body = `## 🤖 AI Code Review\n\n`;
-            if (parseInt(diffSize) > 100000) {
-              body += `> ⚠️ Diff was ${(parseInt(diffSize)/1024).toFixed(0)}KB — truncated to 100KB for review\n\n`;
-            }
-            body += review;
-            body += `\n\n---\n*Automated review by Claude. This is advisory — use your judgment.*`;
-
-            // Find and update existing comment, or create new one
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            const existing = comments.find(c => c.body.includes('🤖 AI Code Review'));
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
-            }
+            If no issues: "✅ No issues found"
+            Be concise. Issues only, no praise.
