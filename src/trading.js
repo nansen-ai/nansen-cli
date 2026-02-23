@@ -261,6 +261,7 @@ export function signSolanaTransaction(transactionBase64, privateKeyHex) {
  * @returns {string} 0x-prefixed signed transaction hex
  */
 // ⚠️ SECURITY: EVM transaction signing - requires thorough review before production use
+// TODO: Always signs as legacy (type 0) transactions. Do we need EIP-1559 (type 2) support?
 export function signEvmTransaction(txData, privateKeyHex, chain, nonce) {
   const chainConfig = CHAIN_MAP[chain];
   if (!chainConfig || chainConfig.type !== 'evm') {
@@ -385,6 +386,16 @@ export function buildApprovalTransaction(tokenAddress, spenderAddress, privateKe
 // ⚠️ SECURITY: Legacy EVM transaction signing - requires thorough review before production use
 
 /**
+ * Strip all leading zero bytes from a buffer.
+ * RLP requires minimal encoding, so signature r/s values must not have leading zeros.
+ */
+export function stripLeadingZeros(buf) {
+  let i = 0;
+  while (i < buf.length && buf[i] === 0) i++;
+  return buf.subarray(i);
+}
+
+/**
  * Sign a legacy (type 0) EVM transaction.
  *
  * @param {object} tx - { nonce, gasPrice, gasLimit, to, value, data, chainId }
@@ -423,8 +434,8 @@ export function signLegacyTransaction(tx, privateKeyHex) {
     rlpNormalize(tx.value),
     toBuffer(tx.data || '0x'),
     rlpNormalize(v),
-    r.length > 0 && r[0] === 0 ? r.subarray(1) : r, // strip leading zero
-    s.length > 0 && s[0] === 0 ? s.subarray(1) : s,
+    stripLeadingZeros(r),
+    stripLeadingZeros(s),
   ];
 
   return '0x' + rlpEncode(signedFields).toString('hex');
@@ -488,8 +499,7 @@ function ecdsaSign(msgHash, privKeyBuf) {
     }
   }
 
-  // Should not reach here with valid keys
-  return { r, s, v: 0 };
+  throw new Error('ECDSA signature recovery failed: could not determine recovery id');
 }
 
 /**

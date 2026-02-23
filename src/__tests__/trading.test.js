@@ -25,6 +25,7 @@ import {
   signEvmTransaction,
   buildApprovalTransaction,
   ecRecover,
+  stripLeadingZeros,
   buildTradingCommands,
 } from '../trading.js';
 import {
@@ -575,6 +576,30 @@ describe('buildTradingCommands', () => {
     await cmds.execute([], null, {}, { quote: quoteId });
     expect(exitCalled).toBe(true);
     expect(logs.some(l => l.includes('transaction data'))).toBe(true);
+  });
+});
+
+// ============= stripLeadingZeros =============
+
+describe('stripLeadingZeros', () => {
+  it('should strip multiple leading zero bytes', () => {
+    expect(stripLeadingZeros(Buffer.from([0, 0, 0, 1, 2]))).toEqual(Buffer.from([1, 2]));
+  });
+
+  it('should strip a single leading zero byte', () => {
+    expect(stripLeadingZeros(Buffer.from([0, 0xff]))).toEqual(Buffer.from([0xff]));
+  });
+
+  it('should return empty buffer for all zeros', () => {
+    expect(stripLeadingZeros(Buffer.from([0, 0, 0]))).toEqual(Buffer.alloc(0));
+  });
+
+  it('should not strip from non-zero-leading buffer', () => {
+    expect(stripLeadingZeros(Buffer.from([1, 2, 3]))).toEqual(Buffer.from([1, 2, 3]));
+  });
+
+  it('should handle empty buffer', () => {
+    expect(stripLeadingZeros(Buffer.alloc(0))).toEqual(Buffer.alloc(0));
   });
 });
 
