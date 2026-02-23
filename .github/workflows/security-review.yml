@@ -1,0 +1,219 @@
+name: "AI Security Review"
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  security-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        id: audit
+        run: |
+          npm audit --json > audit-results.json 2>&1 || true
+          npm audit 2>&1 | tee audit-output.txt || true
+
+      - name: Check for secrets in diff
+        id: secrets
+        run: |
+          git diff origin/main...HEAD > full_diff.txt
+
+          # Pattern-based secret detection (no external tools needed)
+          FINDINGS=""
+          while IFS= read -r line; do
+            line_lower=$(echo "$line" | tr '[:upper:]' '[:lower:]')
+            if echo "$line" | grep -qP '^\+' && echo "$line_lower" | grep -qPi '(api[_-]?key|secret|password|token|private[_-]?key|auth)\s*[:=]\s*["\x27]?[a-zA-Z0-9+/=_\-]{16,}'; then
+              FINDINGS="${FINDINGS}${line}\n"
+            fi
+          done < full_diff.txt
+
+          if [ -n "$FINDINGS" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            printf "%b" "$FINDINGS" > secret-findings.txt
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No hardcoded secrets detected." > secret-findings.txt
+          fi
+
+      - name: Get PR diff
+        id: diff
+        run: |
+          git diff origin/main...HEAD -- '*.js' '*.json' > pr_diff.txt
+          head -c 100000 pr_diff.txt > pr_diff_trimmed.txt
+          echo "size=$(wc -c < pr_diff.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Run AI security review
+        id: review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          DIFF=$(cat pr_diff_trimmed.txt)
+          AUDIT_OUTPUT=$(cat audit-output.txt 2>/dev/null || echo "No audit output")
+          SECRET_FINDINGS=$(cat secret-findings.txt)
+          SECRETS_FOUND="${{ steps.secrets.outputs.found }}"
+
+          cat > prompt.json << 'PROMPT_EOF'
+          {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 4096,
+            "messages": [
+              {
+                "role": "user",
+                "content": "PLACEHOLDER"
+              }
+            ]
+          }
+          PROMPT_EOF
+
+          PROMPT_TEXT=$(cat <<'EOF'
+          You are a security engineer reviewing a PR for nansen-cli, an open-source Node.js CLI for the Nansen blockchain analytics API. Users interact with crypto wallets, API keys, and financial data. Security is critical.
+
+          ## Review Criteria
+
+          1. **Secrets & Credentials** — Hardcoded keys, tokens, or secrets? Credentials logged or exposed in errors?
+          2. **Input Validation** — User inputs sanitized? Command injection via shell exec? Path traversal?
+          3. **API Security** — Keys transmitted securely? Stored safely? Proper auth header handling?
+          4. **Dependency Risk** — New dependencies? Known vulns? Typosquatting risk?
+          5. **Data Exposure** — Sensitive data in logs, error messages, or stack traces? PII leakage?
+          6. **Code Injection** — eval(), Function(), dynamic require()? Template injection?
+          7. **File System** — Safe file operations? Temp file handling? Symlink attacks?
+          8. **Network** — TLS enforced? SSRF vectors? DNS rebinding?
+          9. **Crypto Operations** — If wallet/signing related: key handling, nonce reuse, replay attacks?
+          10. **Supply Chain** — Package.json changes? Lock file integrity? Postinstall scripts?
+
+          ## Output Format
+
+          Provide your review in this EXACT format:
+
+          ### Security Review Summary
+
+          **Score: X/10**
+          **Recommendation: APPROVE ✅ | FIX REQUIRED 🔄 | BLOCK ❌**
+
+          Use these thresholds:
+          - **8-10**: APPROVE ✅ — No security concerns, or only minor hardening suggestions
+          - **5-7**: FIX REQUIRED 🔄 — Has security issues that must be addressed
+          - **1-4**: BLOCK ❌ — Serious vulnerabilities, do not merge
+
+          #### Findings
+          (bullet points with severity: 🔴 Critical, 🟠 High, 🟡 Medium, 🔵 Low)
+          For each finding, reference the specific file and line from the diff.
+
+          #### Dependency Audit
+          (Summary of npm audit results and any new dependency concerns)
+
+          #### Hardcoded Secrets Scan
+          (Results of automated pattern matching — confirm or dismiss each finding)
+
+          #### Recommendations
+          (Specific fixes or hardening suggestions)
+
+          ---
+
+          AUTOMATED SECRET SCAN: SECRETS_PLACEHOLDER
+
+          SECRET SCAN DETAILS:
+          ```
+          SECRET_FINDINGS_PLACEHOLDER
+          ```
+
+          NPM AUDIT:
+          ```
+          AUDIT_PLACEHOLDER
+          ```
+
+          PR DIFF:
+          ```diff
+          DIFF_PLACEHOLDER
+          ```
+          EOF
+          )
+
+          if [ "$SECRETS_FOUND" = "true" ]; then
+            PROMPT_TEXT="${PROMPT_TEXT//SECRETS_PLACEHOLDER/⚠️ Potential secrets detected — review carefully}"
+          else
+            PROMPT_TEXT="${PROMPT_TEXT//SECRETS_PLACEHOLDER/✅ No hardcoded secrets detected}"
+          fi
+
+          jq --arg prompt "$PROMPT_TEXT" \
+             --arg diff "$DIFF" \
+             --arg audit "$AUDIT_OUTPUT" \
+             --arg secrets "$SECRET_FINDINGS" \
+             '.messages[0].content = ($prompt | gsub("DIFF_PLACEHOLDER"; $diff) | gsub("AUDIT_PLACEHOLDER"; $audit) | gsub("SECRET_FINDINGS_PLACEHOLDER"; $secrets))' \
+             prompt.json > request.json
+
+          HTTP_STATUS=$(curl -s -w "%{http_code}" -o response.json \
+            https://api.anthropic.com/v1/messages \
+            -H "content-type: application/json" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -d @request.json)
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Claude API returned HTTP $HTTP_STATUS"
+            cat response.json
+            exit 1
+          fi
+
+          jq -r '.content[0].text' response.json > review.md
+
+      - name: Post security review comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const review = fs.readFileSync('review.md', 'utf8');
+            const secretsFound = '${{ steps.secrets.outputs.found }}';
+            const diffSize = '${{ steps.diff.outputs.size }}';
+
+            let body = `## 🔒 AI Security Review\n\n`;
+            if (secretsFound === 'true') {
+              body += `> 🚨 **Automated secret detection flagged potential findings — see review below**\n\n`;
+            }
+            if (parseInt(diffSize) > 100000) {
+              body += `> ⚠️ Diff was ${(parseInt(diffSize)/1024).toFixed(0)}KB — truncated to 100KB for review\n\n`;
+            }
+            body += review;
+            body += `\n\n---\n*Automated security review by Claude. This is advisory — use your judgment.*`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes('🔒 AI Security Review'));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
