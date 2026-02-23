@@ -952,8 +952,10 @@ EXAMPLES:
           // EVM: quote.transaction is { to, data, value, gas, gasPrice }
           const walletAddress = exported.evm.address;
 
-          // Handle approval if needed (OKX may require approval even for native tokens)
-          if (bestQuote.approvalAddress) {
+          // Handle approval if needed — skip for native ETH (0xeee...eee is a
+          // placeholder used by DEX aggregators, not a real ERC-20 contract)
+          const isNativeToken = /^0xe+$/i.test(bestQuote.inputMint);
+          if (bestQuote.approvalAddress && !isNativeToken) {
             log(`  ⚠ Approval required → ${bestQuote.approvalAddress}`);
             log(`  Sending approval tx...`);
             const approvalNonce = await getEvmNonce(chain, walletAddress);
