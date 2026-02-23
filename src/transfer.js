@@ -234,19 +234,48 @@ async function buildEvmTransaction({ to, amount, token, privateKey, chain }) {
   const maxPriorityFee = 100000000n; // 0.1 gwei (Base is cheap)
   const maxFee = baseFee * 2n + maxPriorityFee;
 
-  let txTo, txValue, txData, gasLimit;
+  let txTo, txValue, txData;
   if (token) {
     const toStripped = to.replace(/^0x/, '').padStart(64, '0');
     const amtHex = amount.toString(16).padStart(64, '0');
     txTo = token;
     txValue = 0n;
     txData = Buffer.from(ERC20_TRANSFER_SELECTOR + toStripped + amtHex, 'hex');
-    gasLimit = 65000n;
+
+    // Pre-check: ERC-20 balance
+    const balResult = await rpcCall(rpcUrl, 'eth_call', [{
+      to: token,
+      data: '0x70a08231' + from.slice(2).padStart(64, '0'), // balanceOf(address)
+    }, 'latest']);
+    const tokenBalance = BigInt(balResult || '0x0');
+    if (tokenBalance < amount) {
+      throw new Error(`Insufficient token balance: have ${tokenBalance}, need ${amount}`);
+    }
   } else {
     txTo = to;
     txValue = amount;
     txData = Buffer.alloc(0);
-    gasLimit = 21000n;
+
+    // Pre-check: native ETH balance
+    const balHex = await rpcCall(rpcUrl, 'eth_getBalance', [from, 'latest']);
+    const ethBalance = BigInt(balHex);
+    const estimatedCost = amount + maxFee * 21000n; // rough gas cost estimate
+    if (ethBalance < estimatedCost) {
+      throw new Error(`Insufficient ETH balance: have ${ethBalance} wei, need ~${estimatedCost} wei (${amount} value + gas)`);
+    }
+  }
+
+  // Estimate gas dynamically instead of hardcoding
+  const estimateParams = { from, to: txTo, data: txData.length > 0 ? '0x' + txData.toString('hex') : '0x' };
+  if (txValue > 0n) estimateParams.value = bigIntToHex(txValue);
+  let gasLimit;
+  try {
+    const gasEstimate = await rpcCall(rpcUrl, 'eth_estimateGas', [estimateParams]);
+    // Add 20% buffer for safety
+    gasLimit = BigInt(gasEstimate) * 120n / 100n;
+  } catch {
+    // Fallback to safe defaults if estimation fails
+    gasLimit = token ? 100000n : 21000n;
   }
 
   // RLP: [chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data, accessList]
@@ -362,7 +391,7 @@ async function buildSolanaTransaction({ to, amount, amountStr, token, privateKey
   const bhResult = await rpcCall(rpcUrl, 'getLatestBlockhash', [{ commitment: 'finalized' }]);
   const blockhash = bhResult.value.blockhash;
 
-  let accountKeys, instructions;
+  let accountKeys, instructions, numReadonlyUnsigned;
 
   if (token) {
     // SPL Token TransferChecked
@@ -373,6 +402,19 @@ async function buildSolanaTransaction({ to, amount, amountStr, token, privateKey
     const destATA = deriveATA(to, token, tokenProgram);
     const tokenProgBuf = base58DecodePubkey(tokenProgram);
 
+    // Pre-check: SPL token balance
+    const sourceAtaAddr = base58Encode(sourceATA);
+    try {
+      const ataInfo = await rpcCall(rpcUrl, 'getTokenAccountBalance', [sourceAtaAddr]);
+      const tokenBalance = BigInt(ataInfo.value.amount);
+      if (tokenBalance < tokenAmount) {
+        throw new Error(`Insufficient token balance: have ${ataInfo.value.uiAmountString}, need ${amountStr}`);
+      }
+    } catch (e) {
+      if (e.message.includes('Insufficient')) throw e;
+      throw new Error(`Source token account not found. Do you hold this token?`);
+    }
+
     // TransferChecked instruction data: [12, amount u64 LE, decimals u8]
     const instrData = Buffer.alloc(10);
     instrData[0] = 12; // TransferChecked
@@ -380,48 +422,71 @@ async function buildSolanaTransaction({ to, amount, amountStr, token, privateKey
     instrData[9] = decimals;
 
     const destPubkey = base58DecodePubkey(to);
-    const ataProgBuf = base58DecodePubkey(ATA_PROGRAM);
-    const sysProgramBuf = base58DecodePubkey(SYSTEM_PROGRAM);
 
-    // Account keys layout:
-    // 0: payer/owner (signer, writable)
-    // 1: sourceATA (writable)
-    // 2: destATA (writable)
-    // 3: destOwner (readonly)
-    // 4: mint (readonly)
-    // 5: system program (readonly)
-    // 6: token program (readonly)
-    // 7: ATA program (readonly)
-    accountKeys = [
-      pubkey,        // 0
-      sourceATA,     // 1
-      destATA,       // 2
-      destPubkey,    // 3
-      mintBuf,       // 4
-      sysProgramBuf, // 5
-      tokenProgBuf,  // 6
-      ataProgBuf,    // 7
-    ];
+    // Check if destination ATA already exists — skip CreateATA if so
+    const destAtaAddr = base58Encode(destATA);
+    let destAtaExists = false;
+    try {
+      const destInfo = await rpcCall(rpcUrl, 'getAccountInfo', [destAtaAddr, { encoding: 'base64' }]);
+      destAtaExists = destInfo?.value !== null;
+    } catch { /* assume doesn't exist */ }
 
-    // Instruction 1: CreateAssociatedTokenAccountIdempotent
-    // Accounts: [payer(sw), ata(w), owner(r), mint(r), systemProgram(r), tokenProgram(r)]
-    const createAtaInstr = {
-      programIdIndex: 7, // ATA program
-      accountIndices: [0, 2, 3, 4, 5, 6],
-      data: Buffer.from([1]), // 1 = CreateIdempotent
-    };
+    if (destAtaExists) {
+      // Simple: just TransferChecked, no CreateATA needed
+      // Accounts: [owner(s,w), sourceATA(w), mint(r), destATA(w), tokenProgram(r)]
+      accountKeys = [
+        pubkey,        // 0: owner/feePayer (signer, writable)
+        sourceATA,     // 1: source ATA (writable)
+        mintBuf,       // 2: mint (readonly)
+        destATA,       // 3: dest ATA (writable)
+        tokenProgBuf,  // 4: token program (readonly)
+      ];
+      instructions = [{
+        programIdIndex: 4,
+        accountIndices: [1, 2, 3, 0], // source, mint, dest, authority
+        data: instrData,
+      }];
+      numReadonlyUnsigned = 2; // mint + tokenProgram
+    } else {
+      // Need CreateAssociatedTokenAccountIdempotent + TransferChecked
+      const ataProgBuf = base58DecodePubkey(ATA_PROGRAM);
+      const sysProgramBuf = base58DecodePubkey(SYSTEM_PROGRAM);
 
-    // Instruction 2: TransferChecked
-    // Accounts: [source(w), mint(r), dest(w), authority(s)]
-    const transferInstr = {
-      programIdIndex: 6, // token program
-      accountIndices: [1, 4, 2, 0],
-      data: instrData,
-    };
+      accountKeys = [
+        pubkey,        // 0
+        sourceATA,     // 1
+        destATA,       // 2
+        destPubkey,    // 3
+        mintBuf,       // 4
+        sysProgramBuf, // 5
+        tokenProgBuf,  // 6
+        ataProgBuf,    // 7
+      ];
 
-    instructions = [createAtaInstr, transferInstr];
+      const createAtaInstr = {
+        programIdIndex: 7,
+        accountIndices: [0, 2, 3, 4, 5, 6],
+        data: Buffer.from([1]),
+      };
+      const transferInstr = {
+        programIdIndex: 6,
+        accountIndices: [1, 4, 2, 0],
+        data: instrData,
+      };
+      instructions = [createAtaInstr, transferInstr];
+      numReadonlyUnsigned = 5; // destOwner, mint, systemProg, tokenProg, ataProg
+    }
   } else {
     // Native SOL transfer
+
+    // Pre-check: SOL balance
+    const balResult = await rpcCall(rpcUrl, 'getBalance', [fromAddr, { commitment: 'confirmed' }]);
+    const solBalance = BigInt(balResult.value);
+    const needed = amount + 5000n; // amount + ~fee
+    if (solBalance < needed) {
+      throw new Error(`Insufficient SOL balance: have ${solBalance} lamports, need ${needed} (${amount} + fees)`);
+    }
+
     const instrData = Buffer.alloc(12);
     instrData.writeUInt32LE(2, 0);
     instrData.writeBigUInt64LE(amount, 4);
@@ -437,11 +502,8 @@ async function buildSolanaTransaction({ to, amount, amountStr, token, privateKey
       accountIndices: [0, 1],
       data: instrData,
     }];
+    numReadonlyUnsigned = 1;
   }
-
-  // Count readonly unsigned accounts (last N that are not signers and not writable)
-  // For native: system_program (1 readonly). For SPL: mint + tokenProg (2 readonly)
-  const numReadonlyUnsigned = token ? 5 : 1;
 
   // Serialize legacy message
   const parts = [];

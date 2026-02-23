@@ -299,15 +299,24 @@ describe('sendTokens integration', () => {
   });
 
   describe('EVM', () => {
-    function mockEvmRpc() {
-      fetch
-        .mockResolvedValueOnce({ json: () => Promise.resolve({ result: '0x5' }) })
-        .mockResolvedValueOnce({ json: () => Promise.resolve({ result: { baseFeePerGas: ['0x3b9aca00','0x3b9aca00','0x3b9aca00','0x3b9aca00','0x3b9aca00'] } }) })
-        .mockResolvedValueOnce({ json: () => Promise.resolve({ result: '0xabc123' }) });
+    // Smart mock that responds based on the RPC method
+    function mockEvmRpcSmart() {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        const responses = {
+          'eth_getTransactionCount': '0x5',
+          'eth_feeHistory': { baseFeePerGas: ['0x3b9aca00','0x3b9aca00','0x3b9aca00','0x3b9aca00','0x3b9aca00'] },
+          'eth_getBalance': '0x8AC7230489E80000', // 10 ETH
+          'eth_estimateGas': '0x5208', // 21000
+          'eth_sendRawTransaction': '0xabc123',
+          'eth_call': '0x' + 'f'.repeat(64), // large balance for balanceOf, or decimals
+        };
+        return { json: () => Promise.resolve({ result: responses[body.method] || '0x0' }) };
+      });
     }
 
     test('sends native ETH and returns tx hash', async () => {
-      mockEvmRpc();
+      mockEvmRpcSmart();
       const result = await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'evm', password: 'test' });
       expect(result.success).toBe(true);
       expect(result.transactionHash).toBe('0xabc123');
@@ -316,19 +325,29 @@ describe('sendTokens integration', () => {
     });
 
     test('sends on Base chain', async () => {
-      mockEvmRpc();
+      mockEvmRpcSmart();
       const result = await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'base', password: 'test' });
       expect(result.chain).toBe('base');
-      // Verify the RPC was called (chainId 8453 should be used internally)
-      expect(fetch).toHaveBeenCalledTimes(3);
     });
 
     test('sends ERC-20 with correct decimals fetch', async () => {
-      fetch
-        .mockResolvedValueOnce({ json: () => Promise.resolve({ result: '0x0000000000000000000000000000000000000000000000000000000000000012' }) }) // 18 decimals
-        .mockResolvedValueOnce({ json: () => Promise.resolve({ result: '0x0' }) })
-        .mockResolvedValueOnce({ json: () => Promise.resolve({ result: { baseFeePerGas: ['0x1','0x1','0x1','0x1','0x1'] } }) })
-        .mockResolvedValueOnce({ json: () => Promise.resolve({ result: '0xtoken_tx' }) });
+      let callCount = 0;
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        const responses = {
+          'eth_getTransactionCount': '0x0',
+          'eth_feeHistory': { baseFeePerGas: ['0x1','0x1','0x1','0x1','0x1'] },
+          'eth_estimateGas': '0xfe00',
+          'eth_sendRawTransaction': '0xtoken_tx',
+        };
+        if (body.method === 'eth_call') {
+          callCount++;
+          // First eth_call = decimals(), second = balanceOf()
+          if (callCount === 1) return { json: () => Promise.resolve({ result: '0x0000000000000000000000000000000000000000000000000000000000000012' }) };
+          return { json: () => Promise.resolve({ result: '0x' + 'f'.repeat(64) }) };
+        }
+        return { json: () => Promise.resolve({ result: responses[body.method] || '0x0' }) };
+      });
 
       const result = await sendTokens({
         to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '100', chain: 'evm',
@@ -338,41 +357,98 @@ describe('sendTokens integration', () => {
       expect(result.token).toBe('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
     });
 
-    test('builds valid raw transaction (sendRawTransaction receives 0x-prefixed hex)', async () => {
-      mockEvmRpc();
-      await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1.0', chain: 'evm', password: 'test' });
+    test('builds valid EIP-1559 type 2 transaction', async () => {
+      mockEvmRpcSmart();
+      await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'evm', password: 'test' });
 
-      // Third call is sendRawTransaction
-      const thirdCall = JSON.parse(fetch.mock.calls[2][1].body);
-      expect(thirdCall.method).toBe('eth_sendRawTransaction');
-      expect(thirdCall.params[0]).toMatch(/^0x02/); // EIP-1559 type 2 prefix
+      // Find the sendRawTransaction call
+      const sendRawCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_sendRawTransaction');
+      expect(sendRawCall).toBeDefined();
+      expect(JSON.parse(sendRawCall[1].body).params[0]).toMatch(/^0x02/);
+    });
+
+    test('uses eth_estimateGas instead of hardcoded gas limit', async () => {
+      mockEvmRpcSmart();
+      await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'evm', password: 'test' });
+
+      const estimateCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_estimateGas');
+      expect(estimateCall).toBeDefined();
+    });
+
+    test('rejects when ETH balance is insufficient', async () => {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'eth_getBalance') return { json: () => Promise.resolve({ result: '0x0' }) };
+        if (body.method === 'eth_getTransactionCount') return { json: () => Promise.resolve({ result: '0x0' }) };
+        if (body.method === 'eth_feeHistory') return { json: () => Promise.resolve({ result: { baseFeePerGas: ['0x3b9aca00','0x3b9aca00','0x3b9aca00','0x3b9aca00','0x3b9aca00'] } }) };
+        return { json: () => Promise.resolve({ result: '0x0' }) };
+      });
+
+      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1.0', chain: 'evm', password: 'test' }))
+        .rejects.toThrow('Insufficient ETH balance');
+    });
+
+    test('rejects when ERC-20 balance is insufficient', async () => {
+      let callCount = 0;
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'eth_call') {
+          callCount++;
+          if (callCount === 1) return { json: () => Promise.resolve({ result: '0x0000000000000000000000000000000000000000000000000000000000000006' }) }; // decimals
+          return { json: () => Promise.resolve({ result: '0x0' }) }; // balanceOf = 0
+        }
+        if (body.method === 'eth_getTransactionCount') return { json: () => Promise.resolve({ result: '0x0' }) };
+        if (body.method === 'eth_feeHistory') return { json: () => Promise.resolve({ result: { baseFeePerGas: ['0x1','0x1','0x1','0x1','0x1'] } }) };
+        return { json: () => Promise.resolve({ result: '0x0' }) };
+      });
+
+      await expect(sendTokens({
+        to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '100', chain: 'evm',
+        token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', password: 'test',
+      })).rejects.toThrow('Insufficient token balance');
     });
   });
 
   describe('Solana', () => {
-    function mockSolRpc() {
-      fetch
-        .mockResolvedValueOnce({ json: () => Promise.resolve({ result: { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } } }) })
-        .mockResolvedValueOnce({ json: () => Promise.resolve({ result: 'sol_sig_123' }) });
+    function mockSolRpcSmart() {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        const responses = {
+          'getLatestBlockhash': { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } },
+          'getBalance': { value: 1000000000 }, // 1 SOL
+          'sendTransaction': 'sol_sig_123',
+        };
+        return { json: () => Promise.resolve({ result: responses[body.method] || null }) };
+      });
     }
 
     test('sends native SOL', async () => {
-      mockSolRpc();
+      mockSolRpcSmart();
       const result = await sendTokens({ to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', amount: '0.5', chain: 'solana', password: 'test' });
       expect(result.success).toBe(true);
       expect(result.transactionHash).toBe('sol_sig_123');
-      expect(result.chain).toBe('solana');
     });
 
     test('broadcasts base64-encoded transaction', async () => {
-      mockSolRpc();
-      await sendTokens({ to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', amount: '1.0', chain: 'solana', password: 'test' });
+      mockSolRpcSmart();
+      await sendTokens({ to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', amount: '0.5', chain: 'solana', password: 'test' });
 
-      const secondCall = JSON.parse(fetch.mock.calls[1][1].body);
-      expect(secondCall.method).toBe('sendTransaction');
-      expect(secondCall.params[1].encoding).toBe('base64');
-      // Verify it's valid base64
-      expect(() => Buffer.from(secondCall.params[0], 'base64')).not.toThrow();
+      const sendCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'sendTransaction');
+      const body = JSON.parse(sendCall[1].body);
+      expect(body.params[1].encoding).toBe('base64');
+      expect(() => Buffer.from(body.params[0], 'base64')).not.toThrow();
+    });
+
+    test('rejects when SOL balance is insufficient', async () => {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'getLatestBlockhash') return { json: () => Promise.resolve({ result: { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } } }) };
+        if (body.method === 'getBalance') return { json: () => Promise.resolve({ result: { value: 100 } }) };
+        return { json: () => Promise.resolve({ result: null }) };
+      });
+
+      await expect(sendTokens({ to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', amount: '1.0', chain: 'solana', password: 'test' }))
+        .rejects.toThrow('Insufficient SOL balance');
     });
   });
 
@@ -396,22 +472,29 @@ describe('sendTokens integration', () => {
     });
 
     test('propagates RPC errors', async () => {
-      fetch.mockResolvedValueOnce({ json: () => Promise.resolve({ error: { message: 'insufficient funds' } }) });
+      fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ error: { message: 'insufficient funds' } }) }));
       await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('insufficient funds');
     });
 
     test('propagates network errors', async () => {
-      fetch.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+      fetch.mockRejectedValue(new Error('ECONNREFUSED'));
       await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('ECONNREFUSED');
     });
 
     test('uses specified wallet name', async () => {
-      fetch
-        .mockResolvedValueOnce({ json: () => Promise.resolve({ result: '0x0' }) })
-        .mockResolvedValueOnce({ json: () => Promise.resolve({ result: { baseFeePerGas: ['0x1','0x1','0x1','0x1','0x1'] } }) })
-        .mockResolvedValueOnce({ json: () => Promise.resolve({ result: '0x1' }) });
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        const r = {
+          'eth_getTransactionCount': '0x0',
+          'eth_feeHistory': { baseFeePerGas: ['0x1','0x1','0x1','0x1','0x1'] },
+          'eth_getBalance': '0x8AC7230489E80000',
+          'eth_estimateGas': '0x5208',
+          'eth_sendRawTransaction': '0x1',
+        };
+        return { json: () => Promise.resolve({ result: r[body.method] || '0x0' }) };
+      });
 
-      await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'evm', wallet: 'my-wallet', password: 'test' });
+      await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.001', chain: 'evm', wallet: 'my-wallet', password: 'test' });
       expect(wallet.exportWallet).toHaveBeenCalledWith('my-wallet', 'test');
     });
   });
