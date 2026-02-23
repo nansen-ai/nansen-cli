@@ -907,7 +907,8 @@ EXAMPLES:
         const chainConfig = resolveChain(chain);
         const chainType = chainConfig.type;
 
-        const bestQuote = quoteData.response.quotes?.[0];
+        const quoteIndex = parseInt(options['quote-index'] ?? '0', 10);
+        const bestQuote = quoteData.response.quotes?.[quoteIndex] || quoteData.response.quotes?.[0];
         if (!bestQuote) {
           log('❌ No quote data found');
           exit(1);
