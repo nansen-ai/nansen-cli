@@ -308,7 +308,7 @@ function warnIfInsecurePerms(filePath) {
   } catch { /* ignore stat errors */ }
 }
 
-function getWalletConfig() {
+export function getWalletConfig() {
   if (!fs.existsSync(getWalletConfigPath())) {
     return { defaultWallet: null, passwordHash: null };
   }
