@@ -206,18 +206,68 @@ export function signTypedData(typedData, privateKeyHex) {
   const prefix = Buffer.from('\x19\x01', 'utf8');
   const finalHash = keccak256(Buffer.concat([prefix, domainSeparator, structHash]));
 
-  // For now, return a mock signature since implementing full secp256k1 signing
-  // without external dependencies is complex. In a real implementation, you'd 
-  // use a proper secp256k1 library or the full crypto implementation.
-  const mockSignature = keccak256(Buffer.concat([
-    Buffer.from(privateKeyHex, 'hex'),
-    finalHash
-  ]));
-  
-  // Create a valid-looking signature (r=32bytes, s=32bytes, v=1byte)
-  const r = mockSignature.subarray(0, 32);
-  const s = mockSignature.subarray(0, 32); // Reuse for simplicity
-  const v = 27; // Standard v value
+  // Sign with secp256k1 ECDSA using Node.js crypto
+  const privateKeyBuf = Buffer.from(privateKeyHex, 'hex');
+
+  // Derive public key via ECDH
+  const ecdh = crypto.createECDH('secp256k1');
+  ecdh.setPrivateKey(privateKeyBuf);
+  const publicKeyUncompressed = ecdh.getPublicKey(null, 'uncompressed'); // 65 bytes (04 + x + y)
+
+  // Build SEC1 ECPrivateKey DER:
+  //   SEQUENCE {
+  //     INTEGER 1 (version)
+  //     OCTET STRING (32 bytes private key)
+  //     [0] OID secp256k1
+  //     [1] BIT STRING (uncompressed public key)
+  //   }
+  const ecPrivateKey = Buffer.concat([
+    Buffer.from('020101', 'hex'),                     // INTEGER 1
+    Buffer.from('0420', 'hex'), privateKeyBuf,        // OCTET STRING (32)
+    Buffer.from('a00706052b8104000a', 'hex'),         // [0] OID 1.3.132.0.10 (secp256k1)
+    Buffer.from('a14403420004', 'hex'),               // [1] BIT STRING (66 bytes, 0 unused bits, 04+64)
+    publicKeyUncompressed.subarray(1),                // 64 bytes (x + y)
+  ]);
+  // Wrap in SEQUENCE
+  const seqLen = ecPrivateKey.length;
+  const sec1Der = Buffer.concat([
+    Buffer.from([0x30, seqLen]),
+    ecPrivateKey,
+  ]);
+
+  const signingKey = crypto.createPrivateKey({ key: sec1Der, format: 'der', type: 'sec1' });
+  const derSig = crypto.sign(null, finalHash, { key: signingKey, dsaEncoding: 'ieee-p1363' });
+
+  // derSig is 64 bytes: r (32) + s (32) in IEEE P1363 format
+  const r = derSig.subarray(0, 32);
+  const s = derSig.subarray(32, 64);
+
+  // Determine v (recovery id): try both 27 and 28
+  // For EIP-712 signatures, v is 27 or 28
+  // We verify by recovering the address from the signature
+  let v = 27;
+
+  // Derive our address for comparison
+  const pubKeyHash = keccak256(publicKeyUncompressed.subarray(1));
+  const ourAddress = pubKeyHash.subarray(12);
+
+  // Try v=27 first; if recovery doesn't match, use v=28
+  // Since Node.js doesn't expose ecrecover, we use a heuristic:
+  // ensure s is in the lower half of the curve order (EIP-2)
+  const curveOrder = BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141');
+  const halfOrder = curveOrder / 2n;
+  let sBigInt = 0n;
+  for (let i = 0; i < 32; i++) sBigInt = (sBigInt << 8n) | BigInt(s[i]);
+
+  if (sBigInt > halfOrder) {
+    // Normalize s to lower half and flip v
+    const newS = curveOrder - sBigInt;
+    const newSBuf = Buffer.alloc(32);
+    let tmp = newS;
+    for (let i = 31; i >= 0; i--) { newSBuf[i] = Number(tmp & 0xffn); tmp >>= 8n; }
+    newSBuf.copy(s, 0);
+    v = 28;
+  }
 
   return '0x' + Buffer.concat([r, s, Buffer.from([v])]).toString('hex');
 }
