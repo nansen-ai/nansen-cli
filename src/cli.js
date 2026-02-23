@@ -1321,7 +1321,7 @@ export function buildCommands(deps = {}) {
 }
 
 // Commands that don't require API authentication
-export const NO_AUTH_COMMANDS = ['login', 'logout', 'help', 'schema', 'cache', 'wallet'];
+export const NO_AUTH_COMMANDS = ['login', 'logout', 'help', 'schema', 'cache', 'wallet', 'quote', 'execute'];
 
 // Command aliases for convenience
 export const COMMAND_ALIASES = {
