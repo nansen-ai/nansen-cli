@@ -295,6 +295,46 @@ export async function getEvmNonce(chain, address) {
 }
 
 /**
+ * Wait for an EVM transaction to be confirmed on-chain.
+ * Polls eth_getTransactionReceipt until receipt is available or timeout.
+ *
+ * @param {string} chain - Chain name
+ * @param {string} txHash - Transaction hash (0x...)
+ * @param {number} [timeoutMs=30000] - Max wait time
+ * @param {number} [pollMs=2000] - Poll interval
+ * @returns {Promise<object>} Transaction receipt
+ */
+export async function waitForReceipt(chain, txHash, timeoutMs = 30000, pollMs = 2000) {
+  const rpcUrl = EVM_RPC_URLS[chain];
+  if (!rpcUrl) throw new Error(`No RPC URL configured for chain: ${chain}`);
+
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const res = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'eth_getTransactionReceipt',
+        params: [txHash],
+      }),
+    });
+    const body = await res.json();
+    if (body.result) {
+      const status = parseInt(body.result.status, 16);
+      if (status !== 1) {
+        throw new Error(`Transaction reverted on-chain (status: 0x${body.result.status}). Tx: ${txHash}`);
+      }
+      return body.result;
+    }
+    // Receipt not yet available — wait and retry
+    await new Promise(r => setTimeout(r, pollMs));
+  }
+  throw new Error(`Transaction receipt not found after ${timeoutMs}ms. Tx: ${txHash}`);
+}
+
+/**
  * Send an ERC-20 approval transaction.
  * Required before swapping non-native EVM tokens.
  *
@@ -306,7 +346,7 @@ export async function getEvmNonce(chain, address) {
  * @returns {string} 0x-prefixed signed approval tx hex
  */
 // ⚠️ SECURITY: ERC-20 approval signing - requires thorough review
-export function buildApprovalTransaction(tokenAddress, spenderAddress, privateKeyHex, chain, nonce) {
+export function buildApprovalTransaction(tokenAddress, spenderAddress, privateKeyHex, chain, nonce, gasPrice) {
   const chainConfig = CHAIN_MAP[chain];
   if (!chainConfig) throw new Error(`Unsupported chain: ${chain}`);
 
@@ -319,7 +359,7 @@ export function buildApprovalTransaction(tokenAddress, spenderAddress, privateKe
 
   const tx = {
     nonce,
-    gasPrice: '0x1', // Caller should provide a reasonable value
+    gasPrice: toHex(gasPrice || '1000000'),
     gasLimit: '0x186a0', // 100000
     to: tokenAddress,
     value: '0x0',
@@ -901,17 +941,21 @@ EXAMPLES:
           // EVM: quote.transaction is { to, data, value, gas, gasPrice }
           const walletAddress = exported.evm.address;
 
-          // Handle ERC-20 approval if needed (skip for native tokens like 0xeee...)
-          const isNativeToken = bestQuote.inputMint?.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
-          if (bestQuote.approvalAddress && !isNativeToken) {
-            log(`  ⚠ Token requires approval. Sending approval tx first...`);
+          // Handle approval if needed (OKX may require approval even for native tokens)
+          if (bestQuote.approvalAddress) {
+            log(`  ⚠ Approval required → ${bestQuote.approvalAddress}`);
+            log(`  Sending approval tx...`);
             const approvalNonce = await getEvmNonce(chain, walletAddress);
+
+            // Use the same gasPrice as the swap tx for the approval
+            const approvalGasPrice = bestQuote.transaction?.gasPrice || bestQuote.transaction?.maxFeePerGas || '1000000';
             const approvalTxHex = buildApprovalTransaction(
               bestQuote.inputMint,
               bestQuote.approvalAddress,
               exported.evm.privateKey,
               chain,
-              approvalNonce
+              approvalNonce,
+              approvalGasPrice,
             );
 
             const approvalResult = await executeTransaction({
@@ -925,11 +969,18 @@ EXAMPLES:
               exit(1);
               return;
             }
-            log(`  ✓ Approval confirmed: ${approvalResult.txHash}`);
-            log('');
 
-            // Re-fetch quote since nonce changed and approval is now in place
-            // For now, just increment nonce
+            // Wait for approval to be confirmed on-chain before proceeding
+            log(`  Waiting for approval confirmation...`);
+            try {
+              const receipt = await waitForReceipt(chain, approvalResult.txHash);
+              log(`  ✓ Approval confirmed in block ${parseInt(receipt.blockNumber, 16)}: ${approvalResult.txHash}`);
+            } catch (receiptErr) {
+              log(`  ❌ Approval may not have confirmed: ${receiptErr.message}`);
+              exit(1);
+              return;
+            }
+            log('');
           }
 
           log('  Fetching nonce...');
