@@ -87,7 +87,7 @@ export async function getQuote(params) {
  * @param {boolean} [params.simulate] - Run pre-broadcast simulation
  * @returns {Promise<object>} Execution result
  */
-export async function executeTransaction(params) {
+export async function executeTransaction(params, { retries = 2, retryDelayMs = 1500 } = {}) {
   const headers = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
@@ -96,30 +96,41 @@ export async function executeTransaction(params) {
     headers['Authorization'] = `Bearer ${process.env.NANSEN_API_KEY}`;
   }
 
-  const res = await fetch(`${TRADING_API_URL}/execute`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(params),
-  });
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) {
+      await new Promise(r => setTimeout(r, retryDelayMs));
+    }
 
-  const text = await res.text();
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    throw Object.assign(
-      new Error(`Execute API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`),
-      { code: 'NON_JSON_RESPONSE', status: res.status, details: text.slice(0, 200) }
-    );
+    const res = await fetch(`${TRADING_API_URL}/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(params),
+    });
+
+    const text = await res.text();
+    let body;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      lastError = Object.assign(
+        new Error(`Execute API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`),
+        { code: 'NON_JSON_RESPONSE', status: res.status, details: text.slice(0, 200) }
+      );
+      // Retry on 502/503 (likely transient Cloudflare issues)
+      if ((res.status === 502 || res.status === 503) && attempt < retries) continue;
+      throw lastError;
+    }
+
+    if (!res.ok) {
+      const code = body.code || 'EXECUTE_ERROR';
+      const msg = body.message || `Execute request failed with status ${res.status}`;
+      throw Object.assign(new Error(msg), { code, status: res.status, details: body.details });
+    }
+
+    return body;
   }
-
-  if (!res.ok) {
-    const code = body.code || 'EXECUTE_ERROR';
-    const msg = body.message || `Execute request failed with status ${res.status}`;
-    throw Object.assign(new Error(msg), { code, status: res.status, details: body.details });
-  }
-
-  return body;
+  throw lastError;
 }
 
 // ============= Quote Storage =============
@@ -324,7 +335,7 @@ export async function waitForReceipt(chain, txHash, timeoutMs = 30000, pollMs = 
     if (body.result) {
       const status = parseInt(body.result.status, 16);
       if (status !== 1) {
-        throw new Error(`Transaction reverted on-chain (status: 0x${body.result.status}). Tx: ${txHash}`);
+        throw new Error(`Transaction reverted on-chain (status: ${body.result.status}). Tx: ${txHash}`);
       }
       return body.result;
     }
@@ -984,6 +995,8 @@ EXAMPLES:
           }
 
           log('  Fetching nonce...');
+          // Small delay to let RPC update after approval
+          await new Promise(r => setTimeout(r, 1000));
           const nonce = await getEvmNonce(chain, walletAddress);
           log(`  Nonce: ${nonce}`);
 
@@ -1009,6 +1022,24 @@ EXAMPLES:
         if (result.status === 'Success') {
           const txId = result.signature || result.txHash;
           const explorerUrl = chainConfig.explorer + txId;
+
+          // For EVM: verify the tx actually succeeded on-chain (API may report Success
+          // but the tx can still revert). Solana tx status is reliable from Jupiter.
+          if (chainType === 'evm' && result.txHash) {
+            log('  Verifying on-chain status...');
+            try {
+              await waitForReceipt(chain, result.txHash);
+            } catch (receiptErr) {
+              log(`\n  ⚠ Transaction was broadcast but REVERTED on-chain!`);
+              log(`    Tx Hash:   ${result.txHash}`);
+              log(`    Explorer:  ${explorerUrl}`);
+              log(`    Error:     ${receiptErr.message}`);
+              log(`\n  The trading API reported success, but the contract execution failed.`);
+              log(`  This can happen due to: stale quotes, insufficient gas, or liquidity changes.`);
+              exit(1);
+              return;
+            }
+          }
 
           log(`\n  ✓ Transaction successful!`);
           log(`    Status:      ${result.status}`);
