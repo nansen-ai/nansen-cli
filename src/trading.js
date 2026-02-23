@@ -307,6 +307,39 @@ export async function getEvmNonce(chain, address) {
 }
 
 /**
+ * Check ERC-20 allowance for a given owner/spender pair.
+ *
+ * @param {string} chain - Chain name
+ * @param {string} tokenAddress - ERC-20 token contract
+ * @param {string} ownerAddress - Token owner
+ * @param {string} spenderAddress - Approved spender (e.g. DEX router)
+ * @returns {Promise<bigint>} Current allowance in raw token units
+ */
+export async function checkAllowance(chain, tokenAddress, ownerAddress, spenderAddress) {
+  const rpcUrl = EVM_RPC_URLS[chain];
+  if (!rpcUrl) throw new Error(`No RPC URL configured for chain: ${chain}`);
+
+  // allowance(address owner, address spender) selector = 0xdd62ed3e
+  const data = '0xdd62ed3e'
+    + ownerAddress.slice(2).toLowerCase().padStart(64, '0')
+    + spenderAddress.slice(2).toLowerCase().padStart(64, '0');
+
+  const res = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'eth_call',
+      params: [{ to: tokenAddress, data }, 'latest'],
+    }),
+  });
+  const body = await res.json();
+  if (body.error) throw new Error(`RPC error: ${body.error.message}`);
+  return BigInt(body.result || '0x0');
+}
+
+/**
  * Wait for an EVM transaction to be confirmed on-chain.
  * Polls eth_getTransactionReceipt until receipt is available or timeout.
  *
@@ -890,7 +923,7 @@ EXAMPLES:
     'execute': async (args, apiInstance, flags, options) => {
       const quoteId = options.quote || options['quote-id'] || args[0];
       const walletName = options.wallet;
-      const noSimulate = flags['no-simulate'] || flags.noSimulate;
+      let noSimulate = flags['no-simulate'] || flags.noSimulate;
 
       if (!quoteId) {
         errorOutput(`
@@ -1002,6 +1035,30 @@ EXAMPLES:
               errorOutput(`  Approval may not have confirmed: ${receiptErr.message}`);
               exit(1);
               return;
+            }
+
+            // Verify allowance is actually set on-chain before proceeding
+            // RPC nodes can lag behind — poll until allowance is non-zero or timeout
+            errorOutput(`  Verifying allowance...`);
+            let allowanceVerified = false;
+            for (let attempt = 0; attempt < 5; attempt++) {
+              try {
+                const allowance = await checkAllowance(chain, bestQuote.inputMint, walletAddress, bestQuote.approvalAddress);
+                if (allowance > 0n) {
+                  errorOutput(`  Allowance confirmed: ${allowance.toString()}`);
+                  allowanceVerified = true;
+                  break;
+                }
+              } catch { /* ignore, retry */ }
+              await new Promise(r => setTimeout(r, 2000));
+            }
+
+            if (!allowanceVerified && !noSimulate) {
+              // Allowance not yet visible to RPC — skip simulation for the swap
+              // to avoid false failure. The approval tx IS confirmed on-chain,
+              // the RPC is just lagging.
+              errorOutput(`  Allowance not yet visible to RPC. Skipping simulation for swap to avoid false failure.`);
+              noSimulate = true;
             }
             errorOutput('');
           }

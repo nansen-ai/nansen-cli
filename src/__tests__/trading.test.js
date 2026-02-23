@@ -27,6 +27,7 @@ import {
   ecRecover,
   stripLeadingZeros,
   buildTradingCommands,
+  checkAllowance,
 } from '../trading.js';
 import {
   keccak256,
@@ -695,5 +696,89 @@ describe('API error handling', () => {
     })).rejects.toThrow(); // Should throw, not hang
 
     global.fetch = origFetch;
+  });
+});
+
+// ============= Allowance Check Tests =============
+
+describe('checkAllowance', () => {
+  const origFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = origFetch;
+  });
+
+  it('should return allowance as BigInt', async () => {
+    const maxUint = '0x' + 'f'.repeat(64);
+    global.fetch = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({ result: maxUint }),
+    });
+
+    const allowance = await checkAllowance(
+      'base',
+      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      '0x1111111111111111111111111111111111111111',
+      '0x2222222222222222222222222222222222222222',
+    );
+
+    expect(typeof allowance).toBe('bigint');
+    expect(allowance > 0n).toBe(true);
+  });
+
+  it('should return 0n for zero allowance', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({ result: '0x0000000000000000000000000000000000000000000000000000000000000000' }),
+    });
+
+    const allowance = await checkAllowance(
+      'base',
+      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      '0x1111111111111111111111111111111111111111',
+      '0x2222222222222222222222222222222222222222',
+    );
+
+    expect(allowance).toBe(0n);
+  });
+
+  it('should call eth_call with correct allowance selector', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({ result: '0x0' }),
+    });
+
+    await checkAllowance(
+      'base',
+      '0xTokenAddr000000000000000000000000000000',
+      '0xOwnerAddr000000000000000000000000000000',
+      '0xSpenderAd000000000000000000000000000000',
+    );
+
+    const callBody = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(callBody.method).toBe('eth_call');
+    // Should use allowance selector 0xdd62ed3e
+    expect(callBody.params[0].data).toMatch(/^0xdd62ed3e/);
+    // Should contain owner and spender addresses (lowercased, padded to 64 hex chars)
+    expect(callBody.params[0].data.length).toBe(2 + 8 + 64 + 64); // 0x + selector + owner + spender
+  });
+
+  it('should throw on RPC error', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({ error: { message: 'execution reverted' } }),
+    });
+
+    await expect(checkAllowance(
+      'base',
+      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      '0x1111111111111111111111111111111111111111',
+      '0x2222222222222222222222222222222222222222',
+    )).rejects.toThrow('execution reverted');
+  });
+
+  it('should throw for unsupported chain', async () => {
+    await expect(checkAllowance(
+      'fantom',
+      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      '0x1111111111111111111111111111111111111111',
+      '0x2222222222222222222222222222222222222222',
+    )).rejects.toThrow('No RPC URL');
   });
 });
