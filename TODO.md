@@ -10,8 +10,9 @@
 - [ ] `nansen wallet balance` — check wallet balance
 
 ### Trading Execution
-- [ ] `nansen quote` — get a quote for a DEX swap (chain, token, amount, side)
-- [ ] `nansen execute` — sign and submit a trade via Nansen API (takes quote-id)
+- [x] `nansen quote` — get a quote for a DEX swap (chain, tokens, amount)
+- [x] `nansen execute` — sign and submit a trade via Nansen API (takes quote-id)
+- [ ] ⚠️ EVM transaction signing — requires thorough security review before production use
 
 > These commands are required for `nansen-trading-agent` — the autonomous trading sub-agent.
 > Wallet commands should keep the agent self-contained with zero external dependencies.
