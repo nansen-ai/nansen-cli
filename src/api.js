@@ -570,32 +570,27 @@ export class NansenAPI {
         } else if (code === ErrorCode.CREDITS_EXHAUSTED) {
           message = message.replace(/\.+$/, '') + '. No retry will help. Check your Nansen dashboard for credit balance.';
         } else if (code === ErrorCode.PAYMENT_REQUIRED) {
-          // Try automatic x402 Solana payment if no API key and we have a local wallet
+          // Try automatic x402 payment (Solana or EVM) if no API key and we have a local wallet
           if (!this.apiKey && hasLocalWallet() && attempt === 0) {
-            try {
-              const requirements = parsePaymentRequirements(response);
-              
-              // Check if this is a Solana payment requirement
-              if (requirements && requirements.network && requirements.network.startsWith('solana:')) {
-                console.log('💳 Payment required - attempting automatic Solana payment...');
+            // Check if Solana payment is available
+            const solanaReqs = parsePaymentRequirements(response);
+            if (solanaReqs) {
+              try {
+                console.log('💳 Payment required - attempting automatic Solana/PAYAI payment...');
                 
-                // Get wallet password from env var or prompt
                 let password = process.env.NANSEN_WALLET_PASSWORD;
                 if (!password) {
                   password = await promptWalletPassword();
                 }
                 
-                // Get Solana keypair
                 const keypairHex = await getDefaultSolanaKeypair(password);
                 if (!keypairHex) {
                   throw new Error('Failed to access Solana wallet');
                 }
                 
-                // Create payment payload
-                const paymentPayload = createSolanaPaymentPayload(requirements, keypairHex);
+                const paymentPayload = createSolanaPaymentPayload(solanaReqs, keypairHex);
                 
-                // Retry the request with payment
-                console.log('🚀 Retrying request with x402 payment...');
+                console.log('🚀 Retrying request with Solana x402 payment...');
                 const retryResponse = await fetch(url, {
                   method: 'POST',
                   headers: {
@@ -609,26 +604,19 @@ export class NansenAPI {
                   body: JSON.stringify(NansenAPI.cleanBody(body))
                 });
                 
-                // Handle the retry response
                 if (retryResponse.ok) {
                   const retryData = await retryResponse.json();
-                  console.log('✅ Payment successful - request completed');
-                  
-                  // Cache successful response if enabled
-                  if (useCache) {
-                    setCachedResponse(endpoint, body, retryData);
-                  }
-                  
-                  return { ...retryData, _meta: { ...(retryData._meta || {}), x402Payment: true } };
+                  console.log('✅ Solana payment successful');
+                  if (useCache) setCachedResponse(endpoint, body, retryData);
+                  return { ...retryData, _meta: { ...(retryData._meta || {}), x402Payment: true, x402Network: 'solana' } };
                 } else {
-                  // Payment failed - continue with original 402 error
-                  console.log('❌ x402 payment failed - falling back to manual payment');
+                  console.log('❌ Solana x402 payment rejected by server');
                 }
+              } catch (x402Error) {
+                console.log(`❌ Solana x402 auto-payment failed: ${x402Error.message}`);
               }
-            } catch (x402Error) {
-              console.log(`❌ x402 auto-payment failed: ${x402Error.message}`);
-              // Continue with original 402 error
             }
+            // EVM payment is handled below via shouldAttemptX402Payment
           }
           
           message = 'Payment required (x402). Sign the paymentRequirements below per https://docs.x402.org and pass the result with --x402-payment-signature <value>.';

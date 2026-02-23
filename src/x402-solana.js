@@ -174,14 +174,21 @@ function signTransaction(transaction, keypairHex) {
   // Serialize the transaction for signing
   const message = serializeTransaction(transaction);
   
-  // Sign with Ed25519
-  const signature = crypto.sign(null, message, {
-    key: Buffer.concat([
-      Buffer.from([0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20]),
-      privateSeed
-    ]),
-    format: 'der'
+  // Sign with Ed25519 — build PKCS#8 DER for the private seed
+  const pkcs8Header = Buffer.from([
+    0x30, 0x2e,             // SEQUENCE (46 bytes)
+    0x02, 0x01, 0x00,       // INTEGER 0 (version)
+    0x30, 0x05,             // SEQUENCE (5 bytes)
+    0x06, 0x03, 0x2b, 0x65, 0x70, // OID 1.3.101.112 (Ed25519)
+    0x04, 0x22,             // OCTET STRING (34 bytes)
+    0x04, 0x20              // OCTET STRING (32 bytes) — the seed
+  ]);
+  const signingKey = crypto.createPrivateKey({
+    key: Buffer.concat([pkcs8Header, privateSeed]),
+    format: 'der',
+    type: 'pkcs8'
   });
+  const signature = crypto.sign(null, message, signingKey);
   
   return {
     signature,
@@ -207,19 +214,20 @@ export function parsePaymentRequirements(response) {
     // Decode base64 JSON payment requirements
     const paymentData = JSON.parse(atob(paymentHeader));
     
+    // x402 returns an array of payment requirements at the top level
+    const requirements = Array.isArray(paymentData) ? paymentData : (paymentData.payments || [paymentData]);
+    
     // Look for Solana payment requirement
-    if (paymentData.payments) {
-      for (const payment of paymentData.payments) {
-        if (payment.network && payment.network.startsWith('solana:')) {
-          return {
-            network: payment.network,
-            recipient: payment.recipient,
-            amount: payment.amount,
-            token: payment.token || PAYAI_MINT,
-            memo: payment.memo,
-            nonce: paymentData.nonce || Date.now().toString()
-          };
-        }
+    for (const payment of requirements) {
+      if (payment.network && payment.network.startsWith('solana:')) {
+        return {
+          network: payment.network,
+          recipient: payment.recipient || payment.pay_to,
+          amount: payment.amount || payment.maxAmountRequired,
+          token: payment.token || payment.asset || PAYAI_MINT,
+          memo: payment.memo,
+          nonce: payment.nonce || paymentData.nonce || Date.now().toString()
+        };
       }
     }
     
