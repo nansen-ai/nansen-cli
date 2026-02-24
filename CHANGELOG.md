@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.0
+
+### Minor Changes
+
+- [#26](https://github.com/nansen-ai/nansen-cli/pull/26) [`fe9c82a`](https://github.com/nansen-ai/nansen-cli/commit/fe9c82a60dbc3e0d178e08be00f3460993226c87) Thanks [@askeluv](https://github.com/askeluv)! - Add local wallet management for EVM and Solana (create, list, show, export, default, delete)
+
+- [#37](https://github.com/nansen-ai/nansen-cli/pull/37) [`8036971`](https://github.com/nansen-ai/nansen-cli/commit/8036971251313fc638b71f9f9eb5db9b27ad2ed4) Thanks [@TimNooren](https://github.com/TimNooren)! - Add quote and execute commands for DEX trading via the Nansen Trading API
+
+### Patch Changes
+
+- [#29](https://github.com/nansen-ai/nansen-cli/pull/29) [`3c403c9`](https://github.com/nansen-ai/nansen-cli/commit/3c403c9010d5a7902c94c734621381b4752ee2fb) Thanks [@oscarviolante1](https://github.com/oscarviolante1)! - Improve agent experience: add AGENTS.md quick-start guide, improve SKILL.md with non-interactive auth and troubleshooting, link AGENTS.md from README
+
 ## 1.6.0
 
 ### Minor Changes
