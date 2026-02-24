@@ -78,6 +78,11 @@ function deriveKey(password, salt) {
  * Returns a JSON-serializable object with all params needed for decryption.
  */
 export function encryptKey(privateKeyHex, password) {
+  // No password → store key as plaintext wrapper
+  if (!password) {
+    return { plaintext: privateKeyHex };
+  }
+
   const salt = crypto.randomBytes(SALT_LEN);
   const iv = crypto.randomBytes(IV_LEN);
   const key = deriveKey(password, salt);
@@ -103,6 +108,11 @@ export function encryptKey(privateKeyHex, password) {
  * @throws {Error} If password is wrong
  */
 export function decryptKey(encryptedData, password) {
+  // Plaintext (no password) → return directly
+  if (encryptedData.plaintext) {
+    return encryptedData.plaintext;
+  }
+
   const salt = Buffer.from(encryptedData.salt, 'hex');
   const iv = Buffer.from(encryptedData.iv, 'hex');
   const authTag = Buffer.from(encryptedData.authTag, 'hex');
@@ -328,12 +338,15 @@ export function createWallet(name, password) {
     throw new Error(`Wallet "${name}" already exists`);
   }
 
-  // If this is the first wallet, set the password hash
-  if (!config.passwordHash) {
-    config.passwordHash = hashPassword(password);
-  } else {
-    if (!verifyPassword(password, config)) {
-      throw new Error('Incorrect password');
+  // Password handling: null/undefined = no encryption
+  if (password) {
+    // If this is the first wallet, set the password hash
+    if (!config.passwordHash) {
+      config.passwordHash = hashPassword(password);
+    } else {
+      if (!verifyPassword(password, config)) {
+        throw new Error('Incorrect password');
+      }
     }
   }
 
@@ -391,7 +404,7 @@ export function showWallet(name) {
 }
 
 /**
- * Export private keys for a wallet (requires password).
+ * Export private keys for a wallet (requires password if wallet is encrypted).
  */
 export function exportWallet(name, password) {
   const walletFile = getWalletFile(name);
@@ -400,7 +413,7 @@ export function exportWallet(name, password) {
   }
 
   const config = getWalletConfig();
-  if (!verifyPassword(password, config)) {
+  if (config.passwordHash && !verifyPassword(password, config)) {
     throw new Error('Incorrect password');
   }
 
@@ -445,7 +458,7 @@ export function deleteWallet(name, password) {
   }
 
   const config = getWalletConfig();
-  if (!verifyPassword(password, config)) {
+  if (config.passwordHash && !verifyPassword(password, config)) {
     throw new Error('Incorrect password');
   }
 
@@ -490,22 +503,21 @@ export function buildWalletCommands(deps = {}) {
       const handlers = {
         'create': async () => {
           const name = options.name || args[1] || 'default';
-          const password = process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps);
-          if (!password || password.length < 12) {
-            log('❌ Password must be at least 12 characters');
+          // Password is optional: use env var if set, otherwise no password (keys stored unencrypted)
+          const password = process.env.NANSEN_WALLET_PASSWORD || null;
+
+          if (password && password.length < 12) {
+            log('❌ NANSEN_WALLET_PASSWORD must be at least 12 characters');
             exit(1);
             return;
           }
 
-          // Confirm password for first wallet (skip if set via env var)
+          // If existing wallets have a password, require it for new wallets too
           const config = getWalletConfig();
-          if (!config.passwordHash && !process.env.NANSEN_WALLET_PASSWORD) {
-            const confirm = await promptPassword('Confirm password: ', deps);
-            if (password !== confirm) {
-              log('❌ Passwords do not match');
-              exit(1);
-              return;
-            }
+          if (config.passwordHash && !password) {
+            log('❌ Existing wallets are password-protected. Set NANSEN_WALLET_PASSWORD to create new wallets.');
+            exit(1);
+            return;
           }
 
           try {
@@ -571,7 +583,10 @@ export function buildWalletCommands(deps = {}) {
             exit(1);
             return;
           }
-          const password = process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps);
+          const config = getWalletConfig();
+          const password = config.passwordHash
+            ? (process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps))
+            : null;
           try {
             const result = exportWallet(name, password);
             log(`\n⚠️  Private keys for "${result.name}" — do not share!\n`);
@@ -613,7 +628,10 @@ export function buildWalletCommands(deps = {}) {
             exit(1);
             return;
           }
-          const password = process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps);
+          const config = getWalletConfig();
+          const password = config.passwordHash
+            ? (process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps))
+            : null;
           try {
             const result = deleteWallet(name, password);
             log(`✓ Wallet "${result.deleted}" deleted`);
@@ -655,7 +673,10 @@ export function buildWalletCommands(deps = {}) {
             return;
           }
           
-          const password = process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps);
+          const sendConfig = getWalletConfig();
+          const password = sendConfig.passwordHash
+            ? (process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps))
+            : null;
           const dryRun = flags['dry-run'] || flags.dryRun;
           
           try {

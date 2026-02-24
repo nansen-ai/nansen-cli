@@ -819,7 +819,11 @@ EXAMPLES:
         }
 
         // Get wallet credentials once (before the loop)
-        const password = process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps);
+        const { getWalletConfig } = await import('./wallet.js');
+        const walletConfig = getWalletConfig();
+        const password = walletConfig.passwordHash
+          ? (process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps))
+          : null;
 
         let effectiveWalletName = walletName;
         if (!effectiveWalletName) {
