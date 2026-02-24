@@ -10,6 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import { exportWallet, getDefaultAddress, showWallet, keccak256, listWallets } from './wallet.js';
 import { base58Decode } from './transfer.js';
+import { signSecp256k1, rlpEncode as _rlpEncode } from './crypto.js';
 
 // ============= Constants =============
 
@@ -515,11 +516,11 @@ export function signLegacyTransaction(tx, privateKeyHex) {
     Buffer.alloc(0), // EIP-155: empty for signing
   ];
 
-  const unsignedPayload = rlpEncode(unsignedFields);
+  const unsignedPayload = _rlpEncode(unsignedFields);
   const msgHash = keccak256(unsignedPayload);
 
   // Sign with secp256k1
-  const { r, s, v: recoveryBit } = ecdsaSign(msgHash, Buffer.from(privateKeyHex, 'hex'));
+  const { r, s, v: recoveryBit } = signSecp256k1(msgHash, Buffer.from(privateKeyHex, 'hex'));
 
   // EIP-155 v = chainId * 2 + 35 + recoveryBit
   const v = tx.chainId * 2 + 35 + recoveryBit;
@@ -537,229 +538,10 @@ export function signLegacyTransaction(tx, privateKeyHex) {
     stripLeadingZeros(s),
   ];
 
-  return '0x' + rlpEncode(signedFields).toString('hex');
+  return '0x' + _rlpEncode(signedFields).toString('hex');
 }
 
-// ============= ECDSA Signing (secp256k1) =============
-// ⚠️ SECURITY: Raw ECDSA implementation - requires thorough review
-
-/**
- * Sign a 32-byte hash with secp256k1 using pure BigInt math.
- * No additional hashing — signs the pre-hashed message directly.
- *
- * Uses RFC 6979 deterministic k generation for safety.
- *
- * ⚠️ SECURITY: Pure JS ECDSA implementation - requires thorough review.
- *
- * @param {Buffer} msgHash - 32-byte keccak256 hash
- * @param {Buffer} privKeyBuf - 32-byte private key
- * @returns {{ r: Buffer, s: Buffer, v: number }} Signature components
- */
-function ecdsaSign(msgHash, privKeyBuf) {
-  const d = BigInt('0x' + privKeyBuf.toString('hex'));
-  const z = BigInt('0x' + msgHash.toString('hex'));
-  const G = [Gx, Gy];
-
-  // Compute public key for recovery verification
-  const Q = pointMul(G, d);
-  const pubKeyUncompressed = Buffer.from(
-    '04' + Q[0].toString(16).padStart(64, '0') + Q[1].toString(16).padStart(64, '0'), 'hex'
-  );
-
-  // RFC 6979 deterministic k
-  const k = generateK(msgHash, privKeyBuf);
-
-  // R = k * G
-  const R = pointMul(G, k);
-  const rBn = R[0] % N_EC;
-  if (rBn === 0n) throw new Error('Invalid k: r is zero');
-
-  // s = k⁻¹ * (z + r * d) mod n
-  const kInv = modInv(k, N_EC);
-  let sBn = (kInv * ((z + rBn * d) % N_EC)) % N_EC;
-  if (sBn === 0n) throw new Error('Invalid k: s is zero');
-
-  // Low-S normalization (EIP-2)
-  const halfN = N_EC >> 1n;
-  let sFlipped = false;
-  if (sBn > halfN) {
-    sBn = N_EC - sBn;
-    sFlipped = true;
-  }
-
-  const r = Buffer.from(rBn.toString(16).padStart(64, '0'), 'hex');
-  const s = Buffer.from(sBn.toString(16).padStart(64, '0'), 'hex');
-
-  // Determine recovery ID by trial
-  for (let tryV = 0; tryV <= 1; tryV++) {
-    const recovered = ecRecover(msgHash, r, s, tryV);
-    if (recovered && recovered.equals(pubKeyUncompressed)) {
-      return { r, s, v: tryV };
-    }
-  }
-
-  throw new Error('ECDSA signature recovery failed: could not determine recovery id');
-}
-
-/**
- * RFC 6979 deterministic k generation for secp256k1.
- * ⚠️ SECURITY: Simplified implementation — review before production use.
- */
-function generateK(msgHash, privKey) {
-  // HMAC-based deterministic k per RFC 6979
-  let v = Buffer.alloc(32, 0x01);
-  let kk = Buffer.alloc(32, 0x00);
-
-  const x = privKey;
-  const h1 = msgHash;
-
-  // Step D
-  kk = crypto.createHmac('sha256', kk).update(Buffer.concat([v, Buffer.from([0x00]), x, h1])).digest();
-  // Step E
-  v = crypto.createHmac('sha256', kk).update(v).digest();
-  // Step F
-  kk = crypto.createHmac('sha256', kk).update(Buffer.concat([v, Buffer.from([0x01]), x, h1])).digest();
-  // Step G
-  v = crypto.createHmac('sha256', kk).update(v).digest();
-
-  // Step H
-  while (true) {
-    v = crypto.createHmac('sha256', kk).update(v).digest();
-    const candidate = BigInt('0x' + v.toString('hex'));
-    if (candidate >= 1n && candidate < N_EC) {
-      return candidate;
-    }
-    kk = crypto.createHmac('sha256', kk).update(Buffer.concat([v, Buffer.from([0x00])])).digest();
-    v = crypto.createHmac('sha256', kk).update(v).digest();
-  }
-}
-
-// ============= EC Point Recovery (secp256k1) =============
-// ⚠️ SECURITY: Modular arithmetic for secp256k1 - requires review
-
-const P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2Fn;
-const N_EC = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
-const Gx = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798n;
-const Gy = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8n;
-
-function modPow(base, exp, mod) {
-  let result = 1n;
-  base = ((base % mod) + mod) % mod;
-  while (exp > 0n) {
-    if (exp & 1n) result = (result * base) % mod;
-    exp >>= 1n;
-    base = (base * base) % mod;
-  }
-  return result;
-}
-
-function modInv(a, mod) {
-  return modPow(a, mod - 2n, mod);
-}
-
-// Point addition on secp256k1 (affine coordinates, null = point at infinity)
-function pointAdd(p1, p2) {
-  if (!p1) return p2;
-  if (!p2) return p1;
-  const [x1, y1] = p1;
-  const [x2, y2] = p2;
-  if (x1 === x2 && y1 === y2) {
-    // Point doubling
-    const lam = (3n * x1 * x1 * modInv(2n * y1, P)) % P;
-    const x3 = ((lam * lam - 2n * x1) % P + P) % P;
-    const y3 = ((lam * (x1 - x3) - y1) % P + P) % P;
-    return [x3, y3];
-  }
-  if (x1 === x2) return null; // point at infinity
-  const lam = ((y2 - y1) * modInv(((x2 - x1) % P + P) % P, P)) % P;
-  const x3 = ((lam * lam - x1 - x2) % P + P) % P;
-  const y3 = ((lam * (x1 - x3) - y1) % P + P) % P;
-  return [x3, y3];
-}
-
-// Scalar multiplication (double-and-add)
-function pointMul(point, scalar) {
-  let result = null;
-  let current = point;
-  scalar = ((scalar % N_EC) + N_EC) % N_EC;
-  while (scalar > 0n) {
-    if (scalar & 1n) result = pointAdd(result, current);
-    current = pointAdd(current, current);
-    scalar >>= 1n;
-  }
-  return result;
-}
-
-/**
- * Recover the uncompressed public key from an ECDSA signature.
- * @param {Buffer} msgHash - 32-byte hash
- * @param {Buffer} r - 32-byte r
- * @param {Buffer} s - 32-byte s
- * @param {number} v - recovery id (0 or 1)
- * @returns {Buffer|null} 65-byte uncompressed public key, or null on failure
- */
-export function ecRecover(msgHash, r, s, v) {
-  try {
-    const rBn = BigInt('0x' + r.toString('hex'));
-    const sBn = BigInt('0x' + s.toString('hex'));
-    const z = BigInt('0x' + msgHash.toString('hex'));
-
-    // Recover R point: x = r, solve y from curve equation y² = x³ + 7
-    const x = rBn;
-    const ySquared = (modPow(x, 3n, P) + 7n) % P;
-    let y = modPow(ySquared, (P + 1n) / 4n, P); // sqrt via Tonelli (p ≡ 3 mod 4)
-
-    // Check parity matches v
-    if ((y & 1n) !== BigInt(v)) {
-      y = P - y;
-    }
-
-    // Verify point is on curve
-    if ((y * y % P) !== ySquared) return null;
-
-    const R = [x, y];
-    const rInv = modInv(rBn, N_EC);
-
-    // Q = r⁻¹ * (s*R - z*G)
-    const sR = pointMul(R, sBn);
-    const zG = pointMul([Gx, Gy], z);
-    const negZG = zG ? [zG[0], (P - zG[1]) % P] : null;
-    const sum = pointAdd(sR, negZG);
-    const Q = pointMul(sum, rInv);
-
-    if (!Q) return null;
-
-    // Encode as uncompressed: 04 || x (32 bytes) || y (32 bytes)
-    const xHex = Q[0].toString(16).padStart(64, '0');
-    const yHex = Q[1].toString(16).padStart(64, '0');
-    return Buffer.from('04' + xHex + yHex, 'hex');
-  } catch {
-    return null;
-  }
-}
-
-// ============= RLP Encoding =============
-// ⚠️ SECURITY: RLP encoding - requires review for edge cases
-
-/**
- * RLP-encode a value (Buffer, string, number, or array).
- */
-export function rlpEncode(input) {
-  if (Array.isArray(input)) {
-    const encoded = Buffer.concat(input.map(rlpEncode));
-    return Buffer.concat([encodeLength(encoded.length, 0xc0), encoded]);
-  }
-  const buf = toBuffer(input);
-  if (buf.length === 1 && buf[0] < 0x80) return buf;
-  return Buffer.concat([encodeLength(buf.length, 0x80), buf]);
-}
-
-function encodeLength(len, offset) {
-  if (len < 56) return Buffer.from([offset + len]);
-  const hexLen = len.toString(16);
-  const lenBytes = Buffer.from(hexLen.padStart(hexLen.length + (hexLen.length % 2), '0'), 'hex');
-  return Buffer.concat([Buffer.from([offset + 55 + lenBytes.length]), lenBytes]);
-}
+export { _rlpEncode as rlpEncode };
 
 export function toBuffer(v) {
   if (Buffer.isBuffer(v)) return v;

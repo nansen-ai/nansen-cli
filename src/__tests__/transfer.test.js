@@ -172,10 +172,10 @@ describe('secp256k1 ECDSA Signing', () => {
     expect(sig.s.length).toBe(32);
   });
 
-  test('recovery is 0 or 1', () => {
+  test('v is 0 or 1', () => {
     const hash = crypto.randomBytes(32);
     const sig = signSecp256k1(hash, privKey);
-    expect([0, 1]).toContain(sig.recovery);
+    expect([0, 1]).toContain(sig.v);
   });
 
   test('produces different signatures for different hashes', () => {

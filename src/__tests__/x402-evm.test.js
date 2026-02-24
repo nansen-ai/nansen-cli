@@ -4,26 +4,8 @@
 
 import { describe, it, expect } from 'vitest';
 import crypto from 'crypto';
-import { hashTypedData, signHash, createEvmPaymentPayload, isEvmNetwork, keccak256 } from '../x402-evm.js';
-
-// Inline EVM wallet generation (from wallet.js PR #26, not yet merged)
-function generateEvmWallet() {
-  const privateKey = crypto.randomBytes(32);
-  const ecdh = crypto.createECDH('secp256k1');
-  ecdh.setPrivateKey(privateKey);
-  const publicKey = ecdh.getPublicKey(null, 'uncompressed');
-  const hash = keccak256(publicKey.subarray(1));
-  const addressBytes = hash.subarray(12);
-  const addressHex = addressBytes.toString('hex');
-  const addressHash = keccak256(Buffer.from(addressHex, 'utf8')).toString('hex');
-  let checksummed = '0x';
-  for (let i = 0; i < 40; i++) {
-    checksummed += parseInt(addressHash[i], 16) >= 8
-      ? addressHex[i].toUpperCase()
-      : addressHex[i];
-  }
-  return { privateKey: privateKey.toString('hex'), address: checksummed };
-}
+import { hashTypedData, createEvmPaymentPayload, isEvmNetwork } from '../x402-evm.js';
+import { generateEvmWallet } from '../wallet.js';
 
 describe('EIP-712 hashTypedData', () => {
   it('should produce a 32-byte hash', () => {
@@ -88,32 +70,6 @@ describe('EIP-712 hashTypedData', () => {
     const hash1 = hashTypedData(domain, 'TransferWithAuthorization', fields, msg1);
     const hash2 = hashTypedData(domain, 'TransferWithAuthorization', fields, msg2);
     expect(hash1.toString('hex')).not.toBe(hash2.toString('hex'));
-  });
-});
-
-describe('signHash', () => {
-  it('should produce a 65-byte hex signature (with 0x prefix)', () => {
-    const wallet = generateEvmWallet();
-    const msgHash = crypto.randomBytes(32);
-    const sig = signHash(msgHash, wallet.privateKey);
-
-    expect(sig).toMatch(/^0x[0-9a-f]{130}$/); // 0x + 65 bytes (130 hex chars)
-  });
-
-  it('should produce v=27 or v=28', () => {
-    const wallet = generateEvmWallet();
-    const msgHash = crypto.randomBytes(32);
-    const sig = signHash(msgHash, wallet.privateKey);
-
-    const v = parseInt(sig.slice(-2), 16);
-    expect([27, 28]).toContain(v);
-  });
-
-  it('should produce different signatures for different messages', () => {
-    const wallet = generateEvmWallet();
-    const sig1 = signHash(crypto.randomBytes(32), wallet.privateKey);
-    const sig2 = signHash(crypto.randomBytes(32), wallet.privateKey);
-    expect(sig1).not.toBe(sig2);
   });
 });
 

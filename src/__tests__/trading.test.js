@@ -24,7 +24,6 @@ import {
   signSolanaTransaction,
   signEvmTransaction,
   buildApprovalTransaction,
-  ecRecover,
   stripLeadingZeros,
   buildTradingCommands,
 } from '../trading.js';
@@ -266,35 +265,6 @@ describe('toBuffer', () => {
   it('should handle bigints', () => {
     expect(toBuffer(0n)).toEqual(Buffer.alloc(0));
     expect(toBuffer(100000000000000n)).toEqual(Buffer.from('5af3107a4000', 'hex'));
-  });
-});
-
-// ============= EC Point Recovery =============
-
-describe('ecRecover', () => {
-  it('should recover the correct public key from a signature', () => {
-    const wallet = generateEvmWallet();
-    const privKey = Buffer.from(wallet.privateKey, 'hex');
-
-    // Derive expected public key
-    const ecdh = crypto.createECDH('secp256k1');
-    ecdh.setPrivateKey(privKey);
-    const expectedPubKey = ecdh.getPublicKey();
-
-    // Sign a hash using our signLegacyTransaction internals
-    const msgHash = keccak256(Buffer.from('test-recovery'));
-
-    // Use signLegacyTransaction to get a signed tx, then verify address
-    // But easier: directly test ecRecover with known signature
-    const tx = {
-      nonce: 0, gasPrice: '0x1', gasLimit: '0x5208',
-      to: '0x' + 'ab'.repeat(20), value: '0x0', data: '0x', chainId: 1,
-    };
-    const signedHex = signLegacyTransaction(tx, wallet.privateKey);
-
-    // The fact that signLegacyTransaction succeeds and doesn't hit the
-    // "fallback v=0" path means ecRecover is working
-    expect(signedHex).toMatch(/^0x[0-9a-f]+$/);
   });
 });
 

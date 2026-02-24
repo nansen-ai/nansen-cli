@@ -6,6 +6,7 @@
 
 import crypto from 'crypto';
 import { keccak256, base58Encode, exportWallet, getWalletConfig, verifyPassword } from './wallet.js';
+import { signSecp256k1, rlpEncode, bigIntToMinBuf } from './crypto.js';
 
 // ============= Constants =============
 
@@ -126,126 +127,11 @@ function friendlyRpcError(error) {
   return `RPC error: ${msg}`;
 }
 
-// ============= RLP Encoding =============
-
-function rlpEncode(input) {
-  if (Array.isArray(input)) {
-    const encoded = input.map(rlpEncode);
-    const payload = Buffer.concat(encoded);
-    if (payload.length < 56) {
-      return Buffer.concat([Buffer.from([0xc0 + payload.length]), payload]);
-    }
-    const lenBytes = bigIntToMinBuf(BigInt(payload.length));
-    return Buffer.concat([Buffer.from([0xf7 + lenBytes.length]), lenBytes, payload]);
-  }
-
-  // Scalar: convert hex string or Buffer to bytes
-  let data;
-  if (Buffer.isBuffer(input)) {
-    data = input;
-  } else {
-    let hex = (typeof input === 'string' ? input : '').replace(/^0x/, '');
-    // Strip leading zeros (RLP encodes minimal bytes)
-    hex = hex.replace(/^0+/, '');
-    if (hex === '' || hex.length === 0) return Buffer.from([0x80]); // empty byte string
-    if (hex.length % 2) hex = '0' + hex;
-    data = Buffer.from(hex, 'hex');
-  }
-
-  if (data.length === 0) return Buffer.from([0x80]);
-  if (data.length === 1 && data[0] < 0x80) return data;
-  if (data.length < 56) return Buffer.concat([Buffer.from([0x80 + data.length]), data]);
-  const lenBytes = bigIntToMinBuf(BigInt(data.length));
-  return Buffer.concat([Buffer.from([0xb7 + lenBytes.length]), lenBytes, data]);
-}
-
-function bigIntToMinBuf(n) {
-  if (n === 0n) return Buffer.alloc(0);
-  const hex = n.toString(16);
-  return Buffer.from(hex.length % 2 ? '0' + hex : hex, 'hex');
-}
 
 function bigIntToHex(n) {
   if (n === 0n) return '0x';
   const hex = n.toString(16);
   return '0x' + hex;
-}
-
-// ============= secp256k1 ECDSA =============
-
-const P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2Fn;
-const N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
-const Gx = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798n;
-const Gy = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8n;
-
-function modInv(a, m) {
-  let [old_r, r] = [((a % m) + m) % m, m];
-  let [old_s, s] = [1n, 0n];
-  while (r !== 0n) {
-    const q = old_r / r;
-    [old_r, r] = [r, old_r - q * r];
-    [old_s, s] = [s, old_s - q * s];
-  }
-  return ((old_s % m) + m) % m;
-}
-
-function ptAdd(x1, y1, x2, y2) {
-  if (x1 === null) return [x2, y2];
-  if (x2 === null) return [x1, y1];
-  if (x1 === x2 && y1 === y2) {
-    const lam = (3n * x1 * x1 * modInv(2n * y1, P)) % P;
-    const x3 = ((lam * lam - 2n * x1) % P + P) % P;
-    return [x3, ((lam * (x1 - x3) - y1) % P + P) % P];
-  }
-  if (x1 === x2) return [null, null];
-  const lam = (((y2 - y1) % P + P) * modInv(((x2 - x1) % P + P) % P, P)) % P;
-  const x3 = ((lam * lam - x1 - x2) % P + P) % P;
-  return [x3, ((lam * (x1 - x3) - y1) % P + P) % P];
-}
-
-function ptMul(k, x, y) {
-  let [rx, ry] = [null, null];
-  let [qx, qy] = [x, y];
-  while (k > 0n) {
-    if (k & 1n) [rx, ry] = ptAdd(rx, ry, qx, qy);
-    [qx, qy] = ptAdd(qx, qy, qx, qy);
-    k >>= 1n;
-  }
-  return [rx, ry];
-}
-
-function rfc6979k(privBuf, hash) {
-  let v = Buffer.alloc(32, 0x01);
-  let k = Buffer.alloc(32, 0x00);
-  k = crypto.createHmac('sha256', k).update(Buffer.concat([v, Buffer.from([0x00]), privBuf, hash])).digest();
-  v = crypto.createHmac('sha256', k).update(v).digest();
-  k = crypto.createHmac('sha256', k).update(Buffer.concat([v, Buffer.from([0x01]), privBuf, hash])).digest();
-  v = crypto.createHmac('sha256', k).update(v).digest();
-  while (true) {
-    v = crypto.createHmac('sha256', k).update(v).digest();
-    const candidate = BigInt('0x' + v.toString('hex'));
-    if (candidate >= 1n && candidate < N) return candidate;
-    k = crypto.createHmac('sha256', k).update(Buffer.concat([v, Buffer.from([0x00])])).digest();
-    v = crypto.createHmac('sha256', k).update(v).digest();
-  }
-}
-
-function signSecp256k1(hash, privateKey) {
-  const z = BigInt('0x' + hash.toString('hex'));
-  const d = BigInt('0x' + privateKey.toString('hex'));
-  const k = rfc6979k(privateKey, hash);
-  const [rx, ry] = ptMul(k, Gx, Gy);
-  const r = rx % N;
-  if (r === 0n) throw new Error('Invalid signature: r=0');
-  let s = (modInv(k, N) * ((z + r * d) % N)) % N;
-  if (s === 0n) throw new Error('Invalid signature: s=0');
-  let recovery = (ry % 2n === 0n) ? 0 : 1;
-  if (s > N >> 1n) { s = N - s; recovery ^= 1; }
-  return {
-    r: Buffer.from(r.toString(16).padStart(64, '0'), 'hex'),
-    s: Buffer.from(s.toString(16).padStart(64, '0'), 'hex'),
-    recovery,
-  };
 }
 
 // ============= EVM Transaction =============
@@ -371,7 +257,7 @@ async function buildEvmTransaction({ to, amount, token, privateKey, chain, max =
 
   const signed = rlpEncode([
     ...txFields,
-    bigIntToHex(BigInt(sig.recovery)),
+    bigIntToHex(BigInt(sig.v)),
     '0x' + sig.r.toString('hex'),
     '0x' + sig.s.toString('hex'),
   ]);
