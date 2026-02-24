@@ -29,7 +29,6 @@ const IV_LEN = 12;
 const AUTH_TAG_LEN = 16;
 
 import { keccak256 } from './crypto.js';
-export { keccak256 };
 
 // ============= Base58 Encoding (for Solana) =============
 

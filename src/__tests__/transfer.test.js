@@ -6,9 +6,7 @@ import { test, expect, vi, beforeEach, describe } from 'vitest';
 import crypto from 'crypto';
 import {
   sendTokens,
-  rlpEncode,
   parseAmount,
-  signSecp256k1,
   signEd25519,
   encodeCompactU16,
   base58Decode,
@@ -18,7 +16,8 @@ import {
   validateSolanaAddress,
   bigIntToHex,
 } from '../transfer.js';
-import { keccak256, base58Encode } from '../wallet.js';
+import { keccak256, signSecp256k1, rlpEncode } from '../crypto.js';
+import { base58Encode } from '../wallet.js';
 import * as wallet from '../wallet.js';
 
 // ============= Unit Tests =============

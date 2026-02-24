@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import crypto from "crypto";
-import { keccak256, signSecp256k1, rlpEncode } from "../crypto.js";
+import { keccak256, signSecp256k1, rlpEncode, bigIntToMinBuf } from "../crypto.js";
 
 describe("keccak256", () => {
   it("hashes empty string to known value", () => {
@@ -54,6 +54,26 @@ describe("signSecp256k1", () => {
     expect(sig1.v).toBe(sig2.v);
   });
 
+  it("produces correct signature for known key and hash", () => {
+    // Private key = 1 (well-known: derives to 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf)
+    const key = Buffer.from(
+      "0000000000000000000000000000000000000000000000000000000000000001",
+      "hex"
+    );
+    const hash = Buffer.from(
+      "0000000000000000000000000000000000000000000000000000000000000001",
+      "hex"
+    );
+    const sig = signSecp256k1(hash, key);
+    expect(sig.r.toString("hex")).toBe(
+      "6673ffad2147741f04772b6f921f0ba6af0c1e77fc439e65c36dedf4092e8898"
+    );
+    expect(sig.s.toString("hex")).toBe(
+      "4c1a971652e0ada880120ef8025e709fff2080c4a39aae068d12eed009b68c89"
+    );
+    expect(sig.v).toBe(1);
+  });
+
   it("enforces low-S normalization (EIP-2)", () => {
     const N =
       0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
@@ -82,5 +102,17 @@ describe("rlpEncode", () => {
 
   it("encodes hex string correctly", () => {
     expect(rlpEncode("0x0400")).toEqual(Buffer.from([0x82, 0x04, 0x00]));
+  });
+});
+
+describe("bigIntToMinBuf", () => {
+  it("returns empty buffer for 0n", () => {
+    expect(bigIntToMinBuf(0n)).toEqual(Buffer.alloc(0));
+  });
+
+  it("returns minimal encoding for non-zero values", () => {
+    expect(bigIntToMinBuf(1n)).toEqual(Buffer.from([0x01]));
+    expect(bigIntToMinBuf(255n)).toEqual(Buffer.from([0xff]));
+    expect(bigIntToMinBuf(256n)).toEqual(Buffer.from([0x01, 0x00]));
   });
 });

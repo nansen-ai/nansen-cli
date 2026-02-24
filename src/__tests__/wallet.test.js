@@ -8,7 +8,6 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import {
-  keccak256,
   base58Encode,
   encryptKey,
   decryptKey,
@@ -22,6 +21,7 @@ import {
   deleteWallet,
   verifyPassword,
 } from '../wallet.js';
+import { keccak256 } from '../crypto.js';
 
 // Override HOME to use temp dir for tests
 let originalHome;

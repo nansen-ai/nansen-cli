@@ -5,8 +5,8 @@
  */
 
 import crypto from 'crypto';
-import { keccak256, base58Encode, exportWallet, getWalletConfig, verifyPassword } from './wallet.js';
-import { signSecp256k1, rlpEncode, bigIntToMinBuf } from './crypto.js';
+import { base58Encode, exportWallet, getWalletConfig, verifyPassword } from './wallet.js';
+import { keccak256, signSecp256k1, rlpEncode, bigIntToMinBuf } from './crypto.js';
 
 // ============= Constants =============
 
@@ -585,7 +585,7 @@ async function broadcastTransaction(signedTx, chain) {
 // ============= Public API =============
 
 // Exported for testing
-export { rlpEncode, parseAmount, formatAmount, signSecp256k1, signEd25519, encodeCompactU16, base58Decode, base58DecodePubkey, deriveATA, validateEvmAddress, validateSolanaAddress, bigIntToHex };
+export { parseAmount, formatAmount, signEd25519, encodeCompactU16, base58Decode, base58DecodePubkey, deriveATA, validateEvmAddress, validateSolanaAddress, bigIntToHex };
 
 export async function sendTokens({ to, amount, chain, token = null, wallet = null, password, max = false, dryRun = false }) {
   // Validate address

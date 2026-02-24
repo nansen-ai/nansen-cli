@@ -18,7 +18,6 @@ import {
   loadQuote,
   cleanupQuotes,
   readCompactU16,
-  rlpEncode,
   toBuffer,
   signLegacyTransaction,
   signSolanaTransaction,
@@ -27,9 +26,9 @@ import {
   stripLeadingZeros,
   buildTradingCommands,
 } from '../trading.js';
+import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
 import {
-  keccak256,
   base58Encode,
   generateEvmWallet,
   generateSolanaWallet,

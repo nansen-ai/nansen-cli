@@ -8,9 +8,9 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { exportWallet, getDefaultAddress, showWallet, keccak256, listWallets } from './wallet.js';
+import { exportWallet, getDefaultAddress, showWallet, listWallets } from './wallet.js';
 import { base58Decode } from './transfer.js';
-import { signSecp256k1, rlpEncode as _rlpEncode } from './crypto.js';
+import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 
 // ============= Constants =============
 
@@ -516,7 +516,7 @@ export function signLegacyTransaction(tx, privateKeyHex) {
     Buffer.alloc(0), // EIP-155: empty for signing
   ];
 
-  const unsignedPayload = _rlpEncode(unsignedFields);
+  const unsignedPayload = rlpEncode(unsignedFields);
   const msgHash = keccak256(unsignedPayload);
 
   // Sign with secp256k1
@@ -538,10 +538,8 @@ export function signLegacyTransaction(tx, privateKeyHex) {
     stripLeadingZeros(s),
   ];
 
-  return '0x' + _rlpEncode(signedFields).toString('hex');
+  return '0x' + rlpEncode(signedFields).toString('hex');
 }
-
-export { _rlpEncode as rlpEncode };
 
 export function toBuffer(v) {
   if (Buffer.isBuffer(v)) return v;
