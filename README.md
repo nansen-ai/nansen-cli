@@ -7,7 +7,7 @@
 
 > **Built by agents, for agents.** We prioritize the best possible AI agent experience.
 
-Command-line interface for the [Nansen API](https://docs.nansen.ai) with structured JSON output, designed for AI agents and automation.
+Command-line interface for the [Nansen API](https://docs.nansen.ai) with structured JSON output, designed for AI agents and automation. Analyze on-chain data, profile wallets, track Smart Money, and execute trades, all from your terminal.
 
 ## Installation
 
@@ -68,6 +68,10 @@ nansen profiler balance --address 0x28c6c06298d514db089934071355e5743bf21d60 --c
 
 # Search for an entity
 nansen profiler search --query "Vitalik Buterin" --pretty
+
+# Get a DEX swap quote and execute it
+nansen quote --chain solana --from So11111111111111111111111111111111111111112 --to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 1000000000
+nansen execute --quote <quoteId>
 ```
 
 ## Commands
@@ -103,13 +107,16 @@ Detailed information about any blockchain address.
 | `labels` | Behavioral and entity labels |
 | `transactions` | Transaction history |
 | `pnl` | PnL and trade performance |
+| `pnl-summary` | Summarized PnL metrics |
 | `search` | Search for entities by name |
 | `historical-balances` | Historical balances over time |
 | `related-wallets` | Find wallets related to an address |
 | `counterparties` | Top counterparties by volume |
-| `pnl-summary` | Summarized PnL metrics |
 | `perp-positions` | Current perpetual positions |
 | `perp-trades` | Perpetual trading history |
+| `batch` | Query multiple addresses at once |
+| `trace` | Trace fund flows between wallets |
+| `compare` | Compare multiple wallets side by side |
 
 ### `token` - Token God Mode
 
@@ -117,6 +124,8 @@ Deep analytics for any token.
 
 | Subcommand | Description |
 |------------|-------------|
+| `info` | Token metadata and stats |
+| `indicators` | Technical indicators and signals |
 | `screener` | Discover and filter tokens |
 | `holders` | Token holder analysis |
 | `flows` | Token flow metrics |
@@ -129,6 +138,79 @@ Deep analytics for any token.
 | `perp-trades` | Perp trades by token symbol |
 | `perp-positions` | Open perp positions by token symbol |
 | `perp-pnl-leaderboard` | Perp PnL leaderboard by token |
+
+### `perp` - Perpetual Futures Analytics
+
+| Subcommand | Description |
+|------------|-------------|
+| `screener` | Screen perpetual futures contracts |
+| `leaderboard` | Perpetual futures PnL leaderboard |
+
+### `quote` + `execute` - Trading
+
+Get DEX swap quotes and execute trades directly from the CLI.
+
+```bash
+# Get a quote (SOL → USDC on Solana)
+nansen quote --chain solana \
+  --from So11111111111111111111111111111111111111112 \
+  --to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v \
+  --amount 1000000000
+
+# Execute the quoted trade
+nansen execute --quote <quoteId>
+
+# With custom slippage
+nansen quote --chain base --from 0xeee... --to 0x833... --amount 1000000000000000000 --slippage 0.01
+
+# Auto slippage
+nansen quote --chain solana --from <token> --to <token> --amount <units> --auto-slippage
+```
+
+| Option | Description |
+|--------|-------------|
+| `--chain` | Chain: `solana`, `ethereum`, `base`, `bsc` |
+| `--from` | Input token address |
+| `--to` | Output token address |
+| `--amount` | Amount in base units (lamports, wei) |
+| `--slippage` | Slippage tolerance as decimal (default: 0.03) |
+| `--auto-slippage` | Enable auto slippage calculation |
+| `--swap-mode` | `exactIn` (default) or `exactOut` |
+| `--no-simulate` | Skip pre-broadcast simulation (execute only) |
+
+### `wallet` - Wallet Management
+
+Create and manage local wallets for trading. Supports both EVM and Solana.
+
+```bash
+# Create a new wallet (generates EVM + Solana keypair)
+nansen wallet create --name trading
+
+# List wallets
+nansen wallet list
+
+# Set default wallet
+nansen wallet default trading
+
+# Send tokens
+nansen wallet send --to 0x742d35Cc... --amount 1.5 --chain evm
+nansen wallet send --to 9WzDXw... --amount 0.1 --chain solana --token So11...
+
+# Send entire balance
+nansen wallet send --to 0x742d35Cc... --chain evm --max
+
+# Preview without sending
+nansen wallet send --to 0x742d35Cc... --amount 1.5 --chain evm --dry-run
+
+# Export private keys (password required)
+nansen wallet export trading
+```
+
+| Environment Variable | Description |
+|---------------------|-------------|
+| `NANSEN_WALLET_PASSWORD` | Password for non-interactive use (CI/scripts) |
+| `NANSEN_EVM_RPC` | Custom EVM RPC endpoint |
+| `NANSEN_SOLANA_RPC` | Custom Solana RPC endpoint |
 
 ### `portfolio` - Portfolio Analytics
 
@@ -151,6 +233,12 @@ nansen search "uniswap" --type token --chain ethereum
 | `--chain` | Filter by chain |
 | `--limit` | Max results, 1-50 (default: 25) |
 
+### `points` - Nansen Points
+
+| Subcommand | Description |
+|------------|-------------|
+| `leaderboard` | Nansen Points leaderboard |
+
 ### `schema` - Schema Discovery
 
 Output JSON schema for agent introspection. No API key required.
@@ -167,35 +255,60 @@ Returns command definitions, option types/defaults, supported chains, and smart 
 
 ### `cache` - Cache Management
 
-Manage the local response cache.
-
 ```bash
 # Clear all cached responses
 nansen cache clear
 ```
 
-## Options
+## Output Formats
+
+The CLI supports multiple output formats to suit different workflows:
+
+```bash
+# Structured JSON (default) — ideal for AI agents and piping
+nansen token screener --chain solana
+
+# Formatted JSON — human-readable with indentation
+nansen token screener --chain solana --pretty
+
+# Table — clean terminal-friendly tables with auto-formatted numbers
+nansen token screener --chain solana --table
+
+# CSV — for spreadsheets and data analysis
+nansen token screener --chain solana --format csv
+
+# NDJSON streaming — for incremental processing of large datasets
+nansen token screener --chain solana --stream
+
+# Select specific fields — reduce payload size
+nansen smart-money netflow --chain solana --fields token_symbol,net_flow_24h_usd,trader_count
+```
+
+## Global Options
 
 | Option | Description |
 |--------|-------------|
 | `--pretty` | Format JSON output for readability |
 | `--table` | Format output as human-readable table |
-| `--fields <list>` | Comma-separated fields to include (reduces response size) |
-| `--cache` | Enable response caching |
-| `--no-cache` | Bypass cache for this request |
-| `--cache-ttl <s>` | Cache TTL in seconds (default: 300) |
+| `--format csv` | Output as CSV with header row |
 | `--stream` | Output as JSON lines (NDJSON) for incremental processing |
+| `--fields <list>` | Comma-separated fields to include (reduces response size) |
 | `--chain <chain>` | Blockchain to query |
 | `--chains <json>` | Multiple chains as JSON array |
 | `--limit <n>` | Number of results |
 | `--days <n>` | Date range in days (default: 30) |
 | `--sort <field:dir>` | Sort results (e.g., `--sort value_usd:desc`) |
-| `--symbol <sym>` | Token symbol for perp endpoints (e.g., BTC, ETH) |
-| `--filters <json>` | Filter criteria as JSON |
 | `--order-by <json>` | Sort order as JSON array (advanced) |
+| `--filters <json>` | Filter criteria as JSON |
+| `--symbol <sym>` | Token symbol for perp endpoints (e.g., BTC, ETH) |
 | `--labels <label>` | Smart Money label filter |
 | `--smart-money` | Filter for Smart Money only |
 | `--timeframe <tf>` | Time window (5m, 10m, 1h, 6h, 24h, 7d, 30d) |
+| `--cache` | Enable response caching |
+| `--no-cache` | Bypass cache for this request |
+| `--cache-ttl <s>` | Cache TTL in seconds (default: 300) |
+| `--no-retry` | Disable automatic retry on rate limits/errors |
+| `--retries <n>` | Max retry attempts (default: 3) |
 
 ## Supported Chains
 
@@ -209,11 +322,13 @@ This CLI is built specifically for AI agents. Every design decision prioritizes 
 Direct your users to [app.nansen.ai/auth/agent-setup](https://app.nansen.ai/auth/agent-setup) for seamless authentication. See [AI Agent Access](https://docs.nansen.ai/reference/ai-agent-access) for full documentation.
 
 **Why agents love it:**
-- **Structured Output**: All responses are JSON with consistent schema — no parsing HTML or unstructured text
-- **Predictable Errors**: Errors include status codes and actionable details agents can handle programmatically
-- **Zero Config**: Works with just an API key — no complex setup
-- **Composable**: Commands can be chained with shell pipes
-- **Discoverable**: `help` commands at every level for agent introspection
+- **Structured Output**: All responses are JSON with consistent schema. No parsing HTML or unstructured text.
+- **Predictable Errors**: Errors include status codes and actionable details agents can handle programmatically.
+- **Zero Config**: Works with just an API key. No complex setup.
+- **Composable**: Commands can be chained with shell pipes.
+- **Discoverable**: `nansen schema` outputs full JSON schema for agent introspection. No API key required.
+- **Cacheable**: Built-in response caching with configurable TTL reduces redundant API calls.
+- **Field Selection**: `--fields` flag reduces token usage by returning only what's needed.
 
 ```json
 // Success response
@@ -238,28 +353,51 @@ Direct your users to [app.nansen.ai/auth/agent-setup](https://app.nansen.ai/auth
 ## Examples
 
 ```bash
-# Get trending tokens as a table, sorted by volume
+# Discover tokens — table view, sorted by volume
 nansen token screener --chain solana --sort buy_volume:desc --table
 
-# Get Smart Money DEX trades from Funds only
+# Smart Money DEX trades from Funds only
 nansen smart-money dex-trades --chain ethereum --labels Fund --table
 
-# Get token holders with Smart Money filter
+# Token holders filtered to Smart Money
 nansen token holders --token So11111111111111111111111111111111111111112 --chain solana --smart-money
 
-# Get historical holdings for the past 7 days
+# Historical Smart Money holdings over 7 days
 nansen smart-money historical-holdings --chain solana --days 7
 
-# Get BTC perpetual positions on Hyperliquid
+# BTC perpetual positions on Hyperliquid
 nansen token perp-positions --symbol BTC --pretty
 
-# Get top PnL traders for a token, sorted by realized PnL
+# Top PnL traders for JUP, sorted by realized PnL
 nansen token pnl --token JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN --chain solana --days 30 --sort pnl_usd:desc --table
 
-# Filter response to specific fields (reduces tokens for AI agents)
-nansen smart-money netflow --chain solana --fields token_symbol,net_flow_usd,chain
+# Perp futures screener
+nansen perp screener --pretty
 
-# Get schema for agent introspection
+# Compare two wallets side by side
+nansen profiler compare --addresses 0xabc...,0xdef... --chain ethereum
+
+# Trace fund flows
+nansen profiler trace --address 0xabc... --chain ethereum
+
+# Batch query multiple addresses
+nansen profiler batch --addresses 0xabc...,0xdef...,0x123... --chain ethereum
+
+# Reduce payload for agents — select only needed fields
+nansen smart-money netflow --chain solana --fields token_symbol,net_flow_24h_usd,trader_count
+
+# Export to CSV for spreadsheet analysis
+nansen token screener --chain solana --timeframe 24h --format csv > tokens.csv
+
+# Stream results as NDJSON
+nansen smart-money dex-trades --chain solana --stream
+
+# Full trading flow: quote and execute
+nansen wallet create --name trading
+nansen quote --chain solana --from So11...112 --to EPjFW...Dt1v --amount 1000000000
+nansen execute --quote <quoteId>
+
+# Schema introspection for agents
 nansen schema --pretty
 nansen schema token --pretty
 ```
@@ -288,11 +426,15 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 | Category | Endpoints | Coverage |
 |----------|-----------|----------|
 | Smart Money | 6 | 100% |
-| Profiler | 11 | 100% |
-| Token God Mode | 12 | 100% |
+| Profiler | 14 | 100% |
+| Token God Mode | 14 | 100% |
+| Perpetuals | 2 | 100% |
 | Portfolio | 1 | 100% |
+| Trading | 2 | 100% |
+| Wallet | 6 | 100% |
 | Search | 1 | 100% |
-| **Total** | **31** | **100%** |
+| Points | 1 | 100% |
+| **Total** | **47** | **100%** |
 
 ## License
 
