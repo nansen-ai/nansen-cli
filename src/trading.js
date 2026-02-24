@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { exportWallet, getDefaultAddress, showWallet, keccak256, listWallets } from './wallet.js';
+import { base58Decode } from './transfer.js';
 
 // ============= Constants =============
 
@@ -1075,9 +1076,14 @@ EXAMPLES:
             let requestId;
 
             if (chainType === 'solana') {
-              // Solana: quote.transaction is base64 serialized VersionedTransaction
+              // Solana: transaction is either a base64 string (Jupiter) or an object
+              // with a base58-encoded `data` field (OKX). Normalize to base64.
+              let txBase64 = currentQuote.transaction;
+              if (typeof txBase64 === 'object' && txBase64.data) {
+                txBase64 = base58Decode(txBase64.data).toString('base64');
+              }
               errorOutput('  Signing Solana transaction...');
-              signedTransaction = signSolanaTransaction(currentQuote.transaction, exported.solana.privateKey);
+              signedTransaction = signSolanaTransaction(txBase64, exported.solana.privateKey);
               requestId = currentQuote.metadata?.requestId;
 
             } else {

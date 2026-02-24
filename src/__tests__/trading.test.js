@@ -28,8 +28,10 @@ import {
   stripLeadingZeros,
   buildTradingCommands,
 } from '../trading.js';
+import { base58Decode } from '../transfer.js';
 import {
   keccak256,
+  base58Encode,
   generateEvmWallet,
   generateSolanaWallet,
   createWallet,
@@ -350,6 +352,35 @@ describe('signSolanaTransaction', () => {
     expect(signedBytes.subarray(65, 129).every(b => b === 0)).toBe(true);
     // Message unchanged
     expect(signedBytes.subarray(129).toString()).toBe('multi-sig-test');
+  });
+
+  it('should produce identical result from base58 object (OKX format) after normalization', () => {
+    // OKX returns transaction as { data: "<base58-encoded tx>", ... }
+    // while Jupiter returns a plain base64 string. The execute handler
+    // normalizes by base58-decoding .data to base64 before signing.
+    const message = Buffer.from('okx-format-test');
+    const txBytes = Buffer.concat([
+      Buffer.from([0x01]),
+      Buffer.alloc(64),
+      message,
+    ]);
+
+    const wallet = generateSolanaWallet();
+
+    // Jupiter path: base64 string
+    const base64Tx = txBytes.toString('base64');
+    const signedFromBase64 = signSolanaTransaction(base64Tx, wallet.privateKey);
+
+    // OKX path: base58 object -> normalize -> base64 string
+    const base58Tx = base58Encode(txBytes);
+    const okxTransaction = { data: base58Tx, from: 'addr', gas: '0', to: 'prog', value: '0' };
+    let normalized = okxTransaction;
+    if (typeof normalized === 'object' && normalized.data) {
+      normalized = base58Decode(normalized.data).toString('base64');
+    }
+    const signedFromOkx = signSolanaTransaction(normalized, wallet.privateKey);
+
+    expect(signedFromOkx).toBe(signedFromBase64);
   });
 });
 
