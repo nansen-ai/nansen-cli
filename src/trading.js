@@ -8,7 +8,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { exportWallet, getDefaultAddress, showWallet, listWallets } from './wallet.js';
+import { exportWallet, getDefaultAddress, showWallet, listWallets, getWalletConfig } from './wallet.js';
 import { base58Decode } from './transfer.js';
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendApprovalViaWalletConnect } from './walletconnect-trading.js';
@@ -957,7 +957,10 @@ EXAMPLES:
         let exported = null;
         if (!isWalletConnect) {
           // Get wallet credentials once (before the loop)
-          const password = process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps);
+          const walletConfig = getWalletConfig();
+          const password = walletConfig.passwordHash
+            ? (process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps))
+            : null;
 
           let effectiveWalletName = walletName;
           if (!effectiveWalletName) {
