@@ -3,7 +3,7 @@
  *
  * Covers: chain resolution, quote storage, RLP encoding, compact-u16 parsing,
  * Solana signing, EVM signing (address recovery, decimal/hex handling, EIP-155),
- * ERC-20 approval building, API error handling, and CLI command validation.
+ * EIP-1559 signing, prepare/submit API, and CLI command validation.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -22,7 +22,9 @@ import {
   signLegacyTransaction,
   signSolanaTransaction,
   signEvmTransaction,
-  buildApprovalTransaction,
+  signEip1559EvmTransaction,
+  prepareTransaction,
+  submitExecution,
   stripLeadingZeros,
   buildTradingCommands,
 } from '../trading.js';
@@ -482,25 +484,176 @@ describe('signEvmTransaction (API response format)', () => {
   });
 });
 
-// ============= ERC-20 Approval Transaction =============
+// ============= EIP-1559 (Type 2) Transaction Signing =============
 
-describe('buildApprovalTransaction', () => {
-  it('should build a valid approval tx', () => {
+describe('signEip1559EvmTransaction', () => {
+  it('should produce valid signed tx hex with 0x02 type prefix', () => {
     const wallet = generateEvmWallet();
-    const signedHex = buildApprovalTransaction(
-      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
-      '0x57df6092665eb6058de53939612413ff4b09114e', // spender
-      wallet.privateKey,
-      'base',
-      0,
-    );
-    expect(signedHex).toMatch(/^0x[0-9a-f]+$/);
+    const txData = {
+      nonce: 0,
+      maxFeePerGas: '30000000000',
+      maxPriorityFeePerGas: '1000000000',
+      gas: '21000',
+      to: '0x' + 'ab'.repeat(20),
+      value: '0',
+      data: '0x',
+      chainId: 8453,
+    };
+    const signedHex = signEip1559EvmTransaction(txData, wallet.privateKey);
+    expect(signedHex).toMatch(/^0x02[0-9a-f]+$/);
   });
 
-  it('should reject unsupported chains', () => {
+  it('should produce deterministic signatures (RFC 6979)', () => {
     const wallet = generateEvmWallet();
-    expect(() => buildApprovalTransaction('0xabc', '0xdef', wallet.privateKey, 'polygon', 0))
-      .toThrow('Unsupported chain');
+    const txData = {
+      nonce: 0,
+      maxFeePerGas: '30000000000',
+      maxPriorityFeePerGas: '1000000000',
+      gas: '21000',
+      to: '0x' + 'ab'.repeat(20),
+      value: '0',
+      data: '0x',
+      chainId: 1,
+    };
+    const sig1 = signEip1559EvmTransaction(txData, wallet.privateKey);
+    const sig2 = signEip1559EvmTransaction(txData, wallet.privateKey);
+    expect(sig1).toBe(sig2);
+  });
+
+  it('should produce different signed tx for different nonces', () => {
+    const wallet = generateEvmWallet();
+    const base = {
+      maxFeePerGas: '30000000000',
+      maxPriorityFeePerGas: '1000000000',
+      gas: '21000',
+      to: '0x' + 'ab'.repeat(20),
+      value: '0',
+      data: '0x',
+      chainId: 8453,
+    };
+    const sig0 = signEip1559EvmTransaction({ ...base, nonce: 0 }, wallet.privateKey);
+    const sig1 = signEip1559EvmTransaction({ ...base, nonce: 1 }, wallet.privateKey);
+    expect(sig0).not.toBe(sig1);
+  });
+
+  it('should handle hex string inputs', () => {
+    const wallet = generateEvmWallet();
+    const txData = {
+      nonce: '0x5',
+      maxFeePerGas: '0x6fc23ac00',
+      maxPriorityFeePerGas: '0x3b9aca00',
+      gas: '0x5208',
+      to: '0x' + 'cd'.repeat(20),
+      value: '0xDE0B6B3A7640000',
+      data: '0x',
+      chainId: 8453,
+    };
+    const signedHex = signEip1559EvmTransaction(txData, wallet.privateKey);
+    expect(signedHex).toMatch(/^0x02[0-9a-f]+$/);
+  });
+});
+
+// ============= Prepare / Submit API =============
+
+describe('prepareTransaction', () => {
+  it('should call /execution/prepare with correct params', async () => {
+    const origFetch = global.fetch;
+    const mockResponse = { needsApproval: false, swapTxData: { nonce: 0, to: '0xabc' } };
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify(mockResponse),
+    });
+
+    const result = await prepareTransaction({
+      mode: 'standard',
+      chain: 'evm',
+      chainId: '8453',
+      walletAddress: '0x1234',
+      quote: { aggregator: 'test' },
+    });
+
+    expect(result).toEqual(mockResponse);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/execution/prepare'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+
+    global.fetch = origFetch;
+  });
+
+  it('should throw on non-OK response', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({ code: 'INVALID_PARAMS', message: 'Bad quote' }),
+    });
+
+    await expect(prepareTransaction({ mode: 'standard', chain: 'evm', chainId: '1', walletAddress: '0x1', quote: {} }))
+      .rejects.toThrow('Bad quote');
+
+    global.fetch = origFetch;
+  });
+
+  it('should throw on non-JSON response', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      text: async () => '<html>Bad Gateway</html>',
+    });
+
+    await expect(prepareTransaction({ mode: 'standard', chain: 'evm', chainId: '1', walletAddress: '0x1', quote: {} }))
+      .rejects.toThrow('non-JSON');
+
+    global.fetch = origFetch;
+  });
+});
+
+describe('submitExecution', () => {
+  it('should call /execution/standard with correct params', async () => {
+    const origFetch = global.fetch;
+    const mockResponse = { txHash: '0xabc123', success: true };
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify(mockResponse),
+    });
+
+    const result = await submitExecution({
+      chain: 'evm',
+      chainId: '8453',
+      signedTransaction: '0xsigned',
+      aggregator: 'test',
+    });
+
+    expect(result).toEqual(mockResponse);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/execution/standard'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+
+    global.fetch = origFetch;
+  });
+
+  it('should retry on 502/503 non-JSON responses', async () => {
+    const origFetch = global.fetch;
+    let callCount = 0;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount <= 2) {
+        return { ok: false, status: 502, text: async () => '<html>Bad Gateway</html>' };
+      }
+      return { ok: true, text: async () => JSON.stringify({ txHash: '0xok', success: true }) };
+    });
+
+    const result = await submitExecution(
+      { chain: 'evm', chainId: '1', signedTransaction: '0x' },
+      { retries: 2, retryDelayMs: 10 },
+    );
+    expect(result.success).toBe(true);
+    expect(callCount).toBe(3);
+
+    global.fetch = origFetch;
   });
 });
 
@@ -632,6 +785,22 @@ describe('buildTradingCommands', () => {
       }],
     }, 'ethereum');
 
+    // Mock prepare + submit APIs so execution proceeds past validation
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockImplementation(async (url) => {
+      if (url.includes('/execution/prepare')) {
+        return { ok: true, text: async () => JSON.stringify({
+          needsApproval: false,
+          swapTxData: { nonce: 0, maxFeePerGas: '1000000000', maxPriorityFeePerGas: '100000000', gas: '200000', to: '0xabc', value: '0', data: '0x1234', chainId: 1 },
+        })};
+      }
+      if (url.includes('/execution/standard')) {
+        return { ok: true, text: async () => JSON.stringify({ txHash: '0xabc', success: true }) };
+      }
+      // waitForReceipt RPC call
+      return { ok: true, json: async () => ({ result: { status: '0x1', blockNumber: '0x1' } }) };
+    });
+
     const logs = [];
     const cmds = buildTradingCommands({
       errorOutput: (msg) => logs.push(msg),
@@ -643,6 +812,7 @@ describe('buildTradingCommands', () => {
     expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(false);
     expect(logs.some(l => l.includes('value mismatch'))).toBe(false);
 
+    global.fetch = origFetch;
     delete process.env.NANSEN_WALLET_PASSWORD;
   });
 
@@ -662,6 +832,22 @@ describe('buildTradingCommands', () => {
       }],
     }, 'ethereum');
 
+    // Mock prepare + submit APIs so execution proceeds past validation
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockImplementation(async (url) => {
+      if (url.includes('/execution/prepare')) {
+        return { ok: true, text: async () => JSON.stringify({
+          needsApproval: false,
+          swapTxData: { nonce: 0, maxFeePerGas: '1000000000', maxPriorityFeePerGas: '100000000', gas: '200000', to: '0xabc', value: '1000000000000000000', data: '0x1234', chainId: 1 },
+        })};
+      }
+      if (url.includes('/execution/standard')) {
+        return { ok: true, text: async () => JSON.stringify({ txHash: '0xabc', success: true }) };
+      }
+      // waitForReceipt RPC call
+      return { ok: true, json: async () => ({ result: { status: '0x1', blockNumber: '0x1' } }) };
+    });
+
     const logs = [];
     const cmds = buildTradingCommands({
       errorOutput: (msg) => logs.push(msg),
@@ -673,6 +859,7 @@ describe('buildTradingCommands', () => {
     expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(false);
     expect(logs.some(l => l.includes('value mismatch'))).toBe(false);
 
+    global.fetch = origFetch;
     delete process.env.NANSEN_WALLET_PASSWORD;
   });
 
@@ -776,7 +963,7 @@ describe('API error handling', () => {
     global.fetch = origFetch;
   });
 
-  it('should surface UPSTREAM_BROADCAST_ERROR from execute API', async () => {
+  it('should surface UPSTREAM_BROADCAST_ERROR from submit API', async () => {
     const origFetch = global.fetch;
     const errorBody = JSON.stringify({
       code: 'UPSTREAM_BROADCAST_ERROR',
@@ -788,10 +975,10 @@ describe('API error handling', () => {
       text: async () => errorBody,
     });
 
-    const { executeTransaction } = await import('../trading.js');
-    await expect(executeTransaction({
+    await expect(submitExecution({
       signedTransaction: 'test',
       chain: 'solana',
+      chainId: '501',
     })).rejects.toThrow('simulation failed');
 
     global.fetch = origFetch;

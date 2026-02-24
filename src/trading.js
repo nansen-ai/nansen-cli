@@ -9,7 +9,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { exportWallet, getDefaultAddress, showWallet, listWallets } from './wallet.js';
-import { base58Decode } from './transfer.js';
+
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 
 // ============= Constants =============
@@ -80,16 +80,68 @@ export async function getQuote(params) {
 }
 
 /**
- * Broadcast a signed transaction via the Nansen Trading API.
+ * Call POST /execution/prepare to build transactions server-side.
+ * The server handles nonce, gas estimation, approval building, and simulation.
  *
  * @param {object} params
- * @param {string} params.signedTransaction - Base64 (Solana) or 0x hex (EVM)
- * @param {string} [params.chain] - Target chain name
- * @param {string} [params.requestId] - Optional Jupiter request ID (Solana only)
- * @param {boolean} [params.simulate] - Run pre-broadcast simulation
- * @returns {Promise<object>} Execution result
+ * @param {string} params.mode - Execution mode ('standard')
+ * @param {string} params.chain - Chain type ('evm' or 'solana')
+ * @param {string} params.chainId - Chain ID as string
+ * @param {string} params.walletAddress - Wallet address
+ * @param {object} params.quote - Quote object from the saved quote file
+ * @param {boolean} [params.skipSimulation] - Skip pre-broadcast simulation
+ * @returns {Promise<object>} Prepare result with swapTxData, approvalTxData, needsApproval, etc.
  */
-export async function executeTransaction(params, { retries = 2, retryDelayMs = 1500 } = {}) {
+export async function prepareTransaction(params) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
+  if (process.env.NANSEN_API_KEY) {
+    headers['Authorization'] = `Bearer ${process.env.NANSEN_API_KEY}`;
+  }
+
+  const res = await fetch(`${TRADING_API_URL}/execution/prepare`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(params),
+  });
+
+  const text = await res.text();
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw Object.assign(
+      new Error(`Prepare API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`),
+      { code: 'PREPARE_FAILED', status: res.status, details: text.slice(0, 200) }
+    );
+  }
+
+  if (!res.ok) {
+    const code = body.code || 'PREPARE_ERROR';
+    const msg = body.message || `Prepare request failed with status ${res.status}`;
+    throw Object.assign(new Error(msg), { code, status: res.status, details: body.details });
+  }
+
+  return body;
+}
+
+/**
+ * Call POST /execution/standard to broadcast signed transactions.
+ * The server handles approval broadcast + wait + swap broadcast.
+ *
+ * @param {object} params
+ * @param {string} params.chain - Chain type ('evm' or 'solana')
+ * @param {string} params.chainId - Chain ID as string
+ * @param {string} params.signedTransaction - Signed swap tx (base64 for Solana, 0x hex for EVM)
+ * @param {string} [params.signedApprovalTransaction] - Signed approval tx (EVM only)
+ * @param {string} [params.aggregator] - Aggregator name
+ * @param {string} [params.requestId] - Request ID (Solana/Jupiter)
+ * @param {string} [params.walletAddress] - Wallet address
+ * @returns {Promise<object>} { txHash, success, error? }
+ */
+export async function submitExecution(params, { retries = 2, retryDelayMs = 1500 } = {}) {
   const headers = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
@@ -104,7 +156,7 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       await new Promise(r => setTimeout(r, retryDelayMs));
     }
 
-    const res = await fetch(`${TRADING_API_URL}/execute`, {
+    const res = await fetch(`${TRADING_API_URL}/execution/standard`, {
       method: 'POST',
       headers,
       body: JSON.stringify(params),
@@ -115,11 +167,10 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
     try {
       body = JSON.parse(text);
     } catch {
-      const chainType = params.chain && CHAIN_MAP[params.chain]?.type;
       const feeHint = res.status === 502
-        ? chainType === 'solana'
+        ? params.chain === 'solana'
           ? ' This often means the transaction failed simulation — check that you have enough SOL for fees (~0.005 SOL minimum).'
-          : chainType === 'evm'
+          : params.chain === 'evm'
             ? ' This often means the transaction failed simulation — check that you have enough ETH for gas fees.'
             : ''
         : '';
@@ -291,30 +342,6 @@ export function signEvmTransaction(txData, privateKeyHex, chain, nonce) {
   return signLegacyTransaction(tx, privateKeyHex);
 }
 
-/**
- * Fetch the pending nonce for an EVM address.
- * @param {string} chain - Chain name
- * @param {string} address - 0x address
- * @returns {Promise<number>} Nonce
- */
-export async function getEvmNonce(chain, address) {
-  const rpcUrl = EVM_RPC_URLS[chain];
-  if (!rpcUrl) throw new Error(`No RPC URL configured for chain: ${chain}`);
-
-  const res = await fetch(rpcUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'eth_getTransactionCount',
-      params: [address, 'pending'],
-    }),
-  });
-  const body = await res.json();
-  if (body.error) throw new Error(`RPC error: ${body.error.message}`);
-  return parseInt(body.result, 16);
-}
 
 /**
  * Wait for an EVM transaction to be confirmed on-chain.
@@ -356,130 +383,53 @@ export async function waitForReceipt(chain, txHash, timeoutMs = 30000, pollMs = 
   throw new Error(`Transaction receipt not found after ${timeoutMs}ms. Tx: ${txHash}`);
 }
 
-/**
- * Simulate an EVM transaction via eth_call before broadcasting.
- * Returns { success: true } or { success: false, reason: string }.
- */
-export async function simulateEvmCall(chain, { from, to, data, value, gas }) {
-  const rpcUrl = EVM_RPC_URLS[chain];
-  if (!rpcUrl) return { success: true }; // Can't simulate, skip
 
-  try {
-    const callObj = { from, to, data, value: value || '0x0' };
-    if (gas) callObj.gas = gas; // Pass gas limit to catch under-gassed quotes
-    const res = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_call',
-        params: [callObj, 'latest'],
-      }),
-    });
-    const body = await res.json();
-    if (body.error) {
-      const reason = body.error.message || 'unknown';
-      return { success: false, reason };
-    }
-    return { success: true };
-  } catch {
-    return { success: true }; // Network error — don't block, let broadcast decide
-  }
-}
+// ============= EIP-1559 (Type 2) EVM Transaction Signing =============
 
 /**
- * Estimate gas for an EVM transaction. Returns the gas estimate or null on failure.
- * Used to fix under-gassed quotes from aggregators.
- */
-export async function estimateEvmGas(chain, { from, to, data, value }) {
-  const rpcUrl = EVM_RPC_URLS[chain];
-  if (!rpcUrl) return null;
-
-  try {
-    const res = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_estimateGas',
-        params: [{ from, to, data, value: value || '0x0' }],
-      }),
-    });
-    const body = await res.json();
-    if (body.error) return null;
-    return parseInt(body.result, 16);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Check ERC-20 allowance for a given owner/spender pair.
- * Returns the allowance as a BigInt, or 0n on failure.
- */
-export async function checkErc20Allowance(chain, tokenAddress, ownerAddress, spenderAddress) {
-  const rpcUrl = EVM_RPC_URLS[chain];
-  if (!rpcUrl) return 0n;
-
-  try {
-    // allowance(address,address) selector = 0xdd62ed3e
-    const data = '0xdd62ed3e'
-      + ownerAddress.slice(2).toLowerCase().padStart(64, '0')
-      + spenderAddress.slice(2).toLowerCase().padStart(64, '0');
-    const res = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_call',
-        params: [{ to: tokenAddress, data }, 'latest'],
-      }),
-    });
-    const body = await res.json();
-    if (body.error || !body.result) return 0n;
-    return BigInt(body.result);
-  } catch {
-    return 0n;
-  }
-}
-
-/**
- * Send an ERC-20 approval transaction.
- * Required before swapping non-native EVM tokens.
+ * Sign an EIP-1559 (type 2) EVM transaction.
+ * Used for transactions returned by /execution/prepare which include
+ * maxFeePerGas/maxPriorityFeePerGas instead of gasPrice.
  *
- * @param {string} tokenAddress - ERC-20 token contract
- * @param {string} spenderAddress - Approval target (from quote.approvalAddress)
- * @param {string} privateKeyHex - Wallet private key
- * @param {string} chain - Chain name
- * @param {number} nonce - Account nonce
- * @returns {string} 0x-prefixed signed approval tx hex
+ * @param {object} txData - { nonce, maxFeePerGas, maxPriorityFeePerGas, gas, to, value, data, chainId }
+ * @param {string} privateKeyHex - 32-byte private key as hex
+ * @returns {string} 0x-prefixed signed transaction hex
  */
-// ⚠️ SECURITY: ERC-20 approval signing - requires thorough review
-export function buildApprovalTransaction(tokenAddress, spenderAddress, privateKeyHex, chain, nonce, gasPrice) {
-  const chainConfig = CHAIN_MAP[chain];
-  if (!chainConfig) throw new Error(`Unsupported chain: ${chain}`);
+export function signEip1559EvmTransaction(txData, privateKeyHex) {
+  const chainId = BigInt(txData.chainId);
+  const nonce = BigInt(txData.nonce || 0);
+  const maxPriorityFeePerGas = BigInt(txData.maxPriorityFeePerGas || 0);
+  const maxFeePerGas = BigInt(txData.maxFeePerGas || 0);
+  const gasLimit = BigInt(txData.gas || txData.gasLimit || 210000);
+  const value = BigInt(txData.value || 0);
 
-  // ERC-20 approve(address spender, uint256 amount) selector = 0x095ea7b3
-  // Approve max uint256
-  const MAX_UINT256_HEX = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
-  const data = '0x095ea7b3'
-    + spenderAddress.slice(2).toLowerCase().padStart(64, '0')
-    + MAX_UINT256_HEX;
+  const bigIntToHex = (n) => n === 0n ? '0x' : '0x' + n.toString(16);
 
-  const tx = {
-    nonce,
-    gasPrice: toHex(gasPrice || '1000000'),
-    gasLimit: '0x186a0', // 100000
-    to: tokenAddress,
-    value: '0x0',
-    data,
-    chainId: chainConfig.chainId,
-  };
+  const txFields = [
+    bigIntToHex(chainId),
+    bigIntToHex(nonce),
+    bigIntToHex(maxPriorityFeePerGas),
+    bigIntToHex(maxFeePerGas),
+    bigIntToHex(gasLimit),
+    txData.to,
+    bigIntToHex(value),
+    txData.data || '0x',
+    [], // accessList
+  ];
 
-  return signLegacyTransaction(tx, privateKeyHex);
+  const unsigned = rlpEncode(txFields);
+  const txHash = keccak256(Buffer.concat([Buffer.from([0x02]), unsigned]));
+  const sig = signSecp256k1(txHash, Buffer.from(privateKeyHex, 'hex'));
+
+  const signed = rlpEncode([
+    ...txFields,
+    bigIntToHex(BigInt(sig.v)),
+    '0x' + sig.r.toString('hex'),
+    '0x' + sig.s.toString('hex'),
+  ]);
+
+  const rawTx = Buffer.concat([Buffer.from([0x02]), signed]);
+  return '0x' + rawTx.toString('hex');
 }
 
 // ============= Legacy (Type 0) EVM Transaction Signing =============
@@ -856,33 +806,12 @@ EXAMPLES:
           errorOutput('');
 
           try {
-            let signedTransaction;
-            let requestId;
-
-            if (chainType === 'solana') {
-              // Solana: transaction is either a base64 string (Jupiter) or an object
-              // with a base58-encoded `data` field (OKX). Normalize to base64.
-              let txBase64 = currentQuote.transaction;
-              if (typeof txBase64 === 'object' && txBase64.data) {
-                txBase64 = base58Decode(txBase64.data).toString('base64');
-              }
-              errorOutput('  Signing Solana transaction...');
-              signedTransaction = signSolanaTransaction(txBase64, exported.solana.privateKey);
-              requestId = currentQuote.metadata?.requestId;
-
-            } else {
-              // EVM: quote.transaction is { to, data, value, gas, gasPrice }
-              const walletAddress = exported.evm.address;
-
-              // Handle approval if needed — skip for native ETH
-              // Check existing allowance first to avoid unnecessary approve txs
-              // (industry standard: LiFi SDK checkAllowance, 1inch Permit2)
+            // Client-side tx.value validation (EVM only).
+            // ERC-20 swaps transfer tokens via calldata, so value must be 0.
+            // Native ETH swaps must have value matching the quoted inAmount.
+            // A compromised API could attach a large value to drain ETH silently.
+            if (chainType === 'evm') {
               const isNative = isNativeToken(currentQuote.inputMint);
-
-              // Validate transaction.value matches the swap type.
-              // ERC-20 swaps transfer tokens via calldata, so value must be 0.
-              // Native ETH swaps must have value matching the quoted inAmount.
-              // A compromised API could attach a large value to drain ETH silently.
               const txValue = BigInt(currentQuote.transaction.value || '0');
               if (isNative) {
                 const expectedValue = BigInt(currentQuote.inAmount || currentQuote.inputAmount || '0');
@@ -900,128 +829,68 @@ EXAMPLES:
                   continue;
                 }
               }
-
-              if (currentQuote.approvalAddress && !isNative) {
-                // Check if sufficient allowance already exists
-                const inputAmount = BigInt(currentQuote.inputAmount || currentQuote.inAmount || currentQuote.transaction?.value || '0');
-                const existingAllowance = await checkErc20Allowance(
-                  chain, currentQuote.inputMint, walletAddress, currentQuote.approvalAddress
-                );
-
-                if (existingAllowance >= inputAmount && existingAllowance > 0n) {
-                  errorOutput(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
-                } else {
-                  errorOutput(`  ⚠ Approval required → ${currentQuote.approvalAddress}`);
-                  errorOutput(`  Sending approval tx...`);
-                  const approvalNonce = await getEvmNonce(chain, walletAddress);
-
-                  const approvalGasPrice = currentQuote.transaction?.gasPrice || currentQuote.transaction?.maxFeePerGas || '1000000';
-                  const approvalTxHex = buildApprovalTransaction(
-                    currentQuote.inputMint,
-                    currentQuote.approvalAddress,
-                    exported.evm.privateKey,
-                    chain,
-                    approvalNonce,
-                    approvalGasPrice,
-                  );
-
-                  const approvalResult = await executeTransaction({
-                    signedTransaction: approvalTxHex,
-                    chain,
-                    simulate: !noSimulate,
-                  });
-
-                  if (approvalResult.status !== 'Success') {
-                    errorOutput(`  ❌ Approval failed for ${quoteName}: ${approvalResult.error || 'unknown error'}`);
-                    if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
-                    lastQuoteError = `${quoteName} approval failed`;
-                    continue;
-                  }
-
-                  errorOutput(`  Waiting for approval confirmation...`);
-                  try {
-                    const receipt = await waitForReceipt(chain, approvalResult.txHash);
-                    errorOutput(`  ✓ Approval confirmed in block ${parseInt(receipt.blockNumber, 16)}: ${approvalResult.txHash}`);
-                  } catch (receiptErr) {
-                    errorOutput(`  ❌ Approval may not have confirmed: ${receiptErr.message}`);
-                    if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
-                    lastQuoteError = `${quoteName} approval unconfirmed`;
-                    continue;
-                  }
-                  // Wait for RPC state propagation after approval
-                  await new Promise(r => setTimeout(r, 2000));
-                  errorOutput('');
-                }
-              }
-
-              // Pre-flight simulation (EVM only) — catch logic reverts before spending gas
-              // Runs AFTER approval so eth_call sees the current allowance state
-              // Simulates WITHOUT gas limit to check swap logic; gas re-estimation is separate
-              if (!noSimulate) {
-                const txData = currentQuote.transaction;
-                const sim = await simulateEvmCall(chain, {
-                  from: walletAddress,
-                  to: txData.to,
-                  data: txData.data,
-                  value: txData.value ? '0x' + BigInt(txData.value).toString(16) : '0x0',
-                });
-                if (!sim.success) {
-                  errorOutput(`  ⚠ Simulation failed for ${quoteName}: ${sim.reason}`);
-                  if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
-                  lastQuoteError = `${quoteName} simulation failed: ${sim.reason}`;
-                  continue;
-                }
-              }
-
-              // Use the Trading API's gas estimation (quote.gas) directly.
-              // The API already applies a 1.5x buffer over eth_estimateGas.
-              // Skip client-side re-estimation — it adds latency and the API value is reliable.
-              const txData = currentQuote.transaction;
-              const apiGas = parseInt(currentQuote.gas || "0");
-              const txGas = parseInt(txData.gas || txData.gasLimit || "0");
-              const finalGas = apiGas > 0 ? apiGas : txGas;
-              if (finalGas !== txGas) {
-                errorOutput(`  ℹ Using API gas ${finalGas} (tx.gas was ${txGas})`);
-              }
-              if (txData.gasLimit) txData.gasLimit = String(finalGas);
-              else txData.gas = String(finalGas);
-
-              errorOutput('  Fetching nonce...');
-              await new Promise(r => setTimeout(r, 1000));
-              const nonce = await getEvmNonce(chain, walletAddress);
-              errorOutput(`  Nonce: ${nonce}`);
-
-              errorOutput('  Signing EVM transaction...');
-              signedTransaction = signEvmTransaction(
-                currentQuote.transaction,
-                exported.evm.privateKey,
-                chain,
-                nonce
-              );
             }
 
+            // Step 1: Prepare — server handles nonce, gas, approval building, simulation
+            const walletAddress = chainType === 'solana' ? exported.solana.address : exported.evm.address;
+            errorOutput('  Preparing transaction...');
+            const prepareResult = await prepareTransaction({
+              mode: 'standard',
+              chain: chainConfig.type,
+              chainId: String(chainConfig.chainId),
+              walletAddress,
+              quote: currentQuote,
+              skipSimulation: noSimulate || false,
+            });
+
+            // Step 2: Sign locally
+            let signedTransaction;
+            let signedApprovalTransaction;
+
+            if (chainType === 'solana') {
+              errorOutput('  Signing Solana transaction...');
+              signedTransaction = signSolanaTransaction(prepareResult.transaction, exported.solana.privateKey);
+            } else {
+              // EVM: sign approval if needed, then sign swap
+              if (prepareResult.needsApproval && prepareResult.approvalTxData) {
+                errorOutput('  Signing approval transaction...');
+                signedApprovalTransaction = prepareResult.approvalTxData.maxFeePerGas
+                  ? signEip1559EvmTransaction(prepareResult.approvalTxData, exported.evm.privateKey)
+                  : signEvmTransaction(prepareResult.approvalTxData, exported.evm.privateKey, chain, prepareResult.approvalTxData.nonce);
+              }
+              errorOutput('  Signing swap transaction...');
+              signedTransaction = prepareResult.swapTxData.maxFeePerGas
+                ? signEip1559EvmTransaction(prepareResult.swapTxData, exported.evm.privateKey)
+                : signEvmTransaction(prepareResult.swapTxData, exported.evm.privateKey, chain, prepareResult.swapTxData.nonce);
+            }
+
+            // Step 3: Submit — server handles approval broadcast + wait + swap broadcast
             errorOutput('  Broadcasting...');
-            const execParams = {
+            const submitParams = {
+              chain: chainConfig.type,
+              chainId: String(chainConfig.chainId),
               signedTransaction,
-              chain,
-              simulate: !noSimulate,
+              aggregator: currentQuote.aggregator,
+              walletAddress,
             };
-            if (requestId) execParams.requestId = requestId;
+            if (signedApprovalTransaction) submitParams.signedApprovalTransaction = signedApprovalTransaction;
+            if (prepareResult.requestId) submitParams.requestId = prepareResult.requestId;
+            if (currentQuote.metadata?.requestId) submitParams.requestId = currentQuote.metadata.requestId;
 
-            const result = await executeTransaction(execParams);
+            const result = await submitExecution(submitParams);
 
-            if (result.status === 'Success') {
-              const txId = result.signature || result.txHash;
+            if (result.success) {
+              const txId = result.txHash;
               const explorerUrl = chainConfig.explorer + txId;
 
               // For EVM: verify the tx actually succeeded on-chain
-              if (chainType === 'evm' && result.txHash) {
+              if (chainType === 'evm' && txId) {
                 errorOutput('  Verifying on-chain status...');
                 try {
-                  await waitForReceipt(chain, result.txHash);
+                  await waitForReceipt(chain, txId);
                 } catch (receiptErr) {
                   errorOutput(`\n  ⚠ Transaction was broadcast but REVERTED on-chain!`);
-                  errorOutput(`    Tx Hash:   ${result.txHash}`);
+                  errorOutput(`    Tx Hash:   ${txId}`);
                   errorOutput(`    Explorer:  ${explorerUrl}`);
                   errorOutput(`    Error:     ${receiptErr.message}`);
                   if (qi + 1 < endIndex) {
@@ -1037,24 +906,15 @@ EXAMPLES:
               }
 
               errorOutput(`\n  ✓ Transaction successful!`);
-              errorOutput(`    Status:      ${result.status}`);
-              errorOutput(`    ${result.signature ? 'Signature' : 'Tx Hash'}:   ${txId}`);
-              errorOutput(`    Chain:       ${chainConfig.name} (${result.chainType})`);
-              errorOutput(`    Broadcaster: ${result.broadcaster}`);
-              errorOutput(`    Explorer:    ${explorerUrl}`);
-
-              if (result.swapEvents?.length) {
-                errorOutput(`    Swaps:`);
-                result.swapEvents.forEach(e => {
-                  errorOutput(`      ${e.inputAmount} ${e.inputMint?.slice(0, 8)}... → ${e.outputAmount} ${e.outputMint?.slice(0, 8)}...`);
-                });
-              }
+              errorOutput(`    Tx Hash:   ${txId}`);
+              errorOutput(`    Chain:     ${chainConfig.name}`);
+              errorOutput(`    Explorer:  ${explorerUrl}`);
               errorOutput('');
               return undefined; // Success — done
             } else {
-              errorOutput(`\n  ✗ Quote ${quoteName} failed: ${result.status}`);
+              errorOutput(`\n  ✗ Quote ${quoteName} failed`);
               if (result.error) errorOutput(`    Error:  ${result.error}`);
-              lastQuoteError = `${quoteName}: ${result.error || result.status}`;
+              lastQuoteError = `${quoteName}: ${result.error || 'unknown'}`;
               if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
             }
 
