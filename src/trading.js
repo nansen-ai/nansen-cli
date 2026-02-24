@@ -642,6 +642,10 @@ async function promptPassword(prompt, deps = {}) {
   });
 }
 
+function isNativeToken(mintAddress) {
+  return /^0x[eE]{40}$/.test(mintAddress);
+}
+
 function formatQuote(quote, index) {
   const lines = [];
   const label = index !== undefined ? `  Quote #${index + 1}` : '  Best Quote';
@@ -653,7 +657,7 @@ function formatQuote(quote, index) {
   if (quote.priceImpactPct) lines.push(`    Price Impact: ${quote.priceImpactPct}%`);
   if (quote.tradingFeeInUsd) lines.push(`    Trading Fee:  $${quote.tradingFeeInUsd}`);
   if (quote.networkFeeInUsd) lines.push(`    Network Fee:  $${quote.networkFeeInUsd}`);
-  if (quote.approvalAddress) lines.push(`    ⚠ Requires token approval to: ${quote.approvalAddress}`);
+  if (quote.approvalAddress && !isNativeToken(quote.inputMint)) lines.push(`    ⚠ Requires token approval to: ${quote.approvalAddress}`);
   return lines.join('\n');
 }
 
@@ -751,7 +755,7 @@ EXAMPLES:
         errorOutput(`\n  Quote ID: ${quoteId}`);
         errorOutput(`  Execute:  nansen execute --quote ${quoteId}`);
 
-        if (response.quotes[0]?.approvalAddress) {
+        if (response.quotes[0]?.approvalAddress && !isNativeToken(response.quotes[0]?.inputMint)) {
           errorOutput(`\n  Warning: This token swap requires an ERC-20 approval step.`);
           errorOutput(`    The execute command will handle this automatically.`);
         }
@@ -873,14 +877,14 @@ EXAMPLES:
               // Handle approval if needed — skip for native ETH
               // Check existing allowance first to avoid unnecessary approve txs
               // (industry standard: LiFi SDK checkAllowance, 1inch Permit2)
-              const isNativeToken = /^0xe+$/i.test(currentQuote.inputMint);
+              const isNative = isNativeToken(currentQuote.inputMint);
 
               // Validate transaction.value matches the swap type.
               // ERC-20 swaps transfer tokens via calldata, so value must be 0.
               // Native ETH swaps must have value matching the quoted inAmount.
               // A compromised API could attach a large value to drain ETH silently.
               const txValue = BigInt(currentQuote.transaction.value || '0');
-              if (isNativeToken) {
+              if (isNative) {
                 const expectedValue = BigInt(currentQuote.inAmount || currentQuote.inputAmount || '0');
                 if (txValue !== expectedValue) {
                   errorOutput(`  ❌ Transaction value mismatch for ${quoteName}: tx.value=${txValue}, expected=${expectedValue}`);
@@ -897,7 +901,7 @@ EXAMPLES:
                 }
               }
 
-              if (currentQuote.approvalAddress && !isNativeToken) {
+              if (currentQuote.approvalAddress && !isNative) {
                 // Check if sufficient allowance already exists
                 const inputAmount = BigInt(currentQuote.inputAmount || currentQuote.inAmount || currentQuote.transaction?.value || '0');
                 const existingAllowance = await checkErc20Allowance(
