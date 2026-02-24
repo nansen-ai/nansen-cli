@@ -559,6 +559,151 @@ describe('buildTradingCommands', () => {
     global.fetch = origFetch;
   });
 
+  it('should reject ERC-20 swap with non-zero tx.value', async () => {
+    // A compromised API could attach ETH value to an ERC-20 swap to drain funds
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'test',
+        inputMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC (ERC-20)
+        outputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        inAmount: '1000000',
+        outAmount: '500000000000000',
+        transaction: { to: '0xabc', data: '0x1234', value: '5000000000000000000', gas: '200000' },
+      }],
+    }, 'ethereum');
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      errorOutput: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    await cmds.execute([], null, {}, { quote: quoteId });
+    expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(true);
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('should reject native ETH swap with missing inAmount but non-zero tx.value', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'test',
+        inputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        outputMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        // no inAmount or inputAmount — malformed quote
+        outAmount: '3000000000',
+        transaction: { to: '0xabc', data: '0x1234', value: '5000000000000000000', gas: '200000' },
+      }],
+    }, 'ethereum');
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      errorOutput: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    await cmds.execute([], null, {}, { quote: quoteId });
+    expect(logs.some(l => l.includes('value mismatch'))).toBe(true);
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('should pass validation for ERC-20 swap with value 0', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'test',
+        inputMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        outputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        inAmount: '1000000',
+        outAmount: '500000000000000',
+        transaction: { to: '0xabc', data: '0x1234', value: '0', gas: '200000' },
+      }],
+    }, 'ethereum');
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      errorOutput: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    await cmds.execute([], null, {}, { quote: quoteId });
+    // Should NOT hit the value validation rejection
+    expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(false);
+    expect(logs.some(l => l.includes('value mismatch'))).toBe(false);
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('should pass validation for native ETH swap with matching value', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'test',
+        inputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        outputMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        inAmount: '1000000000000000000',
+        outAmount: '3000000000',
+        transaction: { to: '0xabc', data: '0x1234', value: '1000000000000000000', gas: '200000' },
+      }],
+    }, 'ethereum');
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      errorOutput: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    await cmds.execute([], null, {}, { quote: quoteId });
+    // Should NOT hit the value validation rejection
+    expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(false);
+    expect(logs.some(l => l.includes('value mismatch'))).toBe(false);
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('should reject native ETH swap with mismatched tx.value', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'test',
+        inputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', // native ETH
+        outputMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        inAmount: '1000000000000000000', // 1 ETH
+        outAmount: '3000000000',
+        transaction: { to: '0xabc', data: '0x1234', value: '5000000000000000000', gas: '200000' },
+      }],
+    }, 'ethereum');
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      errorOutput: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    await cmds.execute([], null, {}, { quote: quoteId });
+    expect(logs.some(l => l.includes('value mismatch'))).toBe(true);
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
   it('should error when execute loads a quote without transaction data', async () => {
     // Save a quote without transaction field
     const quoteId = saveQuote({

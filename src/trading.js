@@ -874,6 +874,29 @@ EXAMPLES:
               // Check existing allowance first to avoid unnecessary approve txs
               // (industry standard: LiFi SDK checkAllowance, 1inch Permit2)
               const isNativeToken = /^0xe+$/i.test(currentQuote.inputMint);
+
+              // Validate transaction.value matches the swap type.
+              // ERC-20 swaps transfer tokens via calldata, so value must be 0.
+              // Native ETH swaps must have value matching the quoted inAmount.
+              // A compromised API could attach a large value to drain ETH silently.
+              const txValue = BigInt(currentQuote.transaction.value || '0');
+              if (isNativeToken) {
+                const expectedValue = BigInt(currentQuote.inAmount || currentQuote.inputAmount || '0');
+                if (txValue !== expectedValue) {
+                  errorOutput(`  ❌ Transaction value mismatch for ${quoteName}: tx.value=${txValue}, expected=${expectedValue}`);
+                  if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+                  lastQuoteError = `${quoteName} transaction value mismatch`;
+                  continue;
+                }
+              } else {
+                if (txValue > 0n) {
+                  errorOutput(`  ❌ ERC-20 swap has non-zero tx.value (${txValue}) for ${quoteName} — aborting`);
+                  if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+                  lastQuoteError = `${quoteName} unexpected tx.value`;
+                  continue;
+                }
+              }
+
               if (currentQuote.approvalAddress && !isNativeToken) {
                 // Check if sufficient allowance already exists
                 const inputAmount = BigInt(currentQuote.inputAmount || currentQuote.inAmount || currentQuote.transaction?.value || '0');
