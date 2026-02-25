@@ -1065,6 +1065,77 @@ export class NansenAPI {
     });
   }
 
+  // ============= Prediction Market Endpoints =============
+
+  async predictionMarkets(params = {}) {
+    const { query, category, status = 'active', filters = {}, orderBy, pagination } = params;
+    return this.request('/api/v1/prediction/markets', {
+      query,
+      category,
+      status,
+      filters,
+      order_by: orderBy,
+      pagination
+    });
+  }
+
+  async predictionEvents(params = {}) {
+    const { query, category, status = 'active', filters = {}, orderBy, pagination } = params;
+    return this.request('/api/v1/prediction/events', {
+      query,
+      category,
+      status,
+      filters,
+      order_by: orderBy,
+      pagination
+    });
+  }
+
+  async predictionMarketDetail(params = {}) {
+    const { market } = params;
+    return this.request('/api/v1/prediction/market-detail', {
+      market
+    });
+  }
+
+  async predictionTrades(params = {}) {
+    const { market, side, filters = {}, orderBy, pagination, days = 7 } = params;
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    return this.request('/api/v1/prediction/trades', {
+      market,
+      side,
+      date: { from, to },
+      filters,
+      order_by: orderBy,
+      pagination
+    });
+  }
+
+  async predictionTopHolders(params = {}) {
+    const { market, outcome, filters = {}, orderBy, pagination } = params;
+    return this.request('/api/v1/prediction/top-holders', {
+      market,
+      outcome,
+      filters,
+      order_by: orderBy,
+      pagination
+    });
+  }
+
+  async predictionLeaderboard(params = {}) {
+    const { platform = 'all', filters = {}, orderBy, pagination, days = 30 } = params;
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    return this.request('/api/v1/prediction/leaderboard', {
+      platform,
+      date: { from, to },
+      filters,
+      order_by: orderBy,
+      pagination
+    });
+  }
+
   // ============= Points Endpoints =============
 
   async pointsLeaderboard(params = {}) {

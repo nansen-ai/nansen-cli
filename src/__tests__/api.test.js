@@ -1883,4 +1883,88 @@ describe('NansenAPI', () => {
       }
     });
   });
+
+  describe('Prediction Markets', () => {
+    describe('predictionMarkets', () => {
+      it('should fetch prediction markets with correct endpoint', async () => {
+        setupMock({ data: [] });
+        await api.predictionMarkets({ query: 'bitcoin', status: 'active' });
+        const body = expectFetchCalledWith('/api/v1/prediction/markets');
+        expect(body.query).toBe('bitcoin');
+        expect(body.status).toBe('active');
+      });
+
+      it('should default status to active', async () => {
+        setupMock({ data: [] });
+        await api.predictionMarkets({});
+        const body = expectFetchCalledWith('/api/v1/prediction/markets');
+        expect(body.status).toBe('active');
+      });
+    });
+
+    describe('predictionEvents', () => {
+      it('should fetch prediction events with correct endpoint', async () => {
+        setupMock({ data: [] });
+        await api.predictionEvents({ query: 'election', category: 'politics' });
+        const body = expectFetchCalledWith('/api/v1/prediction/events');
+        expect(body.query).toBe('election');
+        expect(body.category).toBe('politics');
+      });
+    });
+
+    describe('predictionMarketDetail', () => {
+      it('should fetch market detail with correct endpoint', async () => {
+        setupMock({ data: {} });
+        await api.predictionMarketDetail({ market: 'will-btc-hit-100k' });
+        const body = expectFetchCalledWith('/api/v1/prediction/market-detail');
+        expect(body.market).toBe('will-btc-hit-100k');
+      });
+    });
+
+    describe('predictionTrades', () => {
+      it('should fetch trades with correct endpoint and date range', async () => {
+        setupMock({ data: [] });
+        await api.predictionTrades({ market: 'test-market', days: 7 });
+        const body = expectFetchCalledWith('/api/v1/prediction/trades');
+        expect(body.market).toBe('test-market');
+        expect(body.date).toBeDefined();
+        expect(body.date.from).toBeDefined();
+        expect(body.date.to).toBeDefined();
+      });
+
+      it('should pass side filter', async () => {
+        setupMock({ data: [] });
+        await api.predictionTrades({ market: 'test-market', side: 'buy' });
+        const body = expectFetchCalledWith('/api/v1/prediction/trades');
+        expect(body.side).toBe('buy');
+      });
+    });
+
+    describe('predictionTopHolders', () => {
+      it('should fetch top holders with correct endpoint', async () => {
+        setupMock({ data: [] });
+        await api.predictionTopHolders({ market: 'test-market', outcome: 'yes' });
+        const body = expectFetchCalledWith('/api/v1/prediction/top-holders');
+        expect(body.market).toBe('test-market');
+        expect(body.outcome).toBe('yes');
+      });
+    });
+
+    describe('predictionLeaderboard', () => {
+      it('should fetch leaderboard with correct endpoint', async () => {
+        setupMock({ data: [] });
+        await api.predictionLeaderboard({ platform: 'polymarket', days: 30 });
+        const body = expectFetchCalledWith('/api/v1/prediction/leaderboard');
+        expect(body.platform).toBe('polymarket');
+        expect(body.date).toBeDefined();
+      });
+
+      it('should default platform to all', async () => {
+        setupMock({ data: [] });
+        await api.predictionLeaderboard({});
+        const body = expectFetchCalledWith('/api/v1/prediction/leaderboard');
+        expect(body.platform).toBe('all');
+      });
+    });
+  });
 });

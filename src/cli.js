@@ -289,6 +289,75 @@ export const SCHEMA = {
         }
       }
     },
+    'prediction': {
+      description: 'Prediction market analytics (Polymarket, Kalshi)',
+      subcommands: {
+        'markets': {
+          description: 'List and search prediction markets',
+          options: {
+            query: { type: 'string', description: 'Search by question text' },
+            category: { type: 'string', description: 'Filter by category (e.g., politics, crypto, sports)' },
+            status: { type: 'string', default: 'active', description: 'Market status: active, closed, all' },
+            days: { type: 'number', default: 30 },
+            limit: { type: 'number' },
+            sort: { type: 'string', description: 'Sort by: volume, liquidity, newest, spread' },
+            filters: { type: 'object' }
+          },
+          returns: ['question', 'category', 'last_trade_price', 'volume_24hr', 'volume', 'liquidity', 'yes_holders', 'no_holders', 'spread', 'end_date']
+        },
+        'events': {
+          description: 'List prediction market events (groups of related markets)',
+          options: {
+            query: { type: 'string', description: 'Search by event title' },
+            category: { type: 'string' },
+            status: { type: 'string', default: 'active' },
+            limit: { type: 'number' },
+            sort: { type: 'string' },
+            filters: { type: 'object' }
+          },
+          returns: ['event_title', 'category', 'market_count', 'total_volume', 'created_at']
+        },
+        'market-detail': {
+          description: 'Detailed info for a single prediction market',
+          options: {
+            market: { type: 'string', required: true, description: 'Market ID or slug' }
+          },
+          returns: ['question', 'category', 'outcomes', 'prices', 'volume', 'liquidity', 'price_history', 'top_holders']
+        },
+        'trades': {
+          description: 'Recent trades on a prediction market',
+          options: {
+            market: { type: 'string', required: true, description: 'Market ID or slug' },
+            side: { type: 'string', description: 'Filter by side: buy, sell' },
+            days: { type: 'number', default: 7 },
+            limit: { type: 'number' },
+            filters: { type: 'object' }
+          },
+          returns: ['timestamp', 'maker_address', 'taker_address', 'side', 'price', 'size', 'fee']
+        },
+        'top-holders': {
+          description: 'Top holders of outcome tokens for a market',
+          options: {
+            market: { type: 'string', required: true, description: 'Market ID or slug' },
+            outcome: { type: 'string', description: 'Outcome filter: yes, no' },
+            limit: { type: 'number' },
+            filters: { type: 'object' }
+          },
+          returns: ['address', 'address_label', 'balance', 'cost_basis', 'pnl']
+        },
+        'leaderboard': {
+          description: 'Top prediction market traders by PnL',
+          options: {
+            days: { type: 'number', default: 30 },
+            platform: { type: 'string', default: 'all', description: 'Platform: polymarket, kalshi, all' },
+            limit: { type: 'number' },
+            sort: { type: 'string' },
+            filters: { type: 'object' }
+          },
+          returns: ['address', 'address_label', 'total_pnl', 'win_rate', 'markets_traded', 'volume']
+        }
+      }
+    },
     'search': {
       description: 'Search for tokens and entities across Nansen',
       options: {
@@ -854,6 +923,7 @@ COMMANDS:
                    perp-positions, perp-pnl-leaderboard)
   portfolio      Portfolio analytics (defi)
   perp           Perpetual futures analytics (screener, leaderboard)
+  prediction     Prediction market analytics (markets, events, market-detail, trades, top-holders, leaderboard)
   points         Nansen Points analytics (leaderboard)
   help           Show this help message
 
@@ -869,6 +939,13 @@ GLOBAL OPTIONS:
   --order-by     JSON array with sort order (advanced)
   --days         Date range in days (default: 30 for most endpoints)
   --symbol       Token symbol (for perp endpoints)
+  --market       Market ID or slug (for prediction endpoints)
+  --query        Search query text (for prediction and search endpoints)
+  --category     Category filter (for prediction endpoints)
+  --status       Status filter: active, closed, all (for prediction endpoints)
+  --platform     Platform filter: polymarket, kalshi, all (for prediction endpoints)
+  --outcome      Outcome filter: yes, no (for prediction top-holders)
+  --side         Trade side filter: buy, sell (for prediction trades)
   --no-retry     Disable automatic retry on rate limits/errors
   --retries <n>  Max retry attempts (default: 3)
   --x402-payment-signature <sig>  Pre-signed x402 payment signature header
@@ -1324,6 +1401,59 @@ export function buildCommands(deps = {}) {
       return handlers[subcommand]();
     },
 
+    'prediction': async (args, apiInstance, flags, options) => {
+      const subcommand = args[0] || 'help';
+      const filters = options.filters || {};
+      const orderBy = parseSort(options.sort, options['order-by']);
+      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+      const days = options.days ? parseInt(options.days) : 30;
+
+      const handlers = {
+        'markets': () => apiInstance.predictionMarkets({
+          query: args[1] || options.query,
+          category: options.category,
+          status: options.status || 'active',
+          filters, orderBy, pagination
+        }),
+        'events': () => apiInstance.predictionEvents({
+          query: args[1] || options.query,
+          category: options.category,
+          status: options.status || 'active',
+          filters, orderBy, pagination
+        }),
+        'market-detail': () => {
+          const market = args[1] || options.market;
+          if (!market) return { error: 'Market ID or slug required. Usage: nansen prediction market-detail <market-id>' };
+          return apiInstance.predictionMarketDetail({ market });
+        },
+        'trades': () => {
+          const market = args[1] || options.market;
+          if (!market) return { error: 'Market ID or slug required. Usage: nansen prediction trades <market-id>' };
+          return apiInstance.predictionTrades({ market, side: options.side, filters, orderBy, pagination, days });
+        },
+        'top-holders': () => {
+          const market = args[1] || options.market;
+          if (!market) return { error: 'Market ID or slug required. Usage: nansen prediction top-holders <market-id>' };
+          return apiInstance.predictionTopHolders({ market, outcome: options.outcome, filters, orderBy, pagination });
+        },
+        'leaderboard': () => apiInstance.predictionLeaderboard({
+          platform: options.platform || 'all',
+          filters, orderBy, pagination, days
+        }),
+        'help': () => ({
+          commands: ['markets', 'events', 'market-detail', 'trades', 'top-holders', 'leaderboard'],
+          description: 'Prediction market analytics endpoints',
+          example: 'nansen prediction markets --query "bitcoin" --sort volume'
+        })
+      };
+
+      if (!handlers[subcommand]) {
+        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+      }
+
+      return handlers[subcommand]();
+    },
+
     'search': async (args, apiInstance, flags, options) => {
       return apiInstance.generalSearch({
         query: args[0] || options.query,
@@ -1364,7 +1494,9 @@ export const COMMAND_ALIASES = {
   'tgm': 'token',           // Token God Mode
   'sm': 'smart-money',      // Smart Money
   'prof': 'profiler',       // Profiler
-  'port': 'portfolio'       // Portfolio
+  'port': 'portfolio',      // Portfolio
+  'pred': 'prediction',     // Prediction Markets
+  'pm': 'prediction'        // Prediction Markets
 };
 
 // Generate help text for a specific subcommand using SCHEMA

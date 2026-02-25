@@ -57,6 +57,14 @@ const DOCUMENTED_ENDPOINTS = {
   search: [
     { name: 'general-search', method: 'generalSearch', endpoint: '/api/v1/search/general' },
   ],
+  prediction: [
+    { name: 'markets', method: 'predictionMarkets', endpoint: '/api/v1/prediction/markets' },
+    { name: 'events', method: 'predictionEvents', endpoint: '/api/v1/prediction/events' },
+    { name: 'market-detail', method: 'predictionMarketDetail', endpoint: '/api/v1/prediction/market-detail' },
+    { name: 'trades', method: 'predictionTrades', endpoint: '/api/v1/prediction/trades' },
+    { name: 'top-holders', method: 'predictionTopHolders', endpoint: '/api/v1/prediction/top-holders' },
+    { name: 'leaderboard', method: 'predictionLeaderboard', endpoint: '/api/v1/prediction/leaderboard' },
+  ],
 };
 
 // Endpoints that are documented but return 404 (confirmed non-existent)
@@ -117,6 +125,14 @@ describe('API Endpoint Coverage', () => {
     }
   });
 
+  describe('Prediction Market Endpoints', () => {
+    for (const ep of DOCUMENTED_ENDPOINTS.prediction) {
+      it(`should have ${ep.name} method`, () => {
+        expect(typeof api[ep.method]).toBe('function');
+      });
+    }
+  });
+
   describe('Coverage Summary', () => {
     it('should report implemented endpoints', () => {
       const implemented = [
@@ -126,6 +142,7 @@ describe('API Endpoint Coverage', () => {
         ...DOCUMENTED_ENDPOINTS.composite,
         ...DOCUMENTED_ENDPOINTS.portfolio,
         ...DOCUMENTED_ENDPOINTS.search,
+        ...DOCUMENTED_ENDPOINTS.prediction,
       ];
       
       console.log(`\n📊 API Coverage Summary:`);
