@@ -36,7 +36,7 @@ describe('ENS Resolution', () => {
   });
 
   // Live resolution tests (require network)
-  describe('live resolution', () => {
+  describe.skipIf(!process.env.NANSEN_LIVE_TEST)('live resolution', () => {
     it('resolves nansen.eth', async () => {
       const result = await resolveAddress('nansen.eth');
       expect(result.address).toMatch(/^0x[0-9a-fA-F]{40}$/);

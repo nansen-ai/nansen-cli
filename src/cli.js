@@ -738,8 +738,12 @@ export async function traceCounterparties(api, params = {}) {
 
   // Resolve ENS names
   if (isEnsName(address)) {
-    const resolved = await resolveAddress(address, chain);
-    address = resolved.address;
+    try {
+      const resolved = await resolveAddress(address, chain);
+      address = resolved.address;
+    } catch (err) {
+      throw new NansenError(err.message, ErrorCode.INVALID_ADDRESS);
+    }
   }
 
   const validation = validateAddress(address, chain);
@@ -1193,9 +1197,13 @@ export function buildCommands(deps = {}) {
       // Resolve ENS names (e.g. vitalik.eth → 0x...)
       let ensName;
       if (address && isEnsName(address)) {
-        const resolved = await resolveAddress(address, chain);
-        address = resolved.address;
-        ensName = resolved.ensName;
+        try {
+          const resolved = await resolveAddress(address, chain);
+          address = resolved.address;
+          ensName = resolved.ensName;
+        } catch (err) {
+          throw new NansenError(err.message, ErrorCode.INVALID_ADDRESS);
+        }
       }
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);

@@ -10,9 +10,9 @@ import { keccak256 } from './crypto.js';
 const ENS_PATTERN = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.eth$/;
 
 const EVM_CHAINS = [
-  'ethereum', 'base', 'optimism', 'arbitrum', 'polygon', 'bsc',
+  'ethereum', 'base', 'optimism', 'arbitrum', 'polygon', 'bnb',
   'avalanche', 'fantom', 'gnosis', 'linea', 'scroll', 'zksync',
-  'blast', 'mantle', 'ronin'
+  'blast', 'mantle', 'ronin', 'sonic', 'unichain', 'monad', 'hyperevm', 'iotaevm'
 ];
 
 /**
@@ -96,6 +96,7 @@ function httpsPost(url, body, timeoutMs = 5000) {
       let buf = '';
       res.on('data', chunk => { buf += chunk; });
       res.on('end', () => {
+        if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}`));
         try { resolve(JSON.parse(buf)); } catch (e) { reject(e); }
       });
     });
