@@ -91,6 +91,16 @@ describe('encryption', () => {
 
     expect(() => decryptKey(encrypted, 'wrong-password')).toThrow('Incorrect password');
   });
+
+  it('encryptKey with null password returns unencrypted wrapper', () => {
+    const result = encryptKey('deadbeef', null);
+    expect(result).toEqual({ data: 'deadbeef', encrypted: false });
+  });
+
+  it('decryptKey handles unencrypted wrapper', () => {
+    expect(decryptKey({ data: 'deadbeef', encrypted: false }, null)).toBe('deadbeef');
+    expect(decryptKey({ data: 'deadbeef', encrypted: false }, 'any-password')).toBe('deadbeef');
+  });
 });
 
 describe('generateEvmWallet', () => {

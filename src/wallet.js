@@ -78,7 +78,7 @@ function deriveKey(password, salt) {
  * Returns a JSON-serializable object with all params needed for decryption.
  */
 export function encryptKey(privateKeyHex, password) {
-  // No password → store key as plaintext wrapper
+  // No password → store key as unencrypted wrapper
   if (!password) {
     return { data: privateKeyHex, encrypted: false };
   }
@@ -338,7 +338,10 @@ export function createWallet(name, password) {
     throw new Error(`Wallet "${name}" already exists`);
   }
 
-  // Password handling: null/undefined = no encryption
+  // Password handling: null/undefined = no encryption.
+  // Note: mixed encrypted/unencrypted states are supported — decryptKey handles
+  // both via the `encrypted: false` marker. Once any wallet sets passwordHash,
+  // subsequent create/export/delete operations will require the password.
   if (password) {
     // If this is the first wallet, set the password hash
     if (!config.passwordHash) {
@@ -518,6 +521,10 @@ export function buildWalletCommands(deps = {}) {
             log('❌ Existing wallets are password-protected. Set NANSEN_WALLET_PASSWORD to create new wallets.');
             exit(1);
             return;
+          }
+
+          if (!password) {
+            log('⚠️  No NANSEN_WALLET_PASSWORD set — private keys will be stored unencrypted.');
           }
 
           try {

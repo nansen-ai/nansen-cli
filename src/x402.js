@@ -96,7 +96,7 @@ export async function* createPaymentSignatures(response, url, options = {}) {
   const ranked = rankRequirements(requirements);
   if (ranked.length === 0) return;
 
-  let password = options.password || process.env.NANSEN_WALLET_PASSWORD || null;
+  const password = options.password || process.env.NANSEN_WALLET_PASSWORD || null;
   let exportWallet, listWallets;
   try {
     const { exportWallet: ew, listWallets: lw, getWalletConfig } = await import('./wallet.js');
