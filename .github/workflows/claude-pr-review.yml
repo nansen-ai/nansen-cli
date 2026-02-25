@@ -35,45 +35,36 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Run Claude Code
-        uses: anthropics/claude-code-action@beta
+        uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
           timeout_minutes: 10
-          direct_prompt: |
-            You are a senior staff engineer reviewing this PR. Be thorough but fair.
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
             
-            **Repository:** nansen-cli (Node.js CLI for Nansen API)
+            Review this PR for nansen-cli (Node.js CLI for Nansen API). Be thorough but fair.
             
-            **Hard Rules (auto REQUEST CHANGES):**
+            **Hard Rules (auto request changes):**
             - ES modules only (import/export, NEVER require)
             - All CLI output MUST be structured JSON
             - Zero external dependencies (Node.js built-ins + vitest only)
             
-            **Review with severity ratings:**
-            
-            🔴 **Blocking** (must fix):
-            - Security: API keys/secrets in code, unsanitized user input in shell commands, eval() usage
-            - Correctness: logic errors, wrong address validation (EVM 0x40 chars, Solana base58)
-            - Breaking changes without major version bump
-            - New code paths without test coverage
-            
-            🟡 **Should Fix**:
-            - Error handling gaps (missing UNAUTHORIZED, RATE_LIMITED, NETWORK_ERROR codes)
-            - Unhandled edge cases (empty arrays, null, timeouts)
-            - Missing README/changeset for user-facing changes
-            
+            **Severity ratings:**
+            🔴 **Blocking**: Security (API keys in code, unsanitized shell input, eval), correctness bugs, breaking changes, missing tests
+            🟡 **Should Fix**: Error handling gaps, unhandled edge cases, missing README/changeset
             🟢 **Nitpicks**: Style, naming, docs
             
-            **Common anti-patterns:**
-            - Silent catch blocks that swallow errors
-            - console.log instead of structured JSON output
-            - Promises without .catch() or try/catch
-            - Loose equality (== instead of ===)
+            **Anti-patterns:** Silent catch blocks, console.log (use JSON), unhandled promises, loose equality (==)
             
-            **Output Format:**
-            1. **Summary:** One sentence
-            2. **Findings:** 🔴/🟡/🟢 with line numbers (if none found, state what you verified)
-            3. <details><summary>Details</summary>File-by-file breakdown</details>
-            4. **Effort:** 1-4
-            5. **Verdict:** REQUEST CHANGES (if any 🔴) or APPROVE
+            **Instructions:**
+            1. Review the PR diff using `gh pr diff ${{ github.event.pull_request.number }}`
+            2. Post your review as a comment with: Summary, Findings (🔴/🟡/🟢 + line numbers), Effort (1-4)
+            3. **Submit your verdict:**
+               - If ANY 🔴 blocking issues: `gh pr review ${{ github.event.pull_request.number }} --request-changes -b "See review comment above"`
+               - If NO 🔴 issues: `gh pr review ${{ github.event.pull_request.number }} --approve -b "LGTM - no blocking issues found"`
+            
+            Always submit a review verdict (approve or request-changes) after posting your comment.
+          
+          claude_args: |
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr review:*)"
