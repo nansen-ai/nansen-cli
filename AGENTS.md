@@ -154,6 +154,17 @@ describe('featureName', () => {
 | x402 payment | $0.05 USDC per API call |
 | Gas buffer | API provides `quote.gas` with 1.5x multiplier — use directly |
 
+## Endpoint Quirks
+
+These are internal details agents should know when writing or debugging tests:
+
+- **`token holders --smart-money`** — Returns `UNSUPPORTED_FILTER` for tokens without smart money tracking. Not all tokens have this data.
+- **`token flow-intelligence`** — May return all-zero flows for illiquid tokens. Normal, not an error.
+- **`token screener --search`** — Client-side filtering. The CLI fetches up to 500 results, then filters locally.
+- **`--fields`** — Applies to the entire response tree, including the `success`/`data` wrapper.
+- **Profiler beta endpoints** use `recordsPerPage` instead of `per_page`. The CLI handles this automatically.
+- **`profiler perp-positions`** — No pagination support; the API ignores the pagination parameter.
+
 ## Known Gotchas
 
 1. **EIP-7702 delegated accounts** on Base have contract code. Always use `eth_estimateGas`, never hardcode 21000 gas.

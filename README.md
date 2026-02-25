@@ -51,7 +51,7 @@ nansen login
 export NANSEN_API_KEY=your-api-key
 ```
 
-**Option 3: Direct config file (cheapest — no validation call)**
+**Option 3: Direct config file**
 ```bash
 mkdir -p ~/.nansen && echo '{"apiKey":"<key>","baseUrl":"https://api.nansen.ai"}' > ~/.nansen/config.json && chmod 600 ~/.nansen/config.json
 ```
@@ -64,15 +64,13 @@ Get your API key at [app.nansen.ai/api](https://app.nansen.ai/api).
 2. `~/.nansen/config.json` file
 3. Interactive prompt
 
-> **Note:** `nansen login` validates your key by making a real API call (burns 1 credit). Writing `~/.nansen/config.json` directly is cheaper if you know the key is valid.
-
 ### Verify It Works
 
 ```bash
-# Free — no API key needed:
+# Check CLI is installed (no API key needed):
 nansen schema | head -1
 
-# Burns 1 credit but proves API access:
+# Verify API access:
 nansen token screener --chain solana --limit 1
 ```
 
@@ -225,13 +223,6 @@ nansen smart-money netflow --chain solana
 nansen smart-money netflow --chain solana --fields token_symbol,net_flow_usd,chain --limit 10
 ```
 
-### Budget Credits
-
-- Most calls cost 1 credit
-- `profiler labels` + `profiler balance` are expensive — batch 3-4 at a time
-- `schema`, `help`, `cache` are free (no API key needed)
-- If you get `CREDITS_EXHAUSTED`, **stop immediately** — don't retry
-
 ### Use `--stream` for Large Results
 
 ```bash
@@ -257,17 +248,9 @@ nansen smart-money netflow --chain solana  # auto-pays if no API key
 
 ## Pagination
 
-The CLI exposes `--limit N` which maps to `{page: 1, per_page: N}`. **There is no `--page` flag** — the CLI always fetches page 1. For later pages, use the REST API directly:
+Use `--limit N` to control result count. The CLI fetches the first page of results.
 
-```bash
-curl -s -X POST https://api.nansen.ai/api/v1/smart-money/netflow \
-  -H "apiKey: $NANSEN_API_KEY" -H "Content-Type: application/json" \
-  -d '{"chains":["solana"],"pagination":{"page":2,"per_page":50}}'
-```
-
-**Detecting the last page:** If results returned < your `--limit`, you're on the last page.
-
-**Note:** `profiler perp-positions` has no pagination — the API ignores the pagination parameter.
+**Detecting the last page:** If results returned < your `--limit`, you've reached the end.
 
 ## Output Format
 
@@ -305,9 +288,9 @@ nansen smart-money netflow --chain solana | jq 'keys, .data | keys'
 
 | Code | Action |
 |------|--------|
-| `CREDITS_EXHAUSTED` | **Stop all calls.** Tell the human. |
-| `RATE_LIMITED` | Wait — auto-retry handles this. |
-| `UNSUPPORTED_FILTER` | Remove the filter, retry without it. |
+| `CREDITS_EXHAUSTED` | Check your plan at [app.nansen.ai](https://app.nansen.ai). |
+| `RATE_LIMITED` | Auto-retry handles this. |
+| `UNSUPPORTED_FILTER` | Remove the filter and retry. |
 | `UNAUTHORIZED` | Key is wrong or missing. Re-auth. |
 | `INVALID_ADDRESS` | Check address format for the chain. |
 
@@ -321,16 +304,7 @@ nansen smart-money netflow --chain solana | jq 'keys, .data | keys'
 | Huge JSON response | Use `--fields` to select only needed columns. |
 | Perp endpoints empty | Use `--symbol BTC` not `--token`. Perps are Hyperliquid-only. |
 | `UNSUPPORTED_FILTER` on token holders | Not all tokens have smart money data. Remove `--smart-money`. |
-| `CREDITS_EXHAUSTED` | Stop all calls. Check [app.nansen.ai](https://app.nansen.ai). |
-
-### Known endpoint quirks
-
-- **`token holders --smart-money`** — Fails with `UNSUPPORTED_FILTER` for tokens without smart money tracking. Do not retry.
-- **`token flow-intelligence`** — May return all-zero flows for illiquid tokens. Normal, not an error.
-- **`profiler labels`/`balance`** consume credits. Budget ~20 calls per session.
-- **`token screener --search`** is client-side filtering. Set `--limit` higher than expected results.
-- **`--fields`** applies to the entire response tree, stripping the `success`/`data` wrapper too.
-- **Profiler beta endpoints** use `recordsPerPage` instead of `per_page`. The CLI handles this automatically.
+| `CREDITS_EXHAUSTED` | Check your plan at [app.nansen.ai](https://app.nansen.ai). |
 
 ## Development
 
