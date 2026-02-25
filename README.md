@@ -2,8 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/nansen-cli.svg)](https://www.npmjs.com/package/nansen-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-325%20passing-brightgreen.svg)]()
-[![Coverage](https://img.shields.io/badge/coverage-83%25-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-577%20passing-brightgreen.svg)]()
 
 > **Built by agents, for agents.** We prioritize the best possible AI agent experience.
 
@@ -47,12 +46,35 @@ nansen login
 # ✓ Saved to ~/.nansen/config.json
 ```
 
-**Option 2: Environment variable**
+**Option 2: Environment variable (best for agents)**
 ```bash
 export NANSEN_API_KEY=your-api-key
 ```
 
+**Option 3: Direct config file (cheapest — no validation call)**
+```bash
+mkdir -p ~/.nansen && echo '{"apiKey":"<key>","baseUrl":"https://api.nansen.ai"}' > ~/.nansen/config.json && chmod 600 ~/.nansen/config.json
+```
+
 Get your API key at [app.nansen.ai/api](https://app.nansen.ai/api).
+
+### Auth Priority
+
+1. `NANSEN_API_KEY` env var (highest)
+2. `~/.nansen/config.json` file
+3. Interactive prompt
+
+> **Note:** `nansen login` validates your key by making a real API call (burns 1 credit). Writing `~/.nansen/config.json` directly is cheaper if you know the key is valid.
+
+### Verify It Works
+
+```bash
+# Free — no API key needed:
+nansen schema | head -1
+
+# Burns 1 credit but proves API access:
+nansen token screener --chain solana --limit 1
+```
 
 ## Quick Start
 
@@ -85,17 +107,9 @@ Track trading and holding activity of sophisticated market participants.
 | `dcas` | DCA strategies on Jupiter |
 | `historical-holdings` | Historical holdings over time |
 
-**Smart Money Labels:**
-- `Fund` - Institutional investment funds
-- `Smart Trader` - Historically profitable traders
-- `30D Smart Trader` - Top performers (30-day window)
-- `90D Smart Trader` - Top performers (90-day window)
-- `180D Smart Trader` - Top performers (180-day window)
-- `Smart HL Perps Trader` - Profitable Hyperliquid traders
+**Smart Money Labels:** `Fund`, `Smart Trader`, `30D Smart Trader`, `90D Smart Trader`, `180D Smart Trader`, `Smart HL Perps Trader`
 
 ### `profiler` - Wallet Profiling
-
-Detailed information about any blockchain address.
 
 **ENS Name Resolution:** You can use `.eth` names anywhere an `--address` is accepted:
 
@@ -123,8 +137,6 @@ ENS names are automatically resolved to `0x` addresses via public APIs (with onc
 
 ### `token` - Token God Mode
 
-Deep analytics for any token.
-
 | Subcommand | Description |
 |------------|-------------|
 | `screener` | Discover and filter tokens |
@@ -140,49 +152,49 @@ Deep analytics for any token.
 | `perp-positions` | Open perp positions by token symbol |
 | `perp-pnl-leaderboard` | Perp PnL leaderboard by token |
 
-### `portfolio` - Portfolio Analytics
+### `wallet` - Local Wallet Management
 
 | Subcommand | Description |
 |------------|-------------|
-| `defi` | DeFi holdings across protocols |
+| `create` | Create a new wallet (EVM + Solana keypair) |
+| `list` | List all wallets |
+| `show` | Show wallet addresses |
+| `export` | Export private keys |
+| `default` | Set default wallet |
+| `delete` | Delete a wallet |
+| `send` | Send tokens (native or ERC-20/SPL) |
+
+Wallets are passwordless by default (keys stored like SSH keys). Set `NANSEN_WALLET_PASSWORD` env var for encryption at rest.
+
+### `quote` / `execute` - Trading
+
+```bash
+# Get a swap quote
+nansen quote --from USDC --to SOL --amount 10 --chain solana
+
+# Execute the swap
+nansen execute --from USDC --to SOL --amount 10 --chain solana
+```
 
 ### `search` - Search
-
-Search for tokens and entities across Nansen.
 
 ```bash
 nansen search "uniswap" --pretty
 nansen search "uniswap" --type token --chain ethereum
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--type` | Filter by result type: `token`, `entity`, or `any` (default) |
-| `--chain` | Filter by chain |
-| `--limit` | Max results, 1-50 (default: 25) |
-
 ### `schema` - Schema Discovery
 
-Output JSON schema for agent introspection. No API key required.
+No API key required. Machine-readable command reference for agent introspection.
 
 ```bash
-# Get full schema
-nansen schema --pretty
-
-# Get schema for specific command
-nansen schema smart-money --pretty
+nansen schema --pretty                    # All commands
+nansen schema smart-money --pretty        # One command's options & return fields
 ```
 
-Returns command definitions, option types/defaults, supported chains, and smart money labels.
+### `portfolio` / `perp` / `points` / `cache`
 
-### `cache` - Cache Management
-
-Manage the local response cache.
-
-```bash
-# Clear all cached responses
-nansen cache clear
-```
+See `nansen help` or `nansen schema --pretty` for full details.
 
 ## Options
 
@@ -191,10 +203,9 @@ nansen cache clear
 | `--pretty` | Format JSON output for readability |
 | `--table` | Format output as human-readable table |
 | `--fields <list>` | Comma-separated fields to include (reduces response size) |
-| `--cache` | Enable response caching |
-| `--no-cache` | Bypass cache for this request |
+| `--stream` | Output as NDJSON for incremental processing |
+| `--cache` / `--no-cache` | Enable/disable response caching |
 | `--cache-ttl <s>` | Cache TTL in seconds (default: 300) |
-| `--stream` | Output as JSON lines (NDJSON) for incremental processing |
 | `--chain <chain>` | Blockchain to query |
 | `--chains <json>` | Multiple chains as JSON array |
 | `--limit <n>` | Number of results |
@@ -202,96 +213,144 @@ nansen cache clear
 | `--sort <field:dir>` | Sort results (e.g., `--sort value_usd:desc`) |
 | `--symbol <sym>` | Token symbol for perp endpoints (e.g., BTC, ETH) |
 | `--filters <json>` | Filter criteria as JSON |
-| `--order-by <json>` | Sort order as JSON array (advanced) |
 | `--labels <label>` | Smart Money label filter |
 | `--smart-money` | Filter for Smart Money only |
 | `--timeframe <tf>` | Time window (5m, 10m, 1h, 6h, 24h, 7d, 30d) |
 
 ## Supported Chains
 
-`ethereum`, `solana`, `base`, `bnb`, `arbitrum`, `polygon`, `optimism`, `avalanche`, `linea`, `scroll`, `zksync`, `mantle`, `ronin`, `sei`, `plasma`, `sonic`, `unichain`, `monad`, `hyperevm`, `iotaevm`
+`ethereum` `solana` `base` `bnb` `arbitrum` `polygon` `optimism` `avalanche` `linea` `scroll` `zksync` `mantle` `ronin` `sei` `plasma` `sonic` `unichain` `monad` `hyperevm` `iotaevm`
 
-## AI Agent Integration
+> Run `nansen schema` to get the current chain list (source of truth).
 
-This CLI is built specifically for AI agents. Every design decision prioritizes agent usability.
+## Agent-Optimized Patterns
 
-**Getting Started:**
-Direct your users to [app.nansen.ai/auth/agent-setup](https://app.nansen.ai/auth/agent-setup) for seamless authentication. See [AI Agent Access](https://docs.nansen.ai/reference/ai-agent-access) for full documentation.
-
-**Why agents love it:**
-- **Structured Output**: All responses are JSON with consistent schema — no parsing HTML or unstructured text
-- **Predictable Errors**: Errors include status codes and actionable details agents can handle programmatically
-- **Zero Config**: Works with just an API key — no complex setup
-- **Composable**: Commands can be chained with shell pipes
-- **Discoverable**: `help` commands at every level for agent introspection
-
-```json
-// Success response
-{
-  "success": true,
-  "data": {
-    "results": [...],
-    "pagination": {...}
-  }
-}
-
-// Error response
-{
-  "success": false,
-  "error": "API error message",
-  "code": "UNAUTHORIZED",
-  "status": 401,
-  "details": {...}
-}
-```
-
-## Examples
+### Reduce Token Burn with `--fields`
 
 ```bash
-# Get trending tokens as a table, sorted by volume
-nansen token screener --chain solana --sort buy_volume:desc --table
+# ❌ Returns everything (huge JSON, wastes agent context)
+nansen smart-money netflow --chain solana
 
-# Get Smart Money DEX trades from Funds only
-nansen smart-money dex-trades --chain ethereum --labels Fund --table
-
-# Get token holders with Smart Money filter
-nansen token holders --token So11111111111111111111111111111111111111112 --chain solana --smart-money
-
-# Get historical holdings for the past 7 days
-nansen smart-money historical-holdings --chain solana --days 7
-
-# Get BTC perpetual positions on Hyperliquid
-nansen token perp-positions --symbol BTC --pretty
-
-# Get top PnL traders for a token, sorted by realized PnL
-nansen token pnl --token JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN --chain solana --days 30 --sort pnl_usd:desc --table
-
-# Filter response to specific fields (reduces tokens for AI agents)
-nansen smart-money netflow --chain solana --fields token_symbol,net_flow_usd,chain
-
-# Get schema for agent introspection
-nansen schema --pretty
-nansen schema token --pretty
+# ✅ Only what you need
+nansen smart-money netflow --chain solana --fields token_symbol,net_flow_usd,chain --limit 10
 ```
+
+### Budget Credits
+
+- Most calls cost 1 credit
+- `profiler labels` + `profiler balance` are expensive — batch 3-4 at a time
+- `schema`, `help`, `cache` are free (no API key needed)
+- If you get `CREDITS_EXHAUSTED`, **stop immediately** — don't retry
+
+### Use `--stream` for Large Results
+
+```bash
+# NDJSON mode — process line by line, don't buffer giant arrays
+nansen token dex-trades --chain solana --limit 100 --stream
+```
+
+### x402 Micropayments
+
+When the API returns a 402 Payment Required, the CLI automatically handles payment if a funded wallet exists:
+
+1. CLI detects 402 response with payment requirements
+2. Signs a USDC payment ($0.05/call) using your wallet
+3. Retries the request with the payment signature
+4. Falls back from EVM to Solana if first network has insufficient funds
+
+```bash
+# Fund your wallet, then API calls auto-pay
+nansen wallet create
+# Send USDC to the displayed address
+nansen smart-money netflow --chain solana  # auto-pays if no API key
+```
+
+## Pagination
+
+The CLI exposes `--limit N` which maps to `{page: 1, per_page: N}`. **There is no `--page` flag** — the CLI always fetches page 1. For later pages, use the REST API directly:
+
+```bash
+curl -s -X POST https://api.nansen.ai/api/v1/smart-money/netflow \
+  -H "apiKey: $NANSEN_API_KEY" -H "Content-Type: application/json" \
+  -d '{"chains":["solana"],"pagination":{"page":2,"per_page":50}}'
+```
+
+**Detecting the last page:** If results returned < your `--limit`, you're on the last page.
+
+**Note:** `profiler perp-positions` has no pagination — the API ignores the pagination parameter.
+
+## Output Format
+
+### Response envelope
+
+```json
+// Success
+{ "success": true, "data": <raw_api_response> }
+
+// Error
+{ "success": false, "error": "message", "code": "ERROR_CODE", "status": 401, "details": {...} }
+```
+
+### Response shapes vary by endpoint
+
+The `data` field structure differs across endpoints:
+
+| Shape | Example endpoints |
+|-------|------------------|
+| `data.data` (array) | token screener |
+| `data.results` (array) | entity search |
+| `data.data.results` (array) | most profiler endpoints |
+| `data.netflows` | smart-money netflow |
+| `data.trades` | smart-money dex-trades |
+| `data.holdings` | smart-money holdings |
+| `data.holders` | token holders |
+
+`--table` and `--stream` handle this automatically. For raw JSON parsing:
+
+```bash
+nansen smart-money netflow --chain solana | jq 'keys, .data | keys'
+```
+
+### Error codes
+
+| Code | Action |
+|------|--------|
+| `CREDITS_EXHAUSTED` | **Stop all calls.** Tell the human. |
+| `RATE_LIMITED` | Wait — auto-retry handles this. |
+| `UNSUPPORTED_FILTER` | Remove the filter, retry without it. |
+| `UNAUTHORIZED` | Key is wrong or missing. Re-auth. |
+| `INVALID_ADDRESS` | Check address format for the chain. |
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `command not found: nansen` | `npm install -g nansen-cli` or `npx nansen-cli` |
+| `UNAUTHORIZED` after login | Check `cat ~/.nansen/config.json`. Write directly if needed. |
+| Login hangs | Skip `nansen login`, write config directly. |
+| Huge JSON response | Use `--fields` to select only needed columns. |
+| Perp endpoints empty | Use `--symbol BTC` not `--token`. Perps are Hyperliquid-only. |
+| `UNSUPPORTED_FILTER` on token holders | Not all tokens have smart money data. Remove `--smart-money`. |
+| `CREDITS_EXHAUSTED` | Stop all calls. Check [app.nansen.ai](https://app.nansen.ai). |
+
+### Known endpoint quirks
+
+- **`token holders --smart-money`** — Fails with `UNSUPPORTED_FILTER` for tokens without smart money tracking. Do not retry.
+- **`token flow-intelligence`** — May return all-zero flows for illiquid tokens. Normal, not an error.
+- **`profiler labels`/`balance`** consume credits. Budget ~20 calls per session.
+- **`token screener --search`** is client-side filtering. Set `--limit` higher than expected results.
+- **`--fields`** applies to the entire response tree, stripping the `success`/`data` wrapper too.
+- **Profiler beta endpoints** use `recordsPerPage` instead of `per_page`. The CLI handles this automatically.
 
 ## Development
 
 ```bash
-# Run tests (mocked, no API key needed)
-npm test
-
-# Run with coverage
-npm run test:coverage
-
-# Run against live API
-NANSEN_API_KEY=your-key npm run test:live
+npm test              # Run tests (mocked, no API key needed)
+npm run test:coverage # With coverage
+npm run test:live     # Against live API (needs NANSEN_API_KEY)
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
-
-**AI agents:** See [AGENTS.md](AGENTS.md) for the agent quick-start (install, auth, patterns, troubleshooting).
-
-**AI contributors:** See [CLAUDE.md](CLAUDE.md) for agent-specific guidance on contributing to this repo.
+See [AGENTS.md](AGENTS.md) for contributor guidance (architecture, testing patterns, style guide).
 
 ## API Coverage
 
