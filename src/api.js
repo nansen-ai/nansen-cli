@@ -391,6 +391,17 @@ function parseRetryAfter(headerValue) {
   return null;
 }
 
+/**
+ * Build a date range from today back N days
+ * @param {number} days - Number of days back from today
+ * @returns {{from: string, to: string}} Date range with YYYY-MM-DD strings
+ */
+export function buildDateRange(days) {
+  const to = new Date().toISOString().split('T')[0];
+  const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  return { from, to };
+}
+
 export class NansenAPI {
   constructor(apiKey = config.apiKey, baseUrl = config.baseUrl, options = {}) {
     this.apiKey = apiKey || null;
@@ -624,11 +635,9 @@ export class NansenAPI {
 
   async smartMoneyHistoricalHoldings(params = {}) {
     const { chains = ['solana'], filters = {}, orderBy, pagination, days = 30 } = params;
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/smart-money/historical-holdings', {
       chains,
-      date_range: { from, to },
+      date_range: buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -671,11 +680,7 @@ export class NansenAPI {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    const dateRange = date || (() => {
-      const to = new Date().toISOString().split('T')[0];
-      const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      return { from, to };
-    })();
+    const dateRange = date || buildDateRange(days);
     return this.request('/api/v1/profiler/address/transactions', {
       address,
       chain,
@@ -692,13 +697,7 @@ export class NansenAPI {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    // Build date range
-    let dateRange = date;
-    if (!dateRange) {
-      const to = new Date().toISOString().split('T')[0];
-      const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      dateRange = { from, to };
-    }
+    const dateRange = date || buildDateRange(days);
     return this.request('/api/v1/profiler/address/pnl', {
       address,
       chain,
@@ -734,12 +733,10 @@ export class NansenAPI {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/profiler/address/historical-balances', {
       address,
       chain,
-      date: { from, to },
+      date: buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -766,12 +763,10 @@ export class NansenAPI {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/profiler/address/counterparties', {
       address,
       chain,
-      date: { from, to },
+      date: buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -784,12 +779,10 @@ export class NansenAPI {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/profiler/address/pnl-summary', {
       address,
       chain,
-      date: { from, to },
+      date: buildDateRange(days),
       order_by: orderBy,
       pagination
     });
@@ -808,11 +801,9 @@ export class NansenAPI {
 
   async addressPerpTrades(params = {}) {
     const { address, filters = {}, orderBy, pagination, days = 30 } = params;
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/profiler/perp-trades', {
       address,
-      date: { from, to },
+      date: buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -854,11 +845,7 @@ export class NansenAPI {
       const validation = validateTokenAddress(tokenAddress, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    const dateRange = date || (() => {
-      const to = new Date().toISOString().split('T')[0];
-      const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      return { from, to };
-    })();
+    const dateRange = date || buildDateRange(days);
     return this.request('/api/v1/tgm/flows', {
       token_address: tokenAddress,
       chain,
@@ -875,9 +862,6 @@ export class NansenAPI {
       const validation = validateTokenAddress(tokenAddress, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    
     // Apply smart money filter via filters object
     if (onlySmartMoney) {
       filters.include_smart_money_labels = filters.include_smart_money_labels || 
@@ -887,7 +871,7 @@ export class NansenAPI {
     return this.request('/api/v1/tgm/dex-trades', {
       token_address: tokenAddress,
       chain,
-      date: { from, to },
+      date: buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -900,12 +884,10 @@ export class NansenAPI {
       const validation = validateTokenAddress(tokenAddress, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/tgm/pnl-leaderboard', {
       token_address: tokenAddress,
       chain,
-      date: { from, to },
+      date: buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -918,11 +900,7 @@ export class NansenAPI {
       const validation = validateTokenAddress(tokenAddress, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    const dateRange = date || (() => {
-      const to = new Date().toISOString().split('T')[0];
-      const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      return { from, to };
-    })();
+    const dateRange = date || buildDateRange(days);
     return this.request('/api/v1/tgm/who-bought-sold', {
       token_address: tokenAddress,
       chain,
@@ -951,12 +929,10 @@ export class NansenAPI {
       const validation = validateTokenAddress(tokenAddress, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
     }
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/tgm/transfers', {
       token_address: tokenAddress,
       chain,
-      date: { from, to },
+      date: buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -980,11 +956,9 @@ export class NansenAPI {
 
   async tokenPerpTrades(params = {}) {
     const { tokenSymbol, filters = {}, orderBy, pagination, days = 30 } = params;
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/tgm/perp-trades', {
       token_symbol: tokenSymbol,
-      date: { from, to },
+      date: buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -1003,11 +977,9 @@ export class NansenAPI {
 
   async tokenPerpPnlLeaderboard(params = {}) {
     const { tokenSymbol, filters = {}, orderBy, pagination, days = 30 } = params;
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/tgm/perp-pnl-leaderboard', {
       token_symbol: tokenSymbol,
-      date: { from, to },
+      date: buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -1043,10 +1015,8 @@ export class NansenAPI {
 
   async perpScreener(params = {}) {
     const { filters = {}, orderBy, pagination, days = 30 } = params;
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/perp-screener', {
-      date: { from, to },
+      date: buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -1055,10 +1025,8 @@ export class NansenAPI {
 
   async perpLeaderboard(params = {}) {
     const { filters = {}, orderBy, pagination, days = 30 } = params;
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/perp-leaderboard', {
-      date: { from, to },
+      date: buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
