@@ -248,7 +248,7 @@ nansen smart-money netflow --chain solana  # auto-pays if no API key
 
 ## Pagination
 
-Use `--limit N` to control result count. The CLI fetches the first page of results.
+Use `--limit N` to control result count. The CLI always fetches page 1 (there is no `--page` flag).
 
 **Detecting the last page:** If results returned < your `--limit`, you've reached the end.
 
