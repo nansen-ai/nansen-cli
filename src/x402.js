@@ -97,19 +97,16 @@ export async function* createPaymentSignatures(response, url, options = {}) {
   if (ranked.length === 0) return;
 
   let password = options.password || process.env.NANSEN_WALLET_PASSWORD || null;
-  // For passwordless wallets, we still need to proceed
-  let walletMod;
+  let exportWallet, listWallets;
   try {
-    walletMod = await import('./wallet.js');
-    const config = walletMod.getWalletConfig();
-    if (config.passwordHash && !password) return; // password-protected but no password available
+    const { exportWallet: ew, listWallets: lw, getWalletConfig } = await import('./wallet.js');
+    const config = getWalletConfig();
+    if (config.passwordHash && !password) return;
+    exportWallet = ew;
+    listWallets = lw;
   } catch {
     return;
   }
-
-  let exportWallet, listWallets;
-  exportWallet = walletMod.exportWallet;
-  listWallets = walletMod.listWallets;
 
   const wallets = listWallets();
   if (wallets.wallets.length === 0) return;

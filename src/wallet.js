@@ -80,7 +80,7 @@ function deriveKey(password, salt) {
 export function encryptKey(privateKeyHex, password) {
   // No password → store key as plaintext wrapper
   if (!password) {
-    return { plaintext: privateKeyHex };
+    return { data: privateKeyHex, encrypted: false };
   }
 
   const salt = crypto.randomBytes(SALT_LEN);
@@ -109,8 +109,8 @@ export function encryptKey(privateKeyHex, password) {
  */
 export function decryptKey(encryptedData, password) {
   // Plaintext (no password) → return directly
-  if (encryptedData.plaintext) {
-    return encryptedData.plaintext;
+  if (encryptedData.encrypted === false) {
+    return encryptedData.data;
   }
 
   const salt = Buffer.from(encryptedData.salt, 'hex');
