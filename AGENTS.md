@@ -1,222 +1,182 @@
-# AGENTS.md — Agent Quick Start
+# AGENTS.md
 
-> **This file is for AI agents (OpenClaw, Claude Code, Cursor, etc.) that need to query Nansen data on behalf of their human.** If you're a human, see [README.md](README.md).
+Guidance for AI coding agents working on this repository.
 
-## CLI vs REST API
+## Overview
 
-**Prefer the [REST API](https://docs.nansen.ai) for most agent use cases** — no install step, no dependency issues.
+nansen-cli is an open-source Node.js CLI for the [Nansen](https://nansen.ai) blockchain analytics API. Designed for AI agents to query onchain data, manage wallets, trade tokens, and make x402 micropayments.
+
+## Architecture
+
+```
+src/
+├── index.js          # Entry point (shebang, calls runCLI)
+├── cli.js            # Command router, arg parsing, schema, help text
+├── api.js            # NansenAPI client (REST, retry, cache, x402 auto-pay)
+├── wallet.js         # Wallet CRUD (create/list/show/export/delete/send)
+├── trading.js        # Quote + execute swaps (OKX router via API)
+├── transfer.js       # Token/native transfers (EVM + Solana)
+├── x402.js           # x402 payment orchestration (picks network, signs)
+├── x402-evm.js       # EVM payment signing (EIP-3009 transferWithAuthorization)
+├── x402-svm.js       # Solana payment signing (SPL transfer)
+├── crypto.js         # Key encryption/decryption (AES-256-GCM or plaintext)
+└── update-check.js   # Version upgrade notice
+```
+
+### Key patterns
+
+- **Entry**: `src/index.js` → `runCLI()` in `src/cli.js`
+- **Commands**: Built by `buildCommands()` (cli.js), `buildWalletCommands()` (wallet.js), `buildTradingCommands()` (trading.js). Merged in `runCLI()`.
+- **Auth flow**: Commands in `NO_AUTH_COMMANDS` skip API init. Everything else instantiates `NansenAPI` with retry/cache/x402 config.
+- **Output**: Core functions return data objects. CLI layer formats via `formatOutput()`. Never `console.log` in core functions.
+- **Wallet security**: Passwords optional. Without `NANSEN_WALLET_PASSWORD`, keys stored as plaintext (like SSH keys). With it, AES-256-GCM encrypted.
+- **x402 auto-pay**: When API returns 402, `api.js` calls `createPaymentSignatures()` which yields signatures (EVM first, then Solana fallback). Retry loop tries each until one succeeds.
+
+### Data flow for a trade
+
+```
+CLI (quote args) → api.js (GET /defi/quote) → response
+CLI (execute)    → wallet.js (decrypt key) → trading.js (sign tx) → api.js (POST /defi/execute) → broadcast
+```
+
+### Data flow for x402 payment
+
+```
+api.js (any call) → 402 response with payment requirements
+  → x402.js rankRequirements() → picks cheapest network
+  → x402-evm.js or x402-svm.js → sign payment
+  → api.js retries original request with Payment-Signature header
+```
+
+## Commands
+
+| Command | Subcommands | Auth required |
+|---------|-------------|---------------|
+| `login` | — | No |
+| `logout` | — | No |
+| `wallet` | create, list, show, export, default, delete, send | No |
+| `smart-money` | — | Yes |
+| `profiler` | balance, labels, search | Yes |
+| `token` | holders, screener | Yes |
+| `portfolio` | — | Yes |
+| `perp` | — | Yes |
+| `search` | — | Yes |
+| `points` | — | Yes |
+| `quote` | — | Yes |
+| `execute` | — | Yes |
+| `schema` | — | No |
+| `cache` | — | No |
+| `help` | — | No |
+| `changelog` | — | No |
+
+## Development
 
 ```bash
-# Direct API call — no CLI needed
-curl -s -X POST https://api.nansen.ai/api/v1/token-screener \
-  -H "apiKey: YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"chain":"solana","pagination":{"page":1,"per_page":5}}' | jq .
+npm install           # Install dependencies
+npm test              # Run tests (vitest)
+npm run test:watch    # Watch mode
+npm run test:coverage # With coverage
 ```
 
-Use this CLI guide if the CLI is already installed or your human specifically wants CLI usage. The CLI adds `--pretty`, `--table`, `--fields`, `--stream`, built-in retries, and schema introspection.
-
-## Install & Auth in One Shot
+### Running locally
 
 ```bash
-# Install
-npm install -g nansen-cli
+node src/index.js <command> [options]
 
-# Auth — pick ONE method:
-# Method 1: Interactive (human needs to paste key)
-nansen login
-
-# Method 2: Environment variable (no interaction needed)
-export NANSEN_API_KEY=<key>
-
-# Method 3: Config file (write directly — no validation call burned)
-mkdir -p ~/.nansen && echo '{"apiKey":"<key>","baseUrl":"https://api.nansen.ai"}' > ~/.nansen/config.json && chmod 600 ~/.nansen/config.json
+# Examples
+node src/index.js wallet create my-wallet
+node src/index.js smart-money --chain solana --limit 5
+node src/index.js token holders --token 0x... --smart-money
 ```
 
-**Get an API key:** [app.nansen.ai/api](https://app.nansen.ai/api)
+## Testing
 
-### Auth Priority
+- **Framework**: Vitest
+- **Test files**: `src/__tests__/*.test.js`
+- **Current**: 577 tests across 13 files, all passing
+- **All new code MUST have tests**
+- **Mock RPC/API calls** — never hit real networks or Nansen API in tests
+- RPC mocks: use `vi.fn()` to mock `fetch` and return canned JSON-RPC responses
+- Match on method name (`eth_getBalance`, `getBalance`, `getTokenAccountsByOwner`, etc.)
+- Include all RPC methods your code path touches (e.g., `eth_getCode`, `eth_getTransactionReceipt`, `eth_maxPriorityFeePerGas` for EVM transfers)
 
-1. `NANSEN_API_KEY` env var (highest)
-2. `~/.nansen/config.json` file
-3. Prompt (interactive only)
+### Test structure
 
-### Common Auth Pitfall
+```js
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-`nansen login` validates your key by making a real API call (burns 1 credit). If you already know the key is valid, writing `~/.nansen/config.json` directly is cheaper.
+// Mock fetch globally
+global.fetch = vi.fn();
 
-## Verify It Works
+describe('featureName', () => {
+  beforeEach(() => {
+    fetch.mockReset();
+    // Set up default mocks
+  });
 
-```bash
-# This is cheap and fast:
-nansen schema | head -1
-# Expected: {"version":"1.x.x","commands":{...}}
-
-# This burns a credit but proves API access:
-nansen token screener --chain solana --limit 1
+  it('should do the thing', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', result: '0x...', id: 1 })
+    });
+    // test logic
+  });
+});
 ```
 
-## Agent-Optimized Patterns
+### Common mock patterns
 
-### 1. Always Use `--fields` to Reduce Token Burn
+**EVM transfers** need mocks for: `eth_getBalance`, `eth_gasPrice`, `eth_maxPriorityFeePerGas`, `eth_getTransactionCount`, `eth_estimateGas`, `eth_getCode`, `eth_sendRawTransaction`, `eth_getTransactionReceipt`
 
-```bash
-# ❌ Returns everything (huge JSON, wastes agent context)
-nansen smart-money netflow --chain solana
+**Solana transfers** need mocks for: `getBalance`, `getLatestBlockhash`, `sendTransaction`, `getSignatureStatuses`
 
-# ✅ Only what you need
-nansen smart-money netflow --chain solana --fields token_symbol,net_flow_usd,chain --limit 10
-```
+**SPL token transfers** additionally need: `getTokenAccountsByOwner`, `getAccountInfo`
 
-### 2. Use Schema for Self-Discovery
+## Style Guide
 
-```bash
-# Don't guess commands — introspect:
-nansen schema --pretty                    # All commands
-nansen schema smart-money --pretty        # One command's options & return fields
-```
+- **ESM** (`import`/`export`), no TypeScript, no transpilation
+- **No interactive prompts** in core functions — use env vars (`NANSEN_WALLET_PASSWORD`, `NANSEN_API_KEY`)
+- **Error handling**: `throw new Error('descriptive message')` in core. CLI catches and formats.
+- **Error messages must be actionable** — tell the user what to do, not just what went wrong
+  - ❌ `"Authentication failed"`
+  - ✅ `"Not logged in. Run: nansen login"`
+- **BigInt for amounts** — never use floating point for token amounts. Parse to BigInt with decimals.
+- **Chain-specific code**: Use `chain === 'solana'` branching, not inheritance
+- **No unnecessary dependencies** — stdlib and built-in Node.js APIs preferred
 
-### 3. Parse Errors Programmatically
+## PR Checklist
 
-Every response has `success: true/false`. Errors include `code` for routing:
+Before submitting a PR:
 
-| Code | What To Do |
-|------|------------|
-| `CREDITS_EXHAUSTED` | **Stop all calls.** Tell the human. |
-| `RATE_LIMITED` | Wait. Auto-retry handles this. |
-| `UNSUPPORTED_FILTER` | Remove the filter, retry without it. |
-| `UNAUTHORIZED` | Key is wrong. Re-auth. |
-| `INVALID_ADDRESS` | Check address format for the chain. |
+- [ ] `npm test` passes (all 577+ tests)
+- [ ] New code paths have test coverage
+- [ ] No hardcoded secrets, API keys, or private keys
+- [ ] No `console.log` in core functions (use the `log` dep injection)
+- [ ] Error messages are actionable
+- [ ] CLI help text updated if adding/changing commands
+- [ ] RPC mocks cover all methods in the code path
+- [ ] Wallet flows work with AND without password (`NANSEN_WALLET_PASSWORD`)
 
-### 4. Budget Credits
+## Chains & Networks
 
-- Most calls cost 1 credit
-- `profiler labels` + `profiler balance` are expensive — batch 3-4 at a time
-- `schema`, `help`, `cache` are free (no API key needed)
-- If you get `CREDITS_EXHAUSTED`, **stop immediately** — don't retry
+**EVM**: Ethereum (chain ID 1), Base (8453). Transfer support limited to these two in `CHAIN_IDS` map.
 
-### 5. Use `--stream` for Large Results
+**Solana**: mainnet-beta. Supports native SOL, standard SPL tokens, and Token-2022 (Token Extensions).
 
-```bash
-# NDJSON mode — process line by line, don't buffer giant arrays
-nansen token dex-trades --chain solana --limit 100 --stream
-```
+**RPC endpoints**: Hardcoded in `CHAIN_RPCS` (transfer.js). Nansen API handles RPC for trading.
 
-## Pagination
+## Key Constants
 
-The CLI exposes `--limit N` which maps to `{page: 1, per_page: N}` in the API request. **There is no `--page` flag** — the CLI always fetches page 1. To access later pages, use the REST API directly.
+- **USDC (Base)**: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+- **USDC (Solana)**: `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`
+- **x402 payment**: $0.05 USDC per API call, facilitator settles on Solana
+- **Gas**: API provides `quote.gas` with 1.5x buffer — use it directly, no client-side estimation needed for trades
 
-```bash
-# CLI: page 1 only, up to N results
-nansen smart-money netflow --chain solana --limit 50
+## Known Gotchas
 
-# REST API: full pagination control
-curl -s -X POST https://api.nansen.ai/api/v1/smart-money/netflow \
-  -H "apiKey: $NANSEN_API_KEY" -H "Content-Type: application/json" \
-  -d '{"chains":["solana"],"pagination":{"page":2,"per_page":50}}'
-```
-
-**Pagination key inconsistency:** Profiler endpoints (which use the beta API) take `recordsPerPage` instead of `per_page`. The CLI sends the right key automatically based on the command, but if you're calling the REST API directly, check which key each endpoint expects.
-
-**Detecting the last page:** The raw API response does not include a `total_pages` or `has_more` field in the CLI-visible output. Reliable heuristic: if the number of results returned is less than your `--limit`, you're on the last page.
-
-```bash
-# Request 50, get 23 back → last page
-nansen token holders --token <addr> --chain solana --limit 50
-# Check: .data.data.length (or .data.results.length) < 50 → done
-```
-
-**`profiler perp-positions` has no pagination** — the API ignores the pagination parameter for this endpoint.
-
-## Output Parsing Gotchas
-
-### Response envelope
-
-Every CLI response is wrapped in a standard envelope:
-
-```json
-{ "success": true, "data": <raw_api_response> }
-```
-
-Errors follow a different shape:
-
-```json
-{ "success": false, "error": "message", "code": "ERROR_CODE", "status": 401, "details": {...} }
-```
-
-### Raw API response shapes vary by endpoint
-
-The `data` field inside the envelope is the raw JSON from the Nansen API. Its internal structure differs across endpoints — there is no single canonical key for the results array:
-
-| Shape | Example endpoints |
-|-------|------------------|
-| `data.data` (array) | token screener |
-| `data.results` (array) | entity search |
-| `data.data.results` (array) | most profiler endpoints |
-| `data.netflows` | smart-money netflow |
-| `data.trades` | smart-money dex-trades |
-| `data.holdings` | smart-money holdings |
-| `data.holders` | token holders |
-
-When parsing, check for the array at each level. `--table` and `--stream` handle this automatically, but if you're parsing raw JSON with `jq`, probe the shape first:
-
-```bash
-nansen smart-money netflow --chain solana | jq 'keys, .data | keys'
-```
-
-### `--fields` applies to the entire response tree
-
-`--fields token_symbol,net_flow_usd` strips everything except those keys from the **entire** response, including the `success` and `data` wrapper fields. The result will be a bare object containing only the matched keys found anywhere in the tree.
-
-### Client-side vs server-side filtering
-
-`token screener --search <term>` is **client-side**: the CLI fetches up to 500 results from the server, then filters locally. Set `--limit` higher than your expected result count when using `--search`.
-
-### Fields absent for some chain/token combinations
-
-Some fields are only populated for specific chains or tokens:
-- `smart_money_holders` — absent for tokens without smart money tracking
-- Flow intelligence fields — may all be `0` for illiquid tokens (not an error)
-- Perp endpoints (`--symbol`) only work for Hyperliquid; `--token` is for on-chain tokens
-
-## Chains Quick Reference
-
-`ethereum` `solana` `base` `bnb` `arbitrum` `polygon` `optimism` `avalanche` `linea` `scroll` `mantle` `ronin` `sei` `plasma` `sonic` `monad` `hyperevm` `iotaevm`
-
-> Run `nansen schema` to get the current chain list (source of truth).
-
-## Troubleshooting
-
-### Quick fixes
-
-| Symptom | Fix |
-|---------|-----|
-| `command not found: nansen` | `npm install -g nansen-cli` or `npx nansen-cli` |
-| `UNAUTHORIZED` after login | Check `cat ~/.nansen/config.json` — key may not have saved. Write it directly. |
-| Login hangs or fails | Skip `nansen login`, write config directly (see Install & Auth above) |
-| Huge JSON response | Use `--fields` to select only needed columns |
-| Perp endpoints empty or erroring | Use `--symbol BTC` not `--token`. Perp endpoints are Hyperliquid-only. |
-| JUP DCA returns error | Solana-only endpoint |
-| `UNSUPPORTED_FILTER` on token holders | Not all tokens have smart money data. Remove `--smart-money` and retry. |
-| `CREDITS_EXHAUSTED` | Stop all calls. Check [app.nansen.ai](https://app.nansen.ai). No retry will help. |
-
-### Error codes
-
-| Code | What to do |
-|------|------------|
-| `CREDITS_EXHAUSTED` | **Stop all calls.** Tell the human. Check dashboard. |
-| `RATE_LIMITED` | Wait — auto-retry handles this by default. |
-| `UNSUPPORTED_FILTER` | Remove the filter, retry without it. |
-| `UNAUTHORIZED` | Key is wrong or missing. Re-auth. |
-| `INVALID_ADDRESS` | Check address format matches the chain (EVM: `0x...`, Solana: Base58). |
-
-### Known endpoint quirks
-
-- **`token holders --smart-money`** — Fails with `UNSUPPORTED_FILTER` for tokens without smart money tracking (e.g., WCT on Optimism). Not all tokens have this data. Do not retry.
-- **`token flow-intelligence`** — May return all-zero flows for tokens without significant smart money activity. Normal, not an error.
-- **`profiler labels` and `profiler balance`** consume credits. Budget ~20 calls per session. Batch calls in groups of 3–4.
-- **`profiler perp-positions`** — No pagination support; the API ignores the pagination parameter.
-
-## For OpenClaw / Skill Users
-
-If you installed this as an OpenClaw skill, the `SKILL.md` file has the skill interface. This `AGENTS.md` covers the CLI directly. Both work.
+1. **EIP-7702 delegated accounts** on Base have contract code. `eth_estimateGas` must be used (not hardcoded 21000 gas).
+2. **Solana SPL account ordering**: Writable accounts (destATA) must precede readonly (mint) in the transaction message.
+3. **`getSignatureStatuses`** over `confirmTransaction` — the latter is deprecated and unreliable on public RPCs.
+4. **`--max` native SOL**: Reserve 5000 lamports for fee. On EVM L2s, reserve 3x estimated gas for L1 data posting.
+5. **Token-2022**: Use `TOKEN_2022_PROGRAM_ID` and `TransferCheckedInstruction` (not plain `Transfer`).
+6. **CreateATA path**: When recipient doesn't have a token account, the sender must create it. This path exists in transfer.js but has limited test coverage.
