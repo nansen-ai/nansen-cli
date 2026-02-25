@@ -6,6 +6,7 @@
 import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
 import { buildWalletCommands } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
+import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
 import { createRequire } from 'module';
@@ -685,8 +686,24 @@ export async function batchProfile(api, params = {}) {
   const { addresses = [], chain = 'ethereum', include = ['labels', 'balance'], delayMs = 1000 } = params;
   const results = [];
   for (let i = 0; i < addresses.length; i++) {
-    const address = addresses[i].trim();
+    let address = addresses[i].trim();
     const entry = { address, chain };
+
+    // Resolve ENS names
+    if (isEnsName(address)) {
+      try {
+        const resolved = await resolveAddress(address, chain);
+        entry.ensName = resolved.ensName;
+        address = resolved.address;
+        entry.address = address;
+      } catch (err) {
+        entry.error = err.message;
+        results.push(entry);
+        if (i < addresses.length - 1) await sleep(delayMs);
+        continue;
+      }
+    }
+
     const validation = validateAddress(address, chain);
     if (!validation.valid) {
       entry.error = validation.error;
@@ -714,10 +731,17 @@ export async function batchProfile(api, params = {}) {
 }
 
 export async function traceCounterparties(api, params = {}) {
-  const { address, chain = 'ethereum', depth = 2, width = 10, days = 30, delayMs = 1000 } = params;
+  let { address, chain = 'ethereum', depth = 2, width = 10, days = 30, delayMs = 1000 } = params;
   if (!address) {
     throw new NansenError('address is required for trace', ErrorCode.MISSING_PARAM);
   }
+
+  // Resolve ENS names
+  if (isEnsName(address)) {
+    const resolved = await resolveAddress(address, chain);
+    address = resolved.address;
+  }
+
   const validation = validateAddress(address, chain);
   if (!validation.valid) {
     throw new NansenError(validation.error, ErrorCode.INVALID_ADDRESS);
@@ -1162,9 +1186,17 @@ export function buildCommands(deps = {}) {
 
     'profiler': async (args, apiInstance, flags, options) => {
       const subcommand = args[0] || 'help';
-      const address = options.address;
+      let address = options.address;
       const entityName = options.entity || options['entity-name'];
       const chain = options.chain || 'ethereum';
+
+      // Resolve ENS names (e.g. vitalik.eth → 0x...)
+      let ensName;
+      if (address && isEnsName(address)) {
+        const resolved = await resolveAddress(address, chain);
+        address = resolved.address;
+        ensName = resolved.ensName;
+      }
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = options.limit ? { page: 1, recordsPerPage: options.limit } : undefined;
@@ -1236,7 +1268,14 @@ export function buildCommands(deps = {}) {
         return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
       }
 
-      return handlers[subcommand]();
+      const result = await handlers[subcommand]();
+
+      // Attach ENS metadata so the caller knows the name was resolved
+      if (ensName && result && typeof result === 'object') {
+        result._ens = { name: ensName, resolvedAddress: address };
+      }
+
+      return result;
     },
 
     'token': async (args, apiInstance, flags, options) => {
