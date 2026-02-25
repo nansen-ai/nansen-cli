@@ -1,0 +1,60 @@
+name: Claude Code PR Review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  pull_request_review_comment:
+    types: [created]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  claude-review:
+    # Only run on PR comments with @claude, or on PR events
+    if: |
+      (github.event_name == 'pull_request') ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '@claude'))
+    uses: nansen-ai/nansen-shared-workflows/.github/workflows/claude-pr-review.yml@main
+    with:
+      custom_instructions: |
+        You are reviewing a PR for nansen-cli, a Node.js CLI for the Nansen API.
+        
+        **Project Context:**
+        - ES modules only (import/export, never require)
+        - All CLI output must be structured JSON for AI agent consumption
+        - Zero external dependencies policy (only Node.js built-ins + vitest)
+        - Uses vitest for testing
+        
+        **Review Focus:**
+        1. Code correctness and potential bugs
+        2. Proper error handling with defined error codes (UNAUTHORIZED, RATE_LIMITED, etc.)
+        3. Address validation for EVM (0x...) and Solana (Base58) addresses
+        4. Retry logic with exponential backoff (if modified)
+        5. Test coverage in api.test.js, cli.test.js, coverage.test.js
+        6. README.md updates for user-facing changes
+        7. Changeset file included for publishable changes (use `npx changeset`)
+        
+        **Do NOT approve if:**
+        - New external dependencies are added
+        - Tests are missing for new endpoints
+        - Breaking changes without major version bump
+      auto_approve_effort_threshold: 2
+      run_on_synchronize: true
+      use_vertex_ai: true
+      generate_pr_description: true
+      update_existing_comments: true
+      mark_outdated_reviews: true
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      LINEAR_API_KEY: ${{ secrets.CLAUDE_LINEAR_API_KEY }}
+      PR_APPROVAL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.WORKLOAD_ID_PROVIDER_DEV }}
+      GCP_SERVICE_ACCOUNT: ${{ vars.SERVICE_ACCOUNT_DEV }}
+      GCP_PROJECT_ID: nansen-pro-v2-dev
