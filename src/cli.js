@@ -191,6 +191,7 @@ export const SCHEMA = {
             chains: { type: 'array' },
             timeframe: { type: 'string', default: '24h', enum: ['5m', '10m', '1h', '6h', '24h', '7d', '30d'] },
             'smart-money': { type: 'boolean', description: 'Filter for Smart Money only' },
+            'include-stables': { type: 'boolean', description: 'Include stablecoins in results (excluded by default)' },
             search: { type: 'string', description: 'Filter results by token symbol or name (client-side)' },
             limit: { type: 'number' },
             sort: { type: 'string' }
@@ -1263,24 +1264,49 @@ export function buildCommands(deps = {}) {
         'info': () => apiInstance.tokenInformation({ tokenAddress, chain, timeframe: options.timeframe }),
         'screener': async () => {
           const search = options.search;
-          // When searching, fetch more results to filter from (API has no server-side search)
-          const searchPagination = search 
+          const includeStables = options['include-stables'] || flags['include-stables'] || false;
+          // When searching or filtering stablecoins, fetch more results to filter from
+          const needsClientFilter = search || !includeStables;
+          const searchPagination = needsClientFilter
             ? { page: 1, per_page: Math.max(500, pagination?.per_page || 0) }
             : pagination;
           const result = await apiInstance.tokenScreener({ chains, timeframe, filters, orderBy, pagination: searchPagination });
-          if (search) {
-            const q = search.toLowerCase();
-            const requestedLimit = pagination?.per_page || 100;
-            const filterArr = (arr) => arr.filter(t => 
-              (t.token_symbol && t.token_symbol.toLowerCase().includes(q)) ||
-              (t.token_name && t.token_name.toLowerCase().includes(q)) ||
-              (t.token_address && t.token_address.toLowerCase() === q)
-            ).slice(0, requestedLimit);
+          const requestedLimit = pagination?.per_page || 100;
+
+          const STABLECOIN_SYMBOLS = new Set([
+            'USDC', 'USDT', 'DAI', 'USDS', 'BUSD', 'TUSD', 'FRAX', 'LUSD', 'USDP', 'PYUSD',
+            'USD1', 'FDUSD', 'USDe', 'sUSDe', 'USDD', 'cUSD', 'UST', 'GHO', 'GUSD',
+            'EURS', 'EURT', 'agEUR', 'stEUR'
+          ]);
+
+          const isStablecoin = (t) => {
+            if (t.token_symbol && STABLECOIN_SYMBOLS.has(t.token_symbol)) return true;
+            const price = parseFloat(t.price_usd);
+            const change = parseFloat(t.price_change_24h ?? t.price_change ?? 0);
+            if (!isNaN(price) && price > 0 && Math.abs(price - 1.0) < 0.02 && Math.abs(change) < 0.01) return true;
+            return false;
+          };
+
+          const applyFilters = (arr) => {
+            let filtered = arr;
+            if (!includeStables) filtered = filtered.filter(t => !isStablecoin(t));
+            if (search) {
+              const q = search.toLowerCase();
+              filtered = filtered.filter(t =>
+                (t.token_symbol && t.token_symbol.toLowerCase().includes(q)) ||
+                (t.token_name && t.token_name.toLowerCase().includes(q)) ||
+                (t.token_address && t.token_address.toLowerCase() === q)
+              );
+            }
+            return filtered.slice(0, requestedLimit);
+          };
+
+          if (needsClientFilter) {
             // Handle nested response shapes: {data: [...]} or {data: {data: [...]}}
             if (Array.isArray(result?.data)) {
-              return { ...result, data: filterArr(result.data) };
+              return { ...result, data: applyFilters(result.data) };
             } else if (result?.data?.data && Array.isArray(result.data.data)) {
-              return { ...result, data: { ...result.data, data: filterArr(result.data.data) } };
+              return { ...result, data: { ...result.data, data: applyFilters(result.data.data) } };
             }
           }
           return result;
