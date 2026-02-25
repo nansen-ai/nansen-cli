@@ -288,7 +288,7 @@ nansen smart-money netflow --chain solana | jq 'keys, .data | keys'
 
 | Code | Action |
 |------|--------|
-| `CREDITS_EXHAUSTED` | Check your plan at [app.nansen.ai](https://app.nansen.ai). |
+| `CREDITS_EXHAUSTED` | Stop all API calls immediately — do not retry. Check your plan at [app.nansen.ai](https://app.nansen.ai). |
 | `RATE_LIMITED` | Auto-retry handles this. |
 | `UNSUPPORTED_FILTER` | Remove the filter and retry. |
 | `UNAUTHORIZED` | Key is wrong or missing. Re-auth. |
