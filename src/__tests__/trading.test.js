@@ -22,6 +22,7 @@ import {
   signLegacyTransaction,
   signSolanaTransaction,
   signEvmTransaction,
+  signEip1559EvmTransaction,
   buildApprovalTransaction,
   stripLeadingZeros,
   buildTradingCommands,
@@ -479,6 +480,91 @@ describe('signEvmTransaction (API response format)', () => {
     const sig0 = signEvmTransaction(txData, wallet.privateKey, 'base', 0);
     const sig1 = signEvmTransaction(txData, wallet.privateKey, 'base', 1);
     expect(sig0).not.toBe(sig1);
+  });
+});
+
+// ============= EIP-1559 (Type 2) Transaction Signing =============
+
+describe('signEip1559EvmTransaction', () => {
+  it('should produce valid signed tx hex with 0x02 type prefix', () => {
+    const wallet = generateEvmWallet();
+    const txData = {
+      nonce: 0,
+      maxFeePerGas: '30000000000',
+      maxPriorityFeePerGas: '1000000000',
+      gas: '21000',
+      to: '0x' + 'ab'.repeat(20),
+      value: '0',
+      data: '0x',
+      chainId: 8453,
+    };
+    const signedHex = signEip1559EvmTransaction(txData, wallet.privateKey);
+    expect(signedHex).toMatch(/^0x02[0-9a-f]+$/);
+  });
+
+  it('should produce deterministic signatures (RFC 6979)', () => {
+    const wallet = generateEvmWallet();
+    const txData = {
+      nonce: 0,
+      maxFeePerGas: '30000000000',
+      maxPriorityFeePerGas: '1000000000',
+      gas: '21000',
+      to: '0x' + 'ab'.repeat(20),
+      value: '0',
+      data: '0x',
+      chainId: 1,
+    };
+    const sig1 = signEip1559EvmTransaction(txData, wallet.privateKey);
+    const sig2 = signEip1559EvmTransaction(txData, wallet.privateKey);
+    expect(sig1).toBe(sig2);
+  });
+
+  it('should produce different signed tx for different nonces', () => {
+    const wallet = generateEvmWallet();
+    const base = {
+      maxFeePerGas: '30000000000',
+      maxPriorityFeePerGas: '1000000000',
+      gas: '21000',
+      to: '0x' + 'ab'.repeat(20),
+      value: '0',
+      data: '0x',
+      chainId: 8453,
+    };
+    const sig0 = signEip1559EvmTransaction({ ...base, nonce: 0 }, wallet.privateKey);
+    const sig1 = signEip1559EvmTransaction({ ...base, nonce: 1 }, wallet.privateKey);
+    expect(sig0).not.toBe(sig1);
+  });
+});
+
+describe('signEvmTransaction (EIP-1559 dispatch)', () => {
+  it('should sign as type 2 when maxFeePerGas is present', () => {
+    const wallet = generateEvmWallet();
+    const txData = {
+      to: '0x' + 'ab'.repeat(20),
+      data: '0x',
+      value: '0',
+      gas: '21000',
+      maxFeePerGas: '30000000000',
+      maxPriorityFeePerGas: '1000000000',
+    };
+    const signedHex = signEvmTransaction(txData, wallet.privateKey, 'base', 0);
+    // Type 2 transactions start with 0x02
+    expect(signedHex).toMatch(/^0x02/);
+  });
+
+  it('should sign as legacy type 0 when only gasPrice is present', () => {
+    const wallet = generateEvmWallet();
+    const txData = {
+      to: '0x' + 'ab'.repeat(20),
+      data: '0x',
+      value: '0',
+      gas: '21000',
+      gasPrice: '1000000000',
+    };
+    const signedHex = signEvmTransaction(txData, wallet.privateKey, 'base', 0);
+    // Legacy transactions have RLP list prefix (>= 0xc0), NOT 0x02
+    const firstByte = parseInt(signedHex.slice(2, 4), 16);
+    expect(firstByte).toBeGreaterThanOrEqual(0xc0);
   });
 });
 
