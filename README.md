@@ -8,20 +8,6 @@
 
 Command-line interface for the [Nansen API](https://docs.nansen.ai) with structured JSON output, designed for AI agents and automation.
 
-## CLI vs REST API
-
-**Prefer the [REST API](https://docs.nansen.ai) for most agent use cases** — no install step, no dependency issues.
-
-```bash
-# Direct API call — no CLI needed
-curl -s -X POST https://api.nansen.ai/api/v1/token-screener \
-  -H "apiKey: YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"chain":"solana","pagination":{"page":1,"per_page":5}}' | jq .
-```
-
-The CLI adds `--pretty`, `--table`, `--fields`, `--stream`, built-in retries, schema introspection, wallet management, trading, and x402 micropayments.
-
 ## Installation
 
 ```bash
