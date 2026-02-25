@@ -2271,3 +2271,67 @@ describe('compareWallets', () => {
     expect(result.balances).toHaveLength(2);
   });
 });
+
+describe('ENS integration in batchProfile', () => {
+  it('should resolve .eth names and include ensName in results', async () => {
+    const { resolveAddress } = await import('../ens.js');
+    vi.spyOn(await import('../ens.js'), 'resolveAddress').mockResolvedValue({
+      address: '0x0000000000000000000000000000000000000001',
+      ensName: 'test.eth',
+    });
+    vi.spyOn(await import('../ens.js'), 'isEnsName').mockReturnValue(true);
+
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: ['Fund'] }),
+    };
+
+    const result = await batchProfile(mockApi, {
+      addresses: ['test.eth'],
+      chain: 'ethereum',
+      include: ['labels'],
+      delayMs: 0,
+    });
+
+    expect(result.results[0].ensName).toBe('test.eth');
+    expect(result.results[0].address).toBe('0x0000000000000000000000000000000000000001');
+
+    vi.restoreAllMocks();
+  });
+
+  it('should capture ENS resolution failure as entry error', async () => {
+    vi.spyOn(await import('../ens.js'), 'isEnsName').mockReturnValue(true);
+    vi.spyOn(await import('../ens.js'), 'resolveAddress').mockRejectedValue(
+      new Error('Could not resolve ENS name: bad.eth')
+    );
+
+    const mockApi = {};
+
+    const result = await batchProfile(mockApi, {
+      addresses: ['bad.eth'],
+      chain: 'ethereum',
+      include: ['labels'],
+      delayMs: 0,
+    });
+
+    expect(result.results[0].error).toBeDefined();
+    expect(result.completed).toBe(0);
+
+    vi.restoreAllMocks();
+  });
+});
+
+describe('ENS integration in traceCounterparties', () => {
+  it('should reject failed ENS resolution with INVALID_ADDRESS', async () => {
+    vi.spyOn(await import('../ens.js'), 'isEnsName').mockReturnValue(true);
+    vi.spyOn(await import('../ens.js'), 'resolveAddress').mockRejectedValue(
+      new Error('Could not resolve ENS name: bad.eth')
+    );
+
+    const mockApi = {};
+    await expect(
+      traceCounterparties(mockApi, { address: 'bad.eth', chain: 'ethereum', delayMs: 0 })
+    ).rejects.toThrow('Could not resolve ENS name');
+
+    vi.restoreAllMocks();
+  });
+});

@@ -33,6 +33,10 @@ describe('ENS Resolution', () => {
     it('rejects ENS on non-EVM chains', async () => {
       await expect(resolveAddress('nansen.eth', 'solana')).rejects.toThrow('EVM chains');
     });
+
+    it('fails with descriptive error for unresolvable names', async () => {
+      await expect(resolveAddress('zzznonexistent999999.eth')).rejects.toThrow('Could not resolve ENS name');
+    }, 15000);
   });
 
   // Live resolution tests (require network)

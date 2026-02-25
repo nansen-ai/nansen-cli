@@ -12,7 +12,7 @@ const ENS_PATTERN = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.eth$/;
 const EVM_CHAINS = [
   'ethereum', 'base', 'optimism', 'arbitrum', 'polygon', 'bnb',
   'avalanche', 'fantom', 'gnosis', 'linea', 'scroll', 'zksync',
-  'blast', 'mantle', 'ronin', 'sonic', 'unichain', 'monad', 'hyperevm', 'iotaevm'
+  'blast', 'mantle', 'ronin', 'sei', 'plasma', 'sonic', 'unichain', 'monad', 'hyperevm', 'iotaevm'
 ];
 
 /**
@@ -45,24 +45,25 @@ export async function resolveAddress(addressOrName, chain = 'ethereum') {
   }
 
   const name = trimmed.toLowerCase();
+  const errors = [];
 
   // Try ensideas API first (fast, no auth)
   try {
     const addr = await resolveViaEnsIdeas(name);
     if (addr) return { address: addr, ensName: name };
-  } catch {
-    // Fall through to onchain
+  } catch (e) {
+    errors.push(`ensideas: ${e.message}`);
   }
 
   // Fallback: onchain resolution via public RPC
   try {
     const addr = await resolveOnchain(name);
     if (addr) return { address: addr, ensName: name };
-  } catch {
-    // Fall through
+  } catch (e) {
+    errors.push(`onchain: ${e.message}`);
   }
 
-  throw new Error(`Could not resolve ENS name: ${name}`);
+  throw new Error(`Could not resolve ENS name: ${name}${errors.length ? ` (${errors.join('; ')})` : ''}`);
 }
 
 // ============= Resolvers =============
@@ -132,7 +133,7 @@ function namehash(name) {
 
 const ENS_REGISTRY = '0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e';
 const ZERO_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
-const RPC_URL = 'https://cloudflare-eth.com';
+const RPC_URL = 'https://eth.llamarpc.com';
 
 async function resolveOnchain(name) {
   const hash = namehash(name);

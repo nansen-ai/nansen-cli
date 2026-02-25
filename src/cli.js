@@ -1279,11 +1279,9 @@ export function buildCommands(deps = {}) {
       const result = await handlers[subcommand]();
 
       // Attach ENS metadata so the caller knows the name was resolved
-      if (ensName && result && typeof result === 'object') {
-        result._ens = { name: ensName, resolvedAddress: address };
-      }
-
-      return result;
+      return ensName && result && typeof result === 'object'
+        ? { ...result, _ens: { name: ensName, resolvedAddress: address } }
+        : result;
     },
 
     'token': async (args, apiInstance, flags, options) => {
