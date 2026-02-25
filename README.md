@@ -190,6 +190,57 @@ nansen schema --pretty                    # All commands
 nansen schema smart-money --pretty        # One command's options & return fields
 ```
 
+### `perps` - Hyperliquid Perpetuals Trading
+
+Trade Hyperliquid perpetuals directly from the CLI. Read-only commands (price, funding, orderbook, search, status, balance) work without credentials. Write commands require either `HL_SECRET_KEY` (32-byte private key) or the nansen wallet system.
+
+```bash
+# Auth: set private key in env (or use nansen wallet + NANSEN_WALLET_PASSWORD)
+export HL_SECRET_KEY=0xdeadbeef...        # 32-byte EVM private key
+export HL_ACCOUNT_ADDRESS=0x...           # Optional: agent wallet address override
+export HL_TESTNET=1                       # Optional: use testnet
+
+# Market data (no credentials needed)
+nansen perps price --symbol BTC
+nansen perps funding --symbol ETH
+nansen perps orderbook --symbol BTC --depth 5
+nansen perps search --query pepe
+
+# Account info
+nansen perps status
+nansen perps balance
+
+# Open a position (market order)
+nansen perps open --symbol BTC --side long --size 0.001
+
+# Open with leverage and limit price
+nansen perps open --symbol ETH --side short --size 0.1 --leverage 5 --isolated --price 3100
+
+# Close a position (fully or partially)
+nansen perps close --symbol BTC
+nansen perps close --symbol BTC --size 0.0005
+
+# Close everything
+nansen perps close-all
+
+# Reduce position by 50%
+nansen perps reduce --symbol BTC --percent 50
+
+# Set stop-loss / take-profit
+nansen perps set-sl --symbol BTC --price 60000
+nansen perps set-tp --symbol BTC --price 120000
+
+# Cancel orders
+nansen perps cancel --symbol BTC
+nansen perps cancel-all
+```
+
+**Auth options:**
+- `HL_SECRET_KEY` — 32-byte (64 hex char) EVM private key
+- `HL_ACCOUNT_ADDRESS` — Optional agent/sub-account address (key signs on its behalf)
+- `HL_TESTNET=1` — Use Hyperliquid testnet (mainnet is default)
+- Or: set `NANSEN_WALLET_PASSWORD` and use `--wallet <name>` to use the nansen wallet system
+
 ### `portfolio` / `perp` / `points` / `cache`
 
 See `nansen help` or `nansen schema --pretty` for full details.

@@ -6,6 +6,7 @@
 import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
 import { buildWalletCommands } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
+import { buildPerpsCommands } from './perps.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
@@ -288,6 +289,25 @@ export const SCHEMA = {
           },
           returns: ['address', 'address_label', 'realized_pnl', 'unrealized_pnl', 'total_pnl', 'trade_count', 'win_rate']
         }
+      }
+    },
+    'perps': {
+      description: 'Hyperliquid perpetuals trading — open/close positions, manage SL/TP, query market data',
+      subcommands: {
+        'status':     { description: 'All open positions and PnL', options: { address: { type: 'string', description: 'Wallet address (optional)' } }, returns: ['address', 'equity', 'totalMarginUsed', 'positions', 'positionCount'] },
+        'balance':    { description: 'USDC equity and margin summary', options: { address: { type: 'string' } }, returns: ['address', 'equity', 'totalNtlPos', 'totalRawUsd', 'totalMarginUsed'] },
+        'open':       { description: 'Open a new position', options: { symbol: { type: 'string', required: true, description: 'Asset symbol (e.g. BTC)' }, side: { type: 'string', required: true, description: 'long or short' }, size: { type: 'number', required: true, description: 'Size in base asset units' }, leverage: { type: 'number', description: 'Leverage multiplier' }, isolated: { type: 'boolean', description: 'Use isolated margin' }, price: { type: 'number', description: 'Limit price (omit for market order)' } }, returns: ['symbol', 'side', 'requestedSize', 'status', 'fills'] },
+        'close':      { description: 'Close a position', options: { symbol: { type: 'string', required: true }, size: { type: 'number', description: 'Partial close size (omit to close fully)' } }, returns: ['symbol', 'side', 'requestedSize', 'status', 'fills'] },
+        'close-all':  { description: 'Close all open positions', options: {}, returns: ['attempted', 'symbols', 'result'] },
+        'reduce':     { description: 'Reduce position by percentage', options: { symbol: { type: 'string', required: true }, percent: { type: 'number', description: 'Reduction percentage (default: 50)' } }, returns: ['symbol', 'side', 'requestedSize', 'status', 'fills'] },
+        'set-sl':     { description: 'Set stop-loss order', options: { symbol: { type: 'string', required: true }, price: { type: 'number', required: true, description: 'Trigger price' } }, returns: ['type', 'symbol', 'triggerPrice', 'result'] },
+        'set-tp':     { description: 'Set take-profit order', options: { symbol: { type: 'string', required: true }, price: { type: 'number', required: true, description: 'Trigger price' } }, returns: ['type', 'symbol', 'triggerPrice', 'result'] },
+        'cancel':     { description: 'Cancel open orders for symbol', options: { symbol: { type: 'string', required: true } }, returns: ['symbol', 'cancelled'] },
+        'cancel-all': { description: 'Cancel all open orders', options: {}, returns: ['cancelled'] },
+        'price':      { description: 'Get current mark price', options: { symbol: { type: 'string', required: true } }, returns: ['symbol', 'price'] },
+        'funding':    { description: 'Get funding rate', options: { symbol: { type: 'string', required: true } }, returns: ['symbol', 'fundingRate', 'openInterest', 'markPrice'] },
+        'orderbook':  { description: 'Get L2 order book', options: { symbol: { type: 'string', required: true }, depth: { type: 'number', default: 10, description: 'Number of levels per side' } }, returns: ['symbol', 'bids', 'asks'] },
+        'search':     { description: 'Search available perp symbols', options: { query: { type: 'string', required: true, description: 'Symbol name search query' } }, returns: ['symbol', 'assetIndex', 'szDecimals'] },
       }
     },
     'search': {
@@ -895,6 +915,7 @@ COMMANDS:
                    perp-positions, perp-pnl-leaderboard)
   portfolio      Portfolio analytics (defi)
   perp           Perpetual futures analytics (screener, leaderboard)
+  perps          Hyperliquid perps trading (open, close, set-sl, set-tp, price, funding, orderbook, search)
   points         Nansen Points analytics (leaderboard)
   changelog      Show what's new (use --since <version> to filter)
   help           Show this help message
@@ -1598,7 +1619,7 @@ export async function runCLI(rawArgs, deps = {}) {
     if (updateNotification) errorOutput(updateNotification);
   };
 
-  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...commandOverrides };
+  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...buildPerpsCommands(deps), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);
