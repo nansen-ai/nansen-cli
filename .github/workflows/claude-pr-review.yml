@@ -12,6 +12,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  id-token: write
 
 concurrency:
   group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
@@ -37,6 +38,7 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           timeout_minutes: 10
           direct_prompt: |
             Review this PR for nansen-cli, a Node.js CLI for the Nansen API.
