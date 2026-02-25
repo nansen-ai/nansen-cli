@@ -422,6 +422,18 @@ export function parseArgs(args) {
   return result;
 }
 
+// Command-specific default columns for --table output
+export const TABLE_COLUMNS = {
+  'token.screener': ['token_symbol', 'chain', 'price_usd', 'price_change', 'volume', 'market_cap_usd', 'netflow', 'liquidity'],
+  'smart-money.netflow': ['token_symbol', 'chain', 'net_flow_1h_usd', 'net_flow_24h_usd', 'net_flow_7d_usd', 'trader_count', 'market_cap_usd'],
+  'smart-money.dex-trades': ['token_bought_symbol', 'token_sold_symbol', 'trade_value_usd', 'trader_address_label', 'chain', 'block_timestamp'],
+  'smart-money.holdings': ['token_symbol', 'chain', 'value_usd', 'holders_count', 'balance_24h_percent_change', 'market_cap_usd'],
+  'profiler.balance': ['token_symbol', 'token_amount', 'price_usd', 'value_usd', 'chain'],
+  'profiler.pnl': ['token_symbol', 'realized_pnl_usd', 'unrealized_pnl_usd', 'total_pnl_usd'],
+  'token.dex-trades': ['token_bought_symbol', 'token_sold_symbol', 'trade_value_usd', 'trader_address_label', 'block_timestamp'],
+  'perp.screener': ['symbol', 'price_usd', 'volume_24h', 'open_interest', 'funding_rate'],
+};
+
 // Format a single value for table display
 export function formatValue(val) {
   if (val === null || val === undefined) return '';
@@ -436,7 +448,7 @@ export function formatValue(val) {
 }
 
 // Table formatter for human-readable output
-export function formatTable(data) {
+export function formatTable(data, columns = null) {
   // Extract array of records from various response shapes
   let records = [];
   if (Array.isArray(data)) {
@@ -456,22 +468,31 @@ export function formatTable(data) {
     return 'No data';
   }
 
-  // Get columns from first record, prioritize common useful fields
-  const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
-  const allKeys = [...new Set(records.flatMap(r => Object.keys(r)))];
-  
-  // Sort: priority fields first, then alphabetically
-  const columns = allKeys.sort((a, b) => {
-    const aIdx = priorityFields.indexOf(a);
-    const bIdx = priorityFields.indexOf(b);
-    if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
-    if (aIdx !== -1) return -1;
-    if (bIdx !== -1) return 1;
-    return a.localeCompare(b);
-  }).slice(0, 8); // Limit to 8 columns for readability
+  let selectedColumns;
+  if (columns && columns.length > 0) {
+    // Use command-specific columns, keeping only those present in the data
+    const allKeys = new Set(records.flatMap(r => Object.keys(r)));
+    selectedColumns = columns.filter(col => allKeys.has(col));
+    // Fall back to generic if none of the specified columns exist in data
+    if (selectedColumns.length === 0) selectedColumns = null;
+  }
+
+  if (!selectedColumns) {
+    // Generic fallback: prioritize common useful fields
+    const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
+    const allKeys = [...new Set(records.flatMap(r => Object.keys(r)))];
+    selectedColumns = allKeys.sort((a, b) => {
+      const aIdx = priorityFields.indexOf(a);
+      const bIdx = priorityFields.indexOf(b);
+      if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+      if (aIdx !== -1) return -1;
+      if (bIdx !== -1) return 1;
+      return a.localeCompare(b);
+    }).slice(0, 8); // Limit to 8 columns for readability
+  }
 
   // Calculate column widths
-  const widths = columns.map(col => {
+  const widths = selectedColumns.map(col => {
     const headerLen = col.length;
     const maxDataLen = Math.max(...records.map(r => {
       const val = formatValue(r[col]);
@@ -483,15 +504,15 @@ export function formatTable(data) {
   // Build table
   const separator = '─';
   const lines = [];
-  
+
   // Header
-  const header = columns.map((col, i) => col.padEnd(widths[i])).join(' │ ');
+  const header = selectedColumns.map((col, i) => col.padEnd(widths[i])).join(' │ ');
   lines.push(header);
   lines.push(widths.map(w => separator.repeat(w)).join('─┼─'));
-  
+
   // Rows
   for (const record of records.slice(0, 50)) { // Limit to 50 rows
-    const row = columns.map((col, i) => {
+    const row = selectedColumns.map((col, i) => {
       const val = formatValue(record[col]);
       return val.slice(0, widths[i]).padEnd(widths[i]);
     }).join(' │ ');
@@ -544,7 +565,7 @@ export function formatCsv(data) {
 }
 
 // Format output data (returns string, does not print)
-export function formatOutput(data, { pretty = false, table = false, csv = false } = {}) {
+export function formatOutput(data, { pretty = false, table = false, csv = false, commandPath = null } = {}) {
   if (csv) {
     if (data.success === false) {
       return { type: 'error', text: `Error: ${data.error}` };
@@ -556,7 +577,8 @@ export function formatOutput(data, { pretty = false, table = false, csv = false 
       return { type: 'error', text: `Error: ${data.error}` };
     } else {
       const tableData = data.data || data;
-      return { type: 'table', text: formatTable(tableData) };
+      const tableColumns = commandPath ? (TABLE_COLUMNS[commandPath] || null) : null;
+      return { type: 'table', text: formatTable(tableData, tableColumns) };
     }
   } else if (pretty) {
     return { type: 'json', text: JSON.stringify(data, null, 2) };
@@ -1539,6 +1561,7 @@ export async function runCLI(rawArgs, deps = {}) {
   const command = COMMAND_ALIASES[rawCommand] || rawCommand;
   const subArgs = positional.slice(1);
   const subcommand = subArgs[0];
+  const commandPath = subcommand ? `${command}.${subcommand}` : null;
   const pretty = flags.pretty || flags.p;
   const table = flags.table || flags.t;
   const stream = flags.stream || flags.s;
@@ -1659,13 +1682,13 @@ export async function runCLI(rawArgs, deps = {}) {
     }
 
     const successData = { success: true, data: result };
-    const formatted = formatOutput(successData, { pretty, table, csv });
+    const formatted = formatOutput(successData, { pretty, table, csv, commandPath });
     output(formatted.text);
     notify();
     return { type: csv ? 'csv' : 'success', data: result };
   } catch (error) {
     const errorData = formatError(error);
-    const formatted = formatOutput(errorData, { pretty, table, csv });
+    const formatted = formatOutput(errorData, { pretty, table, csv, commandPath });
     output(formatted.text);
     notify();
     exit(1);

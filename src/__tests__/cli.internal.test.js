@@ -23,7 +23,8 @@ import {
   parseFields,
   batchProfile,
   traceCounterparties,
-  compareWallets
+  compareWallets,
+  TABLE_COLUMNS
 } from '../cli.js';
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir } from '../api.js';
 import * as fs from 'fs';
@@ -173,6 +174,39 @@ describe('formatTable', () => {
     // token_symbol should come before zebra (priority field)
     expect(header.indexOf('token_symbol')).toBeLessThan(header.indexOf('zebra'));
   });
+
+  it('should use command-specific columns when provided', () => {
+    const data = [{ token_symbol: 'SOL', chain: 'solana', price_usd: 100, fdv_mc_ratio: 5, market_cap_usd: 50000000 }];
+    const columns = ['token_symbol', 'chain', 'price_usd', 'market_cap_usd'];
+    const result = formatTable(data, columns);
+    const header = result.split('\n')[0];
+    expect(header).toContain('token_symbol');
+    expect(header).toContain('chain');
+    expect(header).toContain('price_usd');
+    expect(header).toContain('market_cap_usd');
+    // fdv_mc_ratio should not appear since it's not in specified columns
+    expect(header).not.toContain('fdv_mc_ratio');
+  });
+
+  it('should fall back to generic columns when specified columns have no match in data', () => {
+    const data = [{ token_symbol: 'ETH', price_usd: 3000 }];
+    const columns = ['nonexistent_field_a', 'nonexistent_field_b'];
+    const result = formatTable(data, columns);
+    // Should still render something (generic fallback)
+    expect(result).toContain('token_symbol');
+    expect(result).toContain('ETH');
+  });
+
+  it('should skip missing fields gracefully when some columns are absent', () => {
+    const data = [{ token_symbol: 'BTC', price_usd: 60000 }];
+    const columns = ['token_symbol', 'price_usd', 'volume_does_not_exist'];
+    const result = formatTable(data, columns);
+    const header = result.split('\n')[0];
+    expect(header).toContain('token_symbol');
+    expect(header).toContain('price_usd');
+    // Missing column not shown
+    expect(header).not.toContain('volume_does_not_exist');
+  });
 });
 
 describe('formatOutput', () => {
@@ -197,6 +231,41 @@ describe('formatOutput', () => {
     const result = formatOutput({ success: false, error: 'Oops' }, { table: true });
     expect(result.type).toBe('error');
     expect(result.text).toBe('Error: Oops');
+  });
+
+  it('should use command-specific columns when commandPath matches TABLE_COLUMNS', () => {
+    const data = {
+      success: true,
+      data: [{ token_symbol: 'SOL', chain: 'solana', price_usd: 100, fdv_mc_ratio: 5, market_cap_usd: 50000000, netflow: 10000, price_change: 2.5, volume: 1000000, liquidity: 500000 }]
+    };
+    const result = formatOutput(data, { table: true, commandPath: 'token.screener' });
+    expect(result.type).toBe('table');
+    expect(result.text).toContain('token_symbol');
+    expect(result.text).toContain('price_usd');
+    // fdv_mc_ratio should not appear (not in token.screener columns)
+    expect(result.text).not.toContain('fdv_mc_ratio');
+  });
+
+  it('should fall back to generic columns for unknown commandPath', () => {
+    const data = {
+      success: true,
+      data: [{ token_symbol: 'ETH', some_field: 'val', price_usd: 3000 }]
+    };
+    const result = formatOutput(data, { table: true, commandPath: 'unknown.command' });
+    expect(result.type).toBe('table');
+    // Generic logic should still show token_symbol (priority field)
+    expect(result.text).toContain('token_symbol');
+  });
+
+  it('should export TABLE_COLUMNS with all expected command paths', () => {
+    expect(TABLE_COLUMNS['token.screener']).toBeDefined();
+    expect(TABLE_COLUMNS['smart-money.netflow']).toBeDefined();
+    expect(TABLE_COLUMNS['smart-money.dex-trades']).toBeDefined();
+    expect(TABLE_COLUMNS['smart-money.holdings']).toBeDefined();
+    expect(TABLE_COLUMNS['profiler.balance']).toBeDefined();
+    expect(TABLE_COLUMNS['profiler.pnl']).toBeDefined();
+    expect(TABLE_COLUMNS['token.dex-trades']).toBeDefined();
+    expect(TABLE_COLUMNS['perp.screener']).toBeDefined();
   });
 });
 
