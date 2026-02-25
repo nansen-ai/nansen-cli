@@ -20,296 +20,138 @@ const { version: VERSION } = require('../package.json');
 export const SCHEMA = {
   version: VERSION,
   commands: {
-    'smart-money': {
-      description: 'Smart Money analytics - track sophisticated market participants',
+    'research': {
+      description: 'Research and analytics commands',
       subcommands: {
-        'netflow': {
-          description: 'Net capital flows (inflows vs outflows)',
-          options: {
-            chain: { type: 'string', default: 'solana', description: 'Blockchain to query' },
-            chains: { type: 'array', description: 'Multiple chains as JSON array' },
-            limit: { type: 'number', description: 'Number of results' },
-            labels: { type: 'string|array', description: 'Smart Money label filter' },
-            sort: { type: 'string', description: 'Sort field:direction (e.g., value_usd:desc)' },
-            filters: { type: 'object', description: 'Additional filters as JSON' }
-          },
-          returns: ['token_address', 'token_symbol', 'token_name', 'chain', 'inflow_usd', 'outflow_usd', 'net_flow_usd']
+        'smart-money': {
+          description: 'Smart Money analytics - track sophisticated market participants',
+          subcommands: {
+            'netflow': {
+              description: 'Net capital flows (inflows vs outflows)',
+              options: {
+                chain: { type: 'string', default: 'solana', description: 'Blockchain to query' },
+                chains: { type: 'array', description: 'Multiple chains as JSON array' },
+                limit: { type: 'number', description: 'Number of results' },
+                labels: { type: 'string|array', description: 'Smart Money label filter' },
+                sort: { type: 'string', description: 'Sort field:direction (e.g., value_usd:desc)' },
+                filters: { type: 'object', description: 'Additional filters as JSON' }
+              },
+              returns: ['token_address', 'token_symbol', 'token_name', 'chain', 'inflow_usd', 'outflow_usd', 'net_flow_usd']
+            },
+            'dex-trades': {
+              description: 'Real-time DEX trading activity',
+              options: { chain: { type: 'string', default: 'solana' }, chains: { type: 'array' }, limit: { type: 'number' }, labels: { type: 'string|array' }, sort: { type: 'string' }, filters: { type: 'object' } },
+              returns: ['chain', 'block_timestamp', 'transaction_hash', 'trader_address', 'trader_address_label', 'token_bought_address', 'token_sold_address', 'token_bought_amount', 'token_sold_amount', 'token_bought_symbol', 'token_sold_symbol', 'trade_value_usd']
+            },
+            'perp-trades': {
+              description: 'Perpetual trading on Hyperliquid',
+              options: { limit: { type: 'number' }, sort: { type: 'string' }, filters: { type: 'object' } },
+              returns: ['trader_address', 'trader_address_label', 'token_symbol', 'side', 'action', 'token_amount', 'price_usd', 'value_usd', 'type', 'block_timestamp', 'transaction_hash']
+            },
+            'holdings': {
+              description: 'Aggregated token balances',
+              options: { chain: { type: 'string', default: 'solana' }, chains: { type: 'array' }, limit: { type: 'number' }, labels: { type: 'string|array' } },
+              returns: ['chain', 'token_address', 'token_symbol', 'token_sectors', 'value_usd', 'balance_24h_percent_change', 'holders_count', 'share_of_holdings_percent', 'token_age_days', 'market_cap_usd']
+            },
+            'dcas': {
+              description: 'DCA strategies on Jupiter',
+              options: { limit: { type: 'number' }, filters: { type: 'object' } },
+              returns: ['dca_created_at', 'dca_updated_at', 'trader_address', 'trader_address_label', 'dca_vault_address', 'input_token_address', 'output_token_address', 'deposit_token_amount', 'token_spent_amount', 'output_token_redeemed_amount', 'dca_status', 'input_token_symbol', 'output_token_symbol', 'deposit_value_usd']
+            },
+            'historical-holdings': {
+              description: 'Historical holdings over time',
+              options: { chain: { type: 'string', default: 'solana' }, chains: { type: 'array' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
+              returns: ['date', 'token_address', 'token_symbol', 'balance', 'balance_usd']
+            }
+          }
         },
-        'dex-trades': {
-          description: 'Real-time DEX trading activity',
-          options: {
-            chain: { type: 'string', default: 'solana' },
-            chains: { type: 'array' },
-            limit: { type: 'number' },
-            labels: { type: 'string|array' },
-            sort: { type: 'string' },
-            filters: { type: 'object' }
-          },
-          returns: ['chain', 'block_timestamp', 'transaction_hash', 'trader_address', 'trader_address_label', 'token_bought_address', 'token_sold_address', 'token_bought_amount', 'token_sold_amount', 'token_bought_symbol', 'token_sold_symbol', 'trade_value_usd']
+        'profiler': {
+          description: 'Wallet profiling - detailed information about any blockchain address',
+          subcommands: {
+            'balance': { description: 'Current token holdings', options: { address: { type: 'string', required: true, description: 'Wallet address to query' }, chain: { type: 'string', default: 'ethereum' }, entity: { type: 'string', description: 'Entity name instead of address' } }, returns: ['chain', 'address', 'token_address', 'token_symbol', 'token_name', 'token_amount', 'price_usd', 'value_usd'] },
+            'labels': { description: 'Behavioral and entity labels', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' } }, returns: ['label', 'label_type', 'label_subtype'] },
+            'transactions': { description: 'Transaction history', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, date: { type: 'string', required: true, description: 'Date or date range' }, limit: { type: 'number' }, days: { type: 'number', default: 30 } }, returns: ['chain', 'method', 'tokens_sent', 'tokens_received', 'volume_usd', 'block_timestamp', 'transaction_hash'] },
+            'pnl': { description: 'PnL and trade performance', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, date: { type: 'string', description: 'Date or date range' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['token_address', 'token_symbol', 'realized_pnl_usd', 'unrealized_pnl_usd', 'total_pnl_usd'] },
+            'search': { description: 'Search for entities by name', options: { query: { type: 'string', required: true, description: 'Search query' }, limit: { type: 'number' } }, returns: ['entity_name'] },
+            'historical-balances': { description: 'Historical balances over time', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } }, returns: ['date', 'token_address', 'token_symbol', 'balance', 'balance_usd'] },
+            'related-wallets': { description: 'Find wallets related to an address', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, limit: { type: 'number' } }, returns: ['address', 'address_label', 'relation', 'transaction_hash', 'block_timestamp', 'order', 'chain'] },
+            'counterparties': { description: 'Top counterparties by volume', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } }, returns: ['counterparty_address', 'counterparty_address_label', 'interaction_count', 'total_volume_usd', 'volume_in_usd', 'volume_out_usd', 'tokens_info'] },
+            'pnl-summary': { description: 'Summarized PnL metrics', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } }, returns: ['top5_tokens', 'traded_token_count', 'traded_times', 'realized_pnl_usd', 'realized_pnl_percent', 'win_rate'] },
+            'perp-positions': { description: 'Current perpetual positions', options: { address: { type: 'string', required: true }, limit: { type: 'number' } }, returns: ['symbol', 'side', 'size', 'entry_price', 'mark_price', 'unrealized_pnl', 'leverage'] },
+            'perp-trades': { description: 'Perpetual trading history', options: { address: { type: 'string', required: true }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['symbol', 'side', 'size', 'price', 'value_usd', 'pnl_usd', 'timestamp'] },
+            'batch': { description: 'Batch profile multiple addresses', options: { addresses: { type: 'string', description: 'Comma-separated addresses' }, file: { type: 'string', description: 'File with one address per line' }, chain: { type: 'string', default: 'ethereum' }, include: { type: 'string', default: 'labels,balance', description: 'Comma-separated: labels,balance,pnl' }, delay: { type: 'number', default: 1000, description: 'Delay between requests in ms' } }, returns: ['address', 'chain', 'labels', 'balance', 'pnl', 'error'] },
+            'trace': { description: 'Multi-hop counterparty trace (BFS)', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, depth: { type: 'number', default: 2, description: 'Max hops (1-5)' }, width: { type: 'number', default: 10, description: 'Top N counterparties per hop' }, days: { type: 'number', default: 30 }, delay: { type: 'number', default: 1000, description: 'Delay between requests in ms' } }, returns: ['root', 'chain', 'depth', 'nodes', 'edges', 'stats'] },
+            'compare': { description: 'Compare two wallets (shared counterparties, tokens)', options: { addresses: { type: 'string', required: true, description: 'Two comma-separated addresses' }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } }, returns: ['addresses', 'chain', 'shared_counterparties', 'shared_tokens', 'balances'] }
+          }
         },
-        'perp-trades': {
-          description: 'Perpetual trading on Hyperliquid',
-          options: { limit: { type: 'number' }, sort: { type: 'string' }, filters: { type: 'object' } },
-          returns: ['trader_address', 'trader_address_label', 'token_symbol', 'side', 'action', 'token_amount', 'price_usd', 'value_usd', 'type', 'block_timestamp', 'transaction_hash']
-        },
-        'holdings': {
-          description: 'Aggregated token balances',
-          options: { chain: { type: 'string', default: 'solana' }, chains: { type: 'array' }, limit: { type: 'number' }, labels: { type: 'string|array' } },
-          returns: ['chain', 'token_address', 'token_symbol', 'token_sectors', 'value_usd', 'balance_24h_percent_change', 'holders_count', 'share_of_holdings_percent', 'token_age_days', 'market_cap_usd']
-        },
-        'dcas': {
-          description: 'DCA strategies on Jupiter',
-          options: { limit: { type: 'number' }, filters: { type: 'object' } },
-          returns: ['dca_created_at', 'dca_updated_at', 'trader_address', 'trader_address_label', 'dca_vault_address', 'input_token_address', 'output_token_address', 'deposit_token_amount', 'token_spent_amount', 'output_token_redeemed_amount', 'dca_status', 'input_token_symbol', 'output_token_symbol', 'deposit_value_usd']
-        },
-        'historical-holdings': {
-          description: 'Historical holdings over time',
-          options: { chain: { type: 'string', default: 'solana' }, chains: { type: 'array' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
-          returns: ['date', 'token_address', 'token_symbol', 'balance', 'balance_usd']
-        }
-      }
-    },
-    'profiler': {
-      description: 'Wallet profiling - detailed information about any blockchain address',
-      subcommands: {
-        'balance': {
-          description: 'Current token holdings',
-          options: {
-            address: { type: 'string', required: true, description: 'Wallet address to query' },
-            chain: { type: 'string', default: 'ethereum' },
-            entity: { type: 'string', description: 'Entity name instead of address' }
-          },
-          returns: ['chain', 'address', 'token_address', 'token_symbol', 'token_name', 'token_amount', 'price_usd', 'value_usd']
-        },
-        'labels': {
-          description: 'Behavioral and entity labels',
-          options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' } },
-          returns: ['label', 'label_type', 'label_subtype']
-        },
-        'transactions': {
-          description: 'Transaction history',
-          options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, date: { type: 'string', required: true, description: 'Date or date range (YYYY-MM-DD or {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"})' }, limit: { type: 'number' }, days: { type: 'number', default: 30 } },
-          returns: ['chain', 'method', 'tokens_sent', 'tokens_received', 'volume_usd', 'block_timestamp', 'transaction_hash']
-        },
-        'pnl': {
-          description: 'PnL and trade performance',
-          options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, date: { type: 'string', description: 'Date or date range (YYYY-MM-DD or {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"})' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
-          returns: ['token_address', 'token_symbol', 'realized_pnl_usd', 'unrealized_pnl_usd', 'total_pnl_usd']
+        'token': {
+          description: 'Token God Mode - deep analytics for any token',
+          subcommands: {
+            'indicators': { description: 'Risk and reward indicators for a token (Nansen Score)', options: { token: { type: 'string', required: true, description: 'Token address' }, chain: { type: 'string', default: 'ethereum' } }, returns: ['token_info[market_cap_usd, market_cap_group, is_stablecoin]', 'risk_indicators[indicator_type, score, signal, signal_percentile, last_trigger_on]', 'reward_indicators[indicator_type, score, signal, signal_percentile, last_trigger_on]'] },
+            'info': { description: 'Get detailed information for a specific token', options: { token: { type: 'string', required: true, description: 'Token address' }, chain: { type: 'string', default: 'solana' }, timeframe: { type: 'string', default: '1d', enum: ['5m', '1h', '6h', '12h', '1d', '7d'] } }, returns: ['token_address', 'token_symbol', 'token_name', 'chain', 'price_usd', 'volume_usd', 'market_cap', 'holder_count', 'liquidity_usd'] },
+            'screener': { description: 'Discover and filter tokens', options: { chain: { type: 'string', default: 'solana' }, chains: { type: 'array' }, timeframe: { type: 'string', default: '24h', enum: ['5m', '10m', '1h', '6h', '24h', '7d', '30d'] }, 'smart-money': { type: 'boolean', description: 'Filter for Smart Money only' }, search: { type: 'string', description: 'Filter results by token symbol or name (client-side)' }, limit: { type: 'number' }, sort: { type: 'string' } }, returns: ['token_address', 'token_symbol', 'token_name', 'chain', 'price_usd', 'volume_usd', 'market_cap', 'holder_count', 'smart_money_holders'] },
+            'holders': { description: 'Token holder analysis', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, 'smart-money': { type: 'boolean' }, limit: { type: 'number' } }, returns: ['address', 'address_label', 'token_amount', 'total_outflow', 'total_inflow', 'balance_change_24h', 'balance_change_7d', 'balance_change_30d', 'ownership_percentage', 'value_usd'] },
+            'flows': { description: 'Token flow metrics', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, date: { type: 'string', required: true, description: 'Date or date range' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['date', 'price_usd', 'token_amount', 'value_usd', 'holders_count', 'total_inflows_count', 'total_outflows_count'] },
+            'dex-trades': { description: 'DEX trading activity', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, 'smart-money': { type: 'boolean' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['tx_hash', 'wallet_address', 'side', 'amount', 'price_usd', 'value_usd', 'timestamp'] },
+            'pnl': { description: 'PnL leaderboard', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 }, limit: { type: 'number' }, sort: { type: 'string' } }, returns: ['wallet_address', 'realized_pnl_usd', 'unrealized_pnl_usd', 'total_pnl_usd', 'labels'] },
+            'who-bought-sold': { description: 'Recent buyers and sellers', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, date: { type: 'string', required: true, description: 'Date or date range' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['address', 'address_label', 'bought_token_volume', 'sold_token_volume', 'token_trade_volume', 'bought_volume_usd', 'sold_volume_usd', 'trade_volume_usd'] },
+            'flow-intelligence': { description: 'Detailed flow intelligence by label', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 } }, returns: ['public_figure_net_flow_usd', 'public_figure_wallet_count', 'top_pnl_net_flow_usd', 'top_pnl_wallet_count', 'whale_net_flow_usd', 'whale_wallet_count', 'smart_trader_net_flow_usd', 'smart_trader_wallet_count', 'exchange_net_flow_usd', 'exchange_wallet_count', 'fresh_wallets_net_flow_usd', 'fresh_wallets_wallet_count'] },
+            'transfers': { description: 'Token transfer history', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 }, limit: { type: 'number' }, from: { type: 'string', description: 'Filter by sender address' }, to: { type: 'string', description: 'Filter by recipient address' }, enrich: { type: 'boolean', description: 'Enrich addresses with Nansen labels' } }, returns: ['tx_hash', 'from', 'to', 'amount', 'value_usd', 'timestamp'] },
+            'jup-dca': { description: 'Jupiter DCA orders for token', options: { token: { type: 'string', required: true }, limit: { type: 'number' } }, returns: ['wallet_address', 'input_token', 'output_token', 'total_input', 'executed', 'remaining'] },
+            'perp-trades': { description: 'Perp trades by token symbol', options: { symbol: { type: 'string', required: true, description: 'Token symbol (e.g., BTC, ETH)' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['wallet_address', 'side', 'size', 'price', 'value_usd', 'pnl_usd', 'timestamp'] },
+            'perp-positions': { description: 'Open perp positions by token symbol', options: { symbol: { type: 'string', required: true }, limit: { type: 'number' } }, returns: ['wallet_address', 'side', 'size', 'entry_price', 'mark_price', 'unrealized_pnl', 'leverage'] },
+            'perp-pnl-leaderboard': { description: 'Perp PnL leaderboard by token', options: { symbol: { type: 'string', required: true }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['wallet_address', 'realized_pnl', 'unrealized_pnl', 'total_pnl', 'trade_count'] }
+          }
         },
         'search': {
-          description: 'Search for entities by name',
-          options: { query: { type: 'string', required: true, description: 'Search query' }, limit: { type: 'number' } },
-          returns: ['entity_name']
-        },
-        'historical-balances': {
-          description: 'Historical balances over time',
-          options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } },
-          returns: ['date', 'token_address', 'token_symbol', 'balance', 'balance_usd']
-        },
-        'related-wallets': {
-          description: 'Find wallets related to an address',
-          options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, limit: { type: 'number' } },
-          returns: ['address', 'address_label', 'relation', 'transaction_hash', 'block_timestamp', 'order', 'chain']
-        },
-        'counterparties': {
-          description: 'Top counterparties by volume',
-          options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } },
-          returns: ['counterparty_address', 'counterparty_address_label', 'interaction_count', 'total_volume_usd', 'volume_in_usd', 'volume_out_usd', 'tokens_info']
-        },
-        'pnl-summary': {
-          description: 'Summarized PnL metrics',
-          options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } },
-          returns: ['top5_tokens', 'traded_token_count', 'traded_times', 'realized_pnl_usd', 'realized_pnl_percent', 'win_rate']
-        },
-        'perp-positions': {
-          description: 'Current perpetual positions',
-          options: { address: { type: 'string', required: true }, limit: { type: 'number' } },
-          returns: ['symbol', 'side', 'size', 'entry_price', 'mark_price', 'unrealized_pnl', 'leverage']
-        },
-        'perp-trades': {
-          description: 'Perpetual trading history',
-          options: { address: { type: 'string', required: true }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
-          returns: ['symbol', 'side', 'size', 'price', 'value_usd', 'pnl_usd', 'timestamp']
-        },
-        'batch': {
-          description: 'Batch profile multiple addresses',
+          description: 'Search for tokens and entities across Nansen',
           options: {
-            addresses: { type: 'string', description: 'Comma-separated addresses' },
-            file: { type: 'string', description: 'File with one address per line' },
-            chain: { type: 'string', default: 'ethereum' },
-            include: { type: 'string', default: 'labels,balance', description: 'Comma-separated: labels,balance,pnl' },
-            delay: { type: 'number', default: 1000, description: 'Delay between requests in ms' }
+            query: { type: 'string', required: true, description: 'Search query (token name, symbol, address, or entity)' },
+            type: { type: 'string', default: 'any', enum: ['token', 'entity', 'any'], description: 'Result type filter' },
+            chain: { type: 'string', description: 'Filter by chain (e.g., ethereum, solana)' },
+            limit: { type: 'number', default: 25, description: 'Max results (1-50)' }
           },
-          returns: ['address', 'chain', 'labels', 'balance', 'pnl', 'error']
+          returns: ['tokens[name, symbol, chain, address, price, volume_24h, market_cap, rank]', 'entities[name, tags, rank]', 'total_results']
         },
-        'trace': {
-          description: 'Multi-hop counterparty trace (BFS)',
-          options: {
-            address: { type: 'string', required: true },
-            chain: { type: 'string', default: 'ethereum' },
-            depth: { type: 'number', default: 2, description: 'Max hops (1-5)' },
-            width: { type: 'number', default: 10, description: 'Top N counterparties per hop' },
-            days: { type: 'number', default: 30 },
-            delay: { type: 'number', default: 1000, description: 'Delay between requests in ms' }
-          },
-          returns: ['root', 'chain', 'depth', 'nodes', 'edges', 'stats']
+        'perp': {
+          description: 'Perpetual futures analytics',
+          subcommands: {
+            'screener': { description: 'Screen perpetual futures contracts', options: { days: { type: 'number', default: 30 }, limit: { type: 'number' }, sort: { type: 'string' }, filters: { type: 'object' } }, returns: ['token_symbol', 'volume_usd', 'open_interest', 'funding_rate', 'price_change_24h'] },
+            'leaderboard': { description: 'Perpetual futures PnL leaderboard', options: { days: { type: 'number', default: 30 }, limit: { type: 'number' }, sort: { type: 'string' }, filters: { type: 'object' } }, returns: ['address', 'address_label', 'realized_pnl', 'unrealized_pnl', 'total_pnl', 'trade_count', 'win_rate'] }
+          }
         },
-        'compare': {
-          description: 'Compare two wallets (shared counterparties, tokens)',
-          options: {
-            addresses: { type: 'string', required: true, description: 'Two comma-separated addresses' },
-            chain: { type: 'string', default: 'ethereum' },
-            days: { type: 'number', default: 30 }
-          },
-          returns: ['addresses', 'chain', 'shared_counterparties', 'shared_tokens', 'balances']
+        'portfolio': {
+          description: 'Portfolio analytics',
+          subcommands: {
+            'defi': { description: 'DeFi holdings across protocols', options: { wallet: { type: 'string', required: true, description: 'Wallet address' } }, returns: ['protocol', 'chain', 'position_type', 'token_symbol', 'balance', 'balance_usd'] }
+          }
+        },
+        'points': {
+          description: 'Nansen Points analytics',
+          subcommands: {
+            'leaderboard': { description: 'Points leaderboard', options: { tier: { type: 'string', description: 'Filter by tier' }, limit: { type: 'number' } }, returns: ['rank', 'address', 'address_label', 'points', 'tier'] }
+          }
         }
       }
     },
-    'token': {
-      description: 'Token God Mode - deep analytics for any token',
+    'trade': {
+      description: 'DEX trading commands',
       subcommands: {
-        'indicators': {
-          description: 'Risk and reward indicators for a token (Nansen Score)',
+        'quote': {
+          description: 'Get a DEX swap quote (chain, tokens, amount)',
           options: {
-            token: { type: 'string', required: true, description: 'Token address' },
-            chain: { type: 'string', default: 'ethereum' }
-          },
-          returns: ['token_info[market_cap_usd, market_cap_group, is_stablecoin]', 'risk_indicators[indicator_type, score, signal, signal_percentile, last_trigger_on]', 'reward_indicators[indicator_type, score, signal, signal_percentile, last_trigger_on]']
+            chain: { type: 'string', default: 'ethereum', description: 'Blockchain' },
+            from: { type: 'string', required: true, description: 'Token to sell (address or symbol)' },
+            to: { type: 'string', required: true, description: 'Token to buy (address or symbol)' },
+            amount: { type: 'string', required: true, description: 'Amount to swap' }
+          }
         },
-        'info': {
-          description: 'Get detailed information for a specific token',
+        'execute': {
+          description: 'Sign and broadcast a quoted trade',
           options: {
-            token: { type: 'string', required: true, description: 'Token address' },
-            chain: { type: 'string', default: 'solana' },
-            timeframe: { type: 'string', default: '1d', enum: ['5m', '1h', '6h', '12h', '1d', '7d'] }
-          },
-          returns: ['token_address', 'token_symbol', 'token_name', 'chain', 'price_usd', 'volume_usd', 'market_cap', 'holder_count', 'liquidity_usd']
-        },
-        'screener': {
-          description: 'Discover and filter tokens',
-          options: {
-            chain: { type: 'string', default: 'solana' },
-            chains: { type: 'array' },
-            timeframe: { type: 'string', default: '24h', enum: ['5m', '10m', '1h', '6h', '24h', '7d', '30d'] },
-            'smart-money': { type: 'boolean', description: 'Filter for Smart Money only' },
-            search: { type: 'string', description: 'Filter results by token symbol or name (client-side)' },
-            limit: { type: 'number' },
-            sort: { type: 'string' }
-          },
-          returns: ['token_address', 'token_symbol', 'token_name', 'chain', 'price_usd', 'volume_usd', 'market_cap', 'holder_count', 'smart_money_holders']
-        },
-        'holders': {
-          description: 'Token holder analysis',
-          options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, 'smart-money': { type: 'boolean' }, limit: { type: 'number' } },
-          returns: ['address', 'address_label', 'token_amount', 'total_outflow', 'total_inflow', 'balance_change_24h', 'balance_change_7d', 'balance_change_30d', 'ownership_percentage', 'value_usd']
-        },
-        'flows': {
-          description: 'Token flow metrics',
-          options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, date: { type: 'string', required: true, description: 'Date or date range (YYYY-MM-DD or {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"})' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
-          returns: ['date', 'price_usd', 'token_amount', 'value_usd', 'holders_count', 'total_inflows_count', 'total_outflows_count']
-        },
-        'dex-trades': {
-          description: 'DEX trading activity',
-          options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, 'smart-money': { type: 'boolean' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
-          returns: ['tx_hash', 'wallet_address', 'side', 'amount', 'price_usd', 'value_usd', 'timestamp']
-        },
-        'pnl': {
-          description: 'PnL leaderboard',
-          options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 }, limit: { type: 'number' }, sort: { type: 'string' } },
-          returns: ['wallet_address', 'realized_pnl_usd', 'unrealized_pnl_usd', 'total_pnl_usd', 'labels']
-        },
-        'who-bought-sold': {
-          description: 'Recent buyers and sellers',
-          options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, date: { type: 'string', required: true, description: 'Date or date range (YYYY-MM-DD or {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"})' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
-          returns: ['address', 'address_label', 'bought_token_volume', 'sold_token_volume', 'token_trade_volume', 'bought_volume_usd', 'sold_volume_usd', 'trade_volume_usd']
-        },
-        'flow-intelligence': {
-          description: 'Detailed flow intelligence by label',
-          options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 } },
-          returns: ['public_figure_net_flow_usd', 'public_figure_wallet_count', 'top_pnl_net_flow_usd', 'top_pnl_wallet_count', 'whale_net_flow_usd', 'whale_wallet_count', 'smart_trader_net_flow_usd', 'smart_trader_wallet_count', 'exchange_net_flow_usd', 'exchange_wallet_count', 'fresh_wallets_net_flow_usd', 'fresh_wallets_wallet_count']
-        },
-        'transfers': {
-          description: 'Token transfer history',
-          options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 }, limit: { type: 'number' }, from: { type: 'string', description: 'Filter by sender address' }, to: { type: 'string', description: 'Filter by recipient address' }, enrich: { type: 'boolean', description: 'Enrich addresses with Nansen labels' } },
-          returns: ['tx_hash', 'from', 'to', 'amount', 'value_usd', 'timestamp']
-        },
-        'jup-dca': {
-          description: 'Jupiter DCA orders for token',
-          options: { token: { type: 'string', required: true }, limit: { type: 'number' } },
-          returns: ['wallet_address', 'input_token', 'output_token', 'total_input', 'executed', 'remaining']
-        },
-        'perp-trades': {
-          description: 'Perp trades by token symbol',
-          options: { symbol: { type: 'string', required: true, description: 'Token symbol (e.g., BTC, ETH)' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
-          returns: ['wallet_address', 'side', 'size', 'price', 'value_usd', 'pnl_usd', 'timestamp']
-        },
-        'perp-positions': {
-          description: 'Open perp positions by token symbol',
-          options: { symbol: { type: 'string', required: true }, limit: { type: 'number' } },
-          returns: ['wallet_address', 'side', 'size', 'entry_price', 'mark_price', 'unrealized_pnl', 'leverage']
-        },
-        'perp-pnl-leaderboard': {
-          description: 'Perp PnL leaderboard by token',
-          options: { symbol: { type: 'string', required: true }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
-          returns: ['wallet_address', 'realized_pnl', 'unrealized_pnl', 'total_pnl', 'trade_count']
-        }
-      }
-    },
-    'portfolio': {
-      description: 'Portfolio analytics',
-      subcommands: {
-        'defi': {
-          description: 'DeFi holdings across protocols',
-          options: { wallet: { type: 'string', required: true, description: 'Wallet address' } },
-          returns: ['protocol', 'chain', 'position_type', 'token_symbol', 'balance', 'balance_usd']
-        }
-      }
-    },
-    'perp': {
-      description: 'Perpetual futures analytics',
-      subcommands: {
-        'screener': {
-          description: 'Screen perpetual futures contracts',
-          options: {
-            days: { type: 'number', default: 30 },
-            limit: { type: 'number' },
-            sort: { type: 'string' },
-            filters: { type: 'object' }
-          },
-          returns: ['token_symbol', 'volume_usd', 'open_interest', 'funding_rate', 'price_change_24h']
-        },
-        'leaderboard': {
-          description: 'Perpetual futures PnL leaderboard',
-          options: {
-            days: { type: 'number', default: 30 },
-            limit: { type: 'number' },
-            sort: { type: 'string' },
-            filters: { type: 'object' }
-          },
-          returns: ['address', 'address_label', 'realized_pnl', 'unrealized_pnl', 'total_pnl', 'trade_count', 'win_rate']
-        }
-      }
-    },
-    'search': {
-      description: 'Search for tokens and entities across Nansen',
-      options: {
-        query: { type: 'string', required: true, description: 'Search query (token name, symbol, address, or entity)' },
-        type: { type: 'string', default: 'any', enum: ['token', 'entity', 'any'], description: 'Result type filter' },
-        chain: { type: 'string', description: 'Filter by chain (e.g., ethereum, solana)' },
-        limit: { type: 'number', default: 25, description: 'Max results (1-50)' }
-      },
-      returns: ['tokens[name, symbol, chain, address, price, volume_24h, market_cap, rank]', 'entities[name, tags, rank]', 'total_results']
-    },
-    'points': {
-      description: 'Nansen Points analytics',
-      subcommands: {
-        'leaderboard': {
-          description: 'Points leaderboard',
-          options: {
-            tier: { type: 'string', description: 'Filter by tier' },
-            limit: { type: 'number' }
-          },
-          returns: ['rank', 'address', 'address_label', 'points', 'tier']
+            chain: { type: 'string', default: 'ethereum', description: 'Blockchain' },
+            wallet: { type: 'string', description: 'Wallet name or address' }
+          }
         }
       }
     }
@@ -879,23 +721,12 @@ USAGE:
   nansen <command> [subcommand] [options]
 
 COMMANDS:
-  login          Save your API key (interactive)
-  logout         Remove saved API key
-  schema         Output JSON schema for all commands (for agent introspection)
+  research       Research & analytics (smart-money, profiler, token, search, perp, portfolio, points)
+  trade          DEX trading (quote, execute)
   wallet         Local wallet management (create, list, show, export, default, delete)
-  quote          Get a DEX swap quote (chain, tokens, amount)
-  execute        Sign and broadcast a quoted trade
+  login/logout   API key management
+  schema         Output JSON schema for all commands (for agent introspection)
   cache          Cache management (clear)
-  smart-money    Smart Money analytics (netflow, dex-trades, perp-trades, holdings, dcas, historical-holdings)
-  profiler       Wallet profiling (balance, labels, transactions, pnl, pnl-summary, search,
-                   historical-balances, related-wallets, counterparties, perp-positions, perp-trades,
-                   batch, trace, compare)
-  token          Token God Mode (info, indicators, screener, holders, flows, dex-trades, pnl,
-                   who-bought-sold, flow-intelligence, transfers, jup-dca, perp-trades,
-                   perp-positions, perp-pnl-leaderboard)
-  portfolio      Portfolio analytics (defi)
-  perp           Perpetual futures analytics (screener, leaderboard)
-  points         Nansen Points analytics (leaderboard)
   changelog      Show what's new (use --since <version> to filter)
   help           Show this help message
 
@@ -922,22 +753,19 @@ GLOBAL OPTIONS:
 
 EXAMPLES:
   # Get Smart Money netflow on Solana
-  nansen smart-money netflow --chain solana
+  nansen research smart-money netflow --chain solana
 
   # Get top tokens by Smart Money activity
-  nansen token screener --chain solana --timeframe 24h --pretty
+  nansen research token screener --chain solana --timeframe 24h --pretty
 
   # Get wallet balance
-  nansen profiler balance --address 0x123... --chain ethereum
+  nansen research profiler balance --address 0x123... --chain ethereum
 
-  # Get wallet labels
-  nansen profiler labels --address 0x123... --chain ethereum
+  # Search for tokens/entities
+  nansen research search "Vitalik"
 
-  # Search for entity
-  nansen profiler search --query "Vitalik"
-
-  # Get token holders with filters
-  nansen token holders --token 0x123... --smart-money
+  # Get a DEX swap quote
+  nansen trade quote --chain ethereum --from ETH --to USDC --amount 1
 
 SMART MONEY LABELS:
   Fund, Smart Trader, 30D Smart Trader, 90D Smart Trader, 
@@ -1013,7 +841,7 @@ export function buildCommands(deps = {}) {
     exit = process.exit
   } = deps;
 
-  return {
+  const cmds = {
     'login': async (args, apiInstance, flags, options) => {
       // Support non-interactive: nansen login --api-key <key>
       let apiKey = options['api-key'] || options.apiKey;
@@ -1105,18 +933,18 @@ export function buildCommands(deps = {}) {
     'schema': async (args, apiInstance, flags, options) => {
       // Return schema for agent introspection
       const subcommand = args[0];
-      
-      if (subcommand && SCHEMA.commands[subcommand]) {
-        // Return schema for specific command
+      const schemaEntry = subcommand && (SCHEMA.commands[subcommand] || SCHEMA.commands.research.subcommands[subcommand]);
+
+      if (schemaEntry) {
         return {
           command: subcommand,
-          ...SCHEMA.commands[subcommand],
+          ...schemaEntry,
           globalOptions: SCHEMA.globalOptions,
           chains: SCHEMA.chains,
           smartMoneyLabels: SCHEMA.smartMoneyLabels
         };
       }
-      
+
       // Return full schema
       return SCHEMA;
     },
@@ -1448,12 +1276,56 @@ export function buildCommands(deps = {}) {
       return handlers[subcommand]();
     }
   };
+
+  // 'research' delegates to the category handlers defined above
+  const RESEARCH_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points']);
+
+  cmds['research'] = async (args, apiInstance, flags, options) => {
+    const rawCategory = args[0];
+    if (!rawCategory || rawCategory === 'help') {
+      return {
+        categories: [...RESEARCH_CATEGORIES],
+        aliases: RESEARCH_CATEGORY_ALIASES,
+        description: 'Research and analytics commands',
+        example: 'nansen research smart-money netflow --chain solana'
+      };
+    }
+    const category = RESEARCH_CATEGORY_ALIASES[rawCategory] || rawCategory;
+    if (!RESEARCH_CATEGORIES.has(category)) {
+      return { error: `Unknown research category: ${rawCategory}`, available: [...RESEARCH_CATEGORIES] };
+    }
+    return cmds[category](args.slice(1), apiInstance, flags, options);
+  };
+
+  // 'trade' delegates to quote/execute from buildTradingCommands
+  const tradingCmds = buildTradingCommands(deps);
+  cmds['trade'] = async (args, apiInstance, flags, options) => {
+    const sub = args[0];
+    if (!sub || sub === 'help') {
+      return {
+        commands: ['quote', 'execute'],
+        description: 'DEX trading commands',
+        example: 'nansen trade quote --chain ethereum --from ETH --to USDC --amount 1'
+      };
+    }
+    if (!tradingCmds[sub]) {
+      return { error: `Unknown trade subcommand: ${sub}`, available: ['quote', 'execute'] };
+    }
+    return tradingCmds[sub](args.slice(1), apiInstance, flags, options);
+  };
+
+  return cmds;
 }
 
-// Commands that don't require API authentication
-export const NO_AUTH_COMMANDS = ['login', 'logout', 'help', 'schema', 'cache', 'wallet', 'quote', 'execute', 'changelog'];
+// Categories that moved under 'research'
+export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points']);
+// Subcommands that moved under 'trade'
+export const DEPRECATED_TO_TRADE = new Set(['quote', 'execute']);
 
-// Command aliases for convenience
+// Commands that don't require API authentication
+export const NO_AUTH_COMMANDS = ['login', 'logout', 'help', 'schema', 'cache', 'wallet', 'trade', 'quote', 'execute', 'changelog'];
+
+// Command aliases: top-level shortcuts that resolve before routing
 export const COMMAND_ALIASES = {
   'tgm': 'token',           // Token God Mode
   'sm': 'smart-money',      // Smart Money
@@ -1461,11 +1333,20 @@ export const COMMAND_ALIASES = {
   'port': 'portfolio'       // Portfolio
 };
 
+// Aliases used inside the 'research' namespace
+export const RESEARCH_CATEGORY_ALIASES = {
+  'tgm': 'token',
+  'sm': 'smart-money',
+  'prof': 'profiler',
+  'port': 'portfolio'
+};
+
 // Generate help text for a specific subcommand using SCHEMA
 export function generateSubcommandHelp(command, subcommand) {
-  const cmdSchema = SCHEMA.commands[command];
+  // Look up in top-level commands, then fall back to research subcommands
+  const cmdSchema = SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command];
   if (!cmdSchema) return null;
-  
+
   const subSchema = cmdSchema.subcommands?.[subcommand];
   if (!subSchema) return null;
 
@@ -1584,6 +1465,14 @@ export async function runCLI(rawArgs, deps = {}) {
   const command = COMMAND_ALIASES[rawCommand] || rawCommand;
   const subArgs = positional.slice(1);
   const subcommand = subArgs[0];
+
+  // Deprecation warnings for commands that moved under 'research' or 'trade'
+  if (DEPRECATED_TO_RESEARCH.has(command)) {
+    errorOutput(`Warning: "nansen ${command}" is deprecated. Use "nansen research ${command}" instead.`);
+  } else if (DEPRECATED_TO_TRADE.has(command)) {
+    errorOutput(`Warning: "nansen ${command}" is deprecated. Use "nansen trade ${command}" instead.`);
+  }
+
   const pretty = flags.pretty || flags.p;
   const table = flags.table || flags.t;
   const stream = flags.stream || flags.s;
@@ -1608,6 +1497,44 @@ export async function runCLI(rawArgs, deps = {}) {
   if (command === 'help' || flags.help || flags.h) {
     // Check for subcommand-specific help: nansen <command> <subcommand> --help
     if (flags.help || flags.h) {
+      // Handle 'research <category> <sub> --help' (3-level)
+      if (command === 'research' && subcommand) {
+        const category = RESEARCH_CATEGORY_ALIASES[subcommand] || subcommand;
+        const deepSub = subArgs[1];
+        if (deepSub) {
+          const subHelp = generateSubcommandHelp(category, deepSub);
+          if (subHelp) {
+            output(subHelp);
+            notify();
+            return { type: 'subcommand-help', command: category, subcommand: deepSub };
+          }
+        }
+        // List category subcommands: 'nansen research smart-money --help'
+        const researchCat = SCHEMA.commands.research.subcommands[category];
+        if (researchCat) {
+          const catSchema = researchCat;
+          const lines = [`\nresearch ${category} - ${catSchema.description}\n`];
+          if (catSchema.subcommands) {
+            lines.push('SUBCOMMANDS:');
+            for (const [sub, subSchema] of Object.entries(catSchema.subcommands)) {
+              lines.push(`  ${sub.padEnd(20)} ${subSchema.description || ''}`);
+            }
+            lines.push(`\nFor detailed help: nansen research ${category} <subcommand> --help`);
+          }
+          output(lines.join('\n'));
+          notify();
+          return { type: 'command-help', command: `research ${category}` };
+        }
+      }
+      // Handle 'trade <sub> --help'
+      if (command === 'trade' && subcommand) {
+        const tradeSchema = SCHEMA.commands.trade?.subcommands?.[subcommand];
+        if (tradeSchema) {
+          output(`\ntrade ${subcommand} - ${tradeSchema.description}\n`);
+          notify();
+          return { type: 'subcommand-help', command: 'trade', subcommand };
+        }
+      }
       // First try subcommand help
       if (command && subcommand) {
         const subHelp = generateSubcommandHelp(command, subcommand);
@@ -1618,14 +1545,17 @@ export async function runCLI(rawArgs, deps = {}) {
         }
       }
       // Then try command-level help (list subcommands)
-      if (command && SCHEMA.commands[command]) {
-        const cmdSchema = SCHEMA.commands[command];
+      const cmdSchemaLookup = SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command];
+      if (command && cmdSchemaLookup) {
+        const cmdSchema = cmdSchemaLookup;
         const lines = [`\n${command} - ${cmdSchema.description}\n`];
-        lines.push('SUBCOMMANDS:');
-        for (const [sub, subSchema] of Object.entries(cmdSchema.subcommands || {})) {
-          lines.push(`  ${sub.padEnd(20)} ${subSchema.description || ''}`);
+        if (cmdSchema.subcommands) {
+          lines.push('SUBCOMMANDS:');
+          for (const [sub, subSchema] of Object.entries(cmdSchema.subcommands)) {
+            lines.push(`  ${sub.padEnd(20)} ${subSchema.description || ''}`);
+          }
+          lines.push(`\nFor detailed help: nansen ${command} <subcommand> --help`);
         }
-        lines.push(`\nFor detailed help: nansen ${command} <subcommand> --help`);
         output(lines.join('\n'));
         notify();
         return { type: 'command-help', command };

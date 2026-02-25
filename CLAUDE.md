@@ -125,7 +125,7 @@ Returns JSON with all commands, subcommands, option types/defaults, return field
 
 ### Field Filtering
 ```bash
-nansen smart-money netflow --fields token_symbol,net_flow_usd,chain
+nansen research smart-money netflow --fields token_symbol,net_flow_usd,chain
 ```
 Reduces response size by including only specified fields. Works with nested data structures.
 

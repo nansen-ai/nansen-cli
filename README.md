@@ -71,28 +71,38 @@ Get your API key at [app.nansen.ai/api](https://app.nansen.ai/api).
 nansen schema | head -1
 
 # Verify API access:
-nansen token screener --chain solana --limit 1
+nansen research token screener --chain solana --limit 1
 ```
 
 ## Quick Start
 
 ```bash
 # Get trending tokens on Solana
-nansen token screener --chain solana --timeframe 24h --pretty
+nansen research token screener --chain solana --timeframe 24h --pretty
 
 # Check Smart Money activity
-nansen smart-money netflow --chain solana --pretty
+nansen research smart-money netflow --chain solana --pretty
 
 # Profile a wallet
-nansen profiler balance --address 0x28c6c06298d514db089934071355e5743bf21d60 --chain ethereum --pretty
+nansen research profiler balance --address 0x28c6c06298d514db089934071355e5743bf21d60 --chain ethereum --pretty
 
-# Search for an entity
-nansen profiler search --query "Vitalik Buterin" --pretty
+# Search for tokens/entities
+nansen research search "Vitalik Buterin" --pretty
 ```
 
 ## Commands
 
-### `smart-money` - Smart Money Analytics
+All analytics live under `nansen research`, trading under `nansen trade`, and wallet management under `nansen wallet`.
+
+### `research` - Research & Analytics
+
+```
+nansen research <category> <subcommand> [options]
+```
+
+**Category aliases:** `sm` (smart-money), `tgm` (token), `prof` (profiler), `port` (portfolio)
+
+#### `research smart-money` - Smart Money Analytics
 
 Track trading and holding activity of sophisticated market participants.
 
@@ -107,14 +117,14 @@ Track trading and holding activity of sophisticated market participants.
 
 **Smart Money Labels:** `Fund`, `Smart Trader`, `30D Smart Trader`, `90D Smart Trader`, `180D Smart Trader`, `Smart HL Perps Trader`
 
-### `profiler` - Wallet Profiling
+#### `research profiler` - Wallet Profiling
 
 **ENS Name Resolution:** You can use `.eth` names anywhere an `--address` is accepted:
 
 ```bash
-nansen profiler balance --address vitalik.eth
-nansen profiler labels --address nansen.eth --chain ethereum
-nansen profiler transactions --address vitalik.eth --table
+nansen research profiler balance --address vitalik.eth
+nansen research profiler labels --address nansen.eth --chain ethereum
+nansen research profiler transactions --address vitalik.eth --table
 ```
 
 ENS names are automatically resolved to `0x` addresses via public APIs (with onchain RPC fallback). Works on all EVM chains. The resolved name and address are included as `_ens` metadata in JSON output.
@@ -133,7 +143,7 @@ ENS names are automatically resolved to `0x` addresses via public APIs (with onc
 | `perp-positions` | Current perpetual positions |
 | `perp-trades` | Perpetual trading history |
 
-### `token` - Token God Mode
+#### `research token` - Token God Mode
 
 | Subcommand | Description |
 |------------|-------------|
@@ -150,6 +160,20 @@ ENS names are automatically resolved to `0x` addresses via public APIs (with onc
 | `perp-positions` | Open perp positions by token symbol |
 | `perp-pnl-leaderboard` | Perp PnL leaderboard by token |
 
+#### `research search` / `research perp` / `research portfolio` / `research points`
+
+See `nansen research help` or `nansen schema --pretty` for full details.
+
+### `trade` - DEX Trading
+
+```bash
+# Get a swap quote
+nansen trade quote --from USDC --to SOL --amount 10 --chain solana
+
+# Execute the swap
+nansen trade execute --from USDC --to SOL --amount 10 --chain solana
+```
+
 ### `wallet` - Local Wallet Management
 
 | Subcommand | Description |
@@ -164,35 +188,18 @@ ENS names are automatically resolved to `0x` addresses via public APIs (with onc
 
 Wallets are passwordless by default (keys stored like SSH keys). Set `NANSEN_WALLET_PASSWORD` env var for encryption at rest.
 
-### `quote` / `execute` - Trading
-
-```bash
-# Get a swap quote
-nansen quote --from USDC --to SOL --amount 10 --chain solana
-
-# Execute the swap
-nansen execute --from USDC --to SOL --amount 10 --chain solana
-```
-
-### `search` - Search
-
-```bash
-nansen search "uniswap" --pretty
-nansen search "uniswap" --type token --chain ethereum
-```
-
 ### `schema` - Schema Discovery
 
 No API key required. Machine-readable command reference for agent introspection.
 
 ```bash
 nansen schema --pretty                    # All commands
-nansen schema smart-money --pretty        # One command's options & return fields
+nansen schema research --pretty           # Research commands
 ```
 
-### `portfolio` / `perp` / `points` / `cache`
+### Deprecated Flat Commands
 
-See `nansen help` or `nansen schema --pretty` for full details.
+The old flat commands (`nansen smart-money`, `nansen token`, `nansen profiler`, `nansen search`, `nansen perp`, `nansen portfolio`, `nansen points`, `nansen quote`, `nansen execute`) still work but print a deprecation warning to stderr. Use the new `research` and `trade` namespaces instead.
 
 ## Options
 
@@ -227,17 +234,17 @@ See `nansen help` or `nansen schema --pretty` for full details.
 
 ```bash
 # ❌ Returns everything (huge JSON, wastes agent context)
-nansen smart-money netflow --chain solana
+nansen research smart-money netflow --chain solana
 
 # ✅ Only what you need
-nansen smart-money netflow --chain solana --fields token_symbol,net_flow_usd,chain --limit 10
+nansen research smart-money netflow --chain solana --fields token_symbol,net_flow_usd,chain --limit 10
 ```
 
 ### Use `--stream` for Large Results
 
 ```bash
 # NDJSON mode — process line by line, don't buffer giant arrays
-nansen token dex-trades --chain solana --limit 100 --stream
+nansen research token dex-trades --chain solana --limit 100 --stream
 ```
 
 ### x402 Micropayments
@@ -253,7 +260,7 @@ When the API returns a 402 Payment Required, the CLI automatically handles payme
 # Fund your wallet, then API calls auto-pay
 nansen wallet create
 # Send USDC to the displayed address
-nansen smart-money netflow --chain solana  # auto-pays if no API key
+nansen research smart-money netflow --chain solana  # auto-pays if no API key
 ```
 
 ## Pagination
@@ -291,7 +298,7 @@ The `data` field structure differs across endpoints:
 `--table` and `--stream` handle this automatically. For raw JSON parsing:
 
 ```bash
-nansen smart-money netflow --chain solana | jq 'keys, .data | keys'
+nansen research smart-money netflow --chain solana | jq 'keys, .data | keys'
 ```
 
 ### Error codes

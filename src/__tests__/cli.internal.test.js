@@ -17,6 +17,8 @@ import {
   buildCommands,
   runCLI,
   NO_AUTH_COMMANDS,
+  DEPRECATED_TO_RESEARCH,
+  DEPRECATED_TO_TRADE,
   HELP,
   SCHEMA,
   filterFields,
@@ -255,21 +257,12 @@ describe('HELP', () => {
     expect(HELP).toContain('EXAMPLES:');
   });
 
-  it('should list all subcommands in help text', () => {
-    // smart-money
-    expect(HELP).toContain('perp-trades');
-    // profiler
-    expect(HELP).toContain('transactions');
-    expect(HELP).toContain('pnl-summary');
-    expect(HELP).toContain('historical-balances');
-    expect(HELP).toContain('related-wallets');
-    expect(HELP).toContain('perp-positions');
-    // token
-    expect(HELP).toContain('who-bought-sold');
-    expect(HELP).toContain('flow-intelligence');
-    expect(HELP).toContain('transfers');
-    expect(HELP).toContain('jup-dca');
-    expect(HELP).toContain('perp-pnl-leaderboard');
+  it('should list top-level commands in help text', () => {
+    expect(HELP).toContain('research');
+    expect(HELP).toContain('trade');
+    expect(HELP).toContain('wallet');
+    expect(HELP).toContain('schema');
+    expect(HELP).toContain('login/logout');
   });
 });
 
@@ -1107,15 +1100,16 @@ describe('SCHEMA', () => {
     expect(SCHEMA.version).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it('should define all main commands', () => {
-    expect(SCHEMA.commands['smart-money']).toBeDefined();
-    expect(SCHEMA.commands['profiler']).toBeDefined();
-    expect(SCHEMA.commands['token']).toBeDefined();
-    expect(SCHEMA.commands['portfolio']).toBeDefined();
+  it('should define all main commands under research', () => {
+    const r = SCHEMA.commands.research.subcommands;
+    expect(r['smart-money']).toBeDefined();
+    expect(r['profiler']).toBeDefined();
+    expect(r['token']).toBeDefined();
+    expect(r['portfolio']).toBeDefined();
   });
 
   it('should define subcommands for smart-money', () => {
-    const sm = SCHEMA.commands['smart-money'];
+    const sm = SCHEMA.commands.research.subcommands['smart-money'];
     expect(sm.subcommands['netflow']).toBeDefined();
     expect(sm.subcommands['dex-trades']).toBeDefined();
     expect(sm.subcommands['holdings']).toBeDefined();
@@ -1125,7 +1119,7 @@ describe('SCHEMA', () => {
   });
 
   it('should define subcommands for profiler', () => {
-    const profiler = SCHEMA.commands['profiler'];
+    const profiler = SCHEMA.commands.research.subcommands['profiler'];
     expect(profiler.subcommands['balance']).toBeDefined();
     expect(profiler.subcommands['labels']).toBeDefined();
     expect(profiler.subcommands['transactions']).toBeDefined();
@@ -1134,7 +1128,7 @@ describe('SCHEMA', () => {
   });
 
   it('should define subcommands for token', () => {
-    const token = SCHEMA.commands['token'];
+    const token = SCHEMA.commands.research.subcommands['token'];
     expect(token.subcommands['screener']).toBeDefined();
     expect(token.subcommands['holders']).toBeDefined();
     expect(token.subcommands['flows']).toBeDefined();
@@ -1143,19 +1137,19 @@ describe('SCHEMA', () => {
   });
 
   it('should include option definitions with types', () => {
-    const netflow = SCHEMA.commands['smart-money'].subcommands['netflow'];
+    const netflow = SCHEMA.commands.research.subcommands['smart-money'].subcommands['netflow'];
     expect(netflow.options.chain.type).toBe('string');
     expect(netflow.options.chain.default).toBe('solana');
     expect(netflow.options.limit.type).toBe('number');
   });
 
   it('should include required flag for required options', () => {
-    const balance = SCHEMA.commands['profiler'].subcommands['balance'];
+    const balance = SCHEMA.commands.research.subcommands['profiler'].subcommands['balance'];
     expect(balance.options.address.required).toBe(true);
   });
 
   it('should include return field definitions', () => {
-    const netflow = SCHEMA.commands['smart-money'].subcommands['netflow'];
+    const netflow = SCHEMA.commands.research.subcommands['smart-money'].subcommands['netflow'];
     expect(netflow.returns).toContain('token_symbol');
     expect(netflow.returns).toContain('net_flow_usd');
   });
@@ -1344,16 +1338,18 @@ describe('filterFields', () => {
 
 describe('--fields flag integration', () => {
   let outputs;
+  let errors;
   let exitCode;
 
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
-    errorOutput: (msg) => outputs.push(msg),
+    errorOutput: (msg) => errors.push(msg),
     exit: (code) => { exitCode = code; }
   });
 
   beforeEach(() => {
     outputs = [];
+    errors = [];
     exitCode = null;
   });
 
@@ -1678,15 +1674,17 @@ describe('formatStream', () => {
 
 describe('--stream flag integration', () => {
   let outputs;
+  let errors;
   let exitCode;
 
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
-    errorOutput: (msg) => outputs.push(msg),
+    errorOutput: (msg) => errors.push(msg),
     exit: (code) => { exitCode = code; }
   });
 
   beforeEach(() => {
+    errors = [];
     outputs = [];
     exitCode = null;
   });
@@ -1807,7 +1805,7 @@ describe('--from/--to filters on token transfers', () => {
   });
 
   it('should appear in SCHEMA for token.transfers', () => {
-    const transfers = SCHEMA.commands['token'].subcommands['transfers'];
+    const transfers = SCHEMA.commands.research.subcommands['token'].subcommands['transfers'];
     expect(transfers.options.from).toBeDefined();
     expect(transfers.options.to).toBeDefined();
   });
@@ -1817,7 +1815,7 @@ describe('--from/--to filters on token transfers', () => {
 
 describe('profiler batch command', () => {
   it('should appear in SCHEMA', () => {
-    const batch = SCHEMA.commands['profiler'].subcommands['batch'];
+    const batch = SCHEMA.commands.research.subcommands['profiler'].subcommands['batch'];
     expect(batch).toBeDefined();
     expect(batch.options.addresses).toBeDefined();
     expect(batch.options.file).toBeDefined();
@@ -1869,7 +1867,7 @@ describe('profiler batch command', () => {
 
 describe('profiler trace command', () => {
   it('should appear in SCHEMA', () => {
-    const trace = SCHEMA.commands['profiler'].subcommands['trace'];
+    const trace = SCHEMA.commands.research.subcommands['profiler'].subcommands['trace'];
     expect(trace).toBeDefined();
     expect(trace.options.address.required).toBe(true);
     expect(trace.options.depth).toBeDefined();
@@ -1925,7 +1923,7 @@ describe('profiler trace command', () => {
 
 describe('profiler compare command', () => {
   it('should appear in SCHEMA', () => {
-    const compare = SCHEMA.commands['profiler'].subcommands['compare'];
+    const compare = SCHEMA.commands.research.subcommands['profiler'].subcommands['compare'];
     expect(compare).toBeDefined();
     expect(compare.options.addresses.required).toBe(true);
   });
@@ -1958,7 +1956,7 @@ describe('profiler compare command', () => {
 
 describe('--enrich flag on token transfers', () => {
   it('should appear in SCHEMA for token.transfers', () => {
-    const transfers = SCHEMA.commands['token'].subcommands['transfers'];
+    const transfers = SCHEMA.commands.research.subcommands['token'].subcommands['transfers'];
     expect(transfers.options.enrich).toBeDefined();
     expect(transfers.options.enrich.type).toBe('boolean');
   });
@@ -2048,16 +2046,18 @@ describe('formatCsv', () => {
 
 describe('--format csv integration', () => {
   let outputs;
+  let errors;
   let exitCode;
 
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
-    errorOutput: (msg) => outputs.push(msg),
+    errorOutput: (msg) => errors.push(msg),
     exit: (code) => { exitCode = code; }
   });
 
   beforeEach(() => {
     outputs = [];
+    errors = [];
     exitCode = null;
   });
 
@@ -2333,5 +2333,168 @@ describe('ENS integration in traceCounterparties', () => {
     ).rejects.toThrow('Could not resolve ENS name');
 
     vi.restoreAllMocks();
+  });
+});
+
+// =================== research / trade / deprecation ===================
+
+describe('research command routing', () => {
+  it('should list categories when called with no args', async () => {
+    const commands = buildCommands({});
+    const result = await commands.research([], null, {}, {});
+    expect(result.categories).toContain('smart-money');
+    expect(result.categories).toContain('profiler');
+    expect(result.categories).toContain('token');
+  });
+
+  it('should list categories for help subcommand', async () => {
+    const commands = buildCommands({});
+    const result = await commands.research(['help'], null, {}, {});
+    expect(result.categories).toContain('smart-money');
+  });
+
+  it('should delegate to smart-money handler', async () => {
+    const commands = buildCommands({});
+    const result = await commands.research(['smart-money', 'help'], null, {}, {});
+    expect(result.commands).toContain('netflow');
+  });
+
+  it('should resolve category aliases (tgm -> token)', async () => {
+    const commands = buildCommands({});
+    const result = await commands.research(['tgm', 'help'], null, {}, {});
+    expect(result.commands).toContain('screener');
+  });
+
+  it('should error on unknown category', async () => {
+    const commands = buildCommands({});
+    const result = await commands.research(['unknown'], null, {}, {});
+    expect(result.error).toContain('Unknown research category');
+  });
+});
+
+describe('trade command routing', () => {
+  it('should list subcommands when called with no args', async () => {
+    const commands = buildCommands({});
+    const result = await commands.trade([], null, {}, {});
+    expect(result.commands).toContain('quote');
+    expect(result.commands).toContain('execute');
+  });
+
+  it('should error on unknown subcommand', async () => {
+    const commands = buildCommands({});
+    const result = await commands.trade(['unknown'], null, {}, {});
+    expect(result.error).toContain('Unknown trade subcommand');
+  });
+});
+
+describe('deprecation warnings', () => {
+  it('should warn for deprecated research commands', async () => {
+    const errors = [];
+    const deps = {
+      output: () => {},
+      errorOutput: (msg) => errors.push(msg),
+      exit: () => {},
+      NansenAPIClass: function MockAPI() {
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue({ data: [] });
+      }
+    };
+    await runCLI(['smart-money', 'netflow'], deps);
+    expect(errors.some(e => e.includes('deprecated'))).toBe(true);
+    expect(errors.some(e => e.includes('nansen research smart-money'))).toBe(true);
+  });
+
+  it('should warn for deprecated trade commands', async () => {
+    const errors = [];
+    const deps = {
+      output: () => {},
+      errorOutput: (msg) => errors.push(msg),
+      exit: () => {}
+    };
+    await runCLI(['quote'], deps);
+    expect(errors.some(e => e.includes('deprecated'))).toBe(true);
+    expect(errors.some(e => e.includes('nansen trade quote'))).toBe(true);
+  });
+
+  it('should not warn for new research path', async () => {
+    const errors = [];
+    const deps = {
+      output: () => {},
+      errorOutput: (msg) => errors.push(msg),
+      exit: () => {},
+      NansenAPIClass: function MockAPI() {
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue({ data: [] });
+      }
+    };
+    await runCLI(['research', 'smart-money', 'netflow'], deps);
+    expect(errors.some(e => e.includes('deprecated'))).toBe(false);
+  });
+
+  it('should include all expected categories in DEPRECATED_TO_RESEARCH', () => {
+    expect(DEPRECATED_TO_RESEARCH.has('smart-money')).toBe(true);
+    expect(DEPRECATED_TO_RESEARCH.has('profiler')).toBe(true);
+    expect(DEPRECATED_TO_RESEARCH.has('token')).toBe(true);
+    expect(DEPRECATED_TO_RESEARCH.has('search')).toBe(true);
+    expect(DEPRECATED_TO_RESEARCH.has('perp')).toBe(true);
+    expect(DEPRECATED_TO_RESEARCH.has('portfolio')).toBe(true);
+    expect(DEPRECATED_TO_RESEARCH.has('points')).toBe(true);
+  });
+
+  it('should include quote and execute in DEPRECATED_TO_TRADE', () => {
+    expect(DEPRECATED_TO_TRADE.has('quote')).toBe(true);
+    expect(DEPRECATED_TO_TRADE.has('execute')).toBe(true);
+  });
+
+  it('should route deprecated quote through to the handler', async () => {
+    const outputs = [];
+    const errors = [];
+    const deps = {
+      output: (msg) => outputs.push(msg),
+      errorOutput: (msg) => errors.push(msg),
+      exit: () => {}
+    };
+    // quote with no args shows its help; confirms handler was reached
+    const result = await runCLI(['quote'], deps);
+    expect(errors.some(e => e.includes('nansen trade quote'))).toBe(true);
+    expect(result.type).toBe('no-auth');
+  });
+});
+
+describe('SCHEMA structure', () => {
+  it('should have research and trade top-level commands', () => {
+    expect(SCHEMA.commands.research).toBeDefined();
+    expect(SCHEMA.commands.trade).toBeDefined();
+  });
+
+  it('should have research subcommands matching deprecated categories', () => {
+    const researchSubs = Object.keys(SCHEMA.commands.research.subcommands);
+    expect(researchSubs).toContain('smart-money');
+    expect(researchSubs).toContain('profiler');
+    expect(researchSubs).toContain('token');
+    expect(researchSubs).toContain('search');
+    expect(researchSubs).toContain('perp');
+    expect(researchSubs).toContain('portfolio');
+    expect(researchSubs).toContain('points');
+  });
+
+  it('should populate research subcommands from deprecated entries', () => {
+    const smSubs = SCHEMA.commands.research.subcommands['smart-money'].subcommands;
+    expect(smSubs.netflow).toBeDefined();
+    expect(smSubs['dex-trades']).toBeDefined();
+  });
+
+  it('should have trade subcommands', () => {
+    const tradeSubs = Object.keys(SCHEMA.commands.trade.subcommands);
+    expect(tradeSubs).toContain('quote');
+    expect(tradeSubs).toContain('execute');
+  });
+
+  it('should not have deprecated entries at top level', () => {
+    expect(SCHEMA.commands['smart-money']).toBeUndefined();
+    expect(SCHEMA.commands.profiler).toBeUndefined();
+    expect(SCHEMA.commands.token).toBeUndefined();
+    expect(SCHEMA.commands.search).toBeUndefined();
+    expect(SCHEMA.commands.perp).toBeUndefined();
+    expect(SCHEMA.commands.portfolio).toBeUndefined();
+    expect(SCHEMA.commands.points).toBeUndefined();
   });
 });

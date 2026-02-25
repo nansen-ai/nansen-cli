@@ -45,12 +45,12 @@ describe('CLI Smoke Tests', () => {
 
   it('should show help', () => {
     const { stdout, exitCode } = runCLI('help');
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain('Nansen CLI');
-    expect(stdout).toContain('smart-money');
-    expect(stdout).toContain('profiler');
-    expect(stdout).toContain('token');
+    expect(stdout).toContain('research');
+    expect(stdout).toContain('trade');
+    expect(stdout).toContain('wallet');
   });
 
   it('should show schema', () => {
@@ -89,19 +89,24 @@ describe('CLI Smoke Tests', () => {
 
   // =================== Command Routing ===================
 
-  it('should route smart-money commands', () => {
-    const { stdout } = runCLI('smart-money help');
+  it('should route research smart-money commands', () => {
+    const { stdout } = runCLI('research smart-money help');
     expect(stdout).toContain('netflow');
   });
 
-  it('should route profiler commands', () => {
-    const { stdout } = runCLI('profiler help');
+  it('should route research profiler commands', () => {
+    const { stdout } = runCLI('research profiler help');
     expect(stdout).toContain('balance');
   });
 
-  it('should route token commands', () => {
-    const { stdout } = runCLI('token help');
+  it('should route research token commands', () => {
+    const { stdout } = runCLI('research token help');
     expect(stdout).toContain('screener');
+  });
+
+  it('should still route deprecated smart-money path', () => {
+    const { stdout } = runCLI('smart-money help');
+    expect(stdout).toContain('netflow');
   });
 
   // =================== Environment Variables ===================
