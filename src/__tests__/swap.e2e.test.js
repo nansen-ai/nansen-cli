@@ -61,7 +61,7 @@ describe.sequential('e2e: ETH ↔ USDC swap round-trip on Base', () => {
 
   it('quote ETH → USDC on Base', () => {
     const result = runCli(
-      'quote',
+      'trade', 'quote',
       '--chain', 'base',
       '--from', BASE_ETH,
       '--to', BASE_USDC,
@@ -78,7 +78,7 @@ describe.sequential('e2e: ETH ↔ USDC swap round-trip on Base', () => {
     expect(state.forwardQuoteId).toBeTruthy();
 
     const result = runCli(
-      'execute',
+      'trade', 'execute',
       '--quote', state.forwardQuoteId,
     );
     const output = result.stdout + result.stderr;
@@ -100,7 +100,7 @@ describe.sequential('e2e: ETH ↔ USDC swap round-trip on Base', () => {
     expect(state.receivedUsdcAmount, 'Forward swap must capture USDC amount').toBeTruthy();
 
     const result = runCli(
-      'quote',
+      'trade', 'quote',
       '--chain', 'base',
       '--from', BASE_USDC,
       '--to', BASE_ETH,
@@ -117,7 +117,7 @@ describe.sequential('e2e: ETH ↔ USDC swap round-trip on Base', () => {
     expect(state.reverseQuoteId).toBeTruthy();
 
     const result = runCli(
-      'execute',
+      'trade', 'execute',
       '--quote', state.reverseQuoteId,
     );
     const output = result.stdout + result.stderr;
