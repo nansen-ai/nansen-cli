@@ -49,7 +49,7 @@ describe('parseArgs', () => {
 
   it('should parse options with values', () => {
     const result = parseArgs(['--chain', 'solana', '--limit', '10']);
-    expect(result.options).toEqual({ chain: 'solana', limit: 10 }); // numbers parsed via JSON.parse
+    expect(result.options).toEqual({ chain: 'solana', limit: '10' }); // numbers kept as strings to avoid scientific notation
   });
 
   it('should parse JSON options', () => {
@@ -61,7 +61,7 @@ describe('parseArgs', () => {
     const result = parseArgs(['token', 'screener', '--chain', 'solana', '--pretty', '--limit', '5']);
     expect(result._).toEqual(['token', 'screener']);
     expect(result.options.chain).toBe('solana');
-    expect(result.options.limit).toBe(5); // numbers parsed via JSON.parse
+    expect(result.options.limit).toBe('5'); // numbers kept as strings to avoid scientific notation
     expect(result.flags.pretty).toBe(true);
   });
 

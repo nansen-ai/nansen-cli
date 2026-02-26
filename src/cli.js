@@ -245,9 +245,12 @@ export function parseArgs(args) {
       if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich') {
         result.flags[key] = true;
       } else if (next && !next.startsWith('-')) {
-        // Try to parse as JSON first
+        // Try to parse as JSON first (for objects/arrays/booleans),
+        // but keep numeric strings as strings to avoid precision loss
+        // and scientific notation for large integers (e.g. 1e+21).
         try {
-          result.options[key] = JSON.parse(next);
+          const parsed = JSON.parse(next);
+          result.options[key] = typeof parsed === 'number' ? next : parsed;
         } catch {
           result.options[key] = next;
         }
@@ -1601,12 +1604,12 @@ export async function runCLI(rawArgs, deps = {}) {
     // Configure retry options
     const retryOptions = flags['no-retry'] 
       ? { maxRetries: 0 } 
-      : { maxRetries: options.retries !== undefined ? options.retries : 3 };
+      : { maxRetries: options.retries !== undefined ? parseInt(options.retries, 10) : 3 };
     
     // Configure cache options
     const cacheOptions = {
       enabled: flags['cache'] && !flags['no-cache'],
-      ttl: options['cache-ttl'] !== undefined ? options['cache-ttl'] : 300
+      ttl: options['cache-ttl'] !== undefined ? parseInt(options['cache-ttl'], 10) : 300
     };
     
     const defaultHeaders = {};

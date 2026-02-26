@@ -212,7 +212,7 @@ describe('CLI Argument Parsing', () => {
   it('should parse key-value options', () => {
     const result = parseArgs(['--chain', 'ethereum', '--limit', '10']);
     expect(result.options.chain).toBe('ethereum');
-    expect(result.options.limit).toBe(10); // Should parse as number
+    expect(result.options.limit).toBe('10'); // Kept as string to avoid scientific notation for large numbers
   });
 
   it('should parse JSON options', () => {
@@ -243,6 +243,20 @@ describe('CLI Argument Parsing', () => {
     const result = parseArgs(['--address', '0x123abc', '--query', 'Vitalik']);
     expect(result.options.address).toBe('0x123abc');
     expect(result.options.query).toBe('Vitalik');
+  });
+
+  it('should keep large numeric amounts as strings to avoid scientific notation', () => {
+    // 1000 tokens with 18 decimals = 10^21, which JS converts to 1e+21
+    const result = parseArgs(['--amount', '1000000000000000000000']);
+    expect(result.options.amount).toBe('1000000000000000000000');
+    // Verify String() preserves the full representation
+    expect(String(result.options.amount)).toBe('1000000000000000000000');
+  });
+
+  it('should keep all numeric option values as strings', () => {
+    const result = parseArgs(['--days', '30', '--limit', '100']);
+    expect(result.options.days).toBe('30');
+    expect(result.options.limit).toBe('100');
   });
 });
 
