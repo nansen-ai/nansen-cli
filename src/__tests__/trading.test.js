@@ -25,6 +25,7 @@ import {
   buildApprovalTransaction,
   stripLeadingZeros,
   buildTradingCommands,
+  getWrappedNativeFromWarning,
 } from '../trading.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
@@ -745,6 +746,65 @@ describe('stripLeadingZeros', () => {
 
   it('should handle empty buffer', () => {
     expect(stripLeadingZeros(Buffer.alloc(0))).toEqual(Buffer.alloc(0));
+  });
+});
+
+// ============= Wrapped Native Token Warning =============
+
+describe('getWrappedNativeFromWarning', () => {
+  it('should warn when --from is WETH on Base', () => {
+    const warning = getWrappedNativeFromWarning('0x4200000000000000000000000000000000000006', 'base');
+    expect(warning).toContain('WETH');
+    expect(warning).toContain('wrapped ETH');
+    expect(warning).toContain('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+  });
+
+  it('should warn when --from is WETH on Ethereum', () => {
+    const warning = getWrappedNativeFromWarning('0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', 'ethereum');
+    expect(warning).toContain('WETH');
+    expect(warning).toContain('wrapped ETH');
+    expect(warning).toContain('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+  });
+
+  it('should warn when --from is WBNB on BSC', () => {
+    const warning = getWrappedNativeFromWarning('0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', 'bsc');
+    expect(warning).toContain('WBNB');
+    expect(warning).toContain('wrapped BNB');
+    expect(warning).toContain('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+  });
+
+  it('should warn when --from is native sentinel on Base', () => {
+    const warning = getWrappedNativeFromWarning('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 'base');
+    expect(warning).toContain('native ETH');
+    expect(warning).toContain('WETH');
+    expect(warning).toContain('0x4200000000000000000000000000000000000006');
+  });
+
+  it('should warn when --from is native sentinel on BSC', () => {
+    const warning = getWrappedNativeFromWarning('0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', 'bsc');
+    expect(warning).toContain('native BNB');
+    expect(warning).toContain('WBNB');
+    expect(warning).toContain('0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c');
+  });
+
+  it('should match addresses case-insensitively', () => {
+    const warning = getWrappedNativeFromWarning('0x4200000000000000000000000000000000000006', 'Base');
+    expect(warning).toContain('WETH');
+  });
+
+  it('should return null for non-wrapped, non-native tokens', () => {
+    expect(getWrappedNativeFromWarning('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 'base')).toBeNull();
+  });
+
+  it('should return null for unsupported chains (e.g. solana)', () => {
+    expect(getWrappedNativeFromWarning('So11111111111111111111111111111111111111112', 'solana')).toBeNull();
+  });
+
+  it('should return null for null/undefined inputs', () => {
+    expect(getWrappedNativeFromWarning(null, 'base')).toBeNull();
+    expect(getWrappedNativeFromWarning(undefined, 'base')).toBeNull();
+    expect(getWrappedNativeFromWarning('0x4200000000000000000000000000000000000006', null)).toBeNull();
+    expect(getWrappedNativeFromWarning(null, null)).toBeNull();
   });
 });
 

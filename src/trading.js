@@ -23,6 +23,12 @@ const CHAIN_MAP = {
   bsc:      { index: '56',  type: 'evm',    chainId: 56,   name: 'BSC',      explorer: 'https://bscscan.com/tx/' },
 };
 
+const WRAPPED_NATIVE_TOKENS = {
+  ethereum: { address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', symbol: 'WETH', nativeSymbol: 'ETH' },
+  base:     { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', nativeSymbol: 'ETH' },
+  bsc:      { address: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', symbol: 'WBNB', nativeSymbol: 'BNB' },
+};
+
 // Default public RPC endpoints (used for nonce fetching)
 const EVM_RPC_URLS = {
   ethereum: process.env.NANSEN_RPC_ETHEREUM || 'https://eth.llamarpc.com',
@@ -646,6 +652,32 @@ function isNativeToken(mintAddress) {
   return /^0x[eE]{40}$/.test(mintAddress);
 }
 
+/**
+ * Check if --from is a wrapped native token or native sentinel and return
+ * a warning string, or null if no warning is needed. Pure function.
+ */
+export function getWrappedNativeFromWarning(tokenAddress, chain) {
+  if (!tokenAddress || !chain) return null;
+  const wrapped = WRAPPED_NATIVE_TOKENS[chain.toLowerCase()];
+  if (!wrapped) return null;
+
+  const addr = tokenAddress.toLowerCase();
+
+  // Case 1: --from is wrapped token (e.g. WETH) — suggest native sentinel
+  if (addr === wrapped.address.toLowerCase()) {
+    return `Warning: --from is ${wrapped.symbol} (wrapped ${wrapped.nativeSymbol}). ` +
+      `If you hold native ${wrapped.nativeSymbol}, use: 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`;
+  }
+
+  // Case 2: --from is native sentinel — mention the wrapped alternative
+  if (/^0x[eE]{40}$/.test(tokenAddress)) {
+    return `Warning: --from is native ${wrapped.nativeSymbol}. ` +
+      `If you hold ${wrapped.symbol} instead, use: ${wrapped.address}`;
+  }
+
+  return null;
+}
+
 function formatQuote(quote, index) {
   const lines = [];
   const label = index !== undefined ? `  Quote #${index + 1}` : '  Best Quote';
@@ -724,6 +756,9 @@ EXAMPLES:
 
         errorOutput(`\nFetching quote on ${chainConfig.name}...`);
         errorOutput(`  Wallet: ${walletAddress}`);
+
+        const fromWarning = getWrappedNativeFromWarning(from, chain);
+        if (fromWarning) errorOutput(`  ${fromWarning}`);
 
         const params = {
           chainIndex: chainConfig.index,
