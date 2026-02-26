@@ -346,7 +346,15 @@ export async function waitForReceipt(chain, txHash, timeoutMs = 30000, pollMs = 
     if (body.result) {
       const status = parseInt(body.result.status, 16);
       if (status !== 1) {
-        throw new Error(`Transaction reverted on-chain (status: ${body.result.status}). Tx: ${txHash}`);
+        // Try to decode the revert reason via eth_call replay
+        let reason = null;
+        try {
+          reason = await getRevertReason(chain, txHash, body.result.blockNumber);
+        } catch {
+          // Ignore — revert reason decoding is best-effort
+        }
+        const reasonStr = reason ? ` Reason: ${reason}` : '';
+        throw new Error(`Transaction reverted on-chain (status: ${body.result.status}).${reasonStr} Tx: ${txHash}`);
       }
       return body.result;
     }
@@ -354,6 +362,130 @@ export async function waitForReceipt(chain, txHash, timeoutMs = 30000, pollMs = 
     await new Promise(r => setTimeout(r, pollMs));
   }
   throw new Error(`Transaction receipt not found after ${timeoutMs}ms. Tx: ${txHash}`);
+}
+
+// Well-known Panic(uint256) codes from Solidity
+const PANIC_CODES = {
+  0x00: 'Generic compiler panic',
+  0x01: 'Assert failed',
+  0x11: 'Arithmetic overflow/underflow',
+  0x12: 'Division or modulo by zero',
+  0x21: 'Invalid enum conversion',
+  0x22: 'Storage encoding error',
+  0x31: 'Pop on empty array',
+  0x32: 'Array index out of bounds',
+  0x41: 'Out of memory',
+  0x51: 'Called zero-initialized function',
+};
+
+/**
+ * Decode EVM revert reason from hex data.
+ * Handles Error(string) selector 0x08c379a2 and Panic(uint256) selector 0x4e487b71.
+ * Falls back to raw hex for unknown selectors.
+ *
+ * @param {string} hexData - Hex string (with or without 0x prefix)
+ * @returns {string|null} Decoded reason or null if data is empty
+ */
+export function decodeRevertReason(hexData) {
+  if (!hexData || hexData === '0x' || hexData === '0x0') return null;
+
+  const hex = hexData.startsWith('0x') ? hexData.slice(2) : hexData;
+  if (hex.length < 8) return `Unknown revert (0x${hex})`;
+
+  const selector = hex.slice(0, 8).toLowerCase();
+
+  // Error(string) — 0x08c379a2
+  if (selector === '08c379a2' && hex.length >= 136) {
+    try {
+      const dataOffset = parseInt(hex.slice(8, 72), 16);
+      const strStart = 8 + dataOffset * 2;
+      const strLen = parseInt(hex.slice(strStart, strStart + 64), 16);
+      const strHex = hex.slice(strStart + 64, strStart + 64 + strLen * 2);
+      const message = Buffer.from(strHex, 'hex').toString('utf8');
+      return message;
+    } catch {
+      return `Error(string) — failed to decode (0x${hex.slice(0, 40)}...)`;
+    }
+  }
+
+  // Panic(uint256) — 0x4e487b71
+  if (selector === '4e487b71' && hex.length >= 72) {
+    try {
+      const code = parseInt(hex.slice(8, 72), 16);
+      const description = PANIC_CODES[code] || `Unknown panic code`;
+      return `Panic(${code}): ${description}`;
+    } catch {
+      return `Panic — failed to decode (0x${hex.slice(0, 40)}...)`;
+    }
+  }
+
+  // Unknown selector — show raw hex (truncated)
+  const display = hex.length > 64 ? `0x${hex.slice(0, 64)}...` : `0x${hex}`;
+  return `Unknown revert: ${display}`;
+}
+
+/**
+ * Replay a reverted transaction via eth_call to extract the revert reason.
+ * Fetches the original transaction by hash, then calls eth_call at the block it was mined in.
+ *
+ * @param {string} chain - Chain name
+ * @param {string} txHash - Transaction hash
+ * @param {string} blockNumber - Block number (hex) the tx was mined in
+ * @returns {Promise<string|null>} Decoded revert reason or null
+ */
+export async function getRevertReason(chain, txHash, blockNumber) {
+  const rpcUrl = EVM_RPC_URLS[chain];
+  if (!rpcUrl) return null;
+
+  try {
+    // Fetch the original transaction to get its parameters
+    const txRes = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'eth_getTransactionByHash',
+        params: [txHash],
+      }),
+    });
+    const txBody = await txRes.json();
+    if (!txBody.result) return null;
+
+    const tx = txBody.result;
+    // Replay the transaction as eth_call at the block it was mined in
+    const callRes = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'eth_call',
+        params: [
+          { from: tx.from, to: tx.to, data: tx.input, value: tx.value, gas: tx.gas },
+          blockNumber,
+        ],
+      }),
+    });
+    const callBody = await callRes.json();
+
+    // eth_call on a reverting tx returns error with data
+    if (callBody.error) {
+      // Some RPCs put revert data in error.data
+      const revertData = callBody.error.data;
+      if (revertData && typeof revertData === 'string' && revertData !== '0x') {
+        return decodeRevertReason(revertData);
+      }
+      // Some RPCs just return a message
+      if (callBody.error.message) {
+        return callBody.error.message;
+      }
+    }
+
+    return null;
+  } catch {
+    return null; // Don't fail the main flow if revert decoding fails
+  }
 }
 
 /**
@@ -741,8 +873,23 @@ EXAMPLES:
 
         if (!response.success || !response.quotes?.length) {
           errorOutput('No quotes available');
+          if (response.errors?.length) {
+            response.errors.forEach(e => {
+              const reason = typeof e === 'string' ? e : (e.message || e.reason || JSON.stringify(e));
+              errorOutput(`  ✗ ${reason}`);
+            });
+          }
+          if (response.details?.length) {
+            response.details.forEach(d => {
+              const reason = typeof d === 'string' ? d : (d.message || d.reason || JSON.stringify(d));
+              errorOutput(`  ✗ ${reason}`);
+            });
+          }
           if (response.warnings?.length) {
             response.warnings.forEach(w => errorOutput(`  Warning: ${w}`));
+          }
+          if (response.message) {
+            errorOutput(`  Reason: ${response.message}`);
           }
           exit(1);
           return;
@@ -765,7 +912,15 @@ EXAMPLES:
 
       } catch (err) {
         errorOutput(`Error: ${err.message}`);
-        if (err.details) errorOutput(`  Details: ${JSON.stringify(err.details)}`);
+        if (err.code) errorOutput(`  Code: ${err.code}`);
+        if (Array.isArray(err.details)) {
+          err.details.forEach(d => {
+            const reason = typeof d === 'string' ? d : (d.message || d.reason || JSON.stringify(d));
+            errorOutput(`  ✗ ${reason}`);
+          });
+        } else if (err.details) {
+          errorOutput(`  Details: ${JSON.stringify(err.details)}`);
+        }
         exit(1);
       }
     },

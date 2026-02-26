@@ -25,6 +25,9 @@ import {
   buildApprovalTransaction,
   stripLeadingZeros,
   buildTradingCommands,
+  decodeRevertReason,
+  getRevertReason,
+  waitForReceipt,
 } from '../trading.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
@@ -838,6 +841,272 @@ describe('API error handling', () => {
       amount: '1',
       userWalletAddress: 'z',
     })).rejects.toThrow(); // Should throw, not hang
+
+    global.fetch = origFetch;
+  });
+
+  it('should surface aggregator-specific details from NO_QUOTES_AVAILABLE', async () => {
+    const origFetch = global.fetch;
+    const errorBody = JSON.stringify({
+      code: 'NO_QUOTES_AVAILABLE',
+      message: 'No quotes available from any aggregator',
+      details: ['LiFi: token denied', 'OKX: no liquidity for pair'],
+    });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => errorBody,
+    });
+
+    const { getQuote } = await import('../trading.js');
+    try {
+      await getQuote({ chainIndex: '1', fromTokenAddress: 'x', toTokenAddress: 'y', amount: '1', userWalletAddress: 'z' });
+    } catch (err) {
+      expect(err.code).toBe('NO_QUOTES_AVAILABLE');
+      expect(err.details).toEqual(['LiFi: token denied', 'OKX: no liquidity for pair']);
+    }
+
+    global.fetch = origFetch;
+  });
+});
+
+// ============= Revert Reason Decoding =============
+
+describe('decodeRevertReason', () => {
+  it('should return null for empty data', () => {
+    expect(decodeRevertReason(null)).toBeNull();
+    expect(decodeRevertReason('')).toBeNull();
+    expect(decodeRevertReason('0x')).toBeNull();
+    expect(decodeRevertReason('0x0')).toBeNull();
+  });
+
+  it('should decode Error(string) revert reasons', () => {
+    // Error(string) encoding for "Insufficient balance"
+    // selector: 08c379a2
+    // offset:   0000...0020 (32)
+    // length:   0000...0014 (20 bytes)
+    // data:     "Insufficient balance" in hex
+    const msg = 'Insufficient balance';
+    const msgHex = Buffer.from(msg).toString('hex');
+    const hex = '0x08c379a2'
+      + '0000000000000000000000000000000000000000000000000000000000000020'
+      + '0000000000000000000000000000000000000000000000000000000000000014'
+      + msgHex.padEnd(64, '0');
+    expect(decodeRevertReason(hex)).toBe('Insufficient balance');
+  });
+
+  it('should decode Error(string) without 0x prefix', () => {
+    const msg = 'Denied';
+    const msgHex = Buffer.from(msg).toString('hex');
+    const hex = '08c379a2'
+      + '0000000000000000000000000000000000000000000000000000000000000020'
+      + '0000000000000000000000000000000000000000000000000000000000000006'
+      + msgHex.padEnd(64, '0');
+    expect(decodeRevertReason(hex)).toBe('Denied');
+  });
+
+  it('should decode Panic(uint256) for common codes', () => {
+    // Panic(1) = assert failed
+    const hex = '0x4e487b71'
+      + '0000000000000000000000000000000000000000000000000000000000000001';
+    expect(decodeRevertReason(hex)).toBe('Panic(1): Assert failed');
+  });
+
+  it('should decode Panic for arithmetic overflow', () => {
+    // Panic(0x11) = arithmetic overflow
+    const hex = '0x4e487b71'
+      + '0000000000000000000000000000000000000000000000000000000000000011';
+    expect(decodeRevertReason(hex)).toBe('Panic(17): Arithmetic overflow/underflow');
+  });
+
+  it('should decode Panic for division by zero', () => {
+    const hex = '0x4e487b71'
+      + '0000000000000000000000000000000000000000000000000000000000000012';
+    expect(decodeRevertReason(hex)).toBe('Panic(18): Division or modulo by zero');
+  });
+
+  it('should decode Panic for array out of bounds', () => {
+    const hex = '0x4e487b71'
+      + '0000000000000000000000000000000000000000000000000000000000000032';
+    expect(decodeRevertReason(hex)).toBe('Panic(50): Array index out of bounds');
+  });
+
+  it('should handle unknown panic codes', () => {
+    const hex = '0x4e487b71'
+      + '00000000000000000000000000000000000000000000000000000000000000ff';
+    expect(decodeRevertReason(hex)).toBe('Panic(255): Unknown panic code');
+  });
+
+  it('should show raw hex for unknown selectors', () => {
+    const hex = '0xdeadbeef0102030405060708';
+    const result = decodeRevertReason(hex);
+    expect(result).toContain('Unknown revert');
+    expect(result).toContain('deadbeef');
+  });
+
+  it('should handle short hex data', () => {
+    const result = decodeRevertReason('0xab');
+    expect(result).toContain('Unknown revert');
+  });
+});
+
+// ============= getRevertReason =============
+
+describe('getRevertReason', () => {
+  it('should fetch tx and replay via eth_call to extract revert reason', async () => {
+    const origFetch = global.fetch;
+
+    const msg = 'Token denied';
+    const msgHex = Buffer.from(msg).toString('hex');
+    const revertData = '0x08c379a2'
+      + '0000000000000000000000000000000000000000000000000000000000000020'
+      + '000000000000000000000000000000000000000000000000000000000000000c'
+      + msgHex.padEnd(64, '0');
+
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        json: async () => ({
+          jsonrpc: '2.0',
+          id: 1,
+          result: {
+            from: '0xabc',
+            to: '0xdef',
+            input: '0x1234',
+            value: '0x0',
+            gas: '0x5208',
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({
+          jsonrpc: '2.0',
+          id: 2,
+          error: { code: 3, message: 'execution reverted', data: revertData },
+        }),
+      });
+
+    const reason = await getRevertReason('base', '0xtxhash', '0x1234');
+    expect(reason).toBe('Token denied');
+
+    global.fetch = origFetch;
+  });
+
+  it('should return RPC error message when no data field', async () => {
+    const origFetch = global.fetch;
+
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        json: async () => ({
+          jsonrpc: '2.0',
+          id: 1,
+          result: { from: '0xabc', to: '0xdef', input: '0x', value: '0x0', gas: '0x5208' },
+        }),
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({
+          jsonrpc: '2.0',
+          id: 2,
+          error: { code: 3, message: 'execution reverted: transfer amount exceeds balance' },
+        }),
+      });
+
+    const reason = await getRevertReason('ethereum', '0xtxhash', '0x100');
+    expect(reason).toBe('execution reverted: transfer amount exceeds balance');
+
+    global.fetch = origFetch;
+  });
+
+  it('should return null when tx not found', async () => {
+    const origFetch = global.fetch;
+
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: null }),
+    });
+
+    const reason = await getRevertReason('base', '0xtxhash', '0x1234');
+    expect(reason).toBeNull();
+
+    global.fetch = origFetch;
+  });
+
+  it('should return null for unsupported chains', async () => {
+    const reason = await getRevertReason('polygon', '0xtxhash', '0x1');
+    expect(reason).toBeNull();
+  });
+
+  it('should return null on network error', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
+
+    const reason = await getRevertReason('base', '0xtxhash', '0x1');
+    expect(reason).toBeNull();
+
+    global.fetch = origFetch;
+  });
+});
+
+// ============= waitForReceipt with revert reasons =============
+
+describe('waitForReceipt revert reason decoding', () => {
+  it('should include decoded revert reason in error message', async () => {
+    const origFetch = global.fetch;
+
+    const msg = 'TRANSFER_FAILED';
+    const msgHex = Buffer.from(msg).toString('hex');
+    const revertData = '0x08c379a2'
+      + '0000000000000000000000000000000000000000000000000000000000000020'
+      + '000000000000000000000000000000000000000000000000000000000000000f'
+      + msgHex.padEnd(64, '0');
+
+    global.fetch = vi.fn()
+      // First call: eth_getTransactionReceipt (reverted)
+      .mockResolvedValueOnce({
+        json: async () => ({
+          jsonrpc: '2.0',
+          id: 1,
+          result: { status: '0x0', blockNumber: '0xabc' },
+        }),
+      })
+      // Second call: eth_getTransactionByHash (for replay)
+      .mockResolvedValueOnce({
+        json: async () => ({
+          jsonrpc: '2.0',
+          id: 1,
+          result: { from: '0xabc', to: '0xdef', input: '0x1234', value: '0x0', gas: '0x5208' },
+        }),
+      })
+      // Third call: eth_call (replay returns revert data)
+      .mockResolvedValueOnce({
+        json: async () => ({
+          jsonrpc: '2.0',
+          id: 2,
+          error: { code: 3, message: 'execution reverted', data: revertData },
+        }),
+      });
+
+    await expect(waitForReceipt('base', '0xtxhash', 5000, 100))
+      .rejects.toThrow('TRANSFER_FAILED');
+
+    global.fetch = origFetch;
+  });
+
+  it('should still report revert even if reason decoding fails', async () => {
+    const origFetch = global.fetch;
+
+    global.fetch = vi.fn()
+      // eth_getTransactionReceipt (reverted)
+      .mockResolvedValueOnce({
+        json: async () => ({
+          jsonrpc: '2.0',
+          id: 1,
+          result: { status: '0x0', blockNumber: '0xabc' },
+        }),
+      })
+      // eth_getTransactionByHash fails
+      .mockRejectedValueOnce(new Error('RPC down'));
+
+    await expect(waitForReceipt('base', '0xtxhash', 5000, 100))
+      .rejects.toThrow('Transaction reverted on-chain');
 
     global.fetch = origFetch;
   });
