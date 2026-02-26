@@ -2,8 +2,6 @@
 
 Guidance for AI coding agents (Claude Code, Codex, Copilot, etc.) working on this repository. If you're an agent **using** the CLI, see [README.md](README.md).
 
-> **Before opening a PR, read [CONTRIBUTING.md](CONTRIBUTING.md).** It defines the CLI's design philosophy and what we will and won't merge.
-
 ## Architecture
 
 ```
