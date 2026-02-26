@@ -94,6 +94,7 @@ describe('resolveTokenAddress', () => {
     expect(resolveTokenAddress('USDC', 'base')).toBe('0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
     expect(resolveTokenAddress('BNB', 'bsc')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
     expect(resolveTokenAddress('ETH', 'ethereum')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+    expect(resolveTokenAddress('DAI', 'ethereum')).toBe('0x6b175474e89094c44da98b954eedeac495271d0f');
   });
 
   it('should be case-insensitive for symbols', () => {
