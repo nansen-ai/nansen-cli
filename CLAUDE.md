@@ -2,6 +2,8 @@
 
 AI assistant guide for contributing to nansen-cli.
 
+> **Before opening a PR, read [CONTRIBUTING.md](CONTRIBUTING.md).** It defines the CLI's design philosophy and what we will and won't merge.
+
 ## What This Is
 
 A CLI for the [Nansen API](https://docs.nansen.ai), designed specifically for AI agents. All output is structured JSON. 30 endpoints across Smart Money, Profiler, Token God Mode, and Portfolio.
