@@ -651,7 +651,7 @@ async function promptPassword(prompt, deps = {}) {
 }
 
 function isNativeToken(mintAddress) {
-  return typeof mintAddress === 'string' && mintAddress.toLowerCase() === NATIVE_TOKEN_SENTINEL;
+  return /^0x[eE]{40}$/.test(mintAddress);
 }
 
 /**
@@ -727,7 +727,12 @@ export async function resolveWrappedNativeToken(tokenAddress, chain, walletAddre
   if (!wrapped) return { address: tokenAddress, substituted: false };
   if (tokenAddress.toLowerCase() !== wrapped.address.toLowerCase()) return { address: tokenAddress, substituted: false };
 
-  const requiredAmount = BigInt(amount);
+  let requiredAmount;
+  try {
+    requiredAmount = BigInt(amount);
+  } catch {
+    return { address: tokenAddress, substituted: false };
+  }
 
   // Check if user has enough wrapped token balance
   const wrappedBalance = await getErc20Balance(chain, wrapped.address, walletAddress);
