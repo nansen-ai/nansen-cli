@@ -1079,6 +1079,7 @@ describe('SCHEMA', () => {
     expect(r['profiler']).toBeDefined();
     expect(r['token']).toBeDefined();
     expect(r['portfolio']).toBeDefined();
+    expect(r['prediction-market']).toBeDefined();
   });
 
   it('should define subcommands for smart-money', () => {
@@ -1107,6 +1108,39 @@ describe('SCHEMA', () => {
     expect(token.subcommands['flows']).toBeDefined();
     expect(token.subcommands['pnl']).toBeDefined();
     expect(token.subcommands['perp-trades']).toBeDefined();
+  });
+
+  it('should define subcommands for prediction-market', () => {
+    const pm = SCHEMA.commands.research.subcommands['prediction-market'];
+    expect(pm.subcommands['ohlcv']).toBeDefined();
+    expect(pm.subcommands['orderbook']).toBeDefined();
+    expect(pm.subcommands['top-holders']).toBeDefined();
+    expect(pm.subcommands['trades-by-market']).toBeDefined();
+    expect(pm.subcommands['trades-by-address']).toBeDefined();
+    expect(pm.subcommands['market-screener']).toBeDefined();
+    expect(pm.subcommands['event-screener']).toBeDefined();
+    expect(pm.subcommands['pnl-by-market']).toBeDefined();
+    expect(pm.subcommands['pnl-by-address']).toBeDefined();
+    expect(pm.subcommands['position-detail']).toBeDefined();
+    expect(pm.subcommands['categories']).toBeDefined();
+  });
+
+  it('should have required market-id option for pm market endpoints', () => {
+    const ohlcv = SCHEMA.commands.research.subcommands['prediction-market'].subcommands['ohlcv'];
+    expect(ohlcv.options['market-id'].required).toBe(true);
+    expect(ohlcv.options['market-id'].type).toBe('string');
+  });
+
+  it('should have required address option for pm address endpoints', () => {
+    const trades = SCHEMA.commands.research.subcommands['prediction-market'].subcommands['trades-by-address'];
+    expect(trades.options.address.required).toBe(true);
+  });
+
+  it('should have return fields for pm endpoints', () => {
+    const screener = SCHEMA.commands.research.subcommands['prediction-market'].subcommands['market-screener'];
+    expect(screener.returns).toContain('market_id');
+    expect(screener.returns).toContain('volume_24hr');
+    expect(screener.returns).toContain('liquidity');
   });
 
   it('should include option definitions with types', () => {
@@ -2452,6 +2486,7 @@ describe('SCHEMA structure', () => {
     expect(researchSubs).toContain('perp');
     expect(researchSubs).toContain('portfolio');
     expect(researchSubs).toContain('points');
+    expect(researchSubs).toContain('prediction-market');
   });
 
   it('should populate research subcommands from deprecated entries', () => {

@@ -132,6 +132,22 @@ export const SCHEMA = {
           subcommands: {
             'leaderboard': { description: 'Points leaderboard', options: { tier: { type: 'string', description: 'Filter by tier' }, limit: { type: 'number' } }, returns: ['rank', 'address', 'address_label', 'points', 'tier'] }
           }
+        },
+        'prediction-market': {
+          description: 'Polymarket prediction market analytics',
+          subcommands: {
+            'ohlcv': { description: 'OHLCV candle data for a market', options: { 'market-id': { type: 'string', required: true, description: 'Polymarket market ID' }, sort: { type: 'string', description: 'Sort field:direction (e.g., period_start:desc)' }, limit: { type: 'number' } }, returns: ['market_id', 'token_id', 'side', 'outcome_index', 'period_start', 'open', 'high', 'low', 'close', 'volume_usd', 'trade_count', 'unique_traders'] },
+            'orderbook': { description: 'Current orderbook levels for a market', options: { 'market-id': { type: 'string', required: true, description: 'Polymarket market ID' }, limit: { type: 'number' } }, returns: ['market_id', 'event_id', 'outcome', 'outcome_index', 'asset_id', 'side', 'price', 'size', 'cumulative_size', 'snapshot_timestamp'] },
+            'top-holders': { description: 'Top holders for a market', options: { 'market-id': { type: 'string', required: true, description: 'Polymarket market ID' }, sort: { type: 'string', description: 'Sort field:direction (e.g., position_size:desc)' }, limit: { type: 'number' } }, returns: ['market_id', 'outcome_index', 'address', 'owner_address', 'side', 'position_size', 'avg_entry_price', 'current_price', 'unrealized_pnl_usd'] },
+            'trades-by-market': { description: 'Recent trades for a market', options: { 'market-id': { type: 'string', required: true, description: 'Polymarket market ID' }, limit: { type: 'number' } }, returns: ['timestamp', 'seller', 'buyer', 'taker_action', 'side', 'outcome_index', 'size', 'price', 'usdc_value', 'tx_hash', 'market_id'] },
+            'trades-by-address': { description: 'Trades for a specific address', options: { address: { type: 'string', required: true, description: 'Wallet address (Polygon)' }, limit: { type: 'number' } }, returns: ['timestamp', 'seller', 'buyer', 'taker_action', 'side', 'outcome_index', 'size', 'price', 'usdc_value', 'tx_hash', 'market_id', 'market_question', 'event_id', 'event_title'] },
+            'market-screener': { description: 'Screen and discover prediction markets', options: { 'sort-by': { type: 'string', default: 'volume_24hr', description: 'Sort column (volume_24hr, volume, liquidity)' }, query: { type: 'string', description: 'Search query to filter results' }, status: { type: 'string', description: 'Filter by status (active, closed)' }, limit: { type: 'number' } }, returns: ['market_id', 'question', 'slug', 'event_id', 'event_title', 'active', 'closed', 'volume', 'volume_24hr', 'liquidity', 'open_interest', 'best_bid', 'best_ask', 'last_trade_price', 'unique_traders_24h'] },
+            'event-screener': { description: 'Screen and discover prediction market events', options: { 'sort-by': { type: 'string', default: 'volume_24hr', description: 'Sort column (volume_24hr, volume, liquidity)' }, query: { type: 'string', description: 'Search query to filter results' }, status: { type: 'string', description: 'Filter by status (active, closed)' }, limit: { type: 'number' } }, returns: ['event_id', 'event_title', 'tags', 'market_count', 'total_volume', 'total_volume_24hr', 'total_liquidity', 'total_open_interest', 'total_traders_24h', 'top_market_id', 'top_market_question'] },
+            'pnl-by-market': { description: 'PnL leaderboard for a market', options: { 'market-id': { type: 'string', required: true, description: 'Polymarket market ID' }, limit: { type: 'number' } }, returns: ['address', 'owner_address', 'side_held', 'net_buy_cost_usd', 'net_sell_proceeds_usd', 'redemption_value_usd', 'unrealized_value_usd', 'total_pnl_usd', 'question', 'market_resolved', 'size_bucket', 'market_id'] },
+            'pnl-by-address': { description: 'PnL breakdown for an address across markets', options: { address: { type: 'string', required: true, description: 'Wallet address (Polygon)' }, limit: { type: 'number' } }, returns: ['address', 'market_id', 'question', 'event_id', 'event_title', 'side', 'net_buy_cost_usd', 'net_sell_proceeds_usd', 'redemption_value_usd', 'unrealized_value_usd', 'total_pnl_usd', 'market_resolved'] },
+            'position-detail': { description: 'Detailed position data for a market', options: { 'market-id': { type: 'string', required: true, description: 'Polymarket market ID' }, limit: { type: 'number' } }, returns: ['address', 'owner_address', 'outcome', 'outcome_index', 'token_id', 'balance', 'buy_cost_usd', 'sell_proceeds_usd', 'avg_entry_price', 'current_price', 'unrealized_value_usd', 'token_pnl_usd', 'market_id'] },
+            'categories': { description: 'List prediction market categories', options: { limit: { type: 'number' } }, returns: ['category', 'active_markets', 'total_open_interest', 'total_volume', 'total_volume_24hr', 'total_traders_24h', 'top_market_id', 'top_market_question'] }
+          }
         }
       }
     },
@@ -1281,11 +1297,47 @@ export function buildCommands(deps = {}) {
       }
 
       return handlers[subcommand]();
+    },
+
+    'prediction-market': async (args, apiInstance, flags, options) => {
+      const subcommand = args[0] || 'help';
+      const marketId = options['market-id'];
+      const address = options.address;
+      const sortBy = options['sort-by'];
+      const query = options.query;
+      const status = options.status;
+      const sort = parseSort(options.sort);
+      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+
+      const handlers = {
+        'ohlcv': () => apiInstance.pmOhlcv({ marketId, sort, pagination }),
+        'orderbook': () => apiInstance.pmOrderbook({ marketId, pagination }),
+        'top-holders': () => apiInstance.pmTopHolders({ marketId, sort, pagination }),
+        'trades-by-market': () => apiInstance.pmTradesByMarket({ marketId, pagination }),
+        'trades-by-address': () => apiInstance.pmTradesByAddress({ address, pagination }),
+        'market-screener': () => apiInstance.pmMarketScreener({ sortBy, query, status, pagination }),
+        'event-screener': () => apiInstance.pmEventScreener({ sortBy, query, status, pagination }),
+        'pnl-by-market': () => apiInstance.pmPnlByMarket({ marketId, pagination }),
+        'pnl-by-address': () => apiInstance.pmPnlByAddress({ address, pagination }),
+        'position-detail': () => apiInstance.pmPositionDetail({ marketId, pagination }),
+        'categories': () => apiInstance.pmCategories({ pagination }),
+        'help': () => ({
+          commands: ['ohlcv', 'orderbook', 'top-holders', 'trades-by-market', 'trades-by-address', 'market-screener', 'event-screener', 'pnl-by-market', 'pnl-by-address', 'position-detail', 'categories'],
+          description: 'Polymarket prediction market analytics',
+          example: 'nansen pm market-screener --sort-by volume_24hr --limit 20'
+        })
+      };
+
+      if (!handlers[subcommand]) {
+        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+      }
+
+      return handlers[subcommand]();
     }
   };
 
   // 'research' delegates to the category handlers defined above
-  const RESEARCH_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points']);
+  const RESEARCH_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points', 'prediction-market']);
 
   cmds['research'] = async (args, apiInstance, flags, options) => {
     const rawCategory = args[0];
@@ -1362,7 +1414,8 @@ export const RESEARCH_CATEGORY_ALIASES = {
   'tgm': 'token',
   'sm': 'smart-money',
   'prof': 'profiler',
-  'port': 'portfolio'
+  'port': 'portfolio',
+  'pm': 'prediction-market'
 };
 
 // Generate help text for a specific subcommand using SCHEMA
