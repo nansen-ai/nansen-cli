@@ -1325,13 +1325,13 @@ EXAMPLES:
 SYMBOLS:
   Common tokens resolve automatically: SOL, ETH, BNB, USDC, USDT, WETH, WBNB
   Raw addresses are also accepted.`);
-      return;
+      return {
+        commands: ['quote', 'execute'],
+        description: 'DEX trading commands',
+      };
     }
     if (!tradingCmds[sub]) {
-      log(`Unknown trade subcommand: ${sub}`);
-      log(`Available: quote, execute`);
-      log(`Run 'nansen trade help' for usage.`);
-      return;
+      return { error: `Unknown trade subcommand: ${sub}`, available: ['quote', 'execute'] };
     }
     return tradingCmds[sub](args.slice(1), apiInstance, flags, options);
   };

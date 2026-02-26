@@ -2349,18 +2349,33 @@ describe('trade command routing', () => {
   it('should list subcommands when called with no args', async () => {
     const logs = [];
     const commands = buildCommands({ log: (msg) => logs.push(msg) });
-    await commands.trade([], null, {}, {});
+    const result = await commands.trade([], null, {}, {});
     const output = logs.join('\n');
     expect(output).toContain('quote');
     expect(output).toContain('execute');
+    expect(result.commands).toContain('quote');
+    expect(result.commands).toContain('execute');
+    expect(result.description).toBe('DEX trading commands');
+  });
+
+  it('should show help with help subcommand', async () => {
+    const logs = [];
+    const commands = buildCommands({ log: (msg) => logs.push(msg) });
+    const result = await commands.trade(['help'], null, {}, {});
+    const output = logs.join('\n');
+    expect(output).toContain('SUBCOMMANDS');
+    expect(output).toContain('USAGE');
+    expect(output).toContain('EXAMPLES');
+    expect(result.commands).toContain('quote');
+    expect(result.commands).toContain('execute');
   });
 
   it('should error on unknown subcommand', async () => {
-    const logs = [];
-    const commands = buildCommands({ log: (msg) => logs.push(msg) });
-    await commands.trade(['unknown'], null, {}, {});
-    const output = logs.join('\n');
-    expect(output).toContain('Unknown trade subcommand');
+    const commands = buildCommands({ log: () => {} });
+    const result = await commands.trade(['unknown'], null, {}, {});
+    expect(result.error).toContain('Unknown trade subcommand');
+    expect(result.available).toContain('quote');
+    expect(result.available).toContain('execute');
   });
 });
 
