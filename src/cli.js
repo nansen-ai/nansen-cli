@@ -905,7 +905,7 @@ export function buildCommands(deps = {}) {
       try {
         content = fs.readFileSync(changelogPath, 'utf8');
       } catch {
-        errorOutput('CHANGELOG.md not found. Visit https://github.com/nansen-ai/nansen-cli/blob/main/CHANGELOG.md');
+        log('CHANGELOG.md not found. Visit https://github.com/nansen-ai/nansen-cli/blob/main/CHANGELOG.md');
         return;
       }
       const since = options.since;
@@ -1307,14 +1307,31 @@ export function buildCommands(deps = {}) {
   cmds['trade'] = async (args, apiInstance, flags, options) => {
     const sub = args[0];
     if (!sub || sub === 'help') {
-      return {
-        commands: ['quote', 'execute'],
-        description: 'DEX trading commands',
-        example: 'nansen trade quote --chain ethereum --from ETH --to USDC --amount 1'
-      };
+      log(`nansen trade — DEX trading commands
+
+SUBCOMMANDS:
+  quote       Get a swap quote (price, route, fees)
+  execute     Sign and broadcast a quoted swap
+
+USAGE:
+  nansen trade quote --chain <chain> --from <token> --to <token> --amount <units>
+  nansen trade execute --quote <quoteId>
+
+EXAMPLES:
+  nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
+  nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000
+  nansen trade execute --quote 1708900000000-abc123
+
+SYMBOLS:
+  Common tokens resolve automatically: SOL, ETH, BNB, USDC, USDT, WETH, WBNB
+  Raw addresses are also accepted.`);
+      return;
     }
     if (!tradingCmds[sub]) {
-      return { error: `Unknown trade subcommand: ${sub}`, available: ['quote', 'execute'] };
+      log(`Unknown trade subcommand: ${sub}`);
+      log(`Available: quote, execute`);
+      log(`Run 'nansen trade help' for usage.`);
+      return;
     }
     return tradingCmds[sub](args.slice(1), apiInstance, flags, options);
   };

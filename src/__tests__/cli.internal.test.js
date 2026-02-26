@@ -2347,16 +2347,20 @@ describe('research command routing', () => {
 
 describe('trade command routing', () => {
   it('should list subcommands when called with no args', async () => {
-    const commands = buildCommands({});
-    const result = await commands.trade([], null, {}, {});
-    expect(result.commands).toContain('quote');
-    expect(result.commands).toContain('execute');
+    const logs = [];
+    const commands = buildCommands({ log: (msg) => logs.push(msg) });
+    await commands.trade([], null, {}, {});
+    const output = logs.join('\n');
+    expect(output).toContain('quote');
+    expect(output).toContain('execute');
   });
 
   it('should error on unknown subcommand', async () => {
-    const commands = buildCommands({});
-    const result = await commands.trade(['unknown'], null, {}, {});
-    expect(result.error).toContain('Unknown trade subcommand');
+    const logs = [];
+    const commands = buildCommands({ log: (msg) => logs.push(msg) });
+    await commands.trade(['unknown'], null, {}, {});
+    const output = logs.join('\n');
+    expect(output).toContain('Unknown trade subcommand');
   });
 });
 
