@@ -15,6 +15,7 @@ import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 // ============= Constants =============
 
 const TRADING_API_URL = process.env.NANSEN_TRADING_API_URL || 'https://trading-api.nansen.ai';
+const LIFI_API_URL = 'https://li.quest/v1';
 
 const CHAIN_MAP = {
   solana:   { index: '501', type: 'solana', chainId: 501,  name: 'Solana',   explorer: 'https://solscan.io/tx/' },
@@ -778,6 +779,45 @@ function isNativeToken(mintAddress) {
   return /^0x[eE]{40}$/.test(mintAddress);
 }
 
+/**
+ * Check if a token is supported by LiFi before requesting a quote.
+ * Fails open: if the check itself errors, returns supported=true so trading proceeds.
+ *
+ * @param {string} chain - Chain name (e.g. 'base', 'ethereum')
+ * @param {string} tokenAddress - Token contract address
+ * @returns {Promise<{supported: boolean, reason?: string}>}
+ */
+export async function checkTokenSupport(chain, tokenAddress) {
+  try {
+    const chainConfig = CHAIN_MAP[chain?.toLowerCase()];
+    if (!chainConfig) return { supported: true }; // unknown chain, fail open
+
+    const url = `${LIFI_API_URL}/token?chain=${chainConfig.chainId}&token=${tokenAddress}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+
+    const res = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (res.status === 404) {
+      return { supported: false, reason: 'Token not found on LiFi (may be on deny list)' };
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      const msg = body ? (JSON.parse(body).message || body).slice(0, 200) : `HTTP ${res.status}`;
+      return { supported: false, reason: msg };
+    }
+
+    return { supported: true };
+  } catch {
+    // Fail open — network errors, timeouts, parse errors should not block trading
+    return { supported: true };
+  }
+}
+
 function formatQuote(quote, index) {
   const lines = [];
   const label = index !== undefined ? `  Quote #${index + 1}` : '  Best Quote';
@@ -856,6 +896,19 @@ EXAMPLES:
 
         errorOutput(`\nFetching quote on ${chainConfig.name}...`);
         errorOutput(`  Wallet: ${walletAddress}`);
+
+        // Pre-quote deny list check — warn but don't block
+        const tokenChecks = [];
+        if (!isNativeToken(from)) tokenChecks.push({ address: from, label: 'from' });
+        if (!isNativeToken(to))   tokenChecks.push({ address: to,   label: 'to' });
+        const checkResults = await Promise.all(
+          tokenChecks.map(t => checkTokenSupport(chain, t.address))
+        );
+        checkResults.forEach((result, i) => {
+          if (!result.supported) {
+            errorOutput(`  ⚠ Token ${tokenChecks[i].address} may not be supported: ${result.reason}`);
+          }
+        });
 
         const params = {
           chainIndex: chainConfig.index,

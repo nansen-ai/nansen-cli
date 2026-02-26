@@ -28,6 +28,7 @@ import {
   decodeRevertReason,
   getRevertReason,
   waitForReceipt,
+  checkTokenSupport,
 } from '../trading.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
@@ -1107,6 +1108,96 @@ describe('waitForReceipt revert reason decoding', () => {
 
     await expect(waitForReceipt('base', '0xtxhash', 5000, 100))
       .rejects.toThrow('Transaction reverted on-chain');
+
+    global.fetch = origFetch;
+  });
+});
+
+describe('checkTokenSupport', () => {
+  it('should return supported=true for a valid token', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ address: '0x123', symbol: 'USDC', decimals: 6 }),
+    });
+
+    const result = await checkTokenSupport('base', '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
+    expect(result.supported).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch.mock.calls[0][0]).toContain('chain=8453');
+    expect(global.fetch.mock.calls[0][0]).toContain('token=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
+
+    global.fetch = origFetch;
+  });
+
+  it('should return supported=false for a 404 (denied/missing token)', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: async () => '{"message":"Token not found"}',
+    });
+
+    const result = await checkTokenSupport('base', '0x532f27101965dd16442E59d40670FaF5eBB142E4');
+    expect(result.supported).toBe(false);
+    expect(result.reason).toMatch(/not found|deny/i);
+
+    global.fetch = origFetch;
+  });
+
+  it('should return supported=false with message for non-404 errors', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => '{"message":"Token is on deny list"}',
+    });
+
+    const result = await checkTokenSupport('ethereum', '0xabc');
+    expect(result.supported).toBe(false);
+    expect(result.reason).toContain('Token is on deny list');
+
+    global.fetch = origFetch;
+  });
+
+  it('should fail open on network errors', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockRejectedValue(new Error('Network failure'));
+
+    const result = await checkTokenSupport('base', '0x123');
+    expect(result.supported).toBe(true);
+
+    global.fetch = origFetch;
+  });
+
+  it('should fail open on timeout (AbortError)', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockRejectedValue(new DOMException('Aborted', 'AbortError'));
+
+    const result = await checkTokenSupport('base', '0x123');
+    expect(result.supported).toBe(true);
+
+    global.fetch = origFetch;
+  });
+
+  it('should fail open for unknown chains', async () => {
+    const result = await checkTokenSupport('fantom', '0x123');
+    expect(result.supported).toBe(true);
+  });
+
+  it('should use correct chain ID for each supported chain', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+
+    await checkTokenSupport('ethereum', '0xabc');
+    expect(global.fetch.mock.calls[0][0]).toContain('chain=1');
+
+    await checkTokenSupport('solana', 'So11111111111111111111111111111111111111112');
+    expect(global.fetch.mock.calls[1][0]).toContain('chain=501');
+
+    await checkTokenSupport('bsc', '0xdef');
+    expect(global.fetch.mock.calls[2][0]).toContain('chain=56');
 
     global.fetch = origFetch;
   });
