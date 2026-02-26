@@ -23,14 +23,6 @@ const CHAIN_MAP = {
   bsc:      { index: '56',  type: 'evm',    chainId: 56,   name: 'BSC',      explorer: 'https://bscscan.com/tx/' },
 };
 
-const NATIVE_TOKEN_SENTINEL = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
-
-const WRAPPED_NATIVE_TOKENS = {
-  ethereum: { address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', symbol: 'WETH', nativeSymbol: 'ETH' },
-  base:     { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', nativeSymbol: 'ETH' },
-  bsc:      { address: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', symbol: 'WBNB', nativeSymbol: 'BNB' },
-};
-
 // Default public RPC endpoints (used for nonce fetching)
 const EVM_RPC_URLS = {
   ethereum: process.env.NANSEN_RPC_ETHEREUM || 'https://eth.llamarpc.com',
@@ -654,100 +646,6 @@ function isNativeToken(mintAddress) {
   return /^0x[eE]{40}$/.test(mintAddress);
 }
 
-/**
- * Get ERC-20 token balance for an address.
- * Uses balanceOf(address) selector 0x70a08231.
- * Returns 0n on any failure (network, invalid address, etc).
- */
-export async function getErc20Balance(chain, tokenAddress, ownerAddress) {
-  const rpcUrl = EVM_RPC_URLS[chain];
-  if (!rpcUrl) return 0n;
-
-  try {
-    // balanceOf(address) selector = 0x70a08231
-    const data = '0x70a08231' + ownerAddress.slice(2).toLowerCase().padStart(64, '0');
-    const res = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_call',
-        params: [{ to: tokenAddress, data }, 'latest'],
-      }),
-    });
-    const body = await res.json();
-    if (body.error || !body.result) return 0n;
-    return BigInt(body.result);
-  } catch {
-    return 0n;
-  }
-}
-
-/**
- * Get native token balance (ETH/BNB) for an address.
- * Returns 0n on any failure.
- */
-export async function getNativeBalance(chain, address) {
-  const rpcUrl = EVM_RPC_URLS[chain];
-  if (!rpcUrl) return 0n;
-
-  try {
-    const res = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_getBalance',
-        params: [address, 'latest'],
-      }),
-    });
-    const body = await res.json();
-    if (body.error || !body.result) return 0n;
-    return BigInt(body.result);
-  } catch {
-    return 0n;
-  }
-}
-
-/**
- * Auto-detect whether to substitute a wrapped native token (WETH/WBNB) with the native sentinel.
- * Checks on-chain balances: if user lacks wrapped token but has native token, substitutes.
- *
- * @param {string} tokenAddress - Token address to check
- * @param {string} chain - Chain name
- * @param {string} walletAddress - User's wallet address
- * @param {string} amount - Amount in base units (as string)
- * @returns {Promise<{address: string, substituted: boolean, symbol?: string, nativeSymbol?: string}>}
- */
-export async function resolveWrappedNativeToken(tokenAddress, chain, walletAddress, amount) {
-  if (!tokenAddress || !chain) return { address: tokenAddress, substituted: false };
-  const wrapped = WRAPPED_NATIVE_TOKENS[chain.toLowerCase()];
-  if (!wrapped) return { address: tokenAddress, substituted: false };
-  if (tokenAddress.toLowerCase() !== wrapped.address.toLowerCase()) return { address: tokenAddress, substituted: false };
-
-  let requiredAmount;
-  try {
-    requiredAmount = BigInt(amount);
-  } catch {
-    return { address: tokenAddress, substituted: false };
-  }
-
-  // Check if user has enough wrapped token balance
-  const wrappedBalance = await getErc20Balance(chain, wrapped.address, walletAddress);
-  if (wrappedBalance >= requiredAmount) return { address: tokenAddress, substituted: false };
-
-  // Check if user has enough native token balance
-  const nativeBalance = await getNativeBalance(chain, walletAddress);
-  if (nativeBalance >= requiredAmount) {
-    return { address: NATIVE_TOKEN_SENTINEL, substituted: true, symbol: wrapped.symbol, nativeSymbol: wrapped.nativeSymbol };
-  }
-
-  // Neither sufficient — let API handle the error
-  return { address: tokenAddress, substituted: false };
-}
-
 function formatQuote(quote, index) {
   const lines = [];
   const label = index !== undefined ? `  Quote #${index + 1}` : '  Best Quote';
@@ -774,7 +672,7 @@ export function buildTradingCommands(deps = {}) {
   return {
     'quote': async (args, apiInstance, flags, options) => {
       const chain = options.chain || args[0];
-      let from = options.from || options['from-token'] || args[1];
+      const from = options.from || options['from-token'] || args[1];
       const to = options.to || options['to-token'] || args[2];
       const amount = options.amount || args[3];
       const walletName = options.wallet;
@@ -826,15 +724,6 @@ EXAMPLES:
 
         errorOutput(`\nFetching quote on ${chainConfig.name}...`);
         errorOutput(`  Wallet: ${walletAddress}`);
-
-        // Auto-substitute wrapped native token for --from if wallet has native token instead
-        if (chainConfig.type === 'evm') {
-          const resolved = await resolveWrappedNativeToken(from, chain, walletAddress, amount);
-          if (resolved.substituted) {
-            errorOutput(`  Auto-substituted ${resolved.symbol} → native ${resolved.nativeSymbol} (wallet has native ${resolved.nativeSymbol}, not ${resolved.symbol})`);
-            from = resolved.address;
-          }
-        }
 
         const params = {
           chainIndex: chainConfig.index,
