@@ -144,7 +144,7 @@ export const SCHEMA = {
             chain: { type: 'string', default: 'ethereum', description: 'Blockchain' },
             from: { type: 'string', required: true, description: 'Token to sell (address or symbol)' },
             to: { type: 'string', required: true, description: 'Token to buy (address or symbol)' },
-            amount: { type: 'string', required: true, description: 'Amount to swap' }
+            amount: { type: 'string', required: true, description: 'Amount in base units (wei, lamports, etc.)' }
           }
         },
         'execute': {

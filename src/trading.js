@@ -679,6 +679,21 @@ export function getWrappedNativeFromWarning(tokenAddress, chain) {
   return null;
 }
 
+/**
+ * Check if amount contains a decimal point (i.e. not in base units).
+ * Returns an error string if invalid, or null if OK. Pure function.
+ */
+export function validateBaseUnitAmount(amount) {
+  if (!amount) return null;
+  const str = String(amount);
+  if (str.includes('.')) {
+    return 'Amount must be in base units (integer), not token units. ' +
+      'Examples: 1000000000 lamports = 1 SOL, 1000000000000000000 wei = 1 ETH, ' +
+      '1000000 = 1 USDC. Got: ' + str;
+  }
+  return null;
+}
+
 function formatQuote(quote, index) {
   const lines = [];
   const label = index !== undefined ? `  Quote #${index + 1}` : '  Best Quote';
@@ -733,6 +748,13 @@ EXAMPLES:
   nansen quote --chain solana --from So11111111111111111111111111111111111111112 --to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 1000000000
   nansen quote --chain base --from 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --to 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 --amount 1000000000000000000
 `);
+        exit(1);
+        return;
+      }
+
+      const amountError = validateBaseUnitAmount(amount);
+      if (amountError) {
+        errorOutput(`Error: ${amountError}`);
         exit(1);
         return;
       }
@@ -800,7 +822,11 @@ EXAMPLES:
         return undefined; // Output already printed above
 
       } catch (err) {
-        errorOutput(`Error: ${err.message}`);
+        let message = err.message;
+        if (err.code === 'INVALID_AMOUNT' || /amount/i.test(err.message)) {
+          message += '. Amounts must be in base units (e.g., 1000000000 lamports for 1 SOL, 1000000000000000000 wei for 1 ETH)';
+        }
+        errorOutput(`Error: ${message}`);
         if (err.details) errorOutput(`  Details: ${JSON.stringify(err.details)}`);
         exit(1);
       }

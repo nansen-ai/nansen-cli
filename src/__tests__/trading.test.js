@@ -26,6 +26,7 @@ import {
   stripLeadingZeros,
   buildTradingCommands,
   getWrappedNativeFromWarning,
+  validateBaseUnitAmount,
 } from '../trading.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
@@ -805,6 +806,60 @@ describe('getWrappedNativeFromWarning', () => {
     expect(getWrappedNativeFromWarning(undefined, 'base')).toBeNull();
     expect(getWrappedNativeFromWarning('0x4200000000000000000000000000000000000006', null)).toBeNull();
     expect(getWrappedNativeFromWarning(null, null)).toBeNull();
+  });
+});
+
+// ============= Base Unit Amount Validation =============
+
+describe('validateBaseUnitAmount', () => {
+  it('should return error for decimal amounts', () => {
+    for (const val of ['0.005', '1.5', '0.000001']) {
+      const result = validateBaseUnitAmount(val);
+      expect(result).toContain('base units');
+      expect(result).toContain(val);
+    }
+  });
+
+  it('should return null for valid integer amounts', () => {
+    expect(validateBaseUnitAmount('1000000000')).toBeNull();
+    expect(validateBaseUnitAmount('1000000000000000000')).toBeNull();
+  });
+
+  it('should return null for null/undefined', () => {
+    expect(validateBaseUnitAmount(null)).toBeNull();
+    expect(validateBaseUnitAmount(undefined)).toBeNull();
+  });
+
+  it('should return null for zero (used for max sends)', () => {
+    expect(validateBaseUnitAmount('0')).toBeNull();
+  });
+
+  it('should return null for non-numeric strings (let API handle)', () => {
+    expect(validateBaseUnitAmount('abc')).toBeNull();
+  });
+});
+
+describe('quote handler rejects decimal amounts before API call', () => {
+  it('should error on decimal amount and not call fetch', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn();
+
+    const logs = [];
+    let exitCalled = false;
+    const cmds = buildTradingCommands({
+      errorOutput: (msg) => logs.push(msg),
+      exit: () => { exitCalled = true; },
+    });
+
+    await cmds.quote([], null, {}, {
+      chain: 'solana', from: 'So111', to: 'EPjFW', amount: '0.005',
+    });
+
+    expect(exitCalled).toBe(true);
+    expect(logs.some(l => l.includes('base units'))).toBe(true);
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    global.fetch = origFetch;
   });
 });
 
