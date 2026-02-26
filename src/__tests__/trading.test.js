@@ -25,6 +25,7 @@ import {
   buildApprovalTransaction,
   stripLeadingZeros,
   buildTradingCommands,
+  getWrappedNativeWarning,
 } from '../trading.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
@@ -745,6 +746,127 @@ describe('stripLeadingZeros', () => {
 
   it('should handle empty buffer', () => {
     expect(stripLeadingZeros(Buffer.alloc(0))).toEqual(Buffer.alloc(0));
+  });
+});
+
+// ============= Wrapped Native Token Detection =============
+
+describe('getWrappedNativeWarning', () => {
+  it('should warn for WETH on Base', () => {
+    const warning = getWrappedNativeWarning('0x4200000000000000000000000000000000000006', 'base', 'from');
+    expect(warning).toContain('WETH');
+    expect(warning).toContain('wrapped ETH');
+    expect(warning).toContain('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+  });
+
+  it('should warn for WETH on Ethereum', () => {
+    const warning = getWrappedNativeWarning('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', 'ethereum', 'from');
+    expect(warning).toContain('WETH');
+    expect(warning).toContain('wrapped ETH');
+  });
+
+  it('should warn for WBNB on BSC', () => {
+    const warning = getWrappedNativeWarning('0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', 'bsc', 'to');
+    expect(warning).toContain('WBNB');
+    expect(warning).toContain('wrapped BNB');
+    expect(warning).toContain('--to');
+  });
+
+  it('should be case-insensitive', () => {
+    const lower = getWrappedNativeWarning('0x4200000000000000000000000000000000000006', 'base', 'from');
+    const upper = getWrappedNativeWarning('0x4200000000000000000000000000000000000006'.toUpperCase().replace('0X', '0x'), 'base', 'from');
+    expect(lower).toBeTruthy();
+    expect(upper).toBeTruthy();
+  });
+
+  it('should return null for non-wrapped tokens', () => {
+    expect(getWrappedNativeWarning('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 'base', 'from')).toBeNull();
+  });
+
+  it('should return null for native token sentinel', () => {
+    expect(getWrappedNativeWarning('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 'base', 'from')).toBeNull();
+  });
+
+  it('should return null for solana (no wrapped native mapping)', () => {
+    expect(getWrappedNativeWarning('So11111111111111111111111111111111111111112', 'solana', 'from')).toBeNull();
+  });
+
+  it('should return null for null/undefined inputs', () => {
+    expect(getWrappedNativeWarning(null, 'base', 'from')).toBeNull();
+    expect(getWrappedNativeWarning(undefined, 'base', 'from')).toBeNull();
+    expect(getWrappedNativeWarning('0x4200000000000000000000000000000000000006', null, 'from')).toBeNull();
+  });
+});
+
+describe('quote handler wrapped native token warnings', () => {
+  it('should emit warning when --from is a wrapped native token', async () => {
+    createWallet('default', 'testpass');
+
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({
+        success: true,
+        quotes: [{
+          aggregator: 'test',
+          inputMint: '0x4200000000000000000000000000000000000006',
+          outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+          inAmount: '10000000000000000',
+          outAmount: '25000000',
+        }],
+      }),
+    });
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      errorOutput: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    await cmds.quote([], null, {}, {
+      chain: 'base',
+      from: '0x4200000000000000000000000000000000000006',
+      to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      amount: '10000000000000000',
+    });
+
+    expect(logs.some(l => l.includes('WETH') && l.includes('wrapped ETH'))).toBe(true);
+    global.fetch = origFetch;
+  });
+
+  it('should not emit warning for native token sentinel', async () => {
+    createWallet('default', 'testpass');
+
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({
+        success: true,
+        quotes: [{
+          aggregator: 'test',
+          inputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+          outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+          inAmount: '10000000000000000',
+          outAmount: '25000000',
+        }],
+      }),
+    });
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      errorOutput: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    await cmds.quote([], null, {}, {
+      chain: 'base',
+      from: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      amount: '10000000000000000',
+    });
+
+    expect(logs.some(l => l.includes('WETH') && l.includes('wrapped'))).toBe(false);
+    global.fetch = origFetch;
   });
 });
 

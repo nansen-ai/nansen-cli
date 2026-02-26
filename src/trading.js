@@ -23,6 +23,14 @@ const CHAIN_MAP = {
   bsc:      { index: '56',  type: 'evm',    chainId: 56,   name: 'BSC',      explorer: 'https://bscscan.com/tx/' },
 };
 
+const NATIVE_TOKEN_SENTINEL = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+
+const WRAPPED_NATIVE_TOKENS = {
+  ethereum: { address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', symbol: 'WETH', nativeSymbol: 'ETH' },
+  base:     { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', nativeSymbol: 'ETH' },
+  bsc:      { address: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', symbol: 'WBNB', nativeSymbol: 'BNB' },
+};
+
 // Default public RPC endpoints (used for nonce fetching)
 const EVM_RPC_URLS = {
   ethereum: process.env.NANSEN_RPC_ETHEREUM || 'https://eth.llamarpc.com',
@@ -643,7 +651,25 @@ async function promptPassword(prompt, deps = {}) {
 }
 
 function isNativeToken(mintAddress) {
-  return /^0x[eE]{40}$/.test(mintAddress);
+  return typeof mintAddress === 'string' && mintAddress.toLowerCase() === NATIVE_TOKEN_SENTINEL;
+}
+
+/**
+ * Check if a token address is a wrapped native token (WETH, WBNB).
+ * Returns a warning string if so, null otherwise.
+ *
+ * @param {string} tokenAddress - Token address to check
+ * @param {string} chain - Chain name (ethereum, base, bsc, solana)
+ * @param {string} direction - 'from' or 'to' (for message context)
+ * @returns {string|null} Warning message or null
+ */
+export function getWrappedNativeWarning(tokenAddress, chain, direction) {
+  if (!tokenAddress || !chain) return null;
+  const wrapped = WRAPPED_NATIVE_TOKENS[chain.toLowerCase()];
+  if (!wrapped) return null;
+  if (tokenAddress.toLowerCase() !== wrapped.address.toLowerCase()) return null;
+  return `⚠ Warning: --${direction} is the ${wrapped.symbol} (wrapped ${wrapped.nativeSymbol}) contract address. ` +
+    `If you hold native ${wrapped.nativeSymbol}, use the native token sentinel address instead: ${NATIVE_TOKEN_SENTINEL}`;
 }
 
 function formatQuote(quote, index) {
@@ -724,6 +750,11 @@ EXAMPLES:
 
         errorOutput(`\nFetching quote on ${chainConfig.name}...`);
         errorOutput(`  Wallet: ${walletAddress}`);
+
+        const fromWarning = getWrappedNativeWarning(from, chain, 'from');
+        if (fromWarning) errorOutput(`  ${fromWarning}`);
+        const toWarning = getWrappedNativeWarning(to, chain, 'to');
+        if (toWarning) errorOutput(`  ${toWarning}`);
 
         const params = {
           chainIndex: chainConfig.index,
