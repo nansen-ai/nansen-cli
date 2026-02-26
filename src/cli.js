@@ -1187,11 +1187,47 @@ export function buildCommands(deps = {}) {
       }
 
       return handlers[subcommand]();
+    },
+
+    'prediction-market': async (args, apiInstance, flags, options) => {
+      const subcommand = args[0] || 'help';
+      const marketId = options['market-id'];
+      const address = options.address;
+      const sortBy = options['sort-by'];
+      const query = options.query;
+      const status = options.status;
+      const sort = parseSort(options.sort);
+      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+
+      const handlers = {
+        'ohlcv': () => apiInstance.pmOhlcv({ marketId, sort, pagination }),
+        'orderbook': () => apiInstance.pmOrderbook({ marketId, pagination }),
+        'top-holders': () => apiInstance.pmTopHolders({ marketId, sort, pagination }),
+        'trades-by-market': () => apiInstance.pmTradesByMarket({ marketId, pagination }),
+        'trades-by-address': () => apiInstance.pmTradesByAddress({ address, pagination }),
+        'market-screener': () => apiInstance.pmMarketScreener({ sortBy, query, status, pagination }),
+        'event-screener': () => apiInstance.pmEventScreener({ sortBy, query, status, pagination }),
+        'pnl-by-market': () => apiInstance.pmPnlByMarket({ marketId, pagination }),
+        'pnl-by-address': () => apiInstance.pmPnlByAddress({ address, pagination }),
+        'position-detail': () => apiInstance.pmPositionDetail({ marketId, pagination }),
+        'categories': () => apiInstance.pmCategories({ pagination }),
+        'help': () => ({
+          commands: ['ohlcv', 'orderbook', 'top-holders', 'trades-by-market', 'trades-by-address', 'market-screener', 'event-screener', 'pnl-by-market', 'pnl-by-address', 'position-detail', 'categories'],
+          description: 'Polymarket prediction market analytics',
+          example: 'nansen pm market-screener --sort-by volume_24hr --limit 20'
+        })
+      };
+
+      if (!handlers[subcommand]) {
+        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+      }
+
+      return handlers[subcommand]();
     }
   };
 
   // 'research' delegates to the category handlers defined above
-  const RESEARCH_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points']);
+  const RESEARCH_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points', 'prediction-market']);
 
   cmds['research'] = async (args, apiInstance, flags, options) => {
     const rawCategory = args[0];
@@ -1267,7 +1303,8 @@ export const RESEARCH_CATEGORY_ALIASES = {
   'tgm': 'token',
   'sm': 'smart-money',
   'prof': 'profiler',
-  'port': 'portfolio'
+  'port': 'portfolio',
+  'pm': 'prediction-market'
 };
 
 // Generate help text for a specific subcommand using SCHEMA

@@ -58,6 +58,19 @@ const DOCUMENTED_ENDPOINTS = {
   search: [
     { name: 'general-search', method: 'generalSearch', endpoint: '/api/v1/search/general' },
   ],
+  predictionMarket: [
+    { name: 'ohlcv', method: 'pmOhlcv', endpoint: '/api/v1/prediction-market/ohlcv' },
+    { name: 'orderbook', method: 'pmOrderbook', endpoint: '/api/v1/prediction-market/orderbook' },
+    { name: 'top-holders', method: 'pmTopHolders', endpoint: '/api/v1/prediction-market/top-holders' },
+    { name: 'trades-by-market', method: 'pmTradesByMarket', endpoint: '/api/v1/prediction-market/trades-by-market' },
+    { name: 'trades-by-address', method: 'pmTradesByAddress', endpoint: '/api/v1/prediction-market/trades-by-address' },
+    { name: 'market-screener', method: 'pmMarketScreener', endpoint: '/api/v1/prediction-market/market-screener' },
+    { name: 'event-screener', method: 'pmEventScreener', endpoint: '/api/v1/prediction-market/event-screener' },
+    { name: 'pnl-by-market', method: 'pmPnlByMarket', endpoint: '/api/v1/prediction-market/pnl-by-market' },
+    { name: 'pnl-by-address', method: 'pmPnlByAddress', endpoint: '/api/v1/prediction-market/pnl-by-address' },
+    { name: 'position-detail', method: 'pmPositionDetail', endpoint: '/api/v1/prediction-market/position-detail' },
+    { name: 'categories', method: 'pmCategories', endpoint: '/api/v1/prediction-market/categories' },
+  ],
 };
 
 // Endpoints that are documented but return 404 (confirmed non-existent)
@@ -118,6 +131,14 @@ describe('API Endpoint Coverage', () => {
     }
   });
 
+  describe('Prediction Market Endpoints', () => {
+    for (const ep of DOCUMENTED_ENDPOINTS.predictionMarket) {
+      it(`should have ${ep.name} method`, () => {
+        expect(typeof api[ep.method]).toBe('function');
+      });
+    }
+  });
+
   describe('Coverage Summary', () => {
     it('should report implemented endpoints', () => {
       const implemented = [
@@ -127,6 +148,7 @@ describe('API Endpoint Coverage', () => {
         ...DOCUMENTED_ENDPOINTS.composite,
         ...DOCUMENTED_ENDPOINTS.portfolio,
         ...DOCUMENTED_ENDPOINTS.search,
+        ...DOCUMENTED_ENDPOINTS.predictionMarket,
       ];
       
       console.log(`\n📊 API Coverage Summary:`);

@@ -1103,6 +1103,105 @@ export class NansenAPI {
     });
   }
 
+  // ============= Prediction Market Endpoints =============
+
+  async pmOhlcv(params = {}) {
+    const { marketId, sort, pagination } = params;
+    return this.request('/api/v1/prediction-market/ohlcv', {
+      market_id: marketId,
+      sort,
+      pagination
+    });
+  }
+
+  async pmOrderbook(params = {}) {
+    const { marketId, pagination } = params;
+    return this.request('/api/v1/prediction-market/orderbook', {
+      market_id: marketId,
+      pagination
+    });
+  }
+
+  async pmTopHolders(params = {}) {
+    const { marketId, sort, pagination } = params;
+    return this.request('/api/v1/prediction-market/top-holders', {
+      market_id: marketId,
+      sort,
+      pagination
+    });
+  }
+
+  async pmTradesByMarket(params = {}) {
+    const { marketId, pagination } = params;
+    return this.request('/api/v1/prediction-market/trades-by-market', {
+      market_id: marketId,
+      pagination
+    });
+  }
+
+  async pmTradesByAddress(params = {}) {
+    const { address, pagination } = params;
+    const validation = validateAddress(address, 'polygon');
+    if (!validation.valid) throw new NansenError(validation.error, validation.code);
+    return this.request('/api/v1/prediction-market/trades-by-address', {
+      address,
+      pagination
+    });
+  }
+
+  async pmMarketScreener(params = {}) {
+    const { sortBy = 'volume_24hr', query = '', status = '', pagination } = params;
+    return this.request('/api/v1/prediction-market/market-screener', {
+      sort_by: sortBy,
+      query,
+      status,
+      pagination
+    });
+  }
+
+  async pmEventScreener(params = {}) {
+    const { sortBy = 'volume_24hr', query = '', status = '', pagination } = params;
+    return this.request('/api/v1/prediction-market/event-screener', {
+      sort_by: sortBy,
+      query,
+      status,
+      pagination
+    });
+  }
+
+  async pmPnlByMarket(params = {}) {
+    const { marketId, pagination } = params;
+    return this.request('/api/v1/prediction-market/pnl-by-market', {
+      market_id: marketId,
+      pagination
+    });
+  }
+
+  async pmPnlByAddress(params = {}) {
+    const { address, pagination } = params;
+    const validation = validateAddress(address, 'polygon');
+    if (!validation.valid) throw new NansenError(validation.error, validation.code);
+    return this.request('/api/v1/prediction-market/pnl-by-address', {
+      address,
+      pagination
+    });
+  }
+
+  async pmPositionDetail(params = {}) {
+    const { marketId, pagination } = params;
+    return this.request('/api/v1/prediction-market/position-detail', {
+      market_id: marketId,
+      pagination
+    });
+  }
+
+  async pmCategories(params = {}) {
+    const { pagination } = params;
+    return this.request('/api/v1/prediction-market/categories', {
+      pagination
+    });
+  }
+
   // ============= Points Endpoints =============
 
   async pointsLeaderboard(params = {}) {

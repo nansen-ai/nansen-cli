@@ -188,6 +188,73 @@ const MOCK_RESPONSES = {
     leaders: [
       { address: '0x123', pnl_usd: 500000 }
     ]
+  },
+  // Prediction Market endpoints
+  pmOhlcv: {
+    data: [
+      { market_id: '654412', side: 'Yes', period_start: '2024-11-01T00:00:00', open: 0.50, high: 0.55, low: 0.48, close: 0.53, volume_usd: 12500, trade_count: 150 }
+    ],
+    pagination: { page: 1, per_page: 100 }
+  },
+  pmOrderbook: {
+    data: [
+      { market_id: '654412', outcome: 'Yes', side: 'buy', price: 0.52, size: 1000 }
+    ],
+    pagination: { page: 1, per_page: 100 }
+  },
+  pmTopHolders: {
+    data: [
+      { market_id: '654412', address: '0x1234567890abcdef1234567890abcdef12345678', side: 'Yes', position_size: 15000, unrealized_pnl_usd: 1050 }
+    ],
+    pagination: { page: 1, per_page: 100 }
+  },
+  pmTradesByMarket: {
+    data: [
+      { market_id: '654412', buyer: '0x123', seller: '0x456', side: 'Yes', size: 1000, price: 0.52, usdc_value: 520 }
+    ],
+    pagination: { page: 1, per_page: 100 }
+  },
+  pmTradesByAddress: {
+    data: [
+      { market_id: '654412', market_question: 'Will X happen?', buyer: '0x123', side: 'Yes', size: 500, price: 0.60, usdc_value: 300 }
+    ],
+    pagination: { page: 1, per_page: 100 }
+  },
+  pmMarketScreener: {
+    data: [
+      { market_id: '654412', question: 'Will X happen?', volume_24hr: 50000, liquidity: 100000, open_interest: 200000 }
+    ],
+    pagination: { page: 1, per_page: 100 }
+  },
+  pmEventScreener: {
+    data: [
+      { event_id: 'evt_1', event_title: 'US Election', market_count: 5, total_volume: 1000000, total_volume_24hr: 50000 }
+    ],
+    pagination: { page: 1, per_page: 100 }
+  },
+  pmPnlByMarket: {
+    data: [
+      { market_id: '654412', address: '0x123', total_pnl_usd: 5000, side_held: 'Yes' }
+    ],
+    pagination: { page: 1, per_page: 100 }
+  },
+  pmPnlByAddress: {
+    data: [
+      { address: '0x123', market_id: '654412', question: 'Will X happen?', total_pnl_usd: 5000 }
+    ],
+    pagination: { page: 1, per_page: 100 }
+  },
+  pmPositionDetail: {
+    data: [
+      { market_id: '654412', address: '0x123', outcome: 'Yes', balance: 1000, avg_entry_price: 0.45, current_price: 0.52 }
+    ],
+    pagination: { page: 1, per_page: 100 }
+  },
+  pmCategories: {
+    data: [
+      { category: 'Politics', active_markets: 50, total_volume: 5000000, total_volume_24hr: 100000 }
+    ],
+    pagination: { page: 1, per_page: 100 }
   }
 };
 
@@ -1414,6 +1481,156 @@ describe('NansenAPI', () => {
         expect(result.holdings).toBeInstanceOf(Array);
         expect(result.holdings[0]).toHaveProperty('protocol', 'Aave');
         expect(result.holdings[0]).toHaveProperty('value_usd', 50000);
+      });
+    });
+  });
+
+  // =================== Prediction Market Endpoints ===================
+
+  describe('Prediction Market', () => {
+    describe('pmOhlcv', () => {
+      it('should fetch OHLCV data with correct endpoint and body', async () => {
+        setupMock(MOCK_RESPONSES.pmOhlcv);
+        const result = await api.pmOhlcv({ marketId: '654412' });
+        expectFetchCalledWith('/api/v1/prediction-market/ohlcv', { market_id: '654412' });
+        expect(result.data).toBeInstanceOf(Array);
+        expect(result.data[0]).toHaveProperty('market_id', '654412');
+        expect(result.data[0]).toHaveProperty('volume_usd', 12500);
+      });
+
+      it('should pass sort parameter', async () => {
+        setupMock(MOCK_RESPONSES.pmOhlcv);
+        await api.pmOhlcv({ marketId: '654412', sort: [{ field: 'period_start', direction: 'DESC' }] });
+        const body = expectFetchCalledWith('/api/v1/prediction-market/ohlcv');
+        expect(body.sort).toEqual([{ field: 'period_start', direction: 'DESC' }]);
+      });
+    });
+
+    describe('pmOrderbook', () => {
+      it('should fetch orderbook with correct endpoint', async () => {
+        setupMock(MOCK_RESPONSES.pmOrderbook);
+        const result = await api.pmOrderbook({ marketId: '654412' });
+        expectFetchCalledWith('/api/v1/prediction-market/orderbook', { market_id: '654412' });
+        expect(result.data).toBeInstanceOf(Array);
+        expect(result.data[0]).toHaveProperty('side', 'buy');
+      });
+    });
+
+    describe('pmTopHolders', () => {
+      it('should fetch top holders with correct endpoint', async () => {
+        setupMock(MOCK_RESPONSES.pmTopHolders);
+        const result = await api.pmTopHolders({ marketId: '654412' });
+        expectFetchCalledWith('/api/v1/prediction-market/top-holders', { market_id: '654412' });
+        expect(result.data).toBeInstanceOf(Array);
+        expect(result.data[0]).toHaveProperty('position_size', 15000);
+      });
+    });
+
+    describe('pmTradesByMarket', () => {
+      it('should fetch trades by market with correct endpoint', async () => {
+        setupMock(MOCK_RESPONSES.pmTradesByMarket);
+        const result = await api.pmTradesByMarket({ marketId: '654412' });
+        expectFetchCalledWith('/api/v1/prediction-market/trades-by-market', { market_id: '654412' });
+        expect(result.data).toBeInstanceOf(Array);
+        expect(result.data[0]).toHaveProperty('usdc_value', 520);
+      });
+    });
+
+    describe('pmTradesByAddress', () => {
+      it('should fetch trades by address with correct endpoint', async () => {
+        setupMock(MOCK_RESPONSES.pmTradesByAddress);
+        const result = await api.pmTradesByAddress({ address: '0x1234567890abcdef1234567890abcdef12345678' });
+        expectFetchCalledWith('/api/v1/prediction-market/trades-by-address', { address: '0x1234567890abcdef1234567890abcdef12345678' });
+        expect(result.data).toBeInstanceOf(Array);
+        expect(result.data[0]).toHaveProperty('market_question', 'Will X happen?');
+      });
+
+      it('should validate address format', async () => {
+        await expect(api.pmTradesByAddress({ address: 'invalid' })).rejects.toThrow();
+      });
+    });
+
+    describe('pmMarketScreener', () => {
+      it('should fetch market screener with correct endpoint and defaults', async () => {
+        setupMock(MOCK_RESPONSES.pmMarketScreener);
+        const result = await api.pmMarketScreener({});
+        const body = expectFetchCalledWith('/api/v1/prediction-market/market-screener');
+        expect(body.sort_by).toBe('volume_24hr');
+        expect(body.query).toBe('');
+        expect(body.status).toBe('');
+        expect(result.data).toBeInstanceOf(Array);
+        expect(result.data[0]).toHaveProperty('question', 'Will X happen?');
+      });
+
+      it('should pass sort_by, query, and status', async () => {
+        setupMock(MOCK_RESPONSES.pmMarketScreener);
+        await api.pmMarketScreener({ sortBy: 'liquidity', query: 'election', status: 'active' });
+        const body = expectFetchCalledWith('/api/v1/prediction-market/market-screener');
+        expect(body.sort_by).toBe('liquidity');
+        expect(body.query).toBe('election');
+        expect(body.status).toBe('active');
+      });
+    });
+
+    describe('pmEventScreener', () => {
+      it('should fetch event screener with correct endpoint', async () => {
+        setupMock(MOCK_RESPONSES.pmEventScreener);
+        const result = await api.pmEventScreener({});
+        expectFetchCalledWith('/api/v1/prediction-market/event-screener');
+        expect(result.data).toBeInstanceOf(Array);
+        expect(result.data[0]).toHaveProperty('event_title', 'US Election');
+      });
+    });
+
+    describe('pmPnlByMarket', () => {
+      it('should fetch PnL by market with correct endpoint', async () => {
+        setupMock(MOCK_RESPONSES.pmPnlByMarket);
+        const result = await api.pmPnlByMarket({ marketId: '654412' });
+        expectFetchCalledWith('/api/v1/prediction-market/pnl-by-market', { market_id: '654412' });
+        expect(result.data).toBeInstanceOf(Array);
+        expect(result.data[0]).toHaveProperty('total_pnl_usd', 5000);
+      });
+    });
+
+    describe('pmPnlByAddress', () => {
+      it('should fetch PnL by address with correct endpoint', async () => {
+        setupMock(MOCK_RESPONSES.pmPnlByAddress);
+        const result = await api.pmPnlByAddress({ address: '0x1234567890abcdef1234567890abcdef12345678' });
+        expectFetchCalledWith('/api/v1/prediction-market/pnl-by-address', { address: '0x1234567890abcdef1234567890abcdef12345678' });
+        expect(result.data).toBeInstanceOf(Array);
+        expect(result.data[0]).toHaveProperty('total_pnl_usd', 5000);
+      });
+
+      it('should validate address format', async () => {
+        await expect(api.pmPnlByAddress({ address: 'invalid' })).rejects.toThrow();
+      });
+    });
+
+    describe('pmPositionDetail', () => {
+      it('should fetch position detail with correct endpoint', async () => {
+        setupMock(MOCK_RESPONSES.pmPositionDetail);
+        const result = await api.pmPositionDetail({ marketId: '654412' });
+        expectFetchCalledWith('/api/v1/prediction-market/position-detail', { market_id: '654412' });
+        expect(result.data).toBeInstanceOf(Array);
+        expect(result.data[0]).toHaveProperty('outcome', 'Yes');
+      });
+    });
+
+    describe('pmCategories', () => {
+      it('should fetch categories with correct endpoint', async () => {
+        setupMock(MOCK_RESPONSES.pmCategories);
+        const result = await api.pmCategories({});
+        expectFetchCalledWith('/api/v1/prediction-market/categories');
+        expect(result.data).toBeInstanceOf(Array);
+        expect(result.data[0]).toHaveProperty('category', 'Politics');
+        expect(result.data[0]).toHaveProperty('active_markets', 50);
+      });
+
+      it('should pass pagination', async () => {
+        setupMock(MOCK_RESPONSES.pmCategories);
+        await api.pmCategories({ pagination: { page: 1, per_page: 10 } });
+        const body = expectFetchCalledWith('/api/v1/prediction-market/categories');
+        expect(body.pagination).toEqual({ page: 1, per_page: 10 });
       });
     });
   });
