@@ -25,6 +25,9 @@ import {
   buildApprovalTransaction,
   stripLeadingZeros,
   buildTradingCommands,
+  getErc20Balance,
+  getNativeBalance,
+  resolveWrappedNativeToken,
 } from '../trading.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
@@ -745,6 +748,335 @@ describe('stripLeadingZeros', () => {
 
   it('should handle empty buffer', () => {
     expect(stripLeadingZeros(Buffer.alloc(0))).toEqual(Buffer.alloc(0));
+  });
+});
+
+// ============= Balance Helpers =============
+
+describe('getErc20Balance', () => {
+  it('should return balance from mocked RPC response', async () => {
+    const origFetch = global.fetch;
+    // 1000000000000000000 = 0xde0b6b3a7640000
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: '0x0000000000000000000000000000000000000000000000000de0b6b3a7640000' }),
+    });
+
+    const balance = await getErc20Balance('base', '0x4200000000000000000000000000000000000006', '0x' + 'ab'.repeat(20));
+    expect(balance).toBe(1000000000000000000n);
+
+    global.fetch = origFetch;
+  });
+
+  it('should return 0n on RPC error', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'execution reverted' } }),
+    });
+
+    const balance = await getErc20Balance('base', '0x4200000000000000000000000000000000000006', '0x' + 'ab'.repeat(20));
+    expect(balance).toBe(0n);
+
+    global.fetch = origFetch;
+  });
+
+  it('should return 0n on network failure', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockRejectedValue(new Error('network error'));
+
+    const balance = await getErc20Balance('base', '0x4200000000000000000000000000000000000006', '0x' + 'ab'.repeat(20));
+    expect(balance).toBe(0n);
+
+    global.fetch = origFetch;
+  });
+});
+
+describe('getNativeBalance', () => {
+  it('should return balance from mocked RPC response', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: '0xde0b6b3a7640000' }),
+    });
+
+    const balance = await getNativeBalance('base', '0x' + 'ab'.repeat(20));
+    expect(balance).toBe(1000000000000000000n);
+
+    global.fetch = origFetch;
+  });
+
+  it('should return 0n on RPC error', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'error' } }),
+    });
+
+    const balance = await getNativeBalance('base', '0x' + 'ab'.repeat(20));
+    expect(balance).toBe(0n);
+
+    global.fetch = origFetch;
+  });
+
+  it('should return 0n on network failure', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockRejectedValue(new Error('network error'));
+
+    const balance = await getNativeBalance('base', '0x' + 'ab'.repeat(20));
+    expect(balance).toBe(0n);
+
+    global.fetch = origFetch;
+  });
+});
+
+// ============= Wrapped Native Token Auto-Substitution =============
+
+describe('resolveWrappedNativeToken', () => {
+  it('should not substitute non-wrapped tokens', async () => {
+    const result = await resolveWrappedNativeToken('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 'base', '0x' + 'ab'.repeat(20), '1000');
+    expect(result.substituted).toBe(false);
+    expect(result.address).toBe('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
+  });
+
+  it('should not substitute when WETH balance is sufficient', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: '0x0000000000000000000000000000000000000000000000000de0b6b3a7640000' }), // 1 ETH
+    });
+
+    const result = await resolveWrappedNativeToken(
+      '0x4200000000000000000000000000000000000006', 'base', '0x' + 'ab'.repeat(20), '10000000000000000' // 0.01 ETH
+    );
+    expect(result.substituted).toBe(false);
+    expect(result.address).toBe('0x4200000000000000000000000000000000000006');
+
+    global.fetch = origFetch;
+  });
+
+  it('should substitute when WETH balance is zero but native ETH is sufficient', async () => {
+    const origFetch = global.fetch;
+    let callCount = 0;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) {
+        // getErc20Balance: zero WETH
+        return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result: '0x0' }) };
+      }
+      // getNativeBalance: 1 ETH
+      return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result: '0xde0b6b3a7640000' }) };
+    });
+
+    const result = await resolveWrappedNativeToken(
+      '0x4200000000000000000000000000000000000006', 'base', '0x' + 'ab'.repeat(20), '10000000000000000'
+    );
+    expect(result.substituted).toBe(true);
+    expect(result.address).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+    expect(result.symbol).toBe('WETH');
+    expect(result.nativeSymbol).toBe('ETH');
+
+    global.fetch = origFetch;
+  });
+
+  it('should not substitute when both WETH and native ETH are insufficient', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: '0x0' }),
+    });
+
+    const result = await resolveWrappedNativeToken(
+      '0x4200000000000000000000000000000000000006', 'base', '0x' + 'ab'.repeat(20), '10000000000000000'
+    );
+    expect(result.substituted).toBe(false);
+    expect(result.address).toBe('0x4200000000000000000000000000000000000006');
+
+    global.fetch = origFetch;
+  });
+
+  it('should be case-insensitive for token address matching', async () => {
+    const origFetch = global.fetch;
+    let callCount = 0;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result: '0x0' }) };
+      return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result: '0xde0b6b3a7640000' }) };
+    });
+
+    const result = await resolveWrappedNativeToken(
+      '0x4200000000000000000000000000000000000006'.toUpperCase().replace('0X', '0x'), 'base', '0x' + 'ab'.repeat(20), '10000000000000000'
+    );
+    expect(result.substituted).toBe(true);
+
+    global.fetch = origFetch;
+  });
+
+  it('should not substitute for solana chain', async () => {
+    const result = await resolveWrappedNativeToken(
+      'So11111111111111111111111111111111111111112', 'solana', 'SomeAddress', '1000'
+    );
+    expect(result.substituted).toBe(false);
+  });
+
+  it('should not substitute for null/undefined inputs', async () => {
+    expect((await resolveWrappedNativeToken(null, 'base', '0xabc', '1000')).substituted).toBe(false);
+    expect((await resolveWrappedNativeToken(undefined, 'base', '0xabc', '1000')).substituted).toBe(false);
+    expect((await resolveWrappedNativeToken('0x4200000000000000000000000000000000000006', null, '0xabc', '1000')).substituted).toBe(false);
+  });
+});
+
+describe('quote handler wrapped native token auto-substitution', () => {
+  it('should auto-substitute --from WETH when wallet has no WETH but has native ETH', async () => {
+    createWallet('default', 'testpass');
+
+    const origFetch = global.fetch;
+    let callCount = 0;
+    global.fetch = vi.fn().mockImplementation(async (url, opts) => {
+      const body = opts?.body ? JSON.parse(opts.body) : null;
+
+      // RPC calls for balance checking
+      if (body?.jsonrpc === '2.0') {
+        callCount++;
+        if (callCount === 1) {
+          // getErc20Balance: zero WETH
+          return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result: '0x0' }) };
+        }
+        // getNativeBalance: 1 ETH
+        return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result: '0xde0b6b3a7640000' }) };
+      }
+
+      // Trading API quote call
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          success: true,
+          quotes: [{
+            aggregator: 'test',
+            inputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+            outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+            inAmount: '10000000000000000',
+            outAmount: '25000000',
+          }],
+        }),
+      };
+    });
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      errorOutput: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    await cmds.quote([], null, {}, {
+      chain: 'base',
+      from: '0x4200000000000000000000000000000000000006',
+      to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      amount: '10000000000000000',
+    });
+
+    expect(logs.some(l => l.includes('Auto-substituted') && l.includes('WETH') && l.includes('ETH'))).toBe(true);
+
+    // Verify the API was called with native sentinel, not WETH address
+    const apiCall = global.fetch.mock.calls.find(c => {
+      const url = typeof c[0] === 'string' ? c[0] : '';
+      return url.includes('fromTokenAddress');
+    });
+    expect(apiCall).toBeTruthy();
+    const apiUrl = new URL(apiCall[0]);
+    expect(apiUrl.searchParams.get('fromTokenAddress')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+
+    global.fetch = origFetch;
+  });
+
+  it('should not substitute when wallet has sufficient WETH balance', async () => {
+    createWallet('default', 'testpass');
+
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockImplementation(async (url, opts) => {
+      const body = opts?.body ? JSON.parse(opts.body) : null;
+
+      // RPC call: getErc20Balance returns sufficient WETH
+      if (body?.jsonrpc === '2.0') {
+        return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result: '0xde0b6b3a7640000' }) };
+      }
+
+      // Trading API quote call
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          success: true,
+          quotes: [{
+            aggregator: 'test',
+            inputMint: '0x4200000000000000000000000000000000000006',
+            outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+            inAmount: '10000000000000000',
+            outAmount: '25000000',
+          }],
+        }),
+      };
+    });
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      errorOutput: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    await cmds.quote([], null, {}, {
+      chain: 'base',
+      from: '0x4200000000000000000000000000000000000006',
+      to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      amount: '10000000000000000',
+    });
+
+    expect(logs.some(l => l.includes('Auto-substituted'))).toBe(false);
+
+    // Verify the API was called with original WETH address
+    const apiCall = global.fetch.mock.calls.find(c => {
+      const url = typeof c[0] === 'string' ? c[0] : '';
+      return url.includes('fromTokenAddress');
+    });
+    expect(apiCall).toBeTruthy();
+    const apiUrl = new URL(apiCall[0]);
+    expect(apiUrl.searchParams.get('fromTokenAddress')).toBe('0x4200000000000000000000000000000000000006');
+
+    global.fetch = origFetch;
+  });
+
+  it('should not substitute for native token sentinel (not a wrapped token)', async () => {
+    createWallet('default', 'testpass');
+
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({
+        success: true,
+        quotes: [{
+          aggregator: 'test',
+          inputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+          outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+          inAmount: '10000000000000000',
+          outAmount: '25000000',
+        }],
+      }),
+    });
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      errorOutput: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    await cmds.quote([], null, {}, {
+      chain: 'base',
+      from: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      amount: '10000000000000000',
+    });
+
+    expect(logs.some(l => l.includes('Auto-substituted'))).toBe(false);
+    global.fetch = origFetch;
   });
 });
 
