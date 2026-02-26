@@ -1604,12 +1604,13 @@ export async function runCLI(rawArgs, deps = {}) {
     // Configure retry options
     const retryOptions = flags['no-retry'] 
       ? { maxRetries: 0 } 
-      : { maxRetries: options.retries !== undefined ? parseInt(options.retries, 10) : 3 };
+      : { maxRetries: options.retries !== undefined ? (Number.isNaN(parseInt(options.retries, 10)) ? 3 : parseInt(options.retries, 10)) : 3 };
     
     // Configure cache options
+    const cacheTtl = options['cache-ttl'] !== undefined ? parseInt(options['cache-ttl'], 10) : 300;
     const cacheOptions = {
       enabled: flags['cache'] && !flags['no-cache'],
-      ttl: options['cache-ttl'] !== undefined ? parseInt(options['cache-ttl'], 10) : 300
+      ttl: Number.isNaN(cacheTtl) ? 300 : cacheTtl
     };
     
     const defaultHeaders = {};
