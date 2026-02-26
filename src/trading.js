@@ -23,6 +23,7 @@ const CHAIN_MAP = {
   bsc:      { index: '56',  type: 'evm',    chainId: 56,   name: 'BSC',      explorer: 'https://bscscan.com/tx/' },
 };
 
+// Extend when adding new EVM chains (e.g. arbitrum WETH, polygon WMATIC)
 const WRAPPED_NATIVE_TOKENS = {
   ethereum: { address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', symbol: 'WETH', nativeSymbol: 'ETH' },
   base:     { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', nativeSymbol: 'ETH' },
@@ -670,7 +671,7 @@ export function getWrappedNativeFromWarning(tokenAddress, chain) {
   }
 
   // Case 2: --from is native sentinel — mention the wrapped alternative
-  if (/^0x[eE]{40}$/.test(tokenAddress)) {
+  if (isNativeToken(tokenAddress)) {
     return `Warning: --from is native ${wrapped.nativeSymbol}. ` +
       `If you hold ${wrapped.symbol} instead, use: ${wrapped.address}`;
   }
