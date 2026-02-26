@@ -32,6 +32,8 @@ const WRAPPED_NATIVE_TOKENS = {
 
 // Common token symbol → address lookup per chain.
 // Native sentinels: Solana uses native mint, EVM uses 0xeee…eee.
+// Wrapped-native addresses (WETH, WBNB) are derived from WRAPPED_NATIVE_TOKENS
+// to avoid duplication — keep that map as the single source of truth.
 const EVM_NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 const TOKEN_SYMBOLS = {
   solana: {
@@ -42,19 +44,21 @@ const TOKEN_SYMBOLS = {
   },
   ethereum: {
     ETH:  EVM_NATIVE,
-    WETH: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+    WETH: WRAPPED_NATIVE_TOKENS.ethereum.address,
     USDC: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
     USDT: '0xdac17f958d2ee523a2206206994597c13d831ec7',
   },
   base: {
     ETH:  EVM_NATIVE,
-    WETH: '0x4200000000000000000000000000000000000006',
+    WETH: WRAPPED_NATIVE_TOKENS.base.address,
     USDC: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    // NOTE: Legacy L2-bridged USDT on Base. If Tether deploys natively on Base
+    // (like Circle did with USDC), this address will need updating.
     USDT: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
   },
   bsc: {
     BNB:  EVM_NATIVE,
-    WBNB: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c',
+    WBNB: WRAPPED_NATIVE_TOKENS.bsc.address,
     USDC: '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',
     USDT: '0x55d398326f99059ff775485246999027b3197955',
   },
