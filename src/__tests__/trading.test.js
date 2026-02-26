@@ -26,6 +26,7 @@ import {
   stripLeadingZeros,
   buildTradingCommands,
   getWrappedNativeFromWarning,
+  resolveTokenAddress,
 } from '../trading.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
@@ -81,6 +82,40 @@ describe('resolveChain', () => {
     expect(() => resolveChain('')).toThrow('Unsupported chain');
     expect(() => resolveChain(null)).toThrow('Unsupported chain');
     expect(() => resolveChain(undefined)).toThrow('Unsupported chain');
+  });
+});
+
+describe('resolveTokenAddress', () => {
+  it('should resolve common symbols to addresses', () => {
+    expect(resolveTokenAddress('SOL', 'solana')).toBe('So11111111111111111111111111111111111111112');
+    expect(resolveTokenAddress('USDC', 'solana')).toBe('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+    expect(resolveTokenAddress('ETH', 'base')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+    expect(resolveTokenAddress('USDC', 'base')).toBe('0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
+    expect(resolveTokenAddress('BNB', 'bsc')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+    expect(resolveTokenAddress('ETH', 'ethereum')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+  });
+
+  it('should be case-insensitive for symbols', () => {
+    expect(resolveTokenAddress('sol', 'solana')).toBe('So11111111111111111111111111111111111111112');
+    expect(resolveTokenAddress('usdc', 'ethereum')).toBe('0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
+    expect(resolveTokenAddress('Eth', 'base')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+  });
+
+  it('should pass through raw addresses unchanged', () => {
+    const addr = '0x1234567890abcdef1234567890abcdef12345678';
+    expect(resolveTokenAddress(addr, 'ethereum')).toBe(addr);
+    expect(resolveTokenAddress('So11111111111111111111111111111111111111112', 'solana'))
+      .toBe('So11111111111111111111111111111111111111112');
+  });
+
+  it('should pass through unknown symbols unchanged', () => {
+    expect(resolveTokenAddress('SHIB', 'solana')).toBe('SHIB');
+  });
+
+  it('should handle null/undefined gracefully', () => {
+    expect(resolveTokenAddress(null, 'solana')).toBe(null);
+    expect(resolveTokenAddress('SOL', null)).toBe('SOL');
+    expect(resolveTokenAddress(undefined, undefined)).toBe(undefined);
   });
 });
 

@@ -30,6 +30,49 @@ const WRAPPED_NATIVE_TOKENS = {
   bsc:      { address: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', symbol: 'WBNB', nativeSymbol: 'BNB' },
 };
 
+// Common token symbol → address lookup per chain.
+// Native sentinels: Solana uses native mint, EVM uses 0xeee…eee.
+const EVM_NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+const TOKEN_SYMBOLS = {
+  solana: {
+    SOL:  'So11111111111111111111111111111111111111112',
+    WSOL: 'So11111111111111111111111111111111111111112',
+    USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+  },
+  ethereum: {
+    ETH:  EVM_NATIVE,
+    WETH: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+    USDC: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+    USDT: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+  },
+  base: {
+    ETH:  EVM_NATIVE,
+    WETH: '0x4200000000000000000000000000000000000006',
+    USDC: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    USDT: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
+  },
+  bsc: {
+    BNB:  EVM_NATIVE,
+    WBNB: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c',
+    USDC: '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',
+    USDT: '0x55d398326f99059ff775485246999027b3197955',
+  },
+};
+
+/**
+ * Resolve a token symbol (e.g. "SOL", "USDC") to its canonical address
+ * for the given chain. Returns the input unchanged if no match is found
+ * (assumes it's already a raw address).
+ */
+export function resolveTokenAddress(symbolOrAddress, chainName) {
+  if (!symbolOrAddress || !chainName) return symbolOrAddress;
+  const chainTokens = TOKEN_SYMBOLS[chainName.toLowerCase()];
+  if (!chainTokens) return symbolOrAddress;
+  const resolved = chainTokens[symbolOrAddress.toUpperCase()];
+  return resolved || symbolOrAddress;
+}
+
 // Default public RPC endpoints (used for nonce fetching)
 const EVM_RPC_URLS = {
   ethereum: process.env.NANSEN_RPC_ETHEREUM || 'https://eth.llamarpc.com',
@@ -705,8 +748,10 @@ export function buildTradingCommands(deps = {}) {
   return {
     'quote': async (args, apiInstance, flags, options) => {
       const chain = options.chain || args[0];
-      const from = options.from || options['from-token'] || args[1];
-      const to = options.to || options['to-token'] || args[2];
+      const fromRaw = options.from || options['from-token'] || args[1];
+      const toRaw = options.to || options['to-token'] || args[2];
+      const from = resolveTokenAddress(fromRaw, chain);
+      const to = resolveTokenAddress(toRaw, chain);
       const amount = options.amount || args[3];
       const walletName = options.wallet;
       const slippage = options.slippage;
@@ -720,8 +765,8 @@ Usage: nansen quote --chain <chain> --from <token> --to <token> --amount <baseUn
 
 OPTIONS:
   --chain <chain>           Chain: solana, ethereum, base, bsc
-  --from <address>          Input token address
-  --to <address>            Output token address
+  --from <symbol|address>   Input token (symbol like SOL, USDC or address)
+  --to <symbol|address>     Output token (symbol like USDC, ETH or address)
   --amount <units>          Amount in BASE UNITS (e.g. lamports, wei)
   --wallet <name>           Wallet name (default: default wallet)
   --slippage <pct>          Slippage as decimal (e.g. 0.03 for 3%). Default: 0.03
@@ -730,8 +775,9 @@ OPTIONS:
   --swap-mode <mode>        exactIn (default) or exactOut
 
 EXAMPLES:
+  nansen quote --chain solana --from SOL --to USDC --amount 1000000000
+  nansen quote --chain base --from ETH --to USDC --amount 1000000000000000000
   nansen quote --chain solana --from So11111111111111111111111111111111111111112 --to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 1000000000
-  nansen quote --chain base --from 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --to 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 --amount 1000000000000000000
 `);
         exit(1);
         return;
