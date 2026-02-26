@@ -1898,7 +1898,7 @@ describe('profiler compare command', () => {
   it('should appear in SCHEMA', () => {
     const compare = SCHEMA.commands.research.subcommands['profiler'].subcommands['compare'];
     expect(compare).toBeDefined();
-    expect(compare.options.addresses.required).toBe(true);
+    expect(compare.options.addresses.required).toBeUndefined();
   });
 
   it('should parse two comma-separated addresses', async () => {

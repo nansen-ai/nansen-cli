@@ -81,7 +81,7 @@ export const SCHEMA = {
             'perp-trades': { description: 'Perpetual trading history', options: { address: { type: 'string', required: true }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['symbol', 'side', 'size', 'price', 'value_usd', 'pnl_usd', 'timestamp'] },
             'batch': { description: 'Batch profile multiple addresses', options: { addresses: { type: 'string', description: 'Comma-separated addresses' }, file: { type: 'string', description: 'File with one address per line' }, chain: { type: 'string', default: 'ethereum' }, include: { type: 'string', default: 'labels,balance', description: 'Comma-separated: labels,balance,pnl' }, delay: { type: 'number', default: 1000, description: 'Delay between requests in ms' } }, returns: ['address', 'chain', 'labels', 'balance', 'pnl', 'error'] },
             'trace': { description: 'Multi-hop counterparty trace (BFS)', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, depth: { type: 'number', default: 2, description: 'Max hops (1-5)' }, width: { type: 'number', default: 10, description: 'Top N counterparties per hop' }, days: { type: 'number', default: 30 }, delay: { type: 'number', default: 1000, description: 'Delay between requests in ms' } }, returns: ['root', 'chain', 'depth', 'nodes', 'edges', 'stats'] },
-            'compare': { description: 'Compare two wallets (shared counterparties, tokens)', options: { addresses: { type: 'string', required: true, description: 'Two comma-separated addresses' }, address1: { type: 'string', description: 'First address (alternative to --addresses)' }, address2: { type: 'string', description: 'Second address (alternative to --addresses)' }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } }, returns: ['addresses', 'chain', 'shared_counterparties', 'shared_tokens', 'balances'] }
+            'compare': { description: 'Compare two wallets (shared counterparties, tokens)', options: { addresses: { type: 'string', description: 'Two comma-separated addresses' }, address1: { type: 'string', description: 'First address (alternative to --addresses)' }, address2: { type: 'string', description: 'Second address (alternative to --addresses)' }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } }, returns: ['addresses', 'chain', 'shared_counterparties', 'shared_tokens', 'balances'] }
           }
         },
         'token': {
@@ -1096,7 +1096,10 @@ export function buildCommands(deps = {}) {
         'compare': () => {
           let addrs = (options.addresses || '').split(',').map(a => a.trim()).filter(Boolean);
           if (addrs.length === 0 && (options.address1 || options.address2)) {
-            addrs = [options.address1, options.address2].filter(Boolean);
+            if (!options.address1 || !options.address2) {
+              throw new NansenError('Both --address1 and --address2 are required when using individual flags', ErrorCode.INVALID_PARAMS);
+            }
+            addrs = [options.address1, options.address2];
           }
           return compareWallets(apiInstance, { addresses: addrs, chain, days });
         },
