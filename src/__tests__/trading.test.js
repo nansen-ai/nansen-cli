@@ -87,36 +87,87 @@ describe('resolveChain', () => {
 });
 
 describe('resolveTokenAddress', () => {
-  it('should resolve common symbols to addresses', () => {
-    expect(resolveTokenAddress('SOL', 'solana')).toBe('So11111111111111111111111111111111111111112');
-    expect(resolveTokenAddress('USDC', 'solana')).toBe('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
-    expect(resolveTokenAddress('ETH', 'base')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
-    expect(resolveTokenAddress('USDC', 'base')).toBe('0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
-    expect(resolveTokenAddress('BNB', 'bsc')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
-    expect(resolveTokenAddress('ETH', 'ethereum')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+  it('should resolve common symbols to addresses', async () => {
+    expect(await resolveTokenAddress('SOL', 'solana')).toBe('So11111111111111111111111111111111111111112');
+    expect(await resolveTokenAddress('USDC', 'solana')).toBe('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+    expect(await resolveTokenAddress('ETH', 'base')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+    expect(await resolveTokenAddress('USDC', 'base')).toBe('0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
+    expect(await resolveTokenAddress('BNB', 'bsc')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+    expect(await resolveTokenAddress('ETH', 'ethereum')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
   });
 
-  it('should be case-insensitive for symbols', () => {
-    expect(resolveTokenAddress('sol', 'solana')).toBe('So11111111111111111111111111111111111111112');
-    expect(resolveTokenAddress('usdc', 'ethereum')).toBe('0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
-    expect(resolveTokenAddress('Eth', 'base')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+  it('should be case-insensitive for symbols', async () => {
+    expect(await resolveTokenAddress('sol', 'solana')).toBe('So11111111111111111111111111111111111111112');
+    expect(await resolveTokenAddress('usdc', 'ethereum')).toBe('0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
+    expect(await resolveTokenAddress('Eth', 'base')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
   });
 
-  it('should pass through raw addresses unchanged', () => {
+  it('should pass through raw addresses unchanged', async () => {
     const addr = '0x1234567890abcdef1234567890abcdef12345678';
-    expect(resolveTokenAddress(addr, 'ethereum')).toBe(addr);
-    expect(resolveTokenAddress('So11111111111111111111111111111111111111112', 'solana'))
+    expect(await resolveTokenAddress(addr, 'ethereum')).toBe(addr);
+    expect(await resolveTokenAddress('So11111111111111111111111111111111111111112', 'solana'))
       .toBe('So11111111111111111111111111111111111111112');
   });
 
-  it('should pass through unknown symbols unchanged', () => {
-    expect(resolveTokenAddress('SHIB', 'solana')).toBe('SHIB');
+  it('should pass through unknown symbols when no apiInstance provided', async () => {
+    expect(await resolveTokenAddress('SHIB', 'solana')).toBe('SHIB');
   });
 
-  it('should handle null/undefined gracefully', () => {
-    expect(resolveTokenAddress(null, 'solana')).toBe(null);
-    expect(resolveTokenAddress('SOL', null)).toBe('SOL');
-    expect(resolveTokenAddress(undefined, undefined)).toBe(undefined);
+  it('should handle null/undefined gracefully', async () => {
+    expect(await resolveTokenAddress(null, 'solana')).toBe(null);
+    expect(await resolveTokenAddress('SOL', null)).toBe('SOL');
+    expect(await resolveTokenAddress(undefined, undefined)).toBe(undefined);
+  });
+
+  it('should resolve unknown symbol via search API when apiInstance is provided', async () => {
+    const mockApi = {
+      generalSearch: vi.fn().mockResolvedValue({
+        data: [
+          { token_address: '0x6982508145454ce325ddbe47a25d4ec3d2311933', name: 'Pepe', chain: 'ethereum' },
+        ],
+      }),
+    };
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => {});
+    const result = await resolveTokenAddress('PEPE', 'ethereum', mockApi);
+    expect(result).toBe('0x6982508145454ce325ddbe47a25d4ec3d2311933');
+    expect(mockApi.generalSearch).toHaveBeenCalledWith({
+      query: 'PEPE',
+      resultType: 'token',
+      chain: 'ethereum',
+      limit: 5,
+    });
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('[resolve] "PEPE"'));
+    stderrSpy.mockRestore();
+  });
+
+  it('should not call search API for static map symbols even with apiInstance', async () => {
+    const mockApi = { generalSearch: vi.fn() };
+    const result = await resolveTokenAddress('SOL', 'solana', mockApi);
+    expect(result).toBe('So11111111111111111111111111111111111111112');
+    expect(mockApi.generalSearch).not.toHaveBeenCalled();
+  });
+
+  it('should not call search API for inputs that look like addresses', async () => {
+    const mockApi = { generalSearch: vi.fn() };
+    const evmAddr = '0x1234567890abcdef1234567890abcdef12345678';
+    expect(await resolveTokenAddress(evmAddr, 'ethereum', mockApi)).toBe(evmAddr);
+    expect(mockApi.generalSearch).not.toHaveBeenCalled();
+  });
+
+  it('should fall through silently when search API fails', async () => {
+    const mockApi = {
+      generalSearch: vi.fn().mockRejectedValue(new Error('Network error')),
+    };
+    const result = await resolveTokenAddress('PEPE', 'ethereum', mockApi);
+    expect(result).toBe('PEPE');
+  });
+
+  it('should fall through when search returns no results', async () => {
+    const mockApi = {
+      generalSearch: vi.fn().mockResolvedValue({ data: [] }),
+    };
+    const result = await resolveTokenAddress('UNKNOWN_TOKEN', 'ethereum', mockApi);
+    expect(result).toBe('UNKNOWN_TOKEN');
   });
 });
 

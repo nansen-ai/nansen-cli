@@ -64,17 +64,73 @@ const TOKEN_SYMBOLS = {
   },
 };
 
+// Address patterns used to detect whether input is already an address
+const ADDRESS_LIKE_EVM = /^0x[a-fA-F0-9]{40}$/;
+const ADDRESS_LIKE_SOLANA = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+const EVM_TRADE_CHAINS = new Set(['ethereum', 'base', 'bsc']);
+
+function looksLikeAddress(input, chainName) {
+  const chain = chainName?.toLowerCase();
+  if (chain === 'solana') return ADDRESS_LIKE_SOLANA.test(input);
+  if (EVM_TRADE_CHAINS.has(chain)) return ADDRESS_LIKE_EVM.test(input);
+  return ADDRESS_LIKE_EVM.test(input) || ADDRESS_LIKE_SOLANA.test(input);
+}
+
 /**
  * Resolve a token symbol (e.g. "SOL", "USDC") to its canonical address
  * for the given chain. Returns the input unchanged if no match is found
  * (assumes it's already a raw address).
+ *
+ * When an apiInstance is provided, unknown symbols that don't look like
+ * addresses are resolved dynamically via the Nansen search API.
  */
-export function resolveTokenAddress(symbolOrAddress, chainName) {
+export async function resolveTokenAddress(symbolOrAddress, chainName, apiInstance) {
   if (!symbolOrAddress || !chainName) return symbolOrAddress;
-  const chainTokens = TOKEN_SYMBOLS[chainName.toLowerCase()];
-  if (!chainTokens) return symbolOrAddress;
-  const resolved = chainTokens[symbolOrAddress.toUpperCase()];
-  return resolved || symbolOrAddress;
+  const chain = chainName.toLowerCase();
+
+  // Fast path: static map lookup (never triggers API call)
+  const chainTokens = TOKEN_SYMBOLS[chain];
+  if (chainTokens) {
+    const resolved = chainTokens[symbolOrAddress.toUpperCase()];
+    if (resolved) return resolved;
+  }
+
+  // If it already looks like an address, pass through
+  if (looksLikeAddress(symbolOrAddress, chain)) return symbolOrAddress;
+
+  // Dynamic lookup via Nansen search API (if available)
+  if (apiInstance) {
+    try {
+      const result = await apiInstance.generalSearch({
+        query: symbolOrAddress,
+        resultType: 'token',
+        chain,
+        limit: 5,
+      });
+      const tokens = result?.data || result?.results || [];
+      const match = tokens.find(t =>
+        t.chain?.toLowerCase() === chain ||
+        t.blockchain?.toLowerCase() === chain
+      ) || tokens[0];
+      if (match) {
+        const addr = match.token_address || match.address || match.contractAddress;
+        if (addr) {
+          const name = match.name || match.token_name || symbolOrAddress;
+          const shortAddr = addr.length > 16
+            ? `${addr.slice(0, 6)}...${addr.slice(-4)}`
+            : addr;
+          process.stderr.write(`[resolve] "${symbolOrAddress}" → ${shortAddr} (${name} on ${chain})\n`);
+          return addr;
+        }
+      }
+    } catch {
+      // Search failed (network error, no auth, etc.) — fall through silently
+    }
+  }
+
+  // No match found — pass through as-is and let the API give the error
+  return symbolOrAddress;
 }
 
 // Default public RPC endpoints (used for nonce fetching)
@@ -769,8 +825,8 @@ export function buildTradingCommands(deps = {}) {
       const chain = options.chain || args[0];
       const fromRaw = options.from || options['from-token'] || args[1];
       const toRaw = options.to || options['to-token'] || args[2];
-      const from = resolveTokenAddress(fromRaw, chain);
-      const to = resolveTokenAddress(toRaw, chain);
+      const from = await resolveTokenAddress(fromRaw, chain, apiInstance);
+      const to = await resolveTokenAddress(toRaw, chain, apiInstance);
       const amount = options.amount || args[3];
       const walletName = options.wallet;
       const slippage = options.slippage;
