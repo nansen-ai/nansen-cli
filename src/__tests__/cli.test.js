@@ -136,4 +136,71 @@ describe('CLI Smoke Tests', () => {
     const result = JSON.parse(stdout);
     expect(result.data.error).toContain('Unknown subcommand');
   });
+
+  // =================== Prediction Market Commands ===================
+
+  it('should show prediction help', () => {
+    const { stdout, exitCode } = runCLI('prediction help');
+
+    expect(exitCode).toBe(0);
+    const result = JSON.parse(stdout);
+    expect(result.data.commands).toContain('markets');
+    expect(result.data.commands).toContain('trades');
+    expect(result.data.commands).toContain('leaderboard');
+  });
+
+  it('should show prediction in schema', () => {
+    const { stdout, exitCode } = runCLI('schema prediction');
+
+    expect(exitCode).toBe(0);
+    const firstLine = stdout.split('\n').find(l => l.startsWith('{'));
+    const result = JSON.parse(firstLine);
+    expect(result.command).toBe('prediction');
+    expect(result.subcommands).toHaveProperty('markets');
+    expect(result.subcommands).toHaveProperty('trades');
+    expect(result.subcommands).toHaveProperty('market-detail');
+    expect(result.subcommands).toHaveProperty('top-holders');
+    expect(result.subcommands).toHaveProperty('leaderboard');
+    expect(result.subcommands).toHaveProperty('events');
+  });
+
+  it('should require market ID for prediction market-detail', () => {
+    const { stdout, exitCode } = runCLI('prediction market-detail');
+
+    expect(exitCode).toBe(0);
+    const result = JSON.parse(stdout);
+    expect(result.data.error).toContain('Market ID or slug required');
+  });
+
+  it('should require market ID for prediction trades', () => {
+    const { stdout, exitCode } = runCLI('prediction trades');
+
+    expect(exitCode).toBe(0);
+    const result = JSON.parse(stdout);
+    expect(result.data.error).toContain('Market ID or slug required');
+  });
+
+  it('should require market ID for prediction top-holders', () => {
+    const { stdout, exitCode } = runCLI('prediction top-holders');
+
+    expect(exitCode).toBe(0);
+    const result = JSON.parse(stdout);
+    expect(result.data.error).toContain('Market ID or slug required');
+  });
+
+  it('should handle unknown prediction subcommand', () => {
+    const { stdout, exitCode } = runCLI('prediction unknown-sub');
+
+    expect(exitCode).toBe(0);
+    const result = JSON.parse(stdout);
+    expect(result.data.error).toContain('Unknown subcommand');
+  });
+
+  it('should support prediction alias "pred"', () => {
+    const { stdout, exitCode } = runCLI('pred help');
+
+    expect(exitCode).toBe(0);
+    const result = JSON.parse(stdout);
+    expect(result.data.commands).toContain('markets');
+  });
 });

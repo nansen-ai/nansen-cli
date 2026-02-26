@@ -1068,11 +1068,14 @@ export class NansenAPI {
   // ============= Prediction Market Endpoints =============
 
   async predictionMarkets(params = {}) {
-    const { query, category, status = 'active', filters = {}, orderBy, pagination } = params;
+    const { query, category, status = 'active', filters = {}, orderBy, pagination, days = 30 } = params;
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/prediction/markets', {
       query,
       category,
       status,
+      date: { from, to },
       filters,
       order_by: orderBy,
       pagination
@@ -1080,11 +1083,14 @@ export class NansenAPI {
   }
 
   async predictionEvents(params = {}) {
-    const { query, category, status = 'active', filters = {}, orderBy, pagination } = params;
+    const { query, category, status = 'active', filters = {}, orderBy, pagination, days = 30 } = params;
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return this.request('/api/v1/prediction/events', {
       query,
       category,
       status,
+      date: { from, to },
       filters,
       order_by: orderBy,
       pagination

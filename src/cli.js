@@ -1413,13 +1413,13 @@ export function buildCommands(deps = {}) {
           query: args[1] || options.query,
           category: options.category,
           status: options.status || 'active',
-          filters, orderBy, pagination
+          filters, orderBy, pagination, days
         }),
         'events': () => apiInstance.predictionEvents({
           query: args[1] || options.query,
           category: options.category,
           status: options.status || 'active',
-          filters, orderBy, pagination
+          filters, orderBy, pagination, days
         }),
         'market-detail': () => {
           const market = args[1] || options.market;
