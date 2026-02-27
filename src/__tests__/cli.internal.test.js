@@ -2341,8 +2341,8 @@ describe('research command routing', () => {
 
   it('should error on unknown category', async () => {
     const commands = buildCommands({});
-    const result = await commands.research(['unknown'], null, {}, {});
-    expect(result.error).toContain('Unknown research category');
+    await expect(commands.research(['unknown'], null, {}, {}))
+      .rejects.toThrow('Unknown research category');
   });
 });
 
@@ -2357,11 +2357,9 @@ describe('trade command routing', () => {
   });
 
   it('should error on unknown subcommand', async () => {
-    const logs = [];
-    const commands = buildCommands({ log: (msg) => logs.push(msg) });
-    await commands.trade(['unknown'], null, {}, {});
-    const output = logs.join('\n');
-    expect(output).toContain('Unknown trade subcommand');
+    const commands = buildCommands({});
+    await expect(commands.trade(['unknown'], null, {}, {}))
+      .rejects.toThrow('Unknown trade subcommand');
   });
 });
 

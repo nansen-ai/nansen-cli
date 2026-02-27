@@ -1299,7 +1299,7 @@ export function buildCommands(deps = {}) {
     }
     const category = RESEARCH_CATEGORY_ALIASES[rawCategory] || rawCategory;
     if (!RESEARCH_CATEGORIES.has(category)) {
-      return { error: `Unknown research category: ${rawCategory}`, available: [...RESEARCH_CATEGORIES] };
+      throw new NansenError(`Unknown research category: ${rawCategory}. Available: ${[...RESEARCH_CATEGORIES].join(', ')}`, ErrorCode.UNKNOWN);
     }
     return cmds[category](args.slice(1), apiInstance, flags, options);
   };
@@ -1335,10 +1335,7 @@ SYMBOLS:
       return;
     }
     if (!tradingCmds[sub]) {
-      log(`Unknown trade subcommand: ${sub}`);
-      log(`Available: quote, execute`);
-      log(`Run 'nansen trade help' for usage.`);
-      return;
+      throw new NansenError(`Unknown trade subcommand: ${sub}. Available: quote, execute`, ErrorCode.UNKNOWN);
     }
     return tradingCmds[sub](args.slice(1), apiInstance, flags, options);
   };
@@ -1612,18 +1609,27 @@ export async function runCLI(rawArgs, deps = {}) {
 
   // Commands that don't require API authentication
   if (NO_AUTH_COMMANDS.includes(command)) {
-    const result = await commands[command](subArgs, null, flags, options);
-    
-    // Schema command returns data that should be output
-    if (command === 'schema' && result) {
-      const formatted = formatOutput(result, { pretty, table: false });
+    try {
+      const result = await commands[command](subArgs, null, flags, options);
+
+      // Schema command returns data that should be output
+      if (command === 'schema' && result) {
+        const formatted = formatOutput(result, { pretty, table: false });
+        output(formatted.text);
+        notify();
+        return { type: 'schema', data: result };
+      }
+
+      notify();
+      return { type: 'no-auth', command };
+    } catch (error) {
+      const errorData = formatError(error);
+      const formatted = formatOutput(errorData, { pretty, table, csv });
       output(formatted.text);
       notify();
-      return { type: 'schema', data: result };
+      exit(1);
+      return { type: 'error', data: errorData };
     }
-
-    notify();
-    return { type: 'no-auth', command };
   }
 
   try {
