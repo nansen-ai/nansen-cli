@@ -6,7 +6,7 @@
 
 - [#98](https://github.com/nansen-ai/nansen-cli/pull/98) [`2f3f556`](https://github.com/nansen-ai/nansen-cli/commit/2f3f556d008a1f8ec40d57a8a2822bedbc6b60cb) Thanks [@Codier](https://github.com/Codier)! - Add symbol shortcuts for common tokens (SOL, ETH, USDC, USDT, etc.) that resolve to canonical addresses per chain. Users can now use `--from SOL --to USDC` instead of raw contract addresses.
 
-- [#106](https://github.com/nansen-ai/nansen-cli/pull/106) [`135aa79`](https://github.com/nansen-ai/nansen-cli/commit/135aa79e662febd356935d85c9ba783c1a46738f) Thanks [@TimNooren](https://github.com/TimNooren)! - Add WalletConnect support for trading, transfers, and x402 auto-payment (EVM only)
+- [#32](https://github.com/nansen-ai/nansen-cli/pull/32) [`08a8d21`](https://github.com/nansen-ai/nansen-cli/commit/08a8d21be6e9196661be737545e790af180aebc3) Thanks [@arein](https://github.com/arein)! - Add WalletConnect support for trading, transfers, and x402 auto-payment (EVM only)
 
 ### Patch Changes
 
