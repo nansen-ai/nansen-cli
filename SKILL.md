@@ -159,6 +159,10 @@ nansen trade quote --chain solana \
 
 # Execute the best quote
 nansen trade execute --quote <quote-id>
+
+# Trade via WalletConnect (hardware wallets, mobile wallets — EVM only)
+nansen trade quote --chain base --from <addr> --to <addr> --amount <base_units> --wallet walletconnect
+nansen trade execute --quote <quote-id> --wallet wc
 ```
 
 > ⚠️ Always inspect the quote response (price, slippage, expiry) before executing.
@@ -188,7 +192,12 @@ nansen wallet create          # Create EVM + Solana keypair
 nansen wallet list            # List wallets
 nansen wallet send --to <addr> --amount 1.5 --chain evm    # Send native
 nansen wallet send --to <addr> --chain evm --max            # Send entire balance
+
+# Send via WalletConnect (EVM only)
+nansen wallet send --to <addr> --amount 1.5 --chain base --wallet walletconnect
 ```
+
+Use `--wallet walletconnect` (or `--wallet wc`) to sign trades and transfers via a WalletConnect-connected wallet (hardware wallets, mobile wallets) instead of local keys. EVM chains only.
 
 ## Common Options
 
