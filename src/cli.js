@@ -1316,13 +1316,18 @@ SUBCOMMANDS:
   execute     Sign and broadcast a quoted swap
 
 USAGE:
-  nansen trade quote --chain <chain> --from <token> --to <token> --amount <units>
-  nansen trade execute --quote <quoteId>
+  nansen trade quote --chain <chain> --from <token> --to <token> --amount <units> [--wallet <name>]
+  nansen trade execute --quote <quoteId> [--wallet <name>]
 
 EXAMPLES:
   nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
   nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000
+  nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000 --wallet walletconnect
   nansen trade execute --quote 1708900000000-abc123
+
+WALLET:
+  --wallet <name>   Use a named wallet, or "walletconnect" / "wc" for WalletConnect (EVM only).
+                    Defaults to the default local wallet if omitted.
 
 SYMBOLS:
   Common tokens resolve automatically: SOL, ETH, BNB, USDC, USDT, WETH, WBNB
