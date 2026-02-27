@@ -101,7 +101,10 @@ export async function* createPaymentSignatures(response, url, options = {}) {
   try {
     const { exportWallet: ew, listWallets: lw, getWalletConfig } = await import('./wallet.js');
     const config = getWalletConfig();
-    if (config.passwordHash && !password) return;
+    if (config.passwordHash && !password) {
+      console.error('⚠️ x402 payment skipped: wallet requires password but NANSEN_WALLET_PASSWORD not set');
+      return;
+    }
     exportWallet = ew;
     listWallets = lw;
   } catch {

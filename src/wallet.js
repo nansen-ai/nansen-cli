@@ -110,7 +110,20 @@ export function encryptKey(privateKeyHex, password) {
 export function decryptKey(encryptedData, password) {
   // Plaintext (no password) → return directly
   if (encryptedData.encrypted === false) {
+    // Validate that plaintext entries don't contain encryption metadata
+    // This prevents an attacker from flipping the encrypted flag
+    const encryptionFields = ['salt', 'iv', 'authTag', 'ciphertext'];
+    for (const field of encryptionFields) {
+      if (encryptedData[field] !== undefined) {
+        throw new Error('Plaintext entries cannot contain encryption metadata');
+      }
+    }
     return encryptedData.data;
+  }
+
+  // For encrypted data, password is required
+  if (!password) {
+    throw new Error('Incorrect password');
   }
 
   const salt = Buffer.from(encryptedData.salt, 'hex');
@@ -338,6 +351,11 @@ export function createWallet(name, password) {
     throw new Error(`Wallet "${name}" already exists`);
   }
 
+  // If existing wallets have a password, require it for new wallets too
+  if (config.passwordHash && !password) {
+    throw new Error('Existing wallets are password-protected. Set NANSEN_WALLET_PASSWORD to create new wallets.');
+  }
+
   // Password handling: null/undefined = no encryption.
   // Note: mixed encrypted/unencrypted states are supported — decryptKey handles
   // both via the `encrypted: false` marker. Once any wallet sets passwordHash,
@@ -515,16 +533,10 @@ export function buildWalletCommands(deps = {}) {
             return;
           }
 
-          // If existing wallets have a password, require it for new wallets too
-          const config = getWalletConfig();
-          if (config.passwordHash && !password) {
-            log('❌ Existing wallets are password-protected. Set NANSEN_WALLET_PASSWORD to create new wallets.');
-            exit(1);
-            return;
-          }
+
 
           if (!password) {
-            log('⚠️  No NANSEN_WALLET_PASSWORD set — private keys will be stored unencrypted.');
+            console.error('⚠️  No NANSEN_WALLET_PASSWORD set — private keys will be stored unencrypted.');
           }
 
           try {
