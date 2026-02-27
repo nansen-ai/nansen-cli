@@ -1091,6 +1091,7 @@ export class NansenAPI {
 
   async pmOhlcv(params = {}) {
     const { marketId, sort, pagination } = params;
+    if (!marketId) throw new NansenError('market_id is required', ErrorCode.MISSING_PARAM);
     return this.request('/api/v1/prediction-market/ohlcv', {
       market_id: marketId,
       sort,
@@ -1100,6 +1101,7 @@ export class NansenAPI {
 
   async pmOrderbook(params = {}) {
     const { marketId, pagination } = params;
+    if (!marketId) throw new NansenError('market_id is required', ErrorCode.MISSING_PARAM);
     return this.request('/api/v1/prediction-market/orderbook', {
       market_id: marketId,
       pagination
@@ -1108,6 +1110,7 @@ export class NansenAPI {
 
   async pmTopHolders(params = {}) {
     const { marketId, sort, pagination } = params;
+    if (!marketId) throw new NansenError('market_id is required', ErrorCode.MISSING_PARAM);
     return this.request('/api/v1/prediction-market/top-holders', {
       market_id: marketId,
       sort,
@@ -1117,6 +1120,7 @@ export class NansenAPI {
 
   async pmTradesByMarket(params = {}) {
     const { marketId, pagination } = params;
+    if (!marketId) throw new NansenError('market_id is required', ErrorCode.MISSING_PARAM);
     return this.request('/api/v1/prediction-market/trades-by-market', {
       market_id: marketId,
       pagination
@@ -1125,6 +1129,7 @@ export class NansenAPI {
 
   async pmTradesByAddress(params = {}) {
     const { address, pagination } = params;
+    // Polymarket runs exclusively on Polygon
     const validation = validateAddress(address, 'polygon');
     if (!validation.valid) throw new NansenError(validation.error, validation.code);
     return this.request('/api/v1/prediction-market/trades-by-address', {
@@ -1155,6 +1160,7 @@ export class NansenAPI {
 
   async pmPnlByMarket(params = {}) {
     const { marketId, pagination } = params;
+    if (!marketId) throw new NansenError('market_id is required', ErrorCode.MISSING_PARAM);
     return this.request('/api/v1/prediction-market/pnl-by-market', {
       market_id: marketId,
       pagination
@@ -1163,6 +1169,7 @@ export class NansenAPI {
 
   async pmPnlByAddress(params = {}) {
     const { address, pagination } = params;
+    // Polymarket runs exclusively on Polygon
     const validation = validateAddress(address, 'polygon');
     if (!validation.valid) throw new NansenError(validation.error, validation.code);
     return this.request('/api/v1/prediction-market/pnl-by-address', {
@@ -1173,6 +1180,7 @@ export class NansenAPI {
 
   async pmPositionDetail(params = {}) {
     const { marketId, pagination } = params;
+    if (!marketId) throw new NansenError('market_id is required', ErrorCode.MISSING_PARAM);
     return this.request('/api/v1/prediction-market/position-detail', {
       market_id: marketId,
       pagination

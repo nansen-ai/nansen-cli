@@ -1292,6 +1292,10 @@ describe('NansenAPI', () => {
         const body = expectFetchCalledWith('/api/v1/prediction-market/ohlcv');
         expect(body.sort).toEqual([{ field: 'period_start', direction: 'DESC' }]);
       });
+
+      it('should require marketId', async () => {
+        await expect(api.pmOhlcv({})).rejects.toThrow('market_id is required');
+      });
     });
 
     describe('pmOrderbook', () => {
@@ -1301,6 +1305,10 @@ describe('NansenAPI', () => {
         expectFetchCalledWith('/api/v1/prediction-market/orderbook', { market_id: '654412' });
         expect(result.data).toBeInstanceOf(Array);
         expect(result.data[0]).toHaveProperty('side', 'buy');
+      });
+
+      it('should require marketId', async () => {
+        await expect(api.pmOrderbook({})).rejects.toThrow('market_id is required');
       });
     });
 
@@ -1312,6 +1320,10 @@ describe('NansenAPI', () => {
         expect(result.data).toBeInstanceOf(Array);
         expect(result.data[0]).toHaveProperty('position_size', 15000);
       });
+
+      it('should require marketId', async () => {
+        await expect(api.pmTopHolders({})).rejects.toThrow('market_id is required');
+      });
     });
 
     describe('pmTradesByMarket', () => {
@@ -1321,6 +1333,10 @@ describe('NansenAPI', () => {
         expectFetchCalledWith('/api/v1/prediction-market/trades-by-market', { market_id: '654412' });
         expect(result.data).toBeInstanceOf(Array);
         expect(result.data[0]).toHaveProperty('usdc_value', 520);
+      });
+
+      it('should require marketId', async () => {
+        await expect(api.pmTradesByMarket({})).rejects.toThrow('market_id is required');
       });
     });
 
@@ -1378,6 +1394,10 @@ describe('NansenAPI', () => {
         expect(result.data).toBeInstanceOf(Array);
         expect(result.data[0]).toHaveProperty('total_pnl_usd', 5000);
       });
+
+      it('should require marketId', async () => {
+        await expect(api.pmPnlByMarket({})).rejects.toThrow('market_id is required');
+      });
     });
 
     describe('pmPnlByAddress', () => {
@@ -1401,6 +1421,10 @@ describe('NansenAPI', () => {
         expectFetchCalledWith('/api/v1/prediction-market/position-detail', { market_id: '654412' });
         expect(result.data).toBeInstanceOf(Array);
         expect(result.data[0]).toHaveProperty('outcome', 'Yes');
+      });
+
+      it('should require marketId', async () => {
+        await expect(api.pmPositionDetail({})).rejects.toThrow('market_id is required');
       });
     });
 
