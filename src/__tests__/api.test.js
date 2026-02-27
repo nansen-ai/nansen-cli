@@ -1589,12 +1589,49 @@ describe('NansenAPI', () => {
     });
 
     describe('pmEventScreener', () => {
-      it('should fetch event screener with correct endpoint', async () => {
+      it('should fetch event screener with correct endpoint and defaults', async () => {
         setupMock(MOCK_RESPONSES.pmEventScreener);
         const result = await api.pmEventScreener({});
-        expectFetchCalledWith('/api/v1/prediction-market/event-screener');
+        const body = expectFetchCalledWith('/api/v1/prediction-market/event-screener');
+        expect(body.sort_by).toBe('volume_24hr');
+        expect(body.query).toBe('');
+        expect(body.status).toBe('');
         expect(result.data).toBeInstanceOf(Array);
         expect(result.data[0]).toHaveProperty('event_title', 'US Election');
+      });
+
+      it('should pass sort_by, query, and status', async () => {
+        setupMock(MOCK_RESPONSES.pmEventScreener);
+        await api.pmEventScreener({ sortBy: 'open_interest', query: 'crypto', status: 'active' });
+        const body = expectFetchCalledWith('/api/v1/prediction-market/event-screener');
+        expect(body.sort_by).toBe('open_interest');
+        expect(body.query).toBe('crypto');
+        expect(body.status).toBe('active');
+      });
+    });
+
+    describe('pmTopHolders (sort)', () => {
+      it('should pass sort parameter', async () => {
+        setupMock(MOCK_RESPONSES.pmTopHolders);
+        await api.pmTopHolders({ marketId: '654412', sort: [{ field: 'position_size', direction: 'DESC' }] });
+        const body = expectFetchCalledWith('/api/v1/prediction-market/top-holders');
+        expect(body.sort).toEqual([{ field: 'position_size', direction: 'DESC' }]);
+      });
+
+      it('should pass pagination', async () => {
+        setupMock(MOCK_RESPONSES.pmTopHolders);
+        await api.pmTopHolders({ marketId: '654412', pagination: { page: 2, per_page: 10 } });
+        const body = expectFetchCalledWith('/api/v1/prediction-market/top-holders');
+        expect(body.pagination).toEqual({ page: 2, per_page: 10 });
+      });
+    });
+
+    describe('pmTradesByMarket (pagination)', () => {
+      it('should pass pagination', async () => {
+        setupMock(MOCK_RESPONSES.pmTradesByMarket);
+        await api.pmTradesByMarket({ marketId: '654412', pagination: { page: 3, per_page: 50 } });
+        const body = expectFetchCalledWith('/api/v1/prediction-market/trades-by-market');
+        expect(body.pagination).toEqual({ page: 3, per_page: 50 });
       });
     });
 
