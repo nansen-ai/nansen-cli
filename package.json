@@ -18,7 +18,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:live": "NANSEN_LIVE_TEST=1 vitest run",
-    "test:swap": "vitest run --config vitest.e2e.config.js",
+    "test:trade": "vitest run --config vitest.e2e.config.js",
     "changeset": "changeset",
     "changeset:version": "changeset version",
     "changeset:publish": "changeset publish"

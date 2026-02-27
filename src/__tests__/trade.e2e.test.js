@@ -5,7 +5,7 @@
  *   - A wallet in ~/.nansen/wallets/ with ETH on Base and SOL on Solana
  *   - NANSEN_WALLET_PASSWORD env var set
  *
- * Run: npm run test:swap
+ * Run: npm run test:trade
  *
  * These tests execute REAL swaps with REAL funds. They are excluded
  * from the default test suite and must be run explicitly.
