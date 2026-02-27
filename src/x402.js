@@ -96,39 +96,36 @@ export async function* createPaymentSignatures(response, url, options = {}) {
   const ranked = rankRequirements(requirements);
   if (ranked.length === 0) return;
 
-  let password = options.password || process.env.NANSEN_WALLET_PASSWORD || null;
-  let exportWallet, listWallets;
+  const password = options.password || process.env.NANSEN_WALLET_PASSWORD || null;
+  
   try {
-    const { exportWallet: ew, listWallets: lw, getWalletConfig } = await import('./wallet.js');
+    const { exportWallet, listWallets, getWalletConfig } = await import('./wallet.js');
     const config = getWalletConfig();
-    if (config.passwordHash && !password) return;
-    exportWallet = ew;
-    listWallets = lw;
-  } catch {
-    return;
-  }
-
-  const wallets = listWallets();
-  if (wallets.wallets.length === 0) return;
-
-  const walletName = options.walletName || wallets.defaultWallet;
-  if (!walletName) return;
-
-  let exported;
-  try {
-    exported = exportWallet(walletName, password);
-  } catch {
-    return;
-  }
-
-  for (const req of ranked) {
-    try {
-      const sig = await buildPaymentForRequirement(req, exported, url);
-      if (sig) yield { signature: sig, network: req.network };
-    } catch {
-      // This payment option failed to build, try next
-      continue;
+    
+    if (config.passwordHash && !password) {
+      console.error('⚠️ x402 payment skipped: wallet requires password but NANSEN_WALLET_PASSWORD not set');
+      return;
     }
+
+    const wallets = listWallets();
+    if (wallets.wallets.length === 0) return;
+
+    const walletName = options.walletName || wallets.defaultWallet;
+    if (!walletName) return;
+
+    const exported = exportWallet(walletName, password);
+
+    for (const req of ranked) {
+      try {
+        const sig = await buildPaymentForRequirement(req, exported, url);
+        if (sig) yield { signature: sig, network: req.network };
+      } catch {
+        // This payment option failed to build, try next
+        continue;
+      }
+    }
+  } catch {
+    return;
   }
 }
 

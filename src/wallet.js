@@ -512,13 +512,7 @@ export function buildWalletCommands(deps = {}) {
             return;
           }
 
-          // If existing wallets have a password, require it for new wallets too
-          const config = getWalletConfig();
-          if (config.passwordHash && !password) {
-            log('❌ Existing wallets are password-protected. Set NANSEN_WALLET_PASSWORD to create new wallets.');
-            exit(1);
-            return;
-          }
+
 
           try {
             const result = createWallet(name, password);

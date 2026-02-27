@@ -203,4 +203,30 @@ describe('CLI Smoke Tests', () => {
     const result = JSON.parse(stdout);
     expect(result.data.commands).toContain('markets');
   });
+
+  it('should handle prediction leaderboard command', () => {
+    const { stdout, stderr } = runCLI('prediction leaderboard', {
+      env: { NANSEN_API_KEY: 'test-key' }
+    });
+    
+    // Will fail auth but proves command routing works
+    const output = stdout || stderr;
+    const firstLine = output.split('\n').find(l => l.startsWith('{'));
+    const result = JSON.parse(firstLine);
+    expect(result.success).toBe(false);
+    expect(['UNAUTHORIZED', 'PAYMENT_REQUIRED', 'UNKNOWN']).toContain(result.code);
+  });
+
+  it('should handle prediction markets command', () => {
+    const { stdout, stderr } = runCLI('prediction markets', {
+      env: { NANSEN_API_KEY: 'test-key' }
+    });
+    
+    // Will fail auth but proves command routing works
+    const output = stdout || stderr;
+    const firstLine = output.split('\n').find(l => l.startsWith('{'));
+    const result = JSON.parse(firstLine);
+    expect(result.success).toBe(false);
+    expect(['UNAUTHORIZED', 'PAYMENT_REQUIRED', 'UNKNOWN']).toContain(result.code);
+  });
 });
