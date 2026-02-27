@@ -100,7 +100,7 @@ All analytics live under `nansen research`, trading under `nansen trade`, and wa
 nansen research <category> <subcommand> [options]
 ```
 
-**Category aliases:** `sm` (smart-money), `tgm` (token), `prof` (profiler), `port` (portfolio)
+**Category aliases:** `sm` (smart-money), `tgm` (token), `prof` (profiler), `port` (portfolio), `pm` (prediction-market)
 
 #### `research smart-money` - Smart Money Analytics
 
@@ -160,6 +160,39 @@ ENS names are automatically resolved to `0x` addresses via public APIs (with onc
 | `perp-trades` | Perp trades by token symbol |
 | `perp-positions` | Open perp positions by token symbol |
 | `perp-pnl-leaderboard` | Perp PnL leaderboard by token |
+
+#### `research prediction-market` (alias: `pm`) - Polymarket Analytics
+
+| Subcommand | Description |
+|------------|-------------|
+| `ohlcv` | OHLCV candle data for a market |
+| `orderbook` | Current orderbook levels |
+| `top-holders` | Top holders for a market |
+| `trades-by-market` | Recent trades for a market |
+| `trades-by-address` | Trades for a specific address |
+| `market-screener` | Screen and discover markets |
+| `event-screener` | Screen and discover events |
+| `pnl-by-market` | PnL leaderboard for a market |
+| `pnl-by-address` | PnL breakdown for an address |
+| `position-detail` | Detailed position data |
+| `categories` | List market categories |
+
+```bash
+# Screen prediction markets by volume
+nansen pm market-screener --sort-by volume_24hr --limit 20 --pretty
+
+# Get OHLCV data for a market
+nansen pm ohlcv --market-id 654412 --sort period_start:desc --pretty
+
+# View top holders
+nansen pm top-holders --market-id 654412 --limit 10 --table
+
+# Check trader PnL
+nansen pm pnl-by-address --address 0x1234... --pretty
+
+# Browse categories
+nansen pm categories --pretty
+```
 
 #### `research search` / `research perp` / `research portfolio` / `research points`
 
@@ -341,9 +374,12 @@ See [AGENTS.md](AGENTS.md) for contributor guidance (architecture, testing patte
 | Smart Money | 6 | 100% |
 | Profiler | 11 | 100% |
 | Token God Mode | 12 | 100% |
+| Prediction Market | 11 | 100% |
 | Portfolio | 1 | 100% |
 | Search | 1 | 100% |
-| **Total** | **31** | **100%** |
+| Perp | 3 | 100% |
+| Points | 2 | 100% |
+| **Total** | **47** | **100%** |
 
 ## License
 
