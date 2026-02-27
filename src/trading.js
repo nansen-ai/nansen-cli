@@ -781,7 +781,7 @@ export function buildTradingCommands(deps = {}) {
 
       if (!chain || !from || !to || !amount) {
         errorOutput(`
-Usage: nansen quote --chain <chain> --from <token> --to <token> --amount <baseUnits>
+Usage: nansen trade quote --chain <chain> --from <token> --to <token> --amount <baseUnits>
 
 OPTIONS:
   --chain <chain>           Chain: solana, ethereum, base, bsc
@@ -795,9 +795,9 @@ OPTIONS:
   --swap-mode <mode>        exactIn (default) or exactOut
 
 EXAMPLES:
-  nansen quote --chain solana --from SOL --to USDC --amount 1000000000
-  nansen quote --chain base --from ETH --to USDC --amount 1000000000000000000
-  nansen quote --chain solana --from So11111111111111111111111111111111111111112 --to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 1000000000
+  nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
+  nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000
+  nansen trade quote --chain solana --from So11111111111111111111111111111111111111112 --to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 1000000000
 `);
         exit(1);
         return;

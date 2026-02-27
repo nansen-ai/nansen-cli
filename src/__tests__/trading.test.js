@@ -555,7 +555,7 @@ describe('buildTradingCommands', () => {
 
     await cmds.quote([], null, {}, {});
     expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('Usage: nansen quote'))).toBe(true);
+    expect(logs.some(l => l.includes('Usage: nansen trade quote'))).toBe(true);
   });
 
   it('should show help when quote-id missing for execute', async () => {
