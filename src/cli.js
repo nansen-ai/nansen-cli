@@ -858,7 +858,7 @@ export function buildCommands(deps = {}) {
           // Non-interactive mode: check env var fallback
           apiKey = process.env.NANSEN_API_KEY;
           if (!apiKey) {
-            log('❌ No API key provided. Use: nansen login --api-key <key>\n   Or set NANSEN_API_KEY environment variable.');
+            log('❌ No API key provided. Use: nansen login --api-key <key>\n   Or set NANSEN_API_KEY environment variable.\n   Get your API key at: https://app.nansen.ai/api');
             exit(1);
             return;
           }
