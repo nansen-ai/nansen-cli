@@ -97,7 +97,11 @@ export async function* createPaymentSignatures(response, url, options = {}) {
   if (ranked.length === 0) return;
 
   const password = options.password || process.env.NANSEN_WALLET_PASSWORD || null;
+<<<<<<< HEAD
+  let exportWallet, listWallets;
+=======
   
+>>>>>>> cd5728a (Address PR #58 review comments)
   try {
     const { exportWallet, listWallets, getWalletConfig } = await import('./wallet.js');
     const config = getWalletConfig();

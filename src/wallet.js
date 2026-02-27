@@ -110,7 +110,20 @@ export function encryptKey(privateKeyHex, password) {
 export function decryptKey(encryptedData, password) {
   // Plaintext (no password) → return directly
   if (encryptedData.encrypted === false) {
+    // Validate that plaintext entries don't contain encryption metadata
+    // This prevents an attacker from flipping the encrypted flag
+    const encryptionFields = ['salt', 'iv', 'authTag', 'ciphertext'];
+    for (const field of encryptionFields) {
+      if (encryptedData[field] !== undefined) {
+        throw new Error('Plaintext entries cannot contain encryption metadata');
+      }
+    }
     return encryptedData.data;
+  }
+
+  // For encrypted data, password is required
+  if (!password) {
+    throw new Error('Incorrect password');
   }
 
   const salt = Buffer.from(encryptedData.salt, 'hex');
@@ -338,6 +351,11 @@ export function createWallet(name, password) {
     throw new Error(`Wallet "${name}" already exists`);
   }
 
+  // If existing wallets have a password, require it for new wallets too
+  if (config.passwordHash && !password) {
+    throw new Error('Existing wallets are password-protected. Set NANSEN_WALLET_PASSWORD to create new wallets.');
+  }
+
   // Password handling: null/undefined = no encryption
   if (password) {
     // If this is the first wallet, set the password hash
@@ -512,6 +530,10 @@ export function buildWalletCommands(deps = {}) {
             return;
           }
 
+          if (!password) {
+            console.error('⚠️  No password set — private keys stored unencrypted');
+          }
+
 
 
           try {
@@ -525,6 +547,12 @@ export function buildWalletCommands(deps = {}) {
             log(`    Base (recommended, lower fees): send USDC to ${result.evm}`);
             log(`    Solana: send USDC to ${result.solana}`);
             log('');
+            
+            // Add warning field to result if no password was set
+            if (!password) {
+              result.warning = 'No password set — private keys stored unencrypted';
+            }
+            
             return result;
           } catch (err) {
             log(`❌ ${err.message}`);

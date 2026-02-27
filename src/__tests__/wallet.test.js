@@ -92,6 +92,44 @@ describe('encryption', () => {
 
     expect(() => decryptKey(encrypted, 'wrong-password')).toThrow('Incorrect password');
   });
+
+  it('encryptKey with null password returns unencrypted wrapper', () => {
+    const result = encryptKey('deadbeef', null);
+    expect(result).toEqual({ data: 'deadbeef', encrypted: false });
+  });
+
+  it('decryptKey handles unencrypted wrapper', () => {
+    expect(decryptKey({ data: 'deadbeef', encrypted: false }, null)).toBe('deadbeef');
+    expect(decryptKey({ data: 'deadbeef', encrypted: false }, 'any-password')).toBe('deadbeef');
+  });
+
+  it('decryptKey with encrypted blob and null password should throw', () => {
+    const key = 'a'.repeat(64);
+    const password = 'testpassword123';
+    const encrypted = encryptKey(key, password);
+    
+    expect(() => decryptKey(encrypted, null)).toThrow('Incorrect password');
+  });
+
+  it('decryptKey should reject plaintext with encryption metadata', () => {
+    const maliciousData = {
+      encrypted: false,
+      data: 'deadbeef',
+      salt: 'fakesalt',
+      iv: 'fakeiv',
+      authTag: 'fakeauthtag'
+    };
+    
+    expect(() => decryptKey(maliciousData, null)).toThrow('Plaintext entries cannot contain encryption metadata');
+    expect(() => decryptKey(maliciousData, 'any-password')).toThrow('Plaintext entries cannot contain encryption metadata');
+  });
+
+  it('decryptKey should reject plaintext with any encryption field', () => {
+    expect(() => decryptKey({ encrypted: false, data: 'test', salt: 'x' }, null)).toThrow('Plaintext entries cannot contain encryption metadata');
+    expect(() => decryptKey({ encrypted: false, data: 'test', iv: 'x' }, null)).toThrow('Plaintext entries cannot contain encryption metadata');
+    expect(() => decryptKey({ encrypted: false, data: 'test', authTag: 'x' }, null)).toThrow('Plaintext entries cannot contain encryption metadata');
+    expect(() => decryptKey({ encrypted: false, data: 'test', ciphertext: 'x' }, null)).toThrow('Plaintext entries cannot contain encryption metadata');
+  });
 });
 
 describe('generateEvmWallet', () => {
