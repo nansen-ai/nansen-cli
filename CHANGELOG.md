@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.1
+
+### Patch Changes
+
+- [#110](https://github.com/nansen-ai/nansen-cli/pull/110) [`82aa780`](https://github.com/nansen-ai/nansen-cli/commit/82aa78022bdcd62987b0949e090f19f563699d9a) Thanks [@TimNooren](https://github.com/TimNooren)! - Fix `nansen changelog` always showing "CHANGELOG.md not found". Added a `files` field to `package.json` to explicitly bundle `CHANGELOG.md` with the published package. Also excludes `src/__tests__/` from the package, reducing package size from ~537 kB to ~269 kB.
+
 ## 1.9.0
 
 ### Minor Changes
