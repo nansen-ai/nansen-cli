@@ -1348,9 +1348,6 @@ export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token
 // Subcommands that moved under 'trade'
 export const DEPRECATED_TO_TRADE = new Set(['quote', 'execute']);
 
-// Commands that don't require API authentication
-export const NO_AUTH_COMMANDS = ['login', 'logout', 'help', 'schema', 'cache', 'wallet', 'trade', 'quote', 'execute', 'changelog'];
-
 // Command aliases: top-level shortcuts that resolve before routing
 export const COMMAND_ALIASES = {
   'tgm': 'token',           // Token God Mode
@@ -1607,57 +1604,46 @@ export async function runCLI(rawArgs, deps = {}) {
     return { type: 'error', data: errorData };
   }
 
-  // Commands that don't require API authentication
-  if (NO_AUTH_COMMANDS.includes(command)) {
-    try {
-      const result = await commands[command](subArgs, null, flags, options);
-
-      // Schema command returns data that should be output
-      if (command === 'schema' && result) {
-        const formatted = formatOutput(result, { pretty, table: false });
-        output(formatted.text);
-        notify();
-        return { type: 'schema', data: result };
-      }
-
-      notify();
-      return { type: 'no-auth', command };
-    } catch (error) {
-      const errorData = formatError(error);
-      const formatted = formatOutput(errorData, { pretty, table, csv });
-      output(formatted.text);
-      notify();
-      exit(1);
-      return { type: 'error', data: errorData };
-    }
-  }
-
   try {
     // Configure retry options
-    const retryOptions = flags['no-retry'] 
-      ? { maxRetries: 0 } 
+    const retryOptions = flags['no-retry']
+      ? { maxRetries: 0 }
       : { maxRetries: options.retries !== undefined ? (Number.isNaN(parseInt(options.retries, 10)) ? 3 : parseInt(options.retries, 10)) : 3 };
-    
+
     // Configure cache options
     const cacheTtl = options['cache-ttl'] !== undefined ? parseInt(options['cache-ttl'], 10) : 300;
     const cacheOptions = {
       enabled: flags['cache'] && !flags['no-cache'],
       ttl: Number.isNaN(cacheTtl) ? 300 : cacheTtl
     };
-    
+
     const defaultHeaders = {};
     if (options['x402-payment-signature']) {
       defaultHeaders['Payment-Signature'] = options['x402-payment-signature'];
     }
     const api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders });
     let result = await commands[command](subArgs, api, flags, options);
-    
+
+    // Commands that handle their own output return undefined
+    if (result === undefined) {
+      notify();
+      return { type: 'no-output', command };
+    }
+
+    // Schema returns data directly (not wrapped in { success, data })
+    if (command === 'schema') {
+      const formatted = formatOutput(result, { pretty, table: false });
+      output(formatted.text);
+      notify();
+      return { type: 'schema', data: result };
+    }
+
     // Apply field filtering if --fields is specified
     const fields = parseFields(options.fields);
     if (fields) {
       result = filterFields(result, fields);
     }
-    
+
     // Output in requested format
     if (stream) {
       // Stream mode: output each record as a JSON line (NDJSON)

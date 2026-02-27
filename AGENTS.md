@@ -28,8 +28,6 @@ Commands are built by three functions, merged in `runCLI()`:
 - `buildWalletCommands()` in wallet.js — wallet subcommands
 - `buildTradingCommands()` in trading.js — quote/execute
 
-Commands listed in `NO_AUTH_COMMANDS` skip API initialization. Everything else instantiates `NansenAPI` with retry, cache, and x402 config.
-
 ### Data flow: trade
 
 ```
