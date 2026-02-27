@@ -118,6 +118,13 @@ describe('CLI Smoke Tests', () => {
     expect(stdout).toContain('ohlcv');
   });
 
+  it('should route research prediction-market commands', () => {
+    const { stdout } = runCLI('research pm help');
+    expect(stdout).toContain('ohlcv');
+    expect(stdout).toContain('market-screener');
+    expect(stdout).toContain('categories');
+  });
+
   it('should still route deprecated smart-money path', () => {
     const { stdout } = runCLI('smart-money help');
     expect(stdout).toContain('netflow');
