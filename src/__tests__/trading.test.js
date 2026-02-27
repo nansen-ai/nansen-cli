@@ -28,6 +28,7 @@ import {
   getWrappedNativeFromWarning,
   validateBaseUnitAmount,
   resolveTokenAddress,
+  formatQuote,
 } from '../trading.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
@@ -1179,5 +1180,31 @@ describe('API error handling', () => {
     })).rejects.toThrow(); // Should throw, not hang
 
     global.fetch = origFetch;
+  });
+});
+
+describe('formatQuote price impact warning', () => {
+  it('should show warning when priceImpactPct exceeds 5%', () => {
+    const output = formatQuote({ aggregator: 'jupiter', inputMint: 'So11111111111111111111111111111111111111112', outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', inAmount: '1000', outAmount: '500', priceImpactPct: '22.59' });
+    expect(output).toContain('⚠ Price impact is 22.59%!');
+    expect(output).not.toContain('Price Impact: 22.59%');
+  });
+
+  it('should show warning when priceImpactPct is negative and exceeds -5%', () => {
+    const output = formatQuote({ aggregator: 'okx', inputMint: '0x4ed4e862860bed51a9570b96d89af5e1b0efefed', outputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', inAmount: '100000000000000000000000000', outAmount: '31932262114904620119', priceImpactPct: '-10.03' });
+    expect(output).toContain('⚠ Price impact is 10.03%!');
+    expect(output).not.toContain('-10.03');
+  });
+
+  it('should show normal line when priceImpactPct is low', () => {
+    const output = formatQuote({ aggregator: 'jupiter', inputMint: 'So11111111111111111111111111111111111111112', outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', inAmount: '1000', outAmount: '500', priceImpactPct: '0.05' });
+    expect(output).toContain('Price Impact: 0.05%');
+    expect(output).not.toContain('WARNING');
+  });
+
+  it('should not show price impact line when priceImpactPct is absent', () => {
+    const output = formatQuote({ aggregator: 'jupiter', inputMint: 'So11111111111111111111111111111111111111112', outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', inAmount: '1000', outAmount: '500' });
+    expect(output).not.toContain('Price Impact');
+    expect(output).not.toContain('WARNING');
   });
 });

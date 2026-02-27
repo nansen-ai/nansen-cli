@@ -742,7 +742,7 @@ export function validateBaseUnitAmount(amount) {
   return null;
 }
 
-function formatQuote(quote, index) {
+export function formatQuote(quote, index) {
   const lines = [];
   const label = index !== undefined ? `  Quote #${index + 1}` : '  Best Quote';
   lines.push(`${label} (${quote.aggregator || 'unknown'})`);
@@ -750,10 +750,21 @@ function formatQuote(quote, index) {
   lines.push(`    Output:       ${quote.outAmount} → ${quote.outputMint?.slice(0, 12)}...`);
   if (quote.inUsdValue)  lines.push(`    In USD:       $${quote.inUsdValue}`);
   if (quote.outUsdValue) lines.push(`    Out USD:      $${quote.outUsdValue}`);
-  if (quote.priceImpactPct) lines.push(`    Price Impact: ${quote.priceImpactPct}%`);
+  if (quote.priceImpactPct) {
+    const impactAbs = Math.abs(parseFloat(quote.priceImpactPct));
+    if (impactAbs <= 5) {
+      lines.push(`    Price Impact: ${impactAbs}%`);
+    }
+  }
   if (quote.tradingFeeInUsd) lines.push(`    Trading Fee:  $${quote.tradingFeeInUsd}`);
   if (quote.networkFeeInUsd) lines.push(`    Network Fee:  $${quote.networkFeeInUsd}`);
   if (quote.approvalAddress && !isNativeToken(quote.inputMint)) lines.push(`    ⚠ Requires token approval to: ${quote.approvalAddress}`);
+  if (quote.priceImpactPct) {
+    const impactAbs = Math.abs(parseFloat(quote.priceImpactPct));
+    if (impactAbs > 5) {
+      lines.push(`    ⚠ Price impact is ${impactAbs}%! You may lose significant value.`);
+    }
+  }
   return lines.join('\n');
 }
 
@@ -877,6 +888,9 @@ EXAMPLES:
         const quoteId = saveQuote(response, chain, isWalletConnect ? 'walletconnect' : 'local');
         errorOutput(`\n  Quote ID: ${quoteId}`);
         errorOutput(`  Execute:  nansen trade execute --quote ${quoteId}`);
+        if (response.quotes.length > 1) {
+          errorOutput(`  Pin #1:  nansen trade execute --quote ${quoteId} --quote-index 0`);
+        }
 
         if (response.quotes[0]?.approvalAddress && !isNativeToken(response.quotes[0]?.inputMint)) {
           errorOutput(`\n  Warning: This token swap requires an ERC-20 approval step.`);
