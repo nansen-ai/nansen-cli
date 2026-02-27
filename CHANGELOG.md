@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.2
+
+### Patch Changes
+
+- [#116](https://github.com/nansen-ai/nansen-cli/pull/116) [`7a2b729`](https://github.com/nansen-ai/nansen-cli/commit/7a2b7293c2e731ae1d5375b15df9c05c5611a9cb) Thanks [@TimNooren](https://github.com/TimNooren)! - Fix usage examples for `nansen trade quote` to show correct command name instead of deprecated `nansen quote`
+
+- [#114](https://github.com/nansen-ai/nansen-cli/pull/114) [`37d8c0b`](https://github.com/nansen-ai/nansen-cli/commit/37d8c0b87797145a15b087caa5eb474673217580) Thanks [@TimNooren](https://github.com/TimNooren)! - Show API key URL in non-interactive login error message
+
+- [#117](https://github.com/nansen-ai/nansen-cli/pull/117) [`55ad922`](https://github.com/nansen-ai/nansen-cli/commit/55ad922826a7a2411889edeede42fbfc7b70d7a5) Thanks [@TimNooren](https://github.com/TimNooren)! - Add --wallet and WalletConnect documentation to `nansen trade help` output
+
 ## 1.9.1
 
 ### Patch Changes
