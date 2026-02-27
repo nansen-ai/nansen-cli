@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.9.0
+
+### Minor Changes
+
+- [#98](https://github.com/nansen-ai/nansen-cli/pull/98) [`2f3f556`](https://github.com/nansen-ai/nansen-cli/commit/2f3f556d008a1f8ec40d57a8a2822bedbc6b60cb) Thanks [@Codier](https://github.com/Codier)! - Add symbol shortcuts for common tokens (SOL, ETH, USDC, USDT, etc.) that resolve to canonical addresses per chain. Users can now use `--from SOL --to USDC` instead of raw contract addresses.
+
+- [#106](https://github.com/nansen-ai/nansen-cli/pull/106) [`135aa79`](https://github.com/nansen-ai/nansen-cli/commit/135aa79e662febd356935d85c9ba783c1a46738f) Thanks [@TimNooren](https://github.com/TimNooren)! - Add WalletConnect support for trading, transfers, and x402 auto-payment (EVM only)
+
+### Patch Changes
+
+- [#99](https://github.com/nansen-ai/nansen-cli/pull/99) [`9144cba`](https://github.com/nansen-ai/nansen-cli/commit/9144cba38b06c90d462df97ea6cbcdeaed26fa36) Thanks [@Codier](https://github.com/Codier)! - Show clear error when `--amount` contains a decimal (e.g. `0.005`) instead of base units (lamports, wei). Detected client-side before hitting the API.
+
+- [#100](https://github.com/nansen-ai/nansen-cli/pull/100) [`19559bf`](https://github.com/nansen-ai/nansen-cli/commit/19559bfea6c22f6bd6b8c278ed5e6ae6d64866d5) Thanks [@Codier](https://github.com/Codier)! - Fix `nansen trade help` returning blank output. Now prints subcommands, usage, and examples. Also fixes `errorOutput` ReferenceError in `buildCommands` scope (affected `trade` and `changelog` commands).
+
+- [#93](https://github.com/nansen-ai/nansen-cli/pull/93) [`342c91f`](https://github.com/nansen-ai/nansen-cli/commit/342c91fdeb6d98d6b5c10a58cb9702eb5afe096f) Thanks [@Codier](https://github.com/Codier)! - Warn when `--from` is a wrapped native token (WETH/WBNB) or native sentinel, so AI agents can correct the token before execution fails
+
 ## 1.8.0
 
 ### Minor Changes
