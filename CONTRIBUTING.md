@@ -26,7 +26,7 @@ npm run test:live
 ## Adding New Endpoints
 
 1. Add the API method in `src/api.js`
-2. Add the CLI handler in `src/index.js`
+2. Add the CLI handler in `src/cli.js`
 3. Add tests in `src/__tests__/api.test.js` and `src/__tests__/cli.test.js`
 4. Update `src/__tests__/coverage.test.js` with the new endpoint
 5. Update `README.md` with documentation

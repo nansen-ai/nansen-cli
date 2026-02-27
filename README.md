@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/nansen-cli.svg)](https://www.npmjs.com/package/nansen-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-577%20passing-brightgreen.svg)]()
+[![CI](https://github.com/nansen-ai/nansen-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/nansen-ai/nansen-cli/actions/workflows/ci.yml)
 
 > **Built by agents, for agents.** We prioritize the best possible AI agent experience.
 
