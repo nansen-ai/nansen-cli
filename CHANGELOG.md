@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.3
+
+### Patch Changes
+
+- [#118](https://github.com/nansen-ai/nansen-cli/pull/118) [`0bd4c3c`](https://github.com/nansen-ai/nansen-cli/commit/0bd4c3c1946e575e2c2db5e02d17f266e79752a4) Thanks [@TimNooren](https://github.com/TimNooren)! - Show warning when trade quote price impact exceeds 5%, and show pin command to avoid fallback to worse quotes
+
 ## 1.9.2
 
 ### Patch Changes
