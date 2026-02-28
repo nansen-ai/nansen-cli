@@ -6,6 +6,7 @@
 import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
 import { buildWalletCommands } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
+import { buildAlertCommand } from './alert.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
@@ -133,6 +134,25 @@ export const SCHEMA = {
             'leaderboard': { description: 'Points leaderboard', options: { tier: { type: 'string', description: 'Filter by tier' }, limit: { type: 'number' } }, returns: ['rank', 'address', 'address_label', 'points', 'tier'] }
           }
         }
+      }
+    },
+    'alert': {
+      description: 'Local alert management for price and smart money monitoring',
+      subcommands: {
+        'create': {
+          description: 'Create a new alert (price or smart money)',
+          options: {
+            token: { type: 'string', description: 'Token address for price alerts' },
+            wallet: { type: 'string', description: 'Wallet address for smart money alerts' },
+            chain: { type: 'string', required: true, description: 'Blockchain' },
+            above: { type: 'number', description: 'Trigger when price goes above this value' },
+            below: { type: 'number', description: 'Trigger when price goes below this value' },
+            'smart-money': { type: 'boolean', description: 'Monitor wallet for smart money trades' }
+          }
+        },
+        'list': { description: 'List all alerts' },
+        'delete': { description: 'Delete an alert by ID', options: { id: { type: 'string', required: true, description: 'Alert ID (positional)' } } },
+        'check': { description: 'Poll API and output triggered alerts as JSON' }
       }
     },
     'trade': {
@@ -727,6 +747,7 @@ USAGE:
 
 COMMANDS:
   research       Research & analytics (smart-money, profiler, token, search, perp, portfolio, points)
+  alert          Local alert management (create, list, delete, check)
   trade          DEX trading (quote, execute)
   wallet         Local wallet management (create, list, show, export, default, delete)
   login/logout   API key management
@@ -1339,6 +1360,9 @@ SYMBOLS:
     }
     return tradingCmds[sub](args.slice(1), apiInstance, flags, options);
   };
+
+  // Alert command
+  cmds['alert'] = buildAlertCommand(deps);
 
   return cmds;
 }
