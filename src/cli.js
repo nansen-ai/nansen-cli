@@ -298,7 +298,6 @@ export const SCHEMA = {
             query: { type: 'string', description: 'Search by question text' },
             category: { type: 'string', description: 'Filter by category (e.g., politics, crypto, sports)' },
             status: { type: 'string', default: 'active', description: 'Market status: active, closed, all' },
-            days: { type: 'number', default: 30 },
             limit: { type: 'number' },
             sort: { type: 'string', description: 'Sort by: volume, liquidity, newest, spread' },
             filters: { type: 'object' }

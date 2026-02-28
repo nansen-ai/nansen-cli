@@ -221,8 +221,60 @@ describe('CLI Smoke Tests', () => {
     const { stdout, stderr } = runCLI('prediction markets', {
       env: { NANSEN_API_KEY: 'test-key' }
     });
-    
+
     // Will fail auth but proves command routing works
+    const output = stdout || stderr;
+    const firstLine = output.split('\n').find(l => l.startsWith('{'));
+    const result = JSON.parse(firstLine);
+    expect(result.success).toBe(false);
+    expect(['UNAUTHORIZED', 'PAYMENT_REQUIRED', 'UNKNOWN']).toContain(result.code);
+  });
+
+  it('should handle prediction events command', () => {
+    const { stdout, stderr } = runCLI('prediction events', {
+      env: { NANSEN_API_KEY: 'test-key' }
+    });
+
+    // Will fail auth but proves command routing works
+    const output = stdout || stderr;
+    const firstLine = output.split('\n').find(l => l.startsWith('{'));
+    const result = JSON.parse(firstLine);
+    expect(result.success).toBe(false);
+    expect(['UNAUTHORIZED', 'PAYMENT_REQUIRED', 'UNKNOWN']).toContain(result.code);
+  });
+
+  it('should handle prediction market-detail with id', () => {
+    const { stdout, stderr } = runCLI('prediction market-detail some-market-id', {
+      env: { NANSEN_API_KEY: 'test-key' }
+    });
+
+    // Will fail auth but proves command routing works with an id
+    const output = stdout || stderr;
+    const firstLine = output.split('\n').find(l => l.startsWith('{'));
+    const result = JSON.parse(firstLine);
+    expect(result.success).toBe(false);
+    expect(['UNAUTHORIZED', 'PAYMENT_REQUIRED', 'UNKNOWN']).toContain(result.code);
+  });
+
+  it('should handle prediction trades with id', () => {
+    const { stdout, stderr } = runCLI('prediction trades some-market-id', {
+      env: { NANSEN_API_KEY: 'test-key' }
+    });
+
+    // Will fail auth but proves command routing works with an id
+    const output = stdout || stderr;
+    const firstLine = output.split('\n').find(l => l.startsWith('{'));
+    const result = JSON.parse(firstLine);
+    expect(result.success).toBe(false);
+    expect(['UNAUTHORIZED', 'PAYMENT_REQUIRED', 'UNKNOWN']).toContain(result.code);
+  });
+
+  it('should handle prediction top-holders with id', () => {
+    const { stdout, stderr } = runCLI('prediction top-holders some-market-id', {
+      env: { NANSEN_API_KEY: 'test-key' }
+    });
+
+    // Will fail auth but proves command routing works with an id
     const output = stdout || stderr;
     const firstLine = output.split('\n').find(l => l.startsWith('{'));
     const result = JSON.parse(firstLine);
