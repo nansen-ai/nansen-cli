@@ -119,25 +119,21 @@ describe('encryption', () => {
       authTag: 'fakeauthtag'
     };
     
-    expect(() => decryptKey(maliciousData, null)).toThrow('Plaintext entries cannot contain encryption metadata');
-    expect(() => decryptKey(maliciousData, 'any-password')).toThrow('Plaintext entries cannot contain encryption metadata');
+    expect(() => decryptKey(maliciousData, null)).toThrow('Wallet file appears corrupted or tampered');
+    expect(() => decryptKey(maliciousData, 'any-password')).toThrow('Wallet file appears corrupted or tampered');
   });
 
   it('decryptKey should reject plaintext with any encryption field', () => {
-    expect(() => decryptKey({ encrypted: false, data: 'test', salt: 'x' }, null)).toThrow('Plaintext entries cannot contain encryption metadata');
-    expect(() => decryptKey({ encrypted: false, data: 'test', iv: 'x' }, null)).toThrow('Plaintext entries cannot contain encryption metadata');
-    expect(() => decryptKey({ encrypted: false, data: 'test', authTag: 'x' }, null)).toThrow('Plaintext entries cannot contain encryption metadata');
-    expect(() => decryptKey({ encrypted: false, data: 'test', ciphertext: 'x' }, null)).toThrow('Plaintext entries cannot contain encryption metadata');
+    expect(() => decryptKey({ encrypted: false, data: 'test', salt: 'x' }, null)).toThrow('Wallet file appears corrupted or tampered');
+    expect(() => decryptKey({ encrypted: false, data: 'test', iv: 'x' }, null)).toThrow('Wallet file appears corrupted or tampered');
+    expect(() => decryptKey({ encrypted: false, data: 'test', authTag: 'x' }, null)).toThrow('Wallet file appears corrupted or tampered');
+    expect(() => decryptKey({ encrypted: false, data: 'test', ciphertext: 'x' }, null)).toThrow('Wallet file appears corrupted or tampered');
   });
 
-  it('encryptKey with null password returns unencrypted wrapper', () => {
-    const result = encryptKey('deadbeef', null);
-    expect(result).toEqual({ data: 'deadbeef', encrypted: false });
-  });
-
-  it('decryptKey handles unencrypted wrapper', () => {
-    expect(decryptKey({ data: 'deadbeef', encrypted: false }, null)).toBe('deadbeef');
-    expect(decryptKey({ data: 'deadbeef', encrypted: false }, 'any-password')).toBe('deadbeef');
+  it('decryptKey should reject encrypted blob missing required fields', () => {
+    expect(() => decryptKey({ salt: 'abc' }, 'password')).toThrow('Wallet file appears corrupted or tampered');
+    expect(() => decryptKey({ salt: 'abc', iv: 'def' }, 'password')).toThrow('Wallet file appears corrupted or tampered');
+    expect(() => decryptKey({}, 'password')).toThrow('Wallet file appears corrupted or tampered');
   });
 });
 

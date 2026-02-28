@@ -115,10 +115,18 @@ export function decryptKey(encryptedData, password) {
     const encryptionFields = ['salt', 'iv', 'authTag', 'ciphertext'];
     for (const field of encryptionFields) {
       if (encryptedData[field] !== undefined) {
-        throw new Error('Plaintext entries cannot contain encryption metadata');
+        throw new Error('Wallet file appears corrupted or tampered');
       }
     }
     return encryptedData.data;
+  }
+
+  // Validate that encrypted blobs contain all required fields
+  const requiredFields = ['salt', 'iv', 'authTag', 'ciphertext'];
+  for (const field of requiredFields) {
+    if (!encryptedData[field]) {
+      throw new Error('Wallet file appears corrupted or tampered');
+    }
   }
 
   // For encrypted data, password is required
