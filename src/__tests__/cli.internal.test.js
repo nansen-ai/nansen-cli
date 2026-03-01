@@ -352,6 +352,7 @@ describe('buildCommands', () => {
       expect(mockDeps.exit).toHaveBeenCalledWith(1);
       expect(logs.some(l => l.includes('No API key provided'))).toBe(true);
     });
+
   });
 
   describe('smart-money command', () => {
