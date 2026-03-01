@@ -220,7 +220,52 @@ export function parseFields(fieldsOption) {
   return fieldsOption.split(',').map(f => f.trim()).filter(f => f.length > 0);
 }
 
-// Parse command line arguments
+/**
+ * Produce a compact schema listing commands with params* notation.
+ * Use `nansen schema --full` for the verbose version.
+ */
+export function compactSchema(schema) {
+  function compactOptions(opts) {
+    if (!opts) return '';
+    return Object.entries(opts)
+      .map(([name, o]) => `${name}${o.required ? '*' : ''}`)
+      .join(', ');
+  }
+
+  function compactCmd(prefix, cmd) {
+    const entries = [];
+    if (cmd.subcommands) {
+      for (const [name, sub] of Object.entries(cmd.subcommands)) {
+        const path = prefix ? `${prefix} ${name}` : name;
+        if (sub.subcommands) {
+          entries.push(...compactCmd(path, sub));
+        } else {
+          const params = compactOptions(sub.options);
+          entries.push({ command: path, description: sub.description, params, returns: sub.returns });
+        }
+      }
+    } else {
+      const params = compactOptions(cmd.options);
+      entries.push({ command: prefix, description: cmd.description, params, returns: cmd.returns });
+    }
+    return entries;
+  }
+
+  const commands = [];
+  for (const [name, cmd] of Object.entries(schema.commands)) {
+    commands.push(...compactCmd(name, cmd));
+  }
+
+  return {
+    version: schema.version,
+    params_legend: '* = required',
+    commands,
+    globalOptions: Object.keys(schema.globalOptions).join(', '),
+    chains: schema.chains,
+    smartMoneyLabels: schema.smartMoneyLabels
+  };
+}
+
 /**
  * Compare two semver strings. Returns 1 if a > b, -1 if a < b, 0 if equal.
  */
@@ -244,7 +289,7 @@ export function parseArgs(args) {
       const key = arg.slice(2);
       const next = args[i + 1];
       
-      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich') {
+      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full') {
         result.flags[key] = true;
       } else if (next && !next.startsWith('-')) {
         // Try to parse as JSON first (for objects/arrays/booleans),
@@ -706,86 +751,36 @@ export async function compareWallets(api, params = {}) {
   };
 }
 
-// ASCII Art Banner
-export const BANNER = `
- ███╗   ██╗ █████╗ ███╗   ██╗███████╗███████╗███╗   ██╗
- ████╗  ██║██╔══██╗████╗  ██║██╔════╝██╔════╝████╗  ██║
- ██╔██╗ ██║███████║██╔██╗ ██║███████╗█████╗  ██╔██╗ ██║
- ██║╚██╗██║██╔══██║██║╚██╗██║╚════██║██╔══╝  ██║╚██╗██║
- ██║ ╚████║██║  ██║██║ ╚████║███████║███████╗██║ ╚████║
- ╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═══╝
-                   Surface The Signal
-`;
+export const BANNER = '';
 
-// Help text
-export const HELP = `
-Nansen CLI - Command-line interface for Nansen API
-Designed for AI agents with structured JSON output.
+export const HELP = `Nansen CLI v${VERSION} — structured JSON output for AI agents.
 
-USAGE:
-  nansen <command> [subcommand] [options]
+USAGE: nansen <command> [subcommand] [options]
 
 COMMANDS:
-  research       Research & analytics (smart-money, profiler, token, search, perp, portfolio, points)
-  trade          DEX trading (quote, execute)
-  wallet         Local wallet management (create, list, show, export, default, delete)
-  login/logout   API key management
-  schema         Output JSON schema for all commands (for agent introspection)
-  cache          Cache management (clear)
-  changelog      Show what's new (use --since <version> to filter)
-  help           Show this help message
+  research    smart-money, profiler, token, search, perp, portfolio, points
+  trade       quote, execute
+  wallet      create, list, show, export, default, delete
+  login       Save API key (--api-key <key> or interactive)
+  logout      Remove saved API key
+  schema      JSON schema for all commands (use "nansen schema <cmd>" for one)
+  cache       clear
+  changelog   --since <version> to filter
 
-GLOBAL OPTIONS:
-  --pretty       Format JSON output for readability
-  --table        Format output as human-readable table
-  --fields       Comma-separated list of fields to include (e.g., --fields address,value_usd)
-  --chain        Blockchain to query (ethereum, solana, base, etc.)
-  --chains       Multiple chains as JSON array
-  --limit        Number of results (shorthand for pagination)
-  --filters      JSON object with filters
-  --sort         Sort by field (e.g., --sort value_usd:desc)
-  --order-by     JSON array with sort order (advanced)
-  --days         Date range in days (default: 30 for most endpoints)
-  --symbol       Token symbol (for perp endpoints)
-  --no-retry     Disable automatic retry on rate limits/errors
-  --retries <n>  Max retry attempts (default: 3)
-  --x402-payment-signature <sig>  Pre-signed x402 payment signature header
-  --cache        Enable response caching (default: off)
-  --no-cache     Disable cache for this request
-  --cache-ttl <s> Cache TTL in seconds (default: 300)
-  --stream       Output as JSON lines (NDJSON) for incremental processing
-  --format csv   Output as CSV with header row
+OPTIONS: --chain --limit --sort field:dir --fields a,b --days N --filters '{}'
+FORMAT:  --pretty --table --format csv --stream (NDJSON)
+RETRY:   --no-retry --retries N --cache --cache-ttl N
 
 EXAMPLES:
-  # Get Smart Money netflow on Solana
   nansen research smart-money netflow --chain solana
-
-  # Get top tokens by Smart Money activity
-  nansen research token screener --chain solana --timeframe 24h --pretty
-
-  # Get wallet balance
-  nansen research profiler balance --address 0x123... --chain ethereum
-
-  # Search for tokens/entities
-  nansen research search "Vitalik"
-
-  # Get a DEX swap quote
+  nansen research token screener --chain solana --timeframe 24h
+  nansen research profiler balance --address 0x... --chain ethereum
   nansen trade quote --chain ethereum --from ETH --to USDC --amount 1
 
-SMART MONEY LABELS:
-  Fund, Smart Trader, 30D Smart Trader, 90D Smart Trader, 
-  180D Smart Trader, Smart HL Perps Trader
+Chains: ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, linea, scroll, mantle, ronin, sei, plasma, sonic, monad, hyperevm, iotaevm
+Labels: Fund, Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader
 
-SUPPORTED CHAINS:
-  ethereum, solana, base, bnb, arbitrum, polygon, optimism,
-  avalanche, linea, scroll, mantle, ronin, sei,
-  plasma, sonic, monad, hyperevm, iotaevm
-
-For more info: https://docs.nansen.ai
-
-AI AGENT SKILLS:
-  Skills not installed? Run: npx skills add nansen-ai/nansen-cli
-  Skills provide scoped, agent-optimised docs per command group.
+Docs: https://docs.nansen.ai
 `;
 
 // Helper to prompt for input (exported for mocking)
@@ -941,7 +936,6 @@ export function buildCommands(deps = {}) {
     },
 
     'schema': async (args, apiInstance, flags, options) => {
-      // Return schema for agent introspection
       const subcommand = args[0];
       const schemaEntry = subcommand && (SCHEMA.commands[subcommand] || SCHEMA.commands.research.subcommands[subcommand]);
 
@@ -955,8 +949,11 @@ export function buildCommands(deps = {}) {
         };
       }
 
-      // Return full schema
-      return SCHEMA;
+      if (flags.full) {
+        return SCHEMA;
+      }
+
+      return compactSchema(SCHEMA);
     },
 
     'cache': async (args, apiInstance, flags, options) => {
@@ -1373,7 +1370,6 @@ export const RESEARCH_CATEGORY_ALIASES = {
 
 // Generate help text for a specific subcommand using SCHEMA
 export function generateSubcommandHelp(command, subcommand) {
-  // Look up in top-level commands, then fall back to research subcommands
   const cmdSchema = SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command];
   if (!cmdSchema) return null;
 
@@ -1381,100 +1377,36 @@ export function generateSubcommandHelp(command, subcommand) {
   if (!subSchema) return null;
 
   const lines = [];
-  lines.push(`\n${command} ${subcommand} - ${subSchema.description || 'No description'}\n`);
-  
-  // Usage
-  const requiredOpts = [];
-  const optionalOpts = [];
-  
+  lines.push(`${command} ${subcommand} — ${subSchema.description || 'No description'}`);
+
+  if (subSchema.options) {
+    const params = Object.entries(subSchema.options).map(([name, opt]) => {
+      const parts = [`--${name}`];
+      if (opt.required) parts[0] += '*';
+      if (opt.default !== undefined) parts.push(`(${opt.default})`);
+      if (opt.enum) parts.push(`[${opt.enum.join('|')}]`);
+      return parts.join(' ');
+    });
+    lines.push(`Params (* required): ${params.join(', ')}`);
+  }
+
+  if (subSchema.returns?.length) {
+    lines.push(`Returns: ${subSchema.returns.join(', ')}`);
+  }
+
+  const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
+  const chain = subSchema.options?.chain?.default || 'solana';
+  let example = `nansen ${command} ${subcommand}`;
   if (subSchema.options) {
     for (const [name, opt] of Object.entries(subSchema.options)) {
-      if (opt.required) {
-        requiredOpts.push(name);
-      } else {
-        optionalOpts.push(name);
-      }
+      if (opt.required) example += ` --${name} ${exampleValues[name] || '<val>'}`;
     }
   }
-  
-  let usage = `USAGE:\n  nansen ${command} ${subcommand}`;
-  if (requiredOpts.length) {
-    usage += ' ' + requiredOpts.map(o => `--${o} <value>`).join(' ');
-  }
-  if (optionalOpts.length) {
-    usage += ' [options]';
-  }
-  lines.push(usage);
-  
-  // Required options
-  if (requiredOpts.length) {
-    lines.push('\nREQUIRED:');
-    for (const name of requiredOpts) {
-      const opt = subSchema.options[name];
-      const desc = opt.description || `${opt.type}`;
-      lines.push(`  --${name.padEnd(16)} ${desc}`);
-    }
-  }
-  
-  // Optional options
-  if (optionalOpts.length) {
-    lines.push('\nOPTIONS:');
-    for (const name of optionalOpts) {
-      const opt = subSchema.options[name];
-      const defaultStr = opt.default !== undefined ? ` (default: ${opt.default})` : '';
-      const desc = (opt.description || opt.type) + defaultStr;
-      lines.push(`  --${name.padEnd(16)} ${desc}`);
-    }
-  }
-  
-  // Return fields
-  if (subSchema.returns && subSchema.returns.length) {
-    lines.push('\nRETURNS:');
-    lines.push(`  ${subSchema.returns.join(', ')}`);
-  }
-  
-  // Examples
-  lines.push('\nEXAMPLES:');
-  const chain = subSchema.options?.chain?.default || 'solana';
-  
-  // Example values for common required options
-  const exampleValues = {
-    address: '0x123...',
-    token: '0x123...',
-    query: '"search term"',
-    symbol: 'BTC',
-    date: '2024-01-01'
-  };
-  
-  // Build example based on required options
-  let example = `  nansen ${command} ${subcommand}`;
-  for (const name of requiredOpts) {
-    const value = exampleValues[name] || '<value>';
-    example += ` --${name} ${value}`;
-  }
-  if (subSchema.options?.chain && !requiredOpts.includes('chain')) {
+  if (subSchema.options?.chain && !subSchema.options.chain.required) {
     example += ` --chain ${chain}`;
   }
-  example += ' --pretty';
-  lines.push(example);
-  
-  // Add a filtered example if filters are supported
-  if (subSchema.options?.filters || subSchema.options?.labels) {
-    let filterExample = `  nansen ${command} ${subcommand}`;
-    for (const name of requiredOpts) {
-      const value = exampleValues[name] || '<value>';
-      filterExample += ` --${name} ${value}`;
-    }
-    if (subSchema.options?.chain && !requiredOpts.includes('chain')) {
-      filterExample += ` --chain ${chain}`;
-    }
-    if (subSchema.options?.labels) {
-      filterExample += ' --labels "Smart Trader"';
-    }
-    filterExample += ' --limit 10 --table';
-    lines.push(filterExample);
-  }
-  
+  lines.push(`Example: ${example}`);
+
   return lines.join('\n');
 }
 
@@ -1543,13 +1475,10 @@ export async function runCLI(rawArgs, deps = {}) {
         const researchCat = SCHEMA.commands.research.subcommands[category];
         if (researchCat) {
           const catSchema = researchCat;
-          const lines = [`\nresearch ${category} - ${catSchema.description}\n`];
+          const lines = [`research ${category} — ${catSchema.description}`];
           if (catSchema.subcommands) {
-            lines.push('SUBCOMMANDS:');
-            for (const [sub, subSchema] of Object.entries(catSchema.subcommands)) {
-              lines.push(`  ${sub.padEnd(20)} ${subSchema.description || ''}`);
-            }
-            lines.push(`\nFor detailed help: nansen research ${category} <subcommand> --help`);
+            lines.push('Subcommands: ' + Object.keys(catSchema.subcommands).join(', '));
+            lines.push(`Use: nansen research ${category} <subcommand> --help`);
           }
           output(lines.join('\n'));
           notify();
@@ -1578,13 +1507,10 @@ export async function runCLI(rawArgs, deps = {}) {
       const cmdSchemaLookup = SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command];
       if (command && cmdSchemaLookup) {
         const cmdSchema = cmdSchemaLookup;
-        const lines = [`\n${command} - ${cmdSchema.description}\n`];
+        const lines = [`${command} — ${cmdSchema.description}`];
         if (cmdSchema.subcommands) {
-          lines.push('SUBCOMMANDS:');
-          for (const [sub, subSchema] of Object.entries(cmdSchema.subcommands)) {
-            lines.push(`  ${sub.padEnd(20)} ${subSchema.description || ''}`);
-          }
-          lines.push(`\nFor detailed help: nansen ${command} <subcommand> --help`);
+          lines.push('Subcommands: ' + Object.keys(cmdSchema.subcommands).join(', '));
+          lines.push(`Use: nansen ${command} <subcommand> --help`);
         }
         output(lines.join('\n'));
         notify();
