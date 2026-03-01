@@ -786,11 +786,6 @@ Skills: npx skills add nansen-ai/nansen-cli (agent-optimised docs per command gr
 
 // Helper to prompt for input (exported for mocking)
 export async function prompt(question, hidden = false) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-  
   return new Promise((resolve) => {
     if (hidden && process.stdout.isTTY) {
       process.stdout.write(question);
@@ -805,7 +800,6 @@ export async function prompt(question, hidden = false) {
           process.stdin.pause();
           process.stdin.removeListener('data', onData);
           process.stdout.write('\n');
-          rl.close();
           resolve(input);
         } else if (char === '\u0003') {
           // Ctrl+C
@@ -824,6 +818,10 @@ export async function prompt(question, hidden = false) {
       
       process.stdin.on('data', onData);
     } else {
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
       rl.question(question, (answer) => {
         rl.close();
         resolve(answer);
