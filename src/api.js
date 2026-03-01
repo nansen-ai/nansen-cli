@@ -194,9 +194,9 @@ export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL
     }
     
     return { ...cached.data, _meta: { ...cached.data._meta, fromCache: true, cacheAge: Math.round(age) } };
-  } catch (e) {
+  } catch (_e) {
     // Invalid cache file, delete it
-    try { fs.unlinkSync(cacheFile); } catch {}
+    try { fs.unlinkSync(cacheFile); } catch { /* ignore */ }
     return null;
   }
 }
@@ -305,7 +305,7 @@ function loadConfig() {
 
   // ~/.nansen/config.json (from `nansen login`)
   if (fs.existsSync(CONFIG_FILE)) {
-    try { config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (e) {}
+    try { config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (_e) { /* ignore */ }
   }
 
   // Local config.json (for development)
@@ -476,7 +476,7 @@ export class NansenAPI {
       let data;
       try {
         data = await response.json();
-      } catch (err) {
+      } catch (_err) {
         // Non-JSON response (rare, usually server errors)
         const error = new NansenError(
           `Invalid response from API (status ${response.status})`,

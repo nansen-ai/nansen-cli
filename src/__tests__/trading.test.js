@@ -37,7 +37,6 @@ import {
   generateEvmWallet,
   generateSolanaWallet,
   createWallet,
-  listWallets,
 } from '../wallet.js';
 import * as wcTrading from '../walletconnect-trading.js';
 
@@ -417,7 +416,7 @@ describe('signLegacyTransaction', () => {
       nonce: 0, gasPrice: '0x3B9ACA00', gasLimit: '0x5208',
       to: '0x' + 'ab'.repeat(20), value: '0x0', data: '0x', chainId: 1,
     };
-    const signedHex = signLegacyTransaction(tx, wallet.privateKey);
+    const _signedHex = signLegacyTransaction(tx, wallet.privateKey);
 
     // Decode the signed tx to extract v, r, s and recover the address
     // We'll re-hash the unsigned portion and use ecRecover
