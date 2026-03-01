@@ -262,7 +262,8 @@ describe('HELP', () => {
     expect(HELP).toContain('trade');
     expect(HELP).toContain('wallet');
     expect(HELP).toContain('schema');
-    expect(HELP).toContain('login/logout');
+    expect(HELP).toContain('login');
+    expect(HELP).toContain('logout');
   });
 });
 
