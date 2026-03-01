@@ -1,40 +1,51 @@
 ---
 name: nansen-token
-description: Token analytics — price, holders, flows, screener, PnL, DEX trades. Use when researching a specific token, checking smart money holders, or screening trending tokens.
+description: Token analytics — screener, indicators, OHLCV, holders, flows, PnL, DEX trades, flow intelligence. Use when researching a specific token, checking smart money holders, or screening trending tokens.
 allowed-tools: Bash
 ---
 
 # Token Analytics
 
-`--chain` required. Use `--token` for the token address. Native tokens (SOL, ETH) not supported on most endpoints — use wrapped addresses.
+All commands: `nansen research token <sub> [options]`
+
+`--chain` required. Use `--token <address>` for token-specific endpoints.
 
 ## Screener
 
 ```bash
-# Top tokens by smart money activity
+# Top tokens by volume
+nansen research token screener --chain solana --timeframe 24h --limit 20
+
+# Smart money only
 nansen research token screener --chain solana --timeframe 24h --smart-money --limit 20
 
-# Agent pattern — JSON with selected fields
-nansen research token screener --chain solana --timeframe 24h --output json \
-  --fields symbol,address,price_usd,smart_money_netflow_usd
+# Search within screener results (client-side filter)
+nansen research token screener --chain solana --search "bonk"
 ```
+
+Timeframes: `5m`, `10m`, `1h`, `6h`, `24h`, `7d`, `30d`
 
 ## Token Info & Indicators
 
 ```bash
 nansen research token info --token <addr> --chain solana
-nansen research token indicators --token <addr> --chain solana
+nansen research token indicators --token <addr> --chain ethereum
 ```
 
-## Price (OHLCV)
+`indicators` returns Nansen Score: risk indicators (BTC-reflexivity, token-supply-inflation) and reward indicators (funding-rate, price-momentum) with signal percentiles.
+
+## OHLCV
 
 ```bash
-nansen research token ohlcv --token <addr> --chain solana --timeframe 1h --limit 24
+nansen research token ohlcv --token <addr> --chain solana --timeframe 1h
 ```
+
+Timeframes: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`, `1w`, `1M`
 
 ## Holders
 
 ```bash
+nansen research token holders --token <addr> --chain solana
 nansen research token holders --token <addr> --chain solana --smart-money
 ```
 
@@ -46,13 +57,17 @@ nansen research token flow-intelligence --token <addr> --chain solana
 nansen research token who-bought-sold --token <addr> --chain solana
 ```
 
-## DEX Trades & PnL
+`flow-intelligence` breaks down by label: whales, smart traders, exchanges, fresh wallets, public figures.
+
+## DEX Trades, PnL & Transfers
 
 ```bash
 nansen research token dex-trades --token <addr> --chain solana --limit 20
 nansen research token pnl --token <addr> --chain solana --sort total_pnl_usd:desc
 nansen research token transfers --token <addr> --chain solana --enrich
 ```
+
+`--enrich` on transfers adds Nansen labels to from/to addresses.
 
 ## Perps & DCA (no --chain)
 
@@ -68,14 +83,20 @@ nansen research token jup-dca --token <addr>
 | Flag | Purpose |
 |------|---------|
 | `--chain` | Required (ethereum, solana, base, etc.) |
-| `--token` | Token address (alias: `--mint`, `--token-address`) |
-| `--timeframe` | OHLCV interval (1h, 4h, 1d) |
-| `--smart-money` | Filter to smart money wallets only |
+| `--token` | Token address (alias: `--token-address`) |
+| `--symbol` | Token symbol for perp endpoints (e.g. BTC) |
+| `--timeframe` | Screener or OHLCV interval |
+| `--smart-money` | Filter to SM wallets only (screener, holders) |
 | `--days` | Lookback period (default 30) |
-| `--sort field:dir` | Sort (e.g. `total_pnl_usd:desc`) |
-| `--output json` | JSON output for parsing |
-| `--fields a,b` | Return only specific fields |
+| `--sort` | Sort field:direction (e.g. `total_pnl_usd:desc`) |
+| `--enrich` | Add Nansen labels to transfer addresses |
+| `--fields` | Select specific fields |
+| `--table` | Human-readable table output |
+| `--format csv` | CSV export |
 
-## Exit Codes
+## Notes
 
-`0`=Success, `1`=Error, `2`=Token not found, `3`=Auth error
+- Perp endpoints use `--symbol` (e.g. BTC), not `--token`.
+- `jup-dca` is Solana-only.
+- `holders --smart-money` returns UNSUPPORTED_FILTER for tokens without SM tracking.
+- `flow-intelligence` may return all-zero flows for illiquid tokens.

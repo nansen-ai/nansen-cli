@@ -1,6 +1,6 @@
 ---
 name: nansen-trade
-description: Execute DEX swaps on Solana or Base. Use when buying or selling a token, getting a swap quote, or executing a trade.
+description: Execute DEX swaps on Solana, Ethereum, Base, or BSC. Use when buying or selling a token, getting a swap quote, or executing a trade.
 allowed-tools: Bash
 ---
 
@@ -8,40 +8,32 @@ allowed-tools: Bash
 
 Two-step flow: quote then execute. **Trades are irreversible once on-chain.**
 
+**Prerequisite:** You need a wallet first. Run `nansen wallet create` before trading.
+
 ## Quote
 
 ```bash
 nansen trade quote \
   --chain solana \
-  --from So11111111111111111111111111111111111111112 \
-  --to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v \
+  --from SOL \
+  --to USDC \
   --amount 1000000000
 ```
+
+Symbols resolve automatically: `SOL`, `ETH`, `BNB`, `USDC`, `USDT`, `WETH`, `WBNB`. Raw addresses also work.
 
 ## Execute
 
 ```bash
-# Execute the best quote by ID
 nansen trade execute --quote <quote-id>
-```
-
-> ⚠️ Quotes expire — if execute fails, get a fresh quote and retry.
-
-## WalletConnect (EVM only)
-
-```bash
-nansen trade quote --chain base --from <addr> --to <addr> --amount <units> \
-  --wallet walletconnect
-nansen trade execute --quote <quote-id> --wallet wc
 ```
 
 ## Agent pattern
 
 ```bash
 # Pipe quote ID directly into execute
-nansen trade quote --chain solana --from <from> --to <to> --amount <amt> \
-  --output json | jq -r '.data.quotes[0].id' \
-  | xargs -I{} nansen trade execute --quote {}
+QUOTE_ID=$(nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000 2>&1 | grep "Quote ID:" | awk '{print $NF}')
+nansen trade execute --quote "$QUOTE_ID"
 ```
 
 ## Common Token Addresses
@@ -50,14 +42,13 @@ nansen trade quote --chain solana --from <from> --to <to> --amount <amt> \
 |-------|-------|---------|
 | SOL | Solana | `So11111111111111111111111111111111111111112` |
 | USDC | Solana | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` |
-| JUP | Solana | `JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN` |
 | ETH | Base | `0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee` |
 | USDC | Base | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
 
 ## Amounts are in base units
 
-| Token | Decimals | Example: 1 token |
-|-------|----------|-----------------|
+| Token | Decimals | 1 token = |
+|-------|----------|-----------|
 | SOL | 9 | `1000000000` |
 | ETH | 18 | `1000000000000000000` |
 | USDC | 6 | `1000000` |
@@ -66,13 +57,17 @@ nansen trade quote --chain solana --from <from> --to <to> --amount <amt> \
 
 | Flag | Purpose |
 |------|---------|
-| `--chain` | `solana` or `base` |
-| `--from` | Source token address |
-| `--to` | Destination token address |
-| `--amount` | Amount in base units |
-| `--wallet wc` | Sign via WalletConnect (EVM only) |
-| `--quote` | Quote ID from quote response |
+| `--chain` | `solana`, `ethereum`, `base`, or `bsc` |
+| `--from` | Source token (symbol or address) |
+| `--to` | Destination token (symbol or address) |
+| `--amount` | Amount in base units (integer) |
+| `--wallet` | Wallet name (default: default wallet) |
+| `--slippage` | Slippage tolerance as decimal (e.g. 0.03) |
+| `--quote` | Quote ID for execute |
+| `--no-simulate` | Skip pre-broadcast simulation |
 
-## Exit Codes
+## Notes
 
-`0`=Success, `1`=Error, `2`=Quote expired (re-run quote), `3`=Auth/wallet error
+- Quotes expire after ~1 hour. If execute fails, get a fresh quote.
+- A wallet is required even for quotes (the API builds sender-specific transactions).
+- ERC-20 swaps may require an approval step — execute handles this automatically.

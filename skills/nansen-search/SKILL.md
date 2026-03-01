@@ -17,26 +17,22 @@ nansen research search "Vitalik" --type entity --limit 5
 nansen research search "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
 
 # Agent pattern — get token address from name
-nansen research search "bonk" --type token --output json \
-  --fields address,name,symbol,chain
+nansen research search "bonk" --type token --fields address,name,symbol,chain
 ```
 
 ## Tips
 
-- Search is case-insensitive
-- Use `--type token` to filter to tokens only, `--type entity` for wallets/people
-- After getting an address, use `nansen-token` or `nansen-profiler` for full analysis
-- `nansen schema` lists all available commands and return fields
+- Search is case-insensitive.
+- Use `--type token` or `--type entity` to narrow results.
+- After getting an address, use `nansen-token` or `nansen-profiler` for full analysis.
+- For agent self-discovery: `nansen schema` returns the full JSON schema of every command and return field.
 
 ## Flags
 
 | Flag | Purpose |
 |------|---------|
 | `--type` | Filter: `token` or `entity` |
-| `--limit` | Number of results (default 10) |
-| `--output json` | JSON output |
-| `--fields a,b` | Select fields |
-
-## Exit Codes
-
-`0`=Success, `1`=Error, `2`=No results found, `3`=Auth error
+| `--chain` | Filter by chain |
+| `--limit` | Number of results (default 25, max 50) |
+| `--fields` | Select specific fields |
+| `--table` | Human-readable table output |

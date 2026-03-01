@@ -6,55 +6,62 @@ allowed-tools: Bash
 
 # Smart Money
 
+All commands: `nansen research smart-money <sub> [options]`
+
+## Subcommands
+
 ```bash
-# What is smart money buying on Solana right now?
+# Netflow — what tokens are smart money accumulating?
 nansen research smart-money netflow --chain solana --limit 10
 
-# Smart money DEX trades (with label filter)
+# DEX trades — real-time spot trades by smart money
 nansen research smart-money dex-trades --chain solana --labels "Smart Trader" --limit 20
 
-# Top smart money holdings
+# Holdings — aggregated SM portfolio
 nansen research smart-money holdings --chain solana --limit 10
 
-# Jupiter DCA activity (Solana only, no --chain)
+# DCAs — Jupiter DCA strategies (Solana only, no --chain needed)
 nansen research smart-money dcas --limit 10
 
-# Hyperliquid perp trades (no --chain)
+# Perp trades — Hyperliquid only (no --chain needed)
 nansen research smart-money perp-trades --limit 10
 
-# Historical holdings for a specific token
-nansen research smart-money historical-holdings --chain solana --token-address <addr>
+# Historical holdings — time series of SM positions
+nansen research smart-money historical-holdings --chain solana --days 30
 ```
 
-## Agent pattern
+## Labels
 
-```bash
-# JSON netflow with key fields only
-nansen research smart-money netflow --chain solana --output json \
-  --fields symbol,address,netflow_usd,smart_money_count
-```
+Filter by smart money category with `--labels`:
 
-## Smart Money Labels
-
-| Label | Description |
-|-------|-------------|
+| Label | Use case |
+|-------|----------|
 | `Fund` | Crypto funds |
 | `Smart Trader` | All-time top performers |
-| `30D Smart Trader` | Top performers last 30 days |
-| `90D Smart Trader` | Top performers last 90 days |
-| `180D Smart Trader` | Top performers last 180 days |
+| `30D Smart Trader` | Hot hands — top 30 days |
+| `90D Smart Trader` | Top 90 days |
+| `180D Smart Trader` | Top 180 days |
 | `Smart HL Perps Trader` | Top Hyperliquid perp traders |
+
+```bash
+nansen research smart-money netflow --chain solana --labels "Fund" --limit 10
+```
 
 ## Flags
 
 | Flag | Purpose |
 |------|---------|
-| `--chain` | Required for most (not perp/dca) |
-| `--labels` | Filter by SM label (quoted if multi-word) |
+| `--chain` | Required for netflow/dex-trades/holdings/historical-holdings |
+| `--labels` | Filter by SM label (quote multi-word values) |
 | `--limit` | Number of results |
-| `--output json` | JSON output |
-| `--fields a,b` | Select fields |
+| `--days` | Lookback for historical-holdings (default 30) |
+| `--sort` | Sort field:direction (e.g. `value_usd:desc`) |
+| `--fields` | Select specific fields |
+| `--table` | Human-readable table output |
+| `--format csv` | CSV export |
 
-## Exit Codes
+## Notes
 
-`0`=Success, `1`=Error, `2`=No data for chain/label, `3`=Auth error
+- `dcas` is Solana-only (Jupiter). No `--chain` flag.
+- `perp-trades` is Hyperliquid-only. No `--chain` flag.
+- `historical-holdings` requires `--chain` and optionally `--token-address`.

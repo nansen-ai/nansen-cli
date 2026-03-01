@@ -1,17 +1,19 @@
 ---
 name: nansen-profiler
-description: Wallet profiler — balance, PnL, labels, transactions, counterparties, related wallets. Use when analysing a specific wallet address or comparing wallets.
+description: Wallet profiler — balance, PnL, labels, transactions, counterparties, related wallets, batch, trace, compare. Use when analysing a specific wallet address or comparing wallets.
 allowed-tools: Bash
 ---
 
 # Wallet Profiler
 
-`--chain` and `--address` required for most commands.
+All commands: `nansen research profiler <sub> [options]`
+
+`--address` and `--chain` required for most commands.
 
 ## Balance & Identity
 
 ```bash
-nansen research profiler balance --address <addr> --chain solana
+nansen research profiler balance --address <addr> --chain ethereum
 nansen research profiler labels --address <addr> --chain ethereum
 nansen research profiler search --query "Vitalik"
 ```
@@ -34,50 +36,48 @@ nansen research profiler historical-balances --address <addr> --chain solana --d
 
 ```bash
 nansen research profiler related-wallets --address <addr> --chain ethereum
-nansen research profiler counterparties --address <addr> --chain ethereum
+nansen research profiler counterparties --address <addr> --chain ethereum --days 30
 ```
 
 ## Perps (no --chain)
 
 ```bash
 nansen research profiler perp-positions --address <addr>
-nansen research profiler perp-trades --address <addr>
+nansen research profiler perp-trades --address <addr> --days 7
 ```
 
-## Batch & Compare
+## Batch, Trace & Compare
 
 ```bash
-# Batch — multiple wallets at once
+# Batch — profile multiple wallets at once
 nansen research profiler batch \
   --addresses "0xabc,0xdef" --chain ethereum \
   --include labels,balance,pnl
 
-# Compare two wallets
-nansen research profiler compare --addresses "0xabc,0xdef" --chain ethereum
-
-# Trace fund flows (⚠️ makes N×width API calls — can burn credits fast)
+# Trace — BFS multi-hop counterparty trace (makes N*width API calls)
 nansen research profiler trace --address <addr> --chain ethereum --depth 2 --width 5
-```
 
-## Agent pattern
-
-```bash
-# Full wallet snapshot in one call
-nansen research profiler batch --addresses "<addr>" --chain solana \
-  --include labels,balance,pnl --output json
+# Compare — shared counterparties and tokens between two wallets
+nansen research profiler compare --addresses "0xabc,0xdef" --chain ethereum
 ```
 
 ## Flags
 
 | Flag | Purpose |
 |------|---------|
-| `--address` | Wallet address |
-| `--chain` | Required (not for perps/search) |
+| `--address` | Wallet address (required) |
+| `--chain` | Required except for perps and search |
 | `--days` | Lookback period (default 30) |
-| `--include` | Batch fields: labels,balance,pnl |
-| `--depth` | Trace depth (default 2) |
+| `--limit` | Number of results |
+| `--include` | Batch fields: `labels,balance,pnl` |
+| `--depth` | Trace depth 1-5 (default 2) |
 | `--width` | Trace width — keep low to save credits |
+| `--fields` | Select specific fields |
+| `--table` | Human-readable table output |
+| `--format csv` | CSV export |
 
-## Exit Codes
+## Notes
 
-`0`=Success, `1`=Error, `2`=Wallet not found / no data, `3`=Auth error
+- `perp-positions` has no pagination support.
+- `trace` makes many API calls — use `--width` conservatively.
+- `batch` accepts `--file <path>` with one address per line as alternative to `--addresses`.

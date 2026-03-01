@@ -844,11 +844,15 @@ EXAMPLES:
           const wallet = showWallet(walletName);
           walletAddress = chainType === 'solana' ? wallet.solana : wallet.evm;
         } else {
-          walletAddress = getDefaultAddress(chainType);
+          try {
+            walletAddress = getDefaultAddress(chainType);
+          } catch {
+            // No wallet configured — fall through to the check below
+          }
         }
 
         if (!walletAddress) {
-          errorOutput('No wallet found. Create one with: nansen wallet create');
+          errorOutput('No wallet found. A wallet address is required for quotes because the trading API builds a transaction specific to the sender.\nCreate one with: nansen wallet create');
           exit(1);
           return;
         }

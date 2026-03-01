@@ -1039,7 +1039,7 @@ export class NansenAPI {
   }
 
   async tokenOhlcv(params = {}) {
-    const { tokenAddress, chain = 'solana', timeframe, pagination } = params;
+    const { tokenAddress, chain = 'solana', timeframe } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
@@ -1048,7 +1048,6 @@ export class NansenAPI {
       token_address: tokenAddress,
       chain,
       timeframe,
-      pagination
     });
   }
 

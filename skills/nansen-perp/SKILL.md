@@ -1,6 +1,6 @@
 ---
 name: nansen-perp
-description: Perpetuals analytics on Hyperliquid — screener, leaderboard, positions. Use when checking perp markets, funding rates, or top perp traders.
+description: Perpetuals analytics on Hyperliquid — screener, leaderboard. Use when checking perp markets, funding rates, or top perp traders.
 allowed-tools: Bash
 ---
 
@@ -14,15 +14,14 @@ No `--chain` flag needed — Hyperliquid only.
 # Top perp markets by volume
 nansen research perp screener --sort volume:desc --limit 20
 
-# Agent pattern — JSON output
-nansen research perp screener --sort open_interest:desc --limit 10 --output json \
-  --fields token_symbol,volume,open_interest,funding
+# By open interest
+nansen research perp screener --sort open_interest:desc --limit 10
 ```
 
 ## Leaderboard
 
 ```bash
-# Top perp traders over 7 days
+# Top perp traders by PnL
 nansen research perp leaderboard --days 7 --limit 20
 ```
 
@@ -30,12 +29,15 @@ nansen research perp leaderboard --days 7 --limit 20
 
 | Flag | Purpose |
 |------|---------|
-| `--sort field:dir` | Sort (e.g. `volume:desc`) |
+| `--sort` | Sort field:direction (e.g. `volume:desc`) |
 | `--limit` | Number of results |
-| `--days` | Lookback period |
-| `--output json` | JSON output |
-| `--fields a,b` | Select fields |
+| `--days` | Lookback period (default 30) |
+| `--fields` | Select specific fields |
+| `--table` | Human-readable table output |
+| `--format csv` | CSV export |
 
-## Exit Codes
+## Notes
 
-`0`=Success, `1`=Error, `2`=No data, `3`=Auth error
+- For token-specific perp data, use `nansen research token perp-trades --symbol BTC`.
+- For wallet-specific perp data, use `nansen research profiler perp-positions --address <addr>`.
+- Portfolio perp exposure: `nansen research portfolio defi --wallet <addr>`.

@@ -1,10 +1,22 @@
 ---
 name: nansen-wallet
-description: Wallet management — create, list, send native tokens. Use when creating a new wallet, listing existing wallets, or sending tokens.
+description: Wallet management — create, list, show, export, send, delete. Use when creating wallets, checking balances, or sending tokens.
 allowed-tools: Bash
 ---
 
 # Wallet
+
+## Auth Setup
+
+```bash
+# API key (persistent — recommended)
+nansen login
+# Or non-interactive:
+NANSEN_API_KEY=<key> nansen login
+
+# Verify
+nansen research profiler labels --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum
+```
 
 ## Create
 
@@ -12,43 +24,36 @@ allowed-tools: Bash
 # Interactive
 nansen wallet create
 
-# Non-interactive (for agents)
-NANSEN_WALLET_PASSWORD="<your-password>" nansen wallet create
+# Non-interactive (for agents/CI)
+NANSEN_WALLET_PASSWORD="<password>" nansen wallet create
 ```
 
-## List
+## List & Show
 
 ```bash
 nansen wallet list
+nansen wallet show <name>
+nansen wallet default <name>
 ```
 
 ## Send
 
 ```bash
-# Send native token
-nansen wallet send --to <addr> --amount 1.5 --chain evm
+# Send native token (SOL, ETH)
+nansen wallet send --to <addr> --amount 1.5 --chain solana
 
 # Send entire balance
 nansen wallet send --to <addr> --chain evm --max
 
-# Send via WalletConnect (EVM only)
-nansen wallet send --to <addr> --amount 1.5 --chain base --wallet walletconnect
+# Dry run (preview, no broadcast)
+nansen wallet send --to <addr> --amount 1.0 --chain evm --dry-run
 ```
 
-## Auth Setup
+## Export & Delete
 
-**x402 Pay-Per-Call (no API key needed):**
 ```bash
-nansen wallet create                        # Generate EVM + Solana keypair
-# Fund the EVM address with USDC on Base (~$0.50 minimum)
-export NANSEN_WALLET_PASSWORD="<your-password>"   # Skip interactive prompt
-# Done — CLI auto-pays $0.01-$0.05 per call
-```
-
-**API Key:**
-```bash
-export NANSEN_API_KEY=your-api-key
-# Or: nansen login --api-key YOUR_KEY
+nansen wallet export <name>
+nansen wallet delete <name>
 ```
 
 ## Flags
@@ -59,8 +64,13 @@ export NANSEN_API_KEY=your-api-key
 | `--amount` | Amount to send |
 | `--chain` | `evm` or `solana` |
 | `--max` | Send entire balance |
-| `--wallet wc` | Sign via WalletConnect (EVM only) |
+| `--dry-run` | Preview without broadcasting |
 
-## Exit Codes
+## Environment Variables
 
-`0`=Success, `1`=Error, `2`=Insufficient balance, `3`=Auth/decrypt error
+| Var | Purpose |
+|-----|---------|
+| `NANSEN_WALLET_PASSWORD` | Skip interactive password prompt |
+| `NANSEN_API_KEY` | API key (also set via `nansen login`) |
+| `NANSEN_EVM_RPC` | Custom EVM RPC endpoint |
+| `NANSEN_SOLANA_RPC` | Custom Solana RPC endpoint |
