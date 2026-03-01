@@ -12,11 +12,11 @@ No `--chain` flag needed — Hyperliquid only.
 
 ```bash
 # Top perp markets by volume
-nansen research perp screener --sort volume_usd:desc --limit 20
+nansen research perp screener --sort volume:desc --limit 20
 
 # Agent pattern — JSON output
-nansen research perp screener --sort open_interest_usd:desc --limit 10 --output json \
-  --fields symbol,volume_usd,open_interest_usd,funding_rate
+nansen research perp screener --sort open_interest:desc --limit 10 --output json \
+  --fields token_symbol,volume,open_interest,funding
 ```
 
 ## Leaderboard
@@ -30,7 +30,7 @@ nansen research perp leaderboard --days 7 --limit 20
 
 | Flag | Purpose |
 |------|---------|
-| `--sort field:dir` | Sort (e.g. `volume_usd:desc`) |
+| `--sort field:dir` | Sort (e.g. `volume:desc`) |
 | `--limit` | Number of results |
 | `--days` | Lookback period |
 | `--output json` | JSON output |
