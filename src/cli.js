@@ -635,7 +635,7 @@ export async function traceCounterparties(api, params = {}) {
           queue.push({ addr: cpAddr, hop: hop + 1 });
         }
       }
-    } catch (err) {
+    } catch {
       // Skip addresses that fail (404, etc) but continue the traversal
     }
 
@@ -840,11 +840,11 @@ export async function prompt(question, hidden = false) {
 export function buildCommands(deps = {}) {
   // Allow dependency injection for testing
   const {
-    api = null,
+    api: _api = null,
     promptFn = prompt,
     log = console.log,
-    errorOutput = console.error,
-    NansenAPIClass = NansenAPI,
+    errorOutput: _errorOutput = console.error,
+    NansenAPIClass: _NansenAPIClass = NansenAPI,
     saveConfigFn = saveConfig,
     deleteConfigFn = deleteConfig,
     getConfigFileFn = getConfigFile,
@@ -892,7 +892,7 @@ export function buildCommands(deps = {}) {
       log('  nansen token screener --chain solana --pretty');
     },
 
-    'logout': async (args, apiInstance, flags, options) => {
+    'logout': async (_args, _apiInstance, _flags, _options) => {
       const deleted = deleteConfigFn();
       if (deleted) {
         log(`✓ Removed ${getConfigFileFn()}`);
@@ -901,11 +901,11 @@ export function buildCommands(deps = {}) {
       }
     },
 
-    'help': async (args, apiInstance, flags, options) => {
+    'help': async (_args, _apiInstance, _flags, _options) => {
       log(HELP);
     },
 
-    'changelog': async (args, apiInstance, flags, options) => {
+    'changelog': async (_args, _apiInstance, _flags, _options) => {
       const changelogPath = new URL('../CHANGELOG.md', import.meta.url).pathname;
       let content;
       try {
@@ -914,7 +914,7 @@ export function buildCommands(deps = {}) {
         log('CHANGELOG.md not found. Visit https://github.com/nansen-ai/nansen-cli/blob/main/CHANGELOG.md');
         return;
       }
-      const since = options.since;
+      const since = _options.since;
       if (since) {
         // Show only entries from the given version onwards
         const lines = content.split('\n');
@@ -940,7 +940,7 @@ export function buildCommands(deps = {}) {
       }
     },
 
-    'schema': async (args, apiInstance, flags, options) => {
+    'schema': async (args, _apiInstance, _flags, _options) => {
       // Return schema for agent introspection
       const subcommand = args[0];
       const schemaEntry = subcommand && (SCHEMA.commands[subcommand] || SCHEMA.commands.research.subcommands[subcommand]);
@@ -959,7 +959,7 @@ export function buildCommands(deps = {}) {
       return SCHEMA;
     },
 
-    'cache': async (args, apiInstance, flags, options) => {
+    'cache': async (args, _apiInstance, _flags, _options) => {
       const subcommand = args[0] || 'help';
       
       const handlers = {

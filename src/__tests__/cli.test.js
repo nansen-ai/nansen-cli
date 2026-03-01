@@ -8,7 +8,7 @@
  * to coverage metrics, but they verify the real CLI works.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
@@ -78,7 +78,7 @@ describe('CLI Smoke Tests', () => {
   // =================== JSON Output Format ===================
 
   it('should output valid JSON on error', () => {
-    const { stdout, stderr, exitCode } = runCLI('smart-money netflow', {
+    const { stdout, stderr, exitCode: _exitCode } = runCLI('smart-money netflow', {
       env: { NANSEN_API_KEY: 'invalid-key' }
     });
 

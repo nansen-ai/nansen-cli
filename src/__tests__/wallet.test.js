@@ -19,7 +19,6 @@ import {
   exportWallet,
   setDefaultWallet,
   deleteWallet,
-  verifyPassword,
 } from '../wallet.js';
 import { keccak256 } from '../crypto.js';
 
