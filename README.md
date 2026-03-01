@@ -38,6 +38,8 @@ npx skills add nansen-ai/nansen-cli
 npx skills add nansen-ai/nansen-cli --skill nansen-search
 ```
 
+> Powered by [vercel/skills.sh](https://github.com/vercel/skills.sh) — the open-source CLI for installing agent skills.
+
 This adds 7 skill files to your agent's context:
 
 | Skill | Use when... |
