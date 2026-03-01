@@ -781,6 +781,7 @@ Chains: ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, lin
 Labels: Fund, Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader
 
 Docs: https://docs.nansen.ai
+Skills: npx skills add nansen-ai/nansen-cli (agent-optimised docs per command group)
 `;
 
 // Helper to prompt for input (exported for mocking)
