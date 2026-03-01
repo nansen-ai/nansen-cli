@@ -28,7 +28,7 @@ import {
 } from '../cli.js';
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir } from '../api.js';
 import * as fs from 'fs';
-import * as path from 'path';
+import * as _path from 'path';
 
 describe('parseArgs', () => {
   it('should parse positional arguments', () => {
@@ -261,7 +261,8 @@ describe('HELP', () => {
     expect(HELP).toContain('trade');
     expect(HELP).toContain('wallet');
     expect(HELP).toContain('schema');
-    expect(HELP).toContain('login/logout');
+    expect(HELP).toContain('login');
+    expect(HELP).toContain('logout');
   });
 });
 
@@ -762,17 +763,17 @@ describe('--table output formatting', () => {
 // =================== P1: --no-retry and --retries Flags ===================
 
 describe('--no-retry and --retries flags', () => {
-  let outputs, exitCode;
+  let outputs, _exitCode;
 
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
     errorOutput: (msg) => outputs.push(msg),
-    exit: (code) => { exitCode = code; }
+    exit: (code) => { _exitCode = code; }
   });
 
   beforeEach(() => {
     outputs = [];
-    exitCode = null;
+    _exitCode = null;
   });
 
   it('should set maxRetries to 0 when --no-retry is used', async () => {
@@ -1301,18 +1302,18 @@ describe('filterFields', () => {
 describe('--fields flag integration', () => {
   let outputs;
   let errors;
-  let exitCode;
+  let _exitCode;
 
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
     errorOutput: (msg) => errors.push(msg),
-    exit: (code) => { exitCode = code; }
+    exit: (code) => { _exitCode = code; }
   });
 
   beforeEach(() => {
     outputs = [];
     errors = [];
-    exitCode = null;
+    _exitCode = null;
   });
 
   it('should filter response fields', async () => {
@@ -1497,17 +1498,17 @@ describe('cache command', () => {
 
 describe('--cache flag integration', () => {
   let outputs;
-  let exitCode;
+  let _exitCode;
 
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
     errorOutput: (msg) => outputs.push(msg),
-    exit: (code) => { exitCode = code; }
+    exit: (code) => { _exitCode = code; }
   });
 
   beforeEach(() => {
     outputs = [];
-    exitCode = null;
+    _exitCode = null;
     clearCache();
   });
 
@@ -1633,18 +1634,18 @@ describe('formatStream', () => {
 describe('--stream flag integration', () => {
   let outputs;
   let errors;
-  let exitCode;
+  let _exitCode;
 
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
     errorOutput: (msg) => errors.push(msg),
-    exit: (code) => { exitCode = code; }
+    exit: (code) => { _exitCode = code; }
   });
 
   beforeEach(() => {
     errors = [];
     outputs = [];
-    exitCode = null;
+    _exitCode = null;
   });
 
   it('should output NDJSON when --stream flag used', async () => {
@@ -2005,18 +2006,18 @@ describe('formatCsv', () => {
 describe('--format csv integration', () => {
   let outputs;
   let errors;
-  let exitCode;
+  let _exitCode;
 
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
     errorOutput: (msg) => errors.push(msg),
-    exit: (code) => { exitCode = code; }
+    exit: (code) => { _exitCode = code; }
   });
 
   beforeEach(() => {
     outputs = [];
     errors = [];
-    exitCode = null;
+    _exitCode = null;
   });
 
   it('should output CSV when --format csv is used', async () => {
@@ -2232,7 +2233,7 @@ describe('compareWallets', () => {
 
 describe('ENS integration in batchProfile', () => {
   it('should resolve .eth names and include ensName in results', async () => {
-    const { resolveAddress } = await import('../ens.js');
+    const { resolveAddress: _resolveAddress } = await import('../ens.js');
     vi.spyOn(await import('../ens.js'), 'resolveAddress').mockResolvedValue({
       address: '0x0000000000000000000000000000000000000001',
       ensName: 'test.eth',

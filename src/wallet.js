@@ -26,7 +26,7 @@ const SCRYPT_P = 1;
 const SCRYPT_KEYLEN = 32;
 const SALT_LEN = 16;
 const IV_LEN = 12;
-const AUTH_TAG_LEN = 16;
+const _AUTH_TAG_LEN = 16;
 
 import { keccak256 } from './crypto.js';
 
@@ -481,7 +481,7 @@ export function getDefaultAddress(chainType = 'evm') {
  * Build wallet command handlers for integration into CLI.
  */
 export function buildWalletCommands(deps = {}) {
-  const { log = console.log, promptFn, exit = process.exit } = deps;
+  const { log = console.log, promptFn: _promptFn, exit = process.exit } = deps;
 
   return {
     'wallet': async (args, apiInstance, flags, options) => {

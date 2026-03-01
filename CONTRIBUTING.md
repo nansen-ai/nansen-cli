@@ -1,60 +1,57 @@
-# Contributing to Nansen CLI
+# Contributing
 
-Thanks for your interest in contributing!
-
-## Getting Started
+## Before You Open a PR
 
 ```bash
-git clone https://github.com/nansen-ai/nansen-cli.git
-cd nansen-cli
 npm install
+npm test
+npm run lint
 ```
 
-## Development
+All tests are mocked (no API key needed). Passing output:
+
+```
+ Test Files  15 passed (15)
+      Tests  678 passed | 2 skipped (680)
+```
+
+Paste the final output in your PR description so reviewers can verify.
+
+## Changesets
+
+If your change affects users (new feature, bug fix, changed output), add a changeset file. `npm test` warns if one is missing.
+
+Create `.changeset/<descriptive-name>.md`:
+
+```markdown
+---
+"nansen-cli": patch
+---
+
+Short description (appears in CHANGELOG)
+```
+
+`patch` = bug fix, `minor` = new feature, `major` = breaking change.
+
+Skip for docs-only, test-only, or refactors with no behavior change.
+
+Changesets are temporary — CI consumes them and auto-updates CHANGELOG.md when releasing.
+
+## Linting
+
+ESLint enforces code quality. Auto-fix most issues with:
 
 ```bash
-# Run tests (mocked, no API key needed)
-npm test
-
-# Run tests in watch mode
-npm run test:watch
-
-# Run against live API (requires NANSEN_API_KEY)
-npm run test:live
+npm run lint:fix
 ```
 
-## Adding New Endpoints
+Prefix intentionally unused variables with `_` (e.g. `_err`, `_args`).
 
-1. Add the API method in `src/api.js`
-2. Add the CLI handler in `src/cli.js`
-3. Add tests in `src/__tests__/api.test.js` and `src/__tests__/cli.test.js`
-4. Update `src/__tests__/coverage.test.js` with the new endpoint
-5. Update `README.md` with documentation
+## PR Checklist
 
-## Code Style
-
-- ES modules (`import`/`export`)
-- Async/await for API calls
-- JSDoc comments for public methods
-- All output is JSON (for AI agent consumption)
-
-## Pull Requests
-
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/new-endpoint`)
-3. Make your changes
-4. Run tests (`npm test`)
-5. Commit with a clear message
-6. Push and open a PR
-
-## Reporting Issues
-
-Please include:
-- Node.js version
-- CLI command that failed
-- Error message (with `--pretty` flag)
-- Expected vs actual behavior
-
-## Questions?
-
-Open an issue or reach out on [Discord](https://discord.gg/nansen).
+- [ ] `npm test` passes (paste output in PR)
+- [ ] `npm run lint` passes
+- [ ] New code paths have tests + RPC mocks cover all methods
+- [ ] No `console.log` in core, no hardcoded secrets
+- [ ] Error messages are actionable
+- [ ] Changeset added (if user-facing)

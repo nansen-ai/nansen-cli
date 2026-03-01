@@ -9,8 +9,8 @@
  * - Table formatting
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { validateAddress, validateTokenAddress, saveConfig, deleteConfig, getConfigFile, getConfigDir, ErrorCode, NansenError } from '../api.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { validateAddress, validateTokenAddress, getConfigFile, getConfigDir, ErrorCode, NansenError } from '../api.js';
 import { parseArgs, parseSort, formatValue } from '../cli.js';
 import { selectPaymentRequirement, buildEIP712TypedData, buildPaymentSignatureHeader } from '../walletconnect-x402.js';
 import fs from 'fs';

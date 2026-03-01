@@ -26,7 +26,7 @@ function backupCache() {
     if (fs.existsSync(CACHE_FILE)) {
       savedCacheContent = fs.readFileSync(CACHE_FILE, 'utf8');
     }
-  } catch {}
+  } catch { /* ignore */ }
 }
 
 function restoreCache() {
@@ -36,7 +36,7 @@ function restoreCache() {
     } else if (fs.existsSync(CACHE_FILE)) {
       fs.unlinkSync(CACHE_FILE);
     }
-  } catch {}
+  } catch { /* ignore */ }
   savedCacheContent = null;
 }
 
@@ -48,7 +48,7 @@ function writeCache(data) {
 }
 
 function removeCache() {
-  try { fs.unlinkSync(CACHE_FILE); } catch {}
+  try { fs.unlinkSync(CACHE_FILE); } catch { /* ignore */ }
 }
 
 // =================== getUpdateNotification ===================
@@ -204,7 +204,7 @@ describe('scheduleUpdateCheck', () => {
 describe('update notification in CLI', () => {
   let outputs;
   let errors;
-  let exitCode;
+  let _exitCode;
 
   beforeEach(() => {
     backupCache();
@@ -212,7 +212,7 @@ describe('update notification in CLI', () => {
     delete process.env.CI;
     outputs = [];
     errors = [];
-    exitCode = null;
+    _exitCode = null;
   });
 
   afterEach(() => {
@@ -222,7 +222,7 @@ describe('update notification in CLI', () => {
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
     errorOutput: (msg) => errors.push(msg),
-    exit: (code) => { exitCode = code; }
+    exit: (code) => { _exitCode = code; }
   });
 
   it('should show update notification on stderr for help command', async () => {
