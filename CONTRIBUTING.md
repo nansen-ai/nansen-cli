@@ -5,6 +5,7 @@
 ```bash
 npm install
 npm test
+npm run lint
 ```
 
 All tests are mocked (no API key needed). Passing output:
@@ -36,9 +37,20 @@ Skip for docs-only, test-only, or refactors with no behavior change.
 
 Changesets are temporary — CI consumes them and auto-updates CHANGELOG.md when releasing.
 
+## Linting
+
+ESLint enforces code quality. Auto-fix most issues with:
+
+```bash
+npm run lint:fix
+```
+
+Prefix intentionally unused variables with `_` (e.g. `_err`, `_args`).
+
 ## PR Checklist
 
 - [ ] `npm test` passes (paste output in PR)
+- [ ] `npm run lint` passes
 - [ ] New code paths have tests + RPC mocks cover all methods
 - [ ] No `console.log` in core, no hardcoded secrets
 - [ ] Error messages are actionable
