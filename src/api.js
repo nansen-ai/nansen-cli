@@ -646,11 +646,12 @@ export class NansenAPI {
   }
 
   async smartMoneyPerpTrades(params = {}) {
-    const { filters = {}, orderBy, pagination } = params;
+    const { filters = {}, orderBy, pagination, onlyNewPositions } = params;
     return this.request('/api/v1/smart-money/perp-trades', {
       filters,
       order_by: orderBy,
-      pagination
+      pagination,
+      only_new_positions: onlyNewPositions
     });
   }
 

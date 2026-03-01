@@ -45,7 +45,7 @@ export const SCHEMA = {
             },
             'perp-trades': {
               description: 'Perpetual trading on Hyperliquid',
-              options: { limit: { type: 'number' }, sort: { type: 'string' }, filters: { type: 'object' } },
+              options: { limit: { type: 'number' }, labels: { type: 'string|array', description: 'Smart Money label filter' }, 'only-new-positions': { type: 'boolean', description: 'Show only position-opening trades (Open Long, Open Short)' }, sort: { type: 'string' }, filters: { type: 'object' } },
               returns: ['trader_address', 'trader_address_label', 'token_symbol', 'side', 'action', 'token_amount', 'price_usd', 'value_usd', 'type', 'block_timestamp', 'transaction_hash']
             },
             'holdings': {
@@ -1006,7 +1006,7 @@ export function buildCommands(deps = {}) {
       const handlers = {
         'netflow': () => apiInstance.smartMoneyNetflow({ chains, filters, orderBy, pagination }),
         'dex-trades': () => apiInstance.smartMoneyDexTrades({ chains, filters, orderBy, pagination }),
-        'perp-trades': () => apiInstance.smartMoneyPerpTrades({ filters, orderBy, pagination }),
+        'perp-trades': () => apiInstance.smartMoneyPerpTrades({ filters, orderBy, pagination, onlyNewPositions: options['only-new-positions'] || flags['only-new-positions'] || undefined }),
         'holdings': () => apiInstance.smartMoneyHoldings({ chains, filters, orderBy, pagination }),
         'dcas': () => apiInstance.smartMoneyDcas({ filters, orderBy, pagination }),
         'historical-holdings': () => apiInstance.smartMoneyHistoricalHoldings({ chains, filters, orderBy, pagination, days }),
