@@ -31,8 +31,11 @@ Skills provide scoped, agent-optimised documentation per command group — makin
 ### Install Skills
 
 ```bash
-# After installing nansen-cli
-npx nansen-skills add
+# Install all skills
+npx skills add nansen-ai/nansen-cli
+
+# Install a specific skill
+npx skills add nansen-ai/nansen-cli --skill nansen-search
 ```
 
 This adds 7 skill files to your agent's context:

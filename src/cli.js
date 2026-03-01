@@ -784,7 +784,7 @@ SUPPORTED CHAINS:
 For more info: https://docs.nansen.ai
 
 AI AGENT SKILLS:
-  Skills not installed? Run: npx nansen-skills add
+  Skills not installed? Run: npx skills add nansen-ai/nansen-cli
   Skills provide scoped, agent-optimised docs per command group.
 `;
 
