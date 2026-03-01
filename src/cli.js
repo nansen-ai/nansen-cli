@@ -850,6 +850,18 @@ export function buildCommands(deps = {}) {
 
   const cmds = {
     'login': async (args, apiInstance, flags, options) => {
+      if (flags.help || flags.h) {
+        log('nansen login - Save your Nansen API key\n');
+        log('USAGE:');
+        log('  nansen login                    (interactive)');
+        log('  nansen login --api-key <key>    (non-interactive)\n');
+        log('OPTIONS:');
+        log('  --api-key <key>   Your Nansen API key');
+        log('  --help            Show this help\n');
+        log('Get your API key at: https://app.nansen.ai/api');
+        return;
+      }
+
       // Support non-interactive: nansen login --api-key <key>
       let apiKey = options['api-key'] || options.apiKey;
 
@@ -885,7 +897,7 @@ export function buildCommands(deps = {}) {
 
       log(`✓ Saved to ${getConfigFileFn()}\n`);
       log('You can now use the Nansen CLI. Try:');
-      log('  nansen token screener --chain solana --pretty');
+      log('  nansen research token screener --chain solana --pretty');
     },
 
     'logout': async (_args, _apiInstance, _flags, _options) => {
