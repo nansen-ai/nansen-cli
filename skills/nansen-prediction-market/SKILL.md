@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 # Prediction Market Analytics (Polymarket)
 
-All commands: `nansen research prediction-market <sub> [options]` (alias: `nansen pm <sub>`)
+All commands: `nansen research prediction-market <sub> [options]` (alias: `nansen research pm <sub>`)
 
 No `--chain` flag needed — Polymarket runs on Polygon.
 
@@ -14,16 +14,16 @@ No `--chain` flag needed — Polymarket runs on Polygon.
 
 ```bash
 # Top markets by 24h volume
-nansen pm market-screener --sort-by volume_24hr --limit 20
+nansen research pm market-screener --sort-by volume_24hr --limit 20
 
 # Search for specific markets
-nansen pm market-screener --query "bitcoin" --limit 10
+nansen research pm market-screener --query "bitcoin" --limit 10
 
 # Find resolved/closed markets
-nansen pm market-screener --status closed --limit 10
+nansen research pm market-screener --status closed --limit 10
 
 # Screen events (groups of related markets)
-nansen pm event-screener --sort-by volume_24hr --limit 20
+nansen research pm event-screener --sort-by volume_24hr --limit 20
 ```
 
 Sort options: `volume_24hr`, `volume`, `volume_1wk`, `volume_1mo`, `liquidity`, `open_interest`, `unique_traders_24h`, `age_hours`
@@ -33,41 +33,41 @@ Screeners return active/open markets by default. Use `--status closed` for resol
 ## OHLCV & Orderbook
 
 ```bash
-nansen pm ohlcv --market-id 654412 --sort period_start:desc --limit 50
-nansen pm orderbook --market-id 654412
+nansen research pm ohlcv --market-id 654412 --sort period_start:desc --limit 50
+nansen research pm orderbook --market-id 654412
 ```
 
 ## Holders & Positions
 
 ```bash
-nansen pm top-holders --market-id 654412 --limit 10
-nansen pm position-detail --market-id 654412 --limit 20
+nansen research pm top-holders --market-id 654412 --limit 10
+nansen research pm position-detail --market-id 654412 --limit 20
 ```
 
 ## Trades
 
 ```bash
 # Trades for a specific market
-nansen pm trades-by-market --market-id 654412 --limit 20
+nansen research pm trades-by-market --market-id 654412 --limit 20
 
 # Trades for a specific address
-nansen pm trades-by-address --address 0x1234... --limit 20
+nansen research pm trades-by-address --address 0x1234... --limit 20
 ```
 
 ## PnL
 
 ```bash
 # PnL leaderboard for a market
-nansen pm pnl-by-market --market-id 654412 --limit 20
+nansen research pm pnl-by-market --market-id 654412 --limit 20
 
 # PnL breakdown for a trader
-nansen pm pnl-by-address --address 0x1234...
+nansen research pm pnl-by-address --address 0x1234...
 ```
 
 ## Categories
 
 ```bash
-nansen pm categories --pretty
+nansen research pm categories --pretty
 ```
 
 ## Flags
