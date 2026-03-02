@@ -1618,7 +1618,7 @@
       }
     },
     "status": {
-      "description": "Environment health check — verify auth, API connectivity, wallets, and CLI version before running workflows",
+      "description": "Environment health check — verify auth, API connectivity, wallets, and CLI version before running workflows. Note: success: true means the status command completed without error. Check data.ready for environment readiness.",
       "options": {
         "skip-api": {
           "type": "boolean",
@@ -1626,7 +1626,10 @@
         }
       },
       "returns": [
-        "ready",
+        {
+          "field": "ready",
+          "description": "true if auth.valid and api.reachable are both true. Does not reflect wallet state — check wallet.count separately if wallet operations are needed."
+        },
         "auth.configured",
         "auth.valid",
         "auth.error",
@@ -1635,14 +1638,19 @@
         "api.latency_ms",
         "api.error",
         "api.code",
-        "api.rate_limited",
+        "client.rate_limited",
         "wallet.count",
         "wallet.default",
         "wallet.names",
         "wallet.error",
+        "wallet.code",
         "cli.version",
         "cli.update_available",
-        "cli.latest_version"
+        "cli.latest_version",
+        {
+          "field": "cli.checked",
+          "description": "true if the update cache file was read successfully, false if the check was skipped (file missing or unreadable). When false, update_available and latest_version are not meaningful."
+        }
       ]
     }
   },

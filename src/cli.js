@@ -867,7 +867,7 @@ export function buildCommands(deps = {}) {
     },
 
     'status': async (_args, apiInstance, flags, _options) => {
-      const statusData = { ready: false, auth: null, api: null, wallet: null, cli: null };
+      const statusData = { ready: false, auth: null, api: null, client: null, wallet: null, cli: null };
       const home = os.homedir();
       let apiCallMade = false;
 
@@ -899,7 +899,7 @@ export function buildCommands(deps = {}) {
 
         if (rateLimited) {
           authResult.valid = null;
-          apiResult.rate_limited = true;
+          statusData.client = { rate_limited: true };
           apiResult.error = 'Rate limited: status called too recently (< 10s)';
         } else {
           apiCallMade = true;
@@ -973,7 +973,7 @@ export function buildCommands(deps = {}) {
       }
 
       // --- Wallet check ---
-      const walletResult = { count: 0, default: null, names: [], error: null };
+      const walletResult = { count: 0, default: null, names: [], error: null, code: null };
       const walletsDir = path.join(home, '.nansen', 'wallets');
       // Guard: avoid calling listWallets() when dir is missing, since it auto-creates as a side effect
       if (fs.existsSync(walletsDir)) {
@@ -990,16 +990,18 @@ export function buildCommands(deps = {}) {
           if (walletsDir) msg = msg.replaceAll(walletsDir, '<wallets-dir>');
           if (home) msg = msg.replaceAll(home, '<home>');
           walletResult.error = msg;
+          walletResult.code = ErrorCode.UNKNOWN;
         }
       }
       statusData.wallet = walletResult;
 
       // --- CLI version check ---
-      const cliResult = { version: VERSION, update_available: false, latest_version: null };
+      const cliResult = { version: VERSION, update_available: false, latest_version: null, checked: false };
       const cached = getCachedLatest(VERSION);
       if (cached) {
         cliResult.latest_version = cached.latest;
         cliResult.update_available = cached.updateAvailable;
+        cliResult.checked = true;
       }
       statusData.cli = cliResult;
 
