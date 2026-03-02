@@ -10,7 +10,7 @@ import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck, isNewer } from './update-check.js';
+import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck, isNewer, getCachedLatest } from './update-check.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
 
@@ -869,6 +869,7 @@ export function buildCommands(deps = {}) {
     'status': async (_args, apiInstance, flags, _options) => {
       const statusData = { ready: false, auth: null, api: null, wallet: null, cli: null };
       const home = os.homedir();
+      let apiCallMade = false;
 
       // --- Auth + API check (single call) ---
       const authConfigured = Boolean(apiInstance.apiKey);
@@ -897,9 +898,11 @@ export function buildCommands(deps = {}) {
         }
 
         if (rateLimited) {
+          authResult.valid = null;
           apiResult.rate_limited = true;
           apiResult.error = 'Rate limited: status called too recently (< 10s)';
         } else {
+          apiCallMade = true;
           const start = Date.now();
           const controller = new AbortController();
           let timeoutId;
@@ -926,6 +929,7 @@ export function buildCommands(deps = {}) {
             authResult.valid = true;
           } catch (err) {
             clearTimeout(timeoutId);
+            controller.abort();
             apiResult.latency_ms = Math.min(Date.now() - start, 5000);
             if (err.code === ErrorCode.TIMEOUT) {
               apiResult.reachable = false;
@@ -961,8 +965,8 @@ export function buildCommands(deps = {}) {
       statusData.auth = authResult;
       statusData.api = apiResult;
 
-      // --skip-api → ready is null (not determinable)
-      if (flags['skip-api']) {
+      // --skip-api or rate-limited → ready is null (not determinable)
+      if (flags['skip-api'] || authResult.valid === null) {
         statusData.ready = null;
       } else {
         statusData.ready = authResult.valid === true && apiResult.reachable === true;
@@ -971,6 +975,7 @@ export function buildCommands(deps = {}) {
       // --- Wallet check ---
       const walletResult = { count: 0, default: null, names: [], error: null };
       const walletsDir = path.join(home, '.nansen', 'wallets');
+      // Guard: avoid calling listWallets() when dir is missing, since it auto-creates as a side effect
       if (fs.existsSync(walletsDir)) {
         try {
           const { wallets, defaultWallet } = listWallets();
@@ -991,29 +996,25 @@ export function buildCommands(deps = {}) {
 
       // --- CLI version check ---
       const cliResult = { version: VERSION, update_available: false, latest_version: null };
-      try {
-        const cacheFile = path.join(home, '.nansen', 'update-check.json');
-        const raw = fs.readFileSync(cacheFile, 'utf8');
-        const { latest } = JSON.parse(raw);
-        if (latest && /^\d+\.\d+\.\d+/.test(latest)) {
-          cliResult.latest_version = latest;
-          cliResult.update_available = isNewer(latest, VERSION);
-        }
-      } catch {
-        // Cache file missing or unreadable — skip gracefully
+      const cached = getCachedLatest(VERSION);
+      if (cached) {
+        cliResult.latest_version = cached.latest;
+        cliResult.update_available = cached.updateAvailable;
       }
       statusData.cli = cliResult;
 
-      // --- Write cooldown file (after successful completion) ---
-      try {
-        const nansenDir = path.join(home, '.nansen');
-        fs.mkdirSync(nansenDir, { recursive: true });
-        fs.writeFileSync(
-          path.join(nansenDir, 'status-last-called.json'),
-          JSON.stringify({ calledAt: Date.now() })
-        );
-      } catch {
-        // Non-critical — ignore write failures
+      // --- Write cooldown file (only when an API call was actually made) ---
+      if (apiCallMade) {
+        try {
+          const nansenDir = path.join(home, '.nansen');
+          fs.mkdirSync(nansenDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(nansenDir, 'status-last-called.json'),
+            JSON.stringify({ calledAt: Date.now() })
+          );
+        } catch {
+          // Non-critical — ignore write failures
+        }
       }
 
       return statusData;

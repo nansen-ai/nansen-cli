@@ -64,19 +64,33 @@ export function getUpgradeNotice(currentVersion) {
 }
 
 /**
+ * Read the cached latest version from disk.
+ * Returns { latest, updateAvailable } or null on any failure.
+ * @param {string} currentVersion
+ * @param {string} [cacheFile] - Override path for testing
+ */
+export function getCachedLatest(currentVersion, cacheFile) {
+  try {
+    const file = cacheFile || path.join(process.env.HOME || process.env.USERPROFILE || '', '.nansen', 'update-check.json');
+    const raw = fs.readFileSync(file, 'utf8');
+    const { latest } = JSON.parse(raw);
+    if (!latest || !/^\d+\.\d+\.\d+/.test(latest)) return null;
+    return { latest, updateAvailable: isNewer(latest, currentVersion) };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read the cached check result and return a notification string (or null).
  */
 export function getUpdateNotification(currentVersion) {
   try {
     if (process.env.NO_UPDATE_NOTIFIER || process.env.CI) return null;
     if (!fs.existsSync(CACHE_FILE)) return null;
-
-    const raw = fs.readFileSync(CACHE_FILE, 'utf8');
-    const { latest } = JSON.parse(raw);
-    if (!latest) return null;
-
-    if (isNewer(latest, currentVersion)) {
-      return `Update available: ${currentVersion} → ${latest}  (npm i -g ${PACKAGE_NAME})`;
+    const cached = getCachedLatest(currentVersion);
+    if (cached?.updateAvailable) {
+      return `Update available: ${currentVersion} → ${cached.latest}  (npm i -g ${PACKAGE_NAME})`;
     }
     return null;
   } catch {

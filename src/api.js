@@ -455,7 +455,7 @@ export class NansenAPI {
             ...options.headers
           },
           body: JSON.stringify(NansenAPI.cleanBody(body)),
-          ...(options.signal ? { signal: options.signal } : {})
+          signal: options.signal
         });
       } catch (err) {
         // Network-level errors - retry these too
