@@ -756,7 +756,7 @@ export function formatQuote(quote, index) {
  * Build trading command handlers for CLI integration.
  */
 export function buildTradingCommands(deps = {}) {
-  const { errorOutput = console.error, exit = process.exit } = deps;
+  const { errorOutput = console.error } = deps;
 
   return {
     'quote': async (args, apiInstance, flags, options) => {
@@ -1369,7 +1369,10 @@ export function buildTradingCommands(deps = {}) {
         );
 
       } catch (err) {
-        // Re-throw so the main runner (cli.js) outputs a structured JSON error to stdout
+        // Normalize errors without a code so the main runner can format them consistently
+        if (!err.code) {
+          throw Object.assign(new Error(err.message), { code: 'TRADE_ERROR', status: err.status || null, details: err.details || null });
+        }
         throw err;
       }
     },

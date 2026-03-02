@@ -12,3 +12,4 @@ node_modules/
 .vscode/
 .idea/
 coverage/
+.worktrees/

@@ -542,54 +542,36 @@ describe('buildApprovalTransaction', () => {
 // ============= CLI Command Validation =============
 
 describe('buildTradingCommands', () => {
-  it('should show help when required params missing for quote', async () => {
-    const logs = [];
-    let exitCalled = false;
-    const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
+  it('should throw structured error when required params missing for quote', async () => {
+    const cmds = buildTradingCommands({ errorOutput: () => {} });
+    await expect(cmds.quote([], null, {}, {})).rejects.toMatchObject({
+      code: 'MISSING_PARAM',
+      message: expect.stringContaining('Missing required options'),
     });
-
-    await cmds.quote([], null, {}, {});
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('Usage: nansen trade quote'))).toBe(true);
   });
 
-  it('should show help when quote-id missing for execute', async () => {
-    const logs = [];
-    let exitCalled = false;
-    const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
+  it('should throw structured error when quote-id missing for execute', async () => {
+    const cmds = buildTradingCommands({ errorOutput: () => {} });
+    await expect(cmds.execute([], null, {}, {})).rejects.toMatchObject({
+      code: 'MISSING_PARAM',
+      message: expect.stringContaining('Missing required option: --quote'),
     });
-
-    await cmds.execute([], null, {}, {});
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('Usage: nansen trade execute'))).toBe(true);
   });
 
-  it('should error when no wallet exists for quote', async () => {
-    const logs = [];
-    let exitCalled = false;
-
-    // Mock fetch for the API call
+  it('should throw structured error when no wallet exists for quote', async () => {
     const origFetch = global.fetch;
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       text: async () => JSON.stringify({ success: true, quotes: [{ aggregator: 'test' }] }),
     });
 
-    const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
+    const cmds = buildTradingCommands({ errorOutput: () => {} });
+    await expect(
+      cmds.quote([], null, {}, { chain: 'solana', from: 'So111', to: 'EPjFW', amount: '1000' })
+    ).rejects.toMatchObject({
+      code: 'WALLET_REQUIRED',
+      message: expect.stringContaining('No wallet'),
     });
-
-    await cmds.quote([], null, {}, {
-      chain: 'solana', from: 'So111', to: 'EPjFW', amount: '1000',
-    });
-
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('No wallet') || l.includes('No default wallet'))).toBe(true);
 
     global.fetch = origFetch;
   });
@@ -617,7 +599,7 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await cmds.execute([], null, {}, { quote: quoteId });
+    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toBeDefined();
     expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(true);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
@@ -645,7 +627,7 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await cmds.execute([], null, {}, { quote: quoteId });
+    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toBeDefined();
     expect(logs.some(l => l.includes('value mismatch'))).toBe(true);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
@@ -673,7 +655,8 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await cmds.execute([], null, {}, { quote: quoteId });
+    // May throw downstream (no network) — absorb; we only care it passed the safety check
+    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch (_) {}
     // Should NOT hit the value validation rejection
     expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(false);
     expect(logs.some(l => l.includes('value mismatch'))).toBe(false);
@@ -703,7 +686,8 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await cmds.execute([], null, {}, { quote: quoteId });
+    // May throw downstream (no network) — absorb; we only care it passed the safety check
+    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch (_) {}
     // Should NOT hit the value validation rejection
     expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(false);
     expect(logs.some(l => l.includes('value mismatch'))).toBe(false);
@@ -733,29 +717,23 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await cmds.execute([], null, {}, { quote: quoteId });
+    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toBeDefined();
     expect(logs.some(l => l.includes('value mismatch'))).toBe(true);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
   });
 
-  it('should error when execute loads a quote without transaction data', async () => {
-    // Save a quote without transaction field
+  it('should throw structured error when execute loads a quote without transaction data', async () => {
     const quoteId = saveQuote({
       success: true,
       quotes: [{ aggregator: 'test', inAmount: '100' }], // no .transaction
     }, 'solana');
 
-    const logs = [];
-    let exitCalled = false;
-    const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
+    const cmds = buildTradingCommands({ errorOutput: () => {} });
+    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toMatchObject({
+      code: 'INVALID_QUOTE',
+      message: expect.stringContaining('transaction data'),
     });
-
-    await cmds.execute([], null, {}, { quote: quoteId });
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('transaction data'))).toBe(true);
   });
 });
 
@@ -782,74 +760,56 @@ describe('WalletConnect quote support', () => {
     expect(loaded.signerType).toBe('local');
   });
 
-  it('should reject Solana + walletconnect for quote', async () => {
+  it('should throw structured error for Solana + walletconnect for quote', async () => {
     vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    const cmds = buildTradingCommands({ errorOutput: () => {} });
 
-    const logs = [];
-    let exitCalled = false;
-    const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
-    });
-
-    await cmds.quote([], null, {}, {
+    await expect(cmds.quote([], null, {}, {
       chain: 'solana',
       from: 'So11111111111111111111111111111111111111112',
       to: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
       amount: '1000000000',
       wallet: 'walletconnect',
+    })).rejects.toMatchObject({
+      code: 'UNSUPPORTED_CHAIN',
+      message: expect.stringContaining('WalletConnect is only supported for EVM chains'),
     });
-
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('WalletConnect is only supported for EVM chains'))).toBe(true);
 
     vi.restoreAllMocks();
   });
 
-  it('should error when no WalletConnect session for quote', async () => {
+  it('should throw structured error when no WalletConnect session for quote', async () => {
     vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(null);
+    const cmds = buildTradingCommands({ errorOutput: () => {} });
 
-    const logs = [];
-    let exitCalled = false;
-    const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
-    });
-
-    await cmds.quote([], null, {}, {
+    await expect(cmds.quote([], null, {}, {
       chain: 'base',
       from: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
       to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
       amount: '1000000000000000000',
       wallet: 'walletconnect',
+    })).rejects.toMatchObject({
+      code: 'WALLET_REQUIRED',
+      message: expect.stringContaining('No WalletConnect session active'),
     });
-
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('No WalletConnect session active'))).toBe(true);
 
     vi.restoreAllMocks();
   });
 
-  it('should accept "wc" as walletconnect alias for quote', async () => {
+  it('should treat "wc" as walletconnect alias and throw same error for quote', async () => {
     vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(null);
+    const cmds = buildTradingCommands({ errorOutput: () => {} });
 
-    const logs = [];
-    let exitCalled = false;
-    const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
-    });
-
-    await cmds.quote([], null, {}, {
+    await expect(cmds.quote([], null, {}, {
       chain: 'base',
       from: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
       to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
       amount: '1000000000000000000',
       wallet: 'wc',
+    })).rejects.toMatchObject({
+      code: 'WALLET_REQUIRED',
+      message: expect.stringContaining('No WalletConnect session active'),
     });
-
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('No WalletConnect session active'))).toBe(true);
 
     vi.restoreAllMocks();
   });
@@ -898,7 +858,7 @@ describe('WalletConnect execute support', () => {
     vi.restoreAllMocks();
   });
 
-  it('should error when WC session expired during execute', async () => {
+  it('should throw structured error when WC session expired during execute', async () => {
     vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(null);
 
     const quoteId = saveQuote({
@@ -909,22 +869,16 @@ describe('WalletConnect execute support', () => {
       }],
     }, 'base', 'walletconnect');
 
-    const logs = [];
-    let exitCalled = false;
-    const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
+    const cmds = buildTradingCommands({ errorOutput: () => {} });
+    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toMatchObject({
+      code: 'WALLET_REQUIRED',
+      message: expect.stringContaining('No WalletConnect session active'),
     });
-
-    await cmds.execute([], null, {}, { quote: quoteId });
-
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('No WalletConnect session active'))).toBe(true);
 
     vi.restoreAllMocks();
   });
 
-  it('should reject Solana + walletconnect for execute', async () => {
+  it('should throw structured error for Solana + walletconnect for execute', async () => {
     const quoteId = saveQuote({
       success: true,
       quotes: [{
@@ -933,17 +887,11 @@ describe('WalletConnect execute support', () => {
       }],
     }, 'solana', 'walletconnect');
 
-    const logs = [];
-    let exitCalled = false;
-    const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
+    const cmds = buildTradingCommands({ errorOutput: () => {} });
+    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toMatchObject({
+      code: 'UNSUPPORTED_CHAIN',
+      message: expect.stringContaining('WalletConnect is only supported for EVM chains'),
     });
-
-    await cmds.execute([], null, {}, { quote: quoteId });
-
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('WalletConnect is only supported for EVM chains'))).toBe(true);
   });
 });
 
@@ -1040,25 +988,20 @@ describe('validateBaseUnitAmount', () => {
 });
 
 describe('quote handler rejects decimal amounts before API call', () => {
-  it('should error on decimal amount and not call fetch', async () => {
+  it('should throw structured error on decimal amount and not call fetch', async () => {
     const origFetch = global.fetch;
     global.fetch = vi.fn();
 
-    const logs = [];
-    let exitCalled = false;
-    const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
-    });
+    const cmds = buildTradingCommands({ errorOutput: () => {} });
 
-    await cmds.quote([], null, {}, {
+    await expect(cmds.quote([], null, {}, {
       chain: 'solana', from: 'So111', to: 'EPjFW', amount: '0.005',
+    })).rejects.toMatchObject({
+      code: 'INVALID_AMOUNT',
+      message: expect.stringContaining('base units'),
     });
 
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('base units'))).toBe(true);
     expect(global.fetch).not.toHaveBeenCalled();
-
     global.fetch = origFetch;
   });
 });

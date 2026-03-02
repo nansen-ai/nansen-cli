@@ -1171,13 +1171,13 @@ describe('schema command', () => {
     expect(result.globalOptions).toBeDefined();
   });
 
-  it('should return full schema for unknown command', async () => {
+  it('should throw structured error for unknown schema command', async () => {
     const commands = buildCommands({});
-    const result = await commands.schema(['unknown'], null, {}, {});
-    
-    // Returns full schema when command not found
-    expect(result.version).toBeDefined();
-    expect(result.commands).toBeDefined();
+    // Unknown schema subcommand now throws instead of silently dumping full schema
+    await expect(commands.schema(['unknown'], null, {}, {})).rejects.toMatchObject({
+      code: 'UNKNOWN_COMMAND',
+      message: expect.stringContaining('Unknown schema command: unknown'),
+    });
   });
 
   it('should output JSON', async () => {
@@ -2414,10 +2414,11 @@ describe('deprecation warnings', () => {
       errorOutput: (msg) => errors.push(msg),
       exit: () => {}
     };
-    // quote with no args shows its help; confirms handler was reached
+    // quote with no args now throws MISSING_PARAM; confirms handler was reached
     const result = await runCLI(['quote'], deps);
-    expect(errors.some(e => e.includes('nansen trade quote'))).toBe(true);
-    expect(result.type).toBe('no-output');
+    // The handler was reached and returned a structured error (not no-output)
+    expect(result.type).toBe('error');
+    expect(result.data?.error).toMatch(/Missing required options/i);
   });
 });
 
