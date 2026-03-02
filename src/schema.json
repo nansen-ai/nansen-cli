@@ -1688,7 +1688,7 @@
                 "question",
                 "event_id",
                 "event_title",
-                "side",
+                "side_held",
                 "net_buy_cost_usd",
                 "net_sell_proceeds_usd",
                 "redemption_value_usd",
