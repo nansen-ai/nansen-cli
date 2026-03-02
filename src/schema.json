@@ -1666,7 +1666,6 @@
                 "event_id",
                 "event_title",
                 "market_resolved",
-                "size_bucket",
                 "market_id"
               ]
             },
