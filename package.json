@@ -9,6 +9,7 @@
   },
   "files": [
     "src/*.js",
+    "src/*.json",
     "CHANGELOG.md"
   ],
   "scripts": {
