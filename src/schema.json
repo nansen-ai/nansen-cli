@@ -38,11 +38,15 @@
               "returns": [
                 "token_address",
                 "token_symbol",
-                "token_name",
+                "net_flow_1h_usd",
+                "net_flow_24h_usd",
+                "net_flow_7d_usd",
+                "net_flow_30d_usd",
                 "chain",
-                "inflow_usd",
-                "outflow_usd",
-                "net_flow_usd"
+                "token_sectors",
+                "trader_count",
+                "token_age_days",
+                "market_cap_usd"
               ]
             },
             "dex-trades": {
@@ -80,6 +84,10 @@
                 "token_sold_amount",
                 "token_bought_symbol",
                 "token_sold_symbol",
+                "token_bought_age_days",
+                "token_sold_age_days",
+                "token_bought_market_cap",
+                "token_sold_market_cap",
                 "trade_value_usd"
               ]
             },
@@ -105,8 +113,8 @@
                 }
               },
               "returns": [
-                "trader_address",
                 "trader_address_label",
+                "trader_address",
                 "token_symbol",
                 "side",
                 "action",
@@ -162,6 +170,7 @@
                 "dca_created_at",
                 "dca_updated_at",
                 "trader_address",
+                "transaction_hash",
                 "trader_address_label",
                 "dca_vault_address",
                 "input_token_address",
@@ -195,10 +204,18 @@
               },
               "returns": [
                 "date",
+                "chain",
                 "token_address",
                 "token_symbol",
+                "token_sectors",
+                "smart_money_labels",
                 "balance",
-                "balance_usd"
+                "value_usd",
+                "balance_24h_percent_change",
+                "holders_count",
+                "share_of_holdings_percent",
+                "token_age_days",
+                "market_cap_usd"
               ]
             }
           }
@@ -248,8 +265,7 @@
               },
               "returns": [
                 "label",
-                "label_type",
-                "label_subtype"
+                "category"
               ]
             },
             "transactions": {
@@ -283,7 +299,8 @@
                 "tokens_received",
                 "volume_usd",
                 "block_timestamp",
-                "transaction_hash"
+                "transaction_hash",
+                "source_type"
               ]
             },
             "pnl": {
@@ -312,9 +329,23 @@
               "returns": [
                 "token_address",
                 "token_symbol",
-                "realized_pnl_usd",
-                "unrealized_pnl_usd",
-                "total_pnl_usd"
+                "token_price",
+                "roi_percent_realised",
+                "pnl_usd_realised",
+                "pnl_usd_unrealised",
+                "roi_percent_unrealised",
+                "bought_amount",
+                "bought_usd",
+                "cost_basis_usd",
+                "sold_amount",
+                "sold_usd",
+                "avg_sold_price_usd",
+                "holding_amount",
+                "holding_usd",
+                "nof_buys",
+                "nof_sells",
+                "max_balance_held",
+                "max_balance_held_usd"
               ]
             },
             "search": {
@@ -353,11 +384,12 @@
                 }
               },
               "returns": [
-                "date",
+                "block_timestamp",
                 "token_address",
-                "token_symbol",
-                "balance",
-                "balance_usd"
+                "chain",
+                "token_amount",
+                "value_usd",
+                "token_symbol"
               ]
             },
             "related-wallets": {
@@ -431,7 +463,8 @@
                 }
               },
               "returns": [
-                "top5_tokens",
+                "pagination",
+                "top5_tokens[realized_pnl, realized_roi, token_address, token_symbol, chain]",
                 "traded_token_count",
                 "traded_times",
                 "realized_pnl_usd",
@@ -451,13 +484,18 @@
                 }
               },
               "returns": [
-                "symbol",
-                "side",
-                "size",
-                "entry_price",
-                "mark_price",
-                "unrealized_pnl",
-                "leverage"
+                "assetPositions",
+                "crossMaintenanceMarginUsed",
+                "cross_margin_summary_account_value_usd",
+                "cross_margin_summary_total_margin_used_usd",
+                "cross_margin_summary_total_net_liquidation_position_on_usd",
+                "cross_margin_summary_total_raw_usd",
+                "margin_summary_account_value_usd",
+                "margin_summary_total_margin_used_usd",
+                "margin_summary_total_net_liquidation_position_usd",
+                "margin_summary_total_raw_usd",
+                "time",
+                "withdrawable"
               ]
             },
             "perp-trades": {
@@ -476,13 +514,22 @@
                 }
               },
               "returns": [
-                "symbol",
+                "timestamp",
                 "side",
-                "size",
+                "action",
+                "block_number",
+                "token_symbol",
                 "price",
+                "size",
                 "value_usd",
-                "pnl_usd",
-                "timestamp"
+                "start_position",
+                "closed_pnl",
+                "crossed",
+                "fee_usd",
+                "fee_token_symbol",
+                "transaction_hash",
+                "user",
+                "oid"
               ]
             },
             "batch": {
@@ -604,7 +651,9 @@
                 }
               },
               "returns": [
-                "token_info[market_cap_usd, market_cap_group, is_stablecoin]",
+                "token_address",
+                "chain",
+                "token_info",
                 "risk_indicators[indicator_type, score, signal, signal_percentile, last_trigger_on]",
                 "reward_indicators[indicator_type, score, signal, signal_percentile, last_trigger_on]"
               ]
@@ -640,12 +689,14 @@
                 }
               },
               "returns": [
-                "timestamp",
+                "interval_start",
                 "open",
                 "high",
                 "low",
                 "close",
-                "volume"
+                "volume",
+                "volume_usd",
+                "market_cap"
               ]
             },
             "info": {
@@ -674,15 +725,12 @@
                 }
               },
               "returns": [
-                "token_address",
-                "token_symbol",
-                "token_name",
-                "chain",
-                "price_usd",
-                "volume_usd",
-                "market_cap",
-                "holder_count",
-                "liquidity_usd"
+                "name",
+                "symbol",
+                "contract_address",
+                "logo",
+                "token_details",
+                "spot_metrics"
               ]
             },
             "screener": {
@@ -729,15 +777,22 @@
                 }
               },
               "returns": [
+                "chain",
                 "token_address",
                 "token_symbol",
-                "token_name",
-                "chain",
+                "token_age_days",
+                "market_cap_usd",
+                "liquidity",
                 "price_usd",
-                "volume_usd",
-                "market_cap",
-                "holder_count",
-                "smart_money_holders"
+                "price_change",
+                "fdv",
+                "fdv_mc_ratio",
+                "buy_volume",
+                "inflow_fdv_ratio",
+                "outflow_fdv_ratio",
+                "sell_volume",
+                "volume",
+                "netflow"
               ]
             },
             "holders": {
@@ -852,13 +907,19 @@
                 }
               },
               "returns": [
-                "tx_hash",
-                "wallet_address",
-                "side",
-                "amount",
-                "price_usd",
-                "value_usd",
-                "timestamp"
+                "block_timestamp",
+                "transaction_hash",
+                "trader_address",
+                "trader_address_label",
+                "action",
+                "token_address",
+                "token_name",
+                "token_amount",
+                "traded_token_address",
+                "traded_token_name",
+                "traded_token_amount",
+                "estimated_swap_price_usd",
+                "estimated_value_usd"
               ]
             },
             "pnl": {
@@ -889,11 +950,23 @@
                 }
               },
               "returns": [
-                "wallet_address",
-                "realized_pnl_usd",
-                "unrealized_pnl_usd",
-                "total_pnl_usd",
-                "labels"
+                "trader_address",
+                "trader_address_label",
+                "price_usd",
+                "pnl_usd_realised",
+                "pnl_usd_unrealised",
+                "holding_amount",
+                "holding_usd",
+                "max_balance_held",
+                "max_balance_held_usd",
+                "still_holding_balance_ratio",
+                "netflow_amount_usd",
+                "netflow_amount",
+                "roi_percent_total",
+                "roi_percent_realised",
+                "roi_percent_unrealised",
+                "pnl_usd_total",
+                "nof_trades"
               ]
             },
             "who-bought-sold": {
@@ -957,16 +1030,22 @@
               },
               "returns": [
                 "public_figure_net_flow_usd",
+                "public_figure_avg_flow_usd",
                 "public_figure_wallet_count",
                 "top_pnl_net_flow_usd",
+                "top_pnl_avg_flow_usd",
                 "top_pnl_wallet_count",
                 "whale_net_flow_usd",
+                "whale_avg_flow_usd",
                 "whale_wallet_count",
                 "smart_trader_net_flow_usd",
+                "smart_trader_avg_flow_usd",
                 "smart_trader_wallet_count",
                 "exchange_net_flow_usd",
+                "exchange_avg_flow_usd",
                 "exchange_wallet_count",
                 "fresh_wallets_net_flow_usd",
+                "fresh_wallets_avg_flow_usd",
                 "fresh_wallets_wallet_count"
               ]
             },
@@ -1010,12 +1089,15 @@
                 }
               },
               "returns": [
-                "tx_hash",
-                "from",
-                "to",
-                "amount",
-                "value_usd",
-                "timestamp"
+                "block_timestamp",
+                "transaction_hash",
+                "from_address",
+                "to_address",
+                "from_address_label",
+                "to_address_label",
+                "transaction_type",
+                "transfer_amount",
+                "transfer_value_usd"
               ]
             },
             "jup-dca": {
@@ -1038,12 +1120,21 @@
                 }
               },
               "returns": [
-                "wallet_address",
-                "input_token",
-                "output_token",
-                "total_input",
-                "executed",
-                "remaining"
+                "since_timestamp",
+                "last_timestamp",
+                "trader_address",
+                "creation_hash",
+                "trader_label",
+                "dca_vault_address",
+                "input_mint_address",
+                "output_mint_address",
+                "deposit_amount",
+                "deposit_spent",
+                "other_token_redeemed",
+                "status",
+                "token_input",
+                "token_output",
+                "deposit_usd_value"
               ]
             },
             "perp-trades": {
@@ -1071,13 +1162,17 @@
                 }
               },
               "returns": [
-                "wallet_address",
+                "trader_address_label",
+                "trader_address",
+                "token_symbol",
                 "side",
-                "size",
-                "price",
+                "action",
+                "token_amount",
+                "price_usd",
                 "value_usd",
-                "pnl_usd",
-                "timestamp"
+                "type",
+                "block_timestamp",
+                "transaction_hash"
               ]
             },
             "perp-positions": {
@@ -1100,13 +1195,18 @@
                 }
               },
               "returns": [
-                "wallet_address",
+                "address",
+                "address_label",
                 "side",
-                "size",
+                "position_value_usd",
+                "position_size",
+                "leverage",
+                "leverage_type",
                 "entry_price",
                 "mark_price",
-                "unrealized_pnl",
-                "leverage"
+                "liquidation_price",
+                "funding_usd",
+                "upnl_usd"
               ]
             },
             "perp-pnl-leaderboard": {
@@ -1133,11 +1233,23 @@
                 }
               },
               "returns": [
-                "wallet_address",
-                "realized_pnl",
-                "unrealized_pnl",
-                "total_pnl",
-                "trade_count"
+                "trader_address",
+                "trader_address_label",
+                "price_usd",
+                "pnl_usd_realised",
+                "pnl_usd_unrealised",
+                "holding_amount",
+                "position_value_usd",
+                "max_balance_held",
+                "max_balance_held_usd",
+                "still_holding_balance_ratio",
+                "netflow_amount_usd",
+                "netflow_amount",
+                "roi_percent_total",
+                "roi_percent_realised",
+                "roi_percent_unrealised",
+                "pnl_usd_total",
+                "nof_trades"
               ]
             }
           }
@@ -1171,7 +1283,7 @@
             }
           },
           "returns": [
-            "tokens[name, symbol, chain, address, price, volume_24h, market_cap, rank]",
+            "tokens[name, symbol, chain, address, price]",
             "entities[name, tags, rank]",
             "total_results"
           ]
@@ -1197,11 +1309,16 @@
                 }
               },
               "returns": [
+                "volume",
+                "buy_volume",
+                "sell_volume",
+                "buy_sell_pressure",
+                "trader_count",
                 "token_symbol",
-                "volume_usd",
+                "mark_price",
+                "funding",
                 "open_interest",
-                "funding_rate",
-                "price_change_24h"
+                "previous_price_usd"
               ]
             },
             "leaderboard": {
@@ -1222,13 +1339,11 @@
                 }
               },
               "returns": [
-                "address",
-                "address_label",
-                "realized_pnl",
-                "unrealized_pnl",
+                "trader_address",
+                "trader_address_label",
                 "total_pnl",
-                "trade_count",
-                "win_rate"
+                "roi",
+                "account_value"
               ]
             }
           }
@@ -1246,12 +1361,13 @@
                 }
               },
               "returns": [
-                "protocol",
+                "protocol_name",
                 "chain",
-                "position_type",
-                "token_symbol",
-                "balance",
-                "balance_usd"
+                "total_value_usd",
+                "total_assets_usd",
+                "total_debts_usd",
+                "total_rewards_usd",
+                "tokens"
               ]
             }
           }
