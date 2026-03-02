@@ -9,6 +9,7 @@ import { buildTradingCommands } from './trading.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck, isNewer } from './update-check.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
@@ -153,7 +154,7 @@ export function parseArgs(args) {
       const key = arg.slice(2);
       const next = args[i + 1];
       
-      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full') {
+      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full' || key === 'skip-api') {
         result.flags[key] = true;
       } else if (next && !next.startsWith('-')) {
         // Try to parse as JSON first (for objects/arrays/booleans),
@@ -865,65 +866,91 @@ export function buildCommands(deps = {}) {
       return handlers[subcommand]();
     },
 
-    'status': async (_args, apiInstance, _flags, _options) => {
+    'status': async (_args, apiInstance, flags, _options) => {
       const statusData = { ready: false, auth: null, api: null, wallet: null, cli: null };
+      const home = os.homedir();
 
       // --- Auth + API check (single call) ---
       const authConfigured = Boolean(apiInstance.apiKey);
       const authResult = { configured: authConfigured, valid: false, error: null, code: null };
       const apiResult = { reachable: null, latency_ms: null, error: null, code: null };
 
-      if (authConfigured) {
-        const start = Date.now();
-        const controller = new AbortController();
-        let timeoutId;
-        const timeoutPromise = new Promise((_, reject) => {
-          timeoutId = setTimeout(() => {
-            controller.abort();
-            reject(new NansenError('Health check timed out', ErrorCode.TIMEOUT));
-          }, 5000);
-        });
+      // --skip-api: skip the API health check entirely
+      if (flags['skip-api']) {
+        authResult.valid = authConfigured ? null : false;
+        if (!authConfigured) {
+          authResult.error = 'No API key configured. Run: nansen login';
+          authResult.code = ErrorCode.UNAUTHORIZED;
+        }
+      } else if (authConfigured) {
+        // --- Client-side cooldown ---
+        let rateLimited = false;
+        const cooldownFile = path.join(home, '.nansen', 'status-last-called.json');
         try {
-          // No dedicated /ping or /health endpoint exists on the Nansen API.
-          // Use smart-money/netflow with minimal params (1 row) as the cheapest
-          // authenticated check that validates both connectivity and API key.
-          await Promise.race([
-            apiInstance.request('/api/v1/smart-money/netflow', {
-              chains: ['ethereum'], pagination: { page: 1, per_page: 1 }
-            }, { retry: false, skipX402: true, signal: controller.signal }),
-            timeoutPromise
-          ]);
-          clearTimeout(timeoutId);
-          controller.abort();
-          apiResult.reachable = true;
-          apiResult.latency_ms = Math.min(Date.now() - start, 5000);
-          authResult.valid = true;
-        } catch (err) {
-          clearTimeout(timeoutId);
-          apiResult.latency_ms = Math.min(Date.now() - start, 5000);
-          if (err.code === ErrorCode.TIMEOUT) {
-            apiResult.reachable = false;
-            apiResult.error = err.message;
-            apiResult.code = ErrorCode.TIMEOUT;
-            authResult.error = err.message;
-          } else if (err.code === ErrorCode.NETWORK_ERROR) {
-            apiResult.reachable = false;
-            apiResult.error = err.message;
-            apiResult.code = ErrorCode.NETWORK_ERROR;
-            authResult.error = 'Could not reach API to validate key';
-          } else if (err.status === 404 || err.status === 503) {
-            // Endpoint unavailable — cannot distinguish auth from down
-            apiResult.reachable = false;
-            apiResult.error = err.message;
-            apiResult.code = err.code;
-            authResult.valid = false;
-            authResult.error = 'Could not verify API key — endpoint unavailable';
-          } else {
-            // API responded (reachable) but auth or other error
+          const raw = fs.readFileSync(cooldownFile, 'utf8');
+          const { calledAt } = JSON.parse(raw);
+          if (typeof calledAt === 'number' && Date.now() - calledAt < 10000) {
+            rateLimited = true;
+          }
+        } catch {
+          // File missing or unreadable — no cooldown
+        }
+
+        if (rateLimited) {
+          apiResult.rate_limited = true;
+          apiResult.error = 'Rate limited: status called too recently (< 10s)';
+        } else {
+          const start = Date.now();
+          const controller = new AbortController();
+          let timeoutId;
+          const timeoutPromise = new Promise((_, reject) => {
+            timeoutId = setTimeout(() => {
+              controller.abort();
+              reject(new NansenError('Health check timed out', ErrorCode.TIMEOUT));
+            }, 5000);
+          });
+          try {
+            // No dedicated /ping or /health endpoint exists on the Nansen API.
+            // Use smart-money/netflow with minimal params (1 row) as the cheapest
+            // authenticated check that validates both connectivity and API key.
+            await Promise.race([
+              apiInstance.request('/api/v1/smart-money/netflow', {
+                chains: ['ethereum'], pagination: { page: 1, per_page: 1 }
+              }, { retry: false, skipX402: true, signal: controller.signal }),
+              timeoutPromise
+            ]);
+            clearTimeout(timeoutId);
+            controller.abort();
             apiResult.reachable = true;
-            authResult.valid = false;
-            authResult.error = err.message;
-            authResult.code = err.code != null ? err.code : ErrorCode.UNKNOWN;
+            apiResult.latency_ms = Math.min(Date.now() - start, 5000);
+            authResult.valid = true;
+          } catch (err) {
+            clearTimeout(timeoutId);
+            apiResult.latency_ms = Math.min(Date.now() - start, 5000);
+            if (err.code === ErrorCode.TIMEOUT) {
+              apiResult.reachable = false;
+              apiResult.error = err.message;
+              apiResult.code = ErrorCode.TIMEOUT;
+              authResult.error = err.message;
+            } else if (err.code === ErrorCode.NETWORK_ERROR) {
+              apiResult.reachable = false;
+              apiResult.error = err.message;
+              apiResult.code = ErrorCode.NETWORK_ERROR;
+              authResult.error = 'Could not reach API to validate key';
+            } else if (err.status === 404 || err.status === 503) {
+              // Endpoint unavailable — cannot distinguish auth from down
+              apiResult.reachable = false;
+              apiResult.error = err.message;
+              apiResult.code = err.code;
+              authResult.valid = false;
+              authResult.error = 'Could not verify API key — endpoint unavailable';
+            } else {
+              // API responded (reachable) but auth or other error
+              apiResult.reachable = true;
+              authResult.valid = false;
+              authResult.error = err.message;
+              authResult.code = err.code != null ? err.code : ErrorCode.UNKNOWN;
+            }
           }
         }
       } else {
@@ -933,21 +960,29 @@ export function buildCommands(deps = {}) {
 
       statusData.auth = authResult;
       statusData.api = apiResult;
-      statusData.ready = authResult.valid === true && apiResult.reachable === true;
+
+      // --skip-api → ready is null (not determinable)
+      if (flags['skip-api']) {
+        statusData.ready = null;
+      } else {
+        statusData.ready = authResult.valid === true && apiResult.reachable === true;
+      }
 
       // --- Wallet check ---
       const walletResult = { count: 0, default: null, names: [], error: null };
-      const walletsDir = path.join(process.env.HOME || process.env.USERPROFILE || '', '.nansen', 'wallets');
+      const walletsDir = path.join(home, '.nansen', 'wallets');
       if (fs.existsSync(walletsDir)) {
         try {
           const { wallets, defaultWallet } = listWallets();
           walletResult.count = wallets.length;
           walletResult.default = defaultWallet || null;
-          walletResult.names = wallets.map(w => w.name);
+          walletResult.names = wallets.map(w => {
+            const sanitized = w.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+            return sanitized.slice(0, 64);
+          });
         } catch (err) {
           let msg = err.message;
           if (walletsDir) msg = msg.replaceAll(walletsDir, '<wallets-dir>');
-          const home = process.env.HOME || process.env.USERPROFILE || '';
           if (home) msg = msg.replaceAll(home, '<home>');
           walletResult.error = msg;
         }
@@ -957,7 +992,7 @@ export function buildCommands(deps = {}) {
       // --- CLI version check ---
       const cliResult = { version: VERSION, update_available: false, latest_version: null };
       try {
-        const cacheFile = path.join(process.env.HOME || process.env.USERPROFILE || '', '.nansen', 'update-check.json');
+        const cacheFile = path.join(home, '.nansen', 'update-check.json');
         const raw = fs.readFileSync(cacheFile, 'utf8');
         const { latest } = JSON.parse(raw);
         if (latest && /^\d+\.\d+\.\d+/.test(latest)) {
@@ -968,6 +1003,18 @@ export function buildCommands(deps = {}) {
         // Cache file missing or unreadable — skip gracefully
       }
       statusData.cli = cliResult;
+
+      // --- Write cooldown file (after successful completion) ---
+      try {
+        const nansenDir = path.join(home, '.nansen');
+        fs.mkdirSync(nansenDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(nansenDir, 'status-last-called.json'),
+          JSON.stringify({ calledAt: Date.now() })
+        );
+      } catch {
+        // Non-critical — ignore write failures
+      }
 
       return statusData;
     },

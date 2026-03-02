@@ -1619,6 +1619,12 @@
     },
     "status": {
       "description": "Environment health check — verify auth, API connectivity, wallets, and CLI version before running workflows",
+      "options": {
+        "skip-api": {
+          "type": "boolean",
+          "description": "Skip the API health check. Use in logged environments to prevent API key from appearing in request headers."
+        }
+      },
       "returns": [
         "ready",
         "auth.configured",

@@ -329,6 +329,104 @@ describe('status command', () => {
     expect(result.wallet.error).toBeDefined();
     expect(typeof result.wallet.error).toBe('string');
   });
+
+  // --- Mitigation 1: --skip-api flag ---
+
+  it('should not call request() when --skip-api is set', async () => {
+    const mockApi = {
+      apiKey: 'test-key',
+      request: vi.fn().mockResolvedValue({ data: [] })
+    };
+
+    const result = await commands.status([], mockApi, { 'skip-api': true }, {});
+
+    expect(mockApi.request).not.toHaveBeenCalled();
+  });
+
+  it('should set auth.valid and api.reachable to null when --skip-api is set', async () => {
+    const mockApi = {
+      apiKey: 'test-key',
+      request: vi.fn().mockResolvedValue({ data: [] })
+    };
+
+    const result = await commands.status([], mockApi, { 'skip-api': true }, {});
+
+    expect(result.auth.valid).toBeNull();
+    expect(result.api.reachable).toBeNull();
+    expect(result.api.latency_ms).toBeNull();
+    expect(result.ready).toBeNull();
+    expect(result.auth.configured).toBe(true);
+  });
+
+  // --- Mitigation 2: Client-side cooldown ---
+
+  it('should skip API call when cooldown file has recent timestamp', async () => {
+    const nansenDir = path.join(tempDir, '.nansen');
+    fs.mkdirSync(nansenDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(nansenDir, 'status-last-called.json'),
+      JSON.stringify({ calledAt: Date.now() })
+    );
+
+    const mockApi = {
+      apiKey: 'test-key',
+      request: vi.fn().mockResolvedValue({ data: [] })
+    };
+
+    const result = await commands.status([], mockApi, {}, {});
+
+    expect(mockApi.request).not.toHaveBeenCalled();
+    expect(result.api.rate_limited).toBe(true);
+    expect(result.api.error).toContain('Rate limited');
+  });
+
+  it('should proceed with API call when cooldown file has old timestamp', async () => {
+    const nansenDir = path.join(tempDir, '.nansen');
+    fs.mkdirSync(nansenDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(nansenDir, 'status-last-called.json'),
+      JSON.stringify({ calledAt: Date.now() - 20000 })
+    );
+
+    const mockApi = {
+      apiKey: 'test-key',
+      request: vi.fn().mockResolvedValue({ data: [] })
+    };
+
+    const result = await commands.status([], mockApi, {}, {});
+
+    expect(mockApi.request).toHaveBeenCalled();
+    expect(result.api.rate_limited).toBeUndefined();
+    expect(result.api.reachable).toBe(true);
+  });
+
+  // --- Mitigation 3: Sanitize wallet names ---
+
+  it('should sanitize wallet names with special characters', async () => {
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.mkdirSync(walletsDir, { recursive: true });
+    fs.writeFileSync(path.join(walletsDir, 'config.json'), JSON.stringify({ defaultWallet: null }));
+    fs.writeFileSync(path.join(walletsDir, 'hello world.json'), JSON.stringify({
+      name: 'hello world', evm: { address: '0x1' }, solana: { address: 'a' }, createdAt: '2024-01-01'
+    }));
+    fs.writeFileSync(path.join(walletsDir, 'bad;name<here>.json'), JSON.stringify({
+      name: 'bad;name<here>', evm: { address: '0x2' }, solana: { address: 'b' }, createdAt: '2024-01-01'
+    }));
+    fs.writeFileSync(path.join(walletsDir, 'good-name.json'), JSON.stringify({
+      name: 'good-name', evm: { address: '0x3' }, solana: { address: 'c' }, createdAt: '2024-01-01'
+    }));
+
+    const mockApi = { apiKey: null, request: vi.fn() };
+    const result = await commands.status([], mockApi, {}, {});
+
+    // All names should only contain [a-zA-Z0-9._-]
+    for (const name of result.wallet.names) {
+      expect(name).toMatch(/^[a-zA-Z0-9._-]+$/);
+    }
+    expect(result.wallet.names).toContain('hello_world');
+    expect(result.wallet.names).toContain('bad_name_here_');
+    expect(result.wallet.names).toContain('good-name');
+  });
 });
 
 describe('status command via runCLI', () => {
