@@ -884,7 +884,15 @@ export function buildCommands(deps = {}) {
         return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
       }
 
-      return handlers[subcommand]();
+      const result = await handlers[subcommand]();
+
+      // If the API returned an empty data array, surface a hint so agents don't silently
+      // assume "no data" when the real cause might be an unsupported chain for this endpoint.
+      if (result && Array.isArray(result.data) && result.data.length === 0) {
+        result._hint = 'No results returned. If you expected data, the requested chain may not be supported by this endpoint yet. Try a different chain (e.g. solana or ethereum).';
+      }
+
+      return result;
     },
 
     'profiler': async (args, apiInstance, flags, options) => {

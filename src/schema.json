@@ -201,7 +201,10 @@
                 "balance_usd"
               ]
             }
-          }
+          },
+          "notes": [
+            "Not all chains are supported by every endpoint. If a request returns an empty data array, the endpoint may not yet support the requested chain. Try ethereum or solana for broadest coverage."
+          ]
         },
         "profiler": {
           "description": "Wallet profiling - detailed information about any blockchain address",
