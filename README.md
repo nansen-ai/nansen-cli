@@ -112,6 +112,12 @@ nansen research pm market-screener --query "bitcoin" --limit 10
 # Find resolved/closed markets
 nansen research pm market-screener --status closed --limit 10
 
+# Search for specific markets
+nansen pm market-screener --query "bitcoin" --limit 10
+
+# Find resolved/closed markets
+nansen pm market-screener --status closed --limit 10
+
 # Get OHLCV data for a market
 nansen research pm ohlcv --market-id 654412 --sort period_start:desc --pretty
 
