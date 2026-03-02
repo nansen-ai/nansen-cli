@@ -6,6 +6,7 @@
 import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
 import { buildWalletCommands } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
+import { buildWatchCommand } from './watch.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
@@ -135,6 +136,31 @@ export const SCHEMA = {
         }
       }
     },
+    'watch': {
+      description: 'Watch wallet or token activity in real-time (NDJSON output)',
+      subcommands: {
+        'wallet': {
+          description: 'Watch wallet transactions',
+          options: {
+            address: { type: 'string', required: true, description: 'Wallet address' },
+            chain: { type: 'string', default: 'ethereum', description: 'Blockchain' },
+            interval: { type: 'number', default: 30, description: 'Poll interval in seconds (min: 10, max: 3600)' },
+            once: { type: 'boolean', description: 'Poll once and exit' },
+            timeout: { type: 'number', description: 'Auto-stop after N seconds' }
+          }
+        },
+        'token': {
+          description: 'Watch token DEX trades',
+          options: {
+            address: { type: 'string', required: true, description: 'Token address' },
+            chain: { type: 'string', default: 'solana', description: 'Blockchain' },
+            interval: { type: 'number', default: 30, description: 'Poll interval in seconds (min: 10, max: 3600)' },
+            once: { type: 'boolean', description: 'Poll once and exit' },
+            timeout: { type: 'number', description: 'Auto-stop after N seconds' }
+          }
+        }
+      }
+    },
     'trade': {
       description: 'DEX trading commands',
       subcommands: {
@@ -244,7 +270,7 @@ export function parseArgs(args) {
       const key = arg.slice(2);
       const next = args[i + 1];
       
-      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich') {
+      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'once') {
         result.flags[key] = true;
       } else if (next && !next.startsWith('-')) {
         // Try to parse as JSON first (for objects/arrays/booleans),
@@ -1513,7 +1539,7 @@ export async function runCLI(rawArgs, deps = {}) {
     if (updateNotification) errorOutput(updateNotification);
   };
 
-  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...commandOverrides };
+  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), watch: buildWatchCommand(deps), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);
@@ -1650,8 +1676,16 @@ export async function runCLI(rawArgs, deps = {}) {
       defaultHeaders['Payment-Signature'] = options['x402-payment-signature'];
     }
     const api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders });
+
+    // Watch command handles its own output (NDJSON)
+    if (command === 'watch') {
+      const result = await commands[command](subArgs, api, flags, options);
+      notify();
+      return { type: 'watch', data: result };
+    }
+
     let result = await commands[command](subArgs, api, flags, options);
-    
+
     // Apply field filtering if --fields is specified
     const fields = parseFields(options.fields);
     if (fields) {
