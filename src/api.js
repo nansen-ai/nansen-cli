@@ -65,6 +65,9 @@ export class NansenError extends Error {
     this.data = data;
   }
 
+  /** Alias for .data — used by trading.js error handlers and toJSON() */
+  get details() { return this.data; }
+
   toJSON() {
     return {
       error: this.message,

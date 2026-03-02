@@ -11,6 +11,7 @@ import path from 'path';
 import { exportWallet, getDefaultAddress, showWallet, listWallets } from './wallet.js';
 import { base58Decode } from './transfer.js';
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
+import { NansenError } from './api.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendApprovalViaWalletConnect } from './walletconnect-trading.js';
 
 // ============= Constants =============
@@ -101,16 +102,16 @@ export async function getQuote(params) {
   try {
     body = JSON.parse(text);
   } catch {
-    throw Object.assign(
-      new Error(`Quote API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`),
-      { code: 'NON_JSON_RESPONSE', status: res.status, details: text.slice(0, 200) }
+    throw new NansenError(
+      `Quote API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`,
+      'NON_JSON_RESPONSE', res.status, text.slice(0, 200)
     );
   }
 
   if (!res.ok) {
     const code = body.code || 'QUOTE_ERROR';
     const msg = body.message || `Quote request failed with status ${res.status}`;
-    throw Object.assign(new Error(msg), { code, status: res.status, details: body.details });
+    throw new NansenError(msg, code, res.status, body.details);
   }
 
   return body;
@@ -160,9 +161,9 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
             ? ' This often means the transaction failed simulation — check that you have enough ETH for gas fees.'
             : ''
         : '';
-      lastError = Object.assign(
-        new Error(`Execute API returned non-JSON response (status ${res.status}).${feeHint || ' This may be a Cloudflare challenge or server error.'}`),
-        { code: 'BROADCAST_FAILED', status: res.status, details: text.slice(0, 200) }
+      lastError = new NansenError(
+        `Execute API returned non-JSON response (status ${res.status}).${feeHint || ' This may be a Cloudflare challenge or server error.'}`,
+        'BROADCAST_FAILED', res.status, text.slice(0, 200)
       );
       // Retry on 502/503 (likely transient Cloudflare issues)
       if ((res.status === 502 || res.status === 503) && attempt < retries) continue;
@@ -172,7 +173,7 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
     if (!res.ok) {
       const code = body.code || 'EXECUTE_ERROR';
       const msg = body.message || `Execute request failed with status ${res.status}`;
-      throw Object.assign(new Error(msg), { code, status: res.status, details: body.details });
+      throw new NansenError(msg, code, res.status, body.details);
     }
 
     return body;
