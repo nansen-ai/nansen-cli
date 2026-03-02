@@ -30,12 +30,15 @@ Wallets are encrypted with AES-256-GCM. A lost password means permanently locked
 ### Setup flow (before first wallet operation)
 
 ```bash
-# 1. Check if password is already configured
+# 1. Ensure ~/.nansen exists
+mkdir -p ~/.nansen
+
+# 2. Check if password is already configured (env var OR file)
 source ~/.nansen/.env 2>/dev/null
-if [ -z "$NANSEN_WALLET_PASSWORD" ]; then
-  # 2. Generate a strong password and persist it
+if [ -z "$NANSEN_WALLET_PASSWORD" ] && ! grep -q 'NANSEN_WALLET_PASSWORD' ~/.nansen/.env 2>/dev/null; then
+  # 3. Generate a strong password and persist it
   NANSEN_WALLET_PASSWORD=$(openssl rand -base64 24)
-  echo "export NANSEN_WALLET_PASSWORD=$NANSEN_WALLET_PASSWORD" >> ~/.nansen/.env
+  echo "export NANSEN_WALLET_PASSWORD=\"$NANSEN_WALLET_PASSWORD\"" >> ~/.nansen/.env
   chmod 600 ~/.nansen/.env
 fi
 ```
