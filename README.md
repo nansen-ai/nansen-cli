@@ -104,25 +104,25 @@ Screener options: `--sort-by` (volume_24hr, volume, volume_1wk, volume_1mo, liqu
 
 ```bash
 # Screen prediction markets by volume
-nansen pm market-screener --sort-by volume_24hr --limit 20 --pretty
+nansen research pm market-screener --sort-by volume_24hr --limit 20 --pretty
 
 # Search for specific markets
-nansen pm market-screener --query "bitcoin" --limit 10
+nansen research pm market-screener --query "bitcoin" --limit 10
 
 # Find resolved/closed markets
-nansen pm market-screener --status closed --limit 10
+nansen research pm market-screener --status closed --limit 10
 
 # Get OHLCV data for a market
-nansen pm ohlcv --market-id 654412 --sort period_start:desc --pretty
+nansen research pm ohlcv --market-id 654412 --sort period_start:desc --pretty
 
 # View top holders
-nansen pm top-holders --market-id 654412 --limit 10 --table
+nansen research pm top-holders --market-id 654412 --limit 10 --table
 
 # Check trader PnL
-nansen pm pnl-by-address --address 0x1234... --pretty
+nansen research pm pnl-by-address --address 0x1234... --pretty
 
 # Browse categories
-nansen pm categories --pretty
+nansen research pm categories --pretty
 ```
 
 #### `research search` / `research perp` / `research portfolio` / `research points`
