@@ -877,7 +877,7 @@ export function buildCommands(deps = {}) {
         try {
           await apiInstance.request('/api/v1/smart-money/netflow', {
             chains: ['ethereum'], pagination: { page: 1, per_page: 1 }
-          }, { retry: false });
+          }, { retry: false, skipX402: true });
           apiResult.reachable = true;
           apiResult.latency_ms = Date.now() - start;
           authResult.valid = true;
@@ -903,13 +903,16 @@ export function buildCommands(deps = {}) {
 
       // --- Wallet check ---
       const walletResult = { count: 0, default: null, names: [] };
-      try {
-        const { wallets, defaultWallet } = listWallets();
-        walletResult.count = wallets.length;
-        walletResult.default = defaultWallet || null;
-        walletResult.names = wallets.map(w => w.name);
-      } catch {
-        // No wallets dir or read error — keep defaults
+      const walletsDir = path.join(process.env.HOME || process.env.USERPROFILE || '', '.nansen', 'wallets');
+      if (fs.existsSync(walletsDir)) {
+        try {
+          const { wallets, defaultWallet } = listWallets();
+          walletResult.count = wallets.length;
+          walletResult.default = defaultWallet || null;
+          walletResult.names = wallets.map(w => w.name);
+        } catch {
+          // Read error — keep defaults
+        }
       }
       statusData.wallet = walletResult;
 

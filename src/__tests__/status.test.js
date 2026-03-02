@@ -106,7 +106,7 @@ describe('status command', () => {
     const mockApi = {
       apiKey: 'bad-key',
       request: vi.fn().mockRejectedValue(
-        new NansenError('Invalid API key', ErrorCode.AUTH_FAILED, 401)
+        new NansenError('Invalid API key', ErrorCode.UNAUTHORIZED, 401)
       )
     };
 
@@ -208,7 +208,7 @@ describe('status command', () => {
     expect(mockApi.request).toHaveBeenCalledWith(
       '/api/v1/smart-money/netflow',
       { chains: ['ethereum'], pagination: { page: 1, per_page: 1 } },
-      { retry: false }
+      { retry: false, skipX402: true }
     );
   });
 });

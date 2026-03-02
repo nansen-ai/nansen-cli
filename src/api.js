@@ -508,7 +508,7 @@ export class NansenAPI {
           // Try x402 auto-payment: local wallet (with network fallback), then WalletConnect
           const hasManualSignature = !!(this.defaultHeaders['Payment-Signature'] || options.headers?.['Payment-Signature']);
 
-          if (!hasManualSignature) {
+          if (!hasManualSignature && !options.skipX402) {
             // 1. Try local wallet with fallback across payment networks
             try {
               const { createPaymentSignatures } = await import('./x402.js');
