@@ -801,16 +801,23 @@ export function buildCommands(deps = {}) {
 
     'schema': async (args, _apiInstance, flags, _options) => {
       const subcommand = args[0];
-      const schemaEntry = subcommand && (SCHEMA.commands[subcommand] || SCHEMA.commands.research.subcommands[subcommand]);
 
-      if (schemaEntry) {
-        return {
-          command: subcommand,
-          ...schemaEntry,
-          globalOptions: SCHEMA.globalOptions,
-          chains: SCHEMA.chains,
-          smartMoneyLabels: SCHEMA.smartMoneyLabels
-        };
+      if (subcommand) {
+        const schemaEntry = SCHEMA.commands[subcommand] || SCHEMA.commands.research?.subcommands[subcommand];
+        if (schemaEntry) {
+          return {
+            command: subcommand,
+            ...schemaEntry,
+            globalOptions: SCHEMA.globalOptions,
+            chains: SCHEMA.chains,
+            smartMoneyLabels: SCHEMA.smartMoneyLabels
+          };
+        }
+        // Unknown subcommand — return an error instead of silently dumping full schema
+        throw Object.assign(
+          new Error(`Unknown schema command: ${subcommand}. Available: ${Object.keys(SCHEMA.commands).join(', ')}`),
+          { code: 'UNKNOWN_COMMAND', status: null }
+        );
       }
 
       if (flags.full) {
@@ -876,7 +883,7 @@ export function buildCommands(deps = {}) {
         'help': () => ({
           commands: ['netflow', 'dex-trades', 'perp-trades', 'holdings', 'dcas', 'historical-holdings'],
           description: 'Smart Money analytics endpoints',
-          example: 'nansen smart-money netflow --chain solana --labels Fund'
+          example: 'nansen research smart-money netflow --chain solana --labels Fund'
         })
       };
 
@@ -967,7 +974,7 @@ export function buildCommands(deps = {}) {
         'help': () => ({
           commands: ['balance', 'labels', 'transactions', 'pnl', 'search', 'historical-balances', 'related-wallets', 'counterparties', 'pnl-summary', 'perp-positions', 'perp-trades', 'batch', 'trace', 'compare'],
           description: 'Wallet profiling endpoints',
-          example: 'nansen profiler balance --address 0x123... --chain ethereum'
+          example: 'nansen research profiler balance --address 0x123... --chain ethereum'
         })
       };
 
@@ -1055,7 +1062,7 @@ export function buildCommands(deps = {}) {
         'help': () => ({
           commands: ['info', 'ohlcv', 'screener', 'holders', 'flows', 'dex-trades', 'pnl', 'who-bought-sold', 'flow-intelligence', 'transfers', 'jup-dca', 'perp-trades', 'perp-positions', 'perp-pnl-leaderboard'],
           description: 'Token God Mode endpoints',
-          example: 'nansen token screener --chain solana --timeframe 24h --smart-money'
+          example: 'nansen research token screener --chain solana --timeframe 24h --smart-money'
         })
       };
 
@@ -1083,7 +1090,7 @@ export function buildCommands(deps = {}) {
         'help': () => ({
           commands: ['defi', 'defi-holdings'],
           description: 'Portfolio analytics endpoints',
-          example: 'nansen portfolio defi --wallet 0x123...'
+          example: 'nansen research portfolio defi --wallet 0x123...'
         })
       };
 
@@ -1107,7 +1114,7 @@ export function buildCommands(deps = {}) {
         'help': () => ({
           commands: ['screener', 'leaderboard'],
           description: 'Perpetual futures analytics endpoints',
-          example: 'nansen perp screener --days 7 --limit 20'
+          example: 'nansen research perp screener --days 7 --limit 20'
         })
       };
 
@@ -1137,7 +1144,7 @@ export function buildCommands(deps = {}) {
         'help': () => ({
           commands: ['leaderboard'],
           description: 'Nansen Points analytics endpoints',
-          example: 'nansen points leaderboard --limit 100'
+          example: 'nansen research points leaderboard --limit 100'
         })
       };
 
@@ -1257,7 +1264,9 @@ export function generateSubcommandHelp(command, subcommand) {
 
   const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
   const chain = subSchema.options?.chain?.default || 'solana';
-  let example = `nansen ${command} ${subcommand}`;
+  // Prepend 'research' prefix for research subcategories (e.g. smart-money, profiler, token)
+  const isResearchCategory = !SCHEMA.commands[command] && !!SCHEMA.commands.research?.subcommands[command];
+  let example = `nansen ${isResearchCategory ? `research ${command}` : command} ${subcommand}`;
   if (subSchema.options) {
     for (const [name, opt] of Object.entries(subSchema.options)) {
       if (opt.required) example += ` --${name} ${exampleValues[name] || '<val>'}`;

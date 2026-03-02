@@ -773,39 +773,16 @@ export function buildTradingCommands(deps = {}) {
       const swapMode = options['swap-mode'] || 'exactIn';
 
       if (!chain || !from || !to || !amount) {
-        errorOutput(`
-Usage: nansen trade quote --chain <chain> --from <token> --to <token> --amount <baseUnits>
-
-PREREQUISITE:
-  A wallet must be configured before using this command (the trading API builds
-  a transaction specific to your sender address).
-  Set one up with: nansen wallet create
-
-OPTIONS:
-  --chain <chain>           Chain: solana, base
-  --from <symbol|address>   Input token (symbol like SOL, USDC or address)
-  --to <symbol|address>     Output token (symbol like USDC, ETH or address)
-  --amount <units>          Amount in BASE UNITS (e.g. lamports, wei)
-  --wallet <name>           Wallet name (default: default wallet). Use "walletconnect" or "wc" for WalletConnect (EVM only).
-  --slippage <pct>          Slippage as decimal (e.g. 0.03 for 3%). Default: 0.03
-  --auto-slippage           Enable auto slippage calculation
-  --max-auto-slippage <pct> Max auto slippage when auto-slippage enabled
-  --swap-mode <mode>        exactIn (default) or exactOut
-
-EXAMPLES:
-  nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
-  nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000
-  nansen trade quote --chain solana --from So11111111111111111111111111111111111111112 --to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 1000000000
-`);
-        exit(1);
-        return;
+        const missing = ['chain', 'from', 'to', 'amount'].filter(k => !({ chain, from, to, amount }[k]));
+        throw Object.assign(
+          new Error(`Missing required options: --${missing.join(', --')}. Usage: nansen trade quote --chain <chain> --from <token> --to <token> --amount <baseUnits>`),
+          { code: 'MISSING_PARAM', status: null }
+        );
       }
 
       const amountError = validateBaseUnitAmount(amount);
       if (amountError) {
-        errorOutput(`Error: ${amountError}`);
-        exit(1);
-        return;
+        throw Object.assign(new Error(amountError), { code: 'INVALID_AMOUNT', status: null });
       }
 
       try {
@@ -817,15 +794,11 @@ EXAMPLES:
         let walletAddress;
         if (isWalletConnect) {
           if (chainType !== 'evm') {
-            errorOutput('WalletConnect is only supported for EVM chains');
-            exit(1);
-            return;
+            throw Object.assign(new Error('WalletConnect is only supported for EVM chains'), { code: 'UNSUPPORTED_CHAIN', status: null });
           }
           walletAddress = await getWalletConnectAddress();
           if (!walletAddress) {
-            errorOutput('No WalletConnect session active. Run: walletconnect connect');
-            exit(1);
-            return;
+            throw Object.assign(new Error('No WalletConnect session active. Run: walletconnect connect'), { code: 'WALLET_REQUIRED', status: null });
           }
         } else if (walletName) {
           const wallet = showWallet(walletName);
@@ -839,9 +812,10 @@ EXAMPLES:
         }
 
         if (!walletAddress) {
-          errorOutput('No wallet found. A wallet address is required for quotes because the trading API builds a transaction specific to the sender.\nCreate one with: nansen wallet create');
-          exit(1);
-          return;
+          throw Object.assign(
+            new Error('No wallet configured. A wallet address is required because the trading API builds a transaction specific to the sender. Create one with: nansen wallet create'),
+            { code: 'WALLET_REQUIRED', status: null }
+          );
         }
 
         errorOutput(`\nFetching quote on ${chainConfig.name}...`);
@@ -865,12 +839,11 @@ EXAMPLES:
         const response = await getQuote(params);
 
         if (!response.success || !response.quotes?.length) {
-          errorOutput('No quotes available');
-          if (response.warnings?.length) {
-            response.warnings.forEach(w => errorOutput(`  Warning: ${w}`));
-          }
-          exit(1);
-          return;
+          const warnings = response.warnings?.length ? response.warnings : [];
+          throw Object.assign(
+            new Error('No quotes available for this swap'),
+            { code: 'NO_QUOTES', status: null, details: warnings.length ? { warnings } : null }
+          );
         }
 
         errorOutput('');
@@ -889,16 +862,37 @@ EXAMPLES:
         }
 
         errorOutput('');
-        return undefined; // Output already printed above
+
+        // Return structured data for JSON output (human-readable summary already sent to stderr above)
+        return {
+          quoteId,
+          chain,
+          walletAddress,
+          executeCommand: `nansen trade execute --quote ${quoteId}`,
+          quotes: response.quotes.map(q => ({
+            aggregator: q.aggregator,
+            inAmount: q.inAmount,
+            outAmount: q.outAmount,
+            inputMint: q.inputMint,
+            outputMint: q.outputMint,
+            inUsdValue: q.inUsdValue,
+            outUsdValue: q.outUsdValue,
+            priceImpactPct: q.priceImpactPct,
+            tradingFeeInUsd: q.tradingFeeInUsd,
+            networkFeeInUsd: q.networkFeeInUsd,
+            requiresApproval: !!(q.approvalAddress && !isNativeToken(q.inputMint)),
+          })),
+        };
 
       } catch (err) {
-        let message = err.message;
-        if (err.code === 'INVALID_AMOUNT' || /amount/i.test(err.message)) {
-          message += '. Amounts must be in base units (e.g., 1000000000 lamports for 1 SOL, 1000000000000000000 wei for 1 ETH)';
+        // Re-throw so the main runner outputs a structured JSON error to stdout
+        if (err.code === 'INVALID_AMOUNT' || (!err.code && /amount/i.test(err.message))) {
+          throw Object.assign(
+            new Error(err.message + '. Amounts must be in base units (e.g. 1000000000 lamports = 1 SOL, 1000000000000000000 wei = 1 ETH)'),
+            { code: 'INVALID_AMOUNT', status: err.status || null, details: err.details || null }
+          );
         }
-        errorOutput(`Error: ${message}`);
-        if (err.details) errorOutput(`  Details: ${JSON.stringify(err.details)}`);
-        exit(1);
+        throw err;
       }
     },
 
@@ -908,19 +902,10 @@ EXAMPLES:
       const noSimulate = flags['no-simulate'] || flags.noSimulate;
 
       if (!quoteId) {
-        errorOutput(`
-Usage: nansen trade execute --quote <quoteId> [options]
-
-OPTIONS:
-  --quote <id>              Quote ID from 'nansen quote'
-  --wallet <name>           Wallet name (default: default wallet)
-  --no-simulate             Skip pre-broadcast simulation
-
-EXAMPLES:
-  nansen trade execute --quote 1708900000000-abc123
-`);
-        exit(1);
-        return;
+        throw Object.assign(
+          new Error("Missing required option: --quote <quoteId>. Get a quote first with: nansen trade quote --chain <chain> --from <token> --to <token> --amount <baseUnits>"),
+          { code: 'MISSING_PARAM', status: null }
+        );
       }
 
       try {
@@ -931,9 +916,7 @@ EXAMPLES:
 
         const allQuotes = quoteData.response.quotes || [];
         if (!allQuotes.length) {
-          errorOutput('❌ No quote data found');
-          exit(1);
-          return;
+          throw Object.assign(new Error('No quote data found in stored quote'), { code: 'INVALID_QUOTE', status: null });
         }
 
         // --quote-index pins a specific quote (no fallback)
@@ -944,10 +927,10 @@ EXAMPLES:
         // Check if any quote in range has transaction data before prompting for password
         const hasAnyTransaction = allQuotes.slice(startIndex, endIndex).some(q => q?.transaction);
         if (!hasAnyTransaction) {
-          errorOutput('❌ No quotes contain transaction data.');
-          errorOutput('  Ensure userWalletAddress was provided when fetching the quote.');
-          exit(1);
-          return;
+          throw Object.assign(
+            new Error('No quotes contain transaction data. Ensure userWalletAddress was provided when fetching the quote.'),
+            { code: 'INVALID_QUOTE', status: null }
+          );
         }
 
         // Determine if this is a WalletConnect-signed quote
@@ -965,32 +948,27 @@ EXAMPLES:
             effectiveWalletName = list.defaultWallet;
           }
           if (!effectiveWalletName) {
-            errorOutput('No wallet found. Create one with: nansen wallet create');
-            exit(1);
-            return;
+            throw Object.assign(new Error('No wallet found. Create one with: nansen wallet create'), { code: 'WALLET_REQUIRED', status: null });
           }
 
           exported = exportWallet(effectiveWalletName, password);
         } else {
           // Verify WalletConnect session is still active and address matches quote
           if (chainType !== 'evm') {
-            errorOutput('WalletConnect is only supported for EVM chains');
-            exit(1);
-            return;
+            throw Object.assign(new Error('WalletConnect is only supported for EVM chains'), { code: 'UNSUPPORTED_CHAIN', status: null });
           }
           const wcAddress = await getWalletConnectAddress();
           if (!wcAddress) {
-            errorOutput('No WalletConnect session active. Run: walletconnect connect');
-            exit(1);
-            return;
+            throw Object.assign(new Error('No WalletConnect session active. Run: walletconnect connect'), { code: 'WALLET_REQUIRED', status: null });
           }
           // Check address matches the one used during quoting
           const quoteWallet = quoteData.response?.quotes?.[0]?.transaction?.from
             || quoteData.response?.metadata?.userWalletAddress;
           if (quoteWallet && wcAddress.toLowerCase() !== quoteWallet.toLowerCase()) {
-            errorOutput(`Connected wallet (${wcAddress}) doesn't match quote. Get a new quote with --wallet walletconnect`);
-            exit(1);
-            return;
+            throw Object.assign(
+              new Error(`Connected wallet (${wcAddress}) does not match the wallet used when fetching the quote. Get a new quote with --wallet walletconnect`),
+              { code: 'WALLET_MISMATCH', status: null }
+            );
           }
         }
 
@@ -1159,8 +1137,7 @@ EXAMPLES:
                     lastQuoteError = `${quoteName} reverted on-chain`;
                     continue;
                   }
-                  exit(1);
-                  return;
+                  throw Object.assign(new Error(`Transaction reverted on-chain: ${receiptErr.message}. Tx: ${wcResult.txHash}`), { code: 'TRADE_REVERTED', status: null });
                 }
 
                 errorOutput(`\n  ✓ Transaction successful!`);
@@ -1168,7 +1145,13 @@ EXAMPLES:
                 errorOutput(`    Chain:       ${chainConfig.name}`);
                 errorOutput(`    Explorer:    ${chainConfig.explorer}${wcResult.txHash}`);
                 errorOutput('');
-                return undefined; // Success
+                return {
+                  status: 'Success',
+                  txHash: wcResult.txHash,
+                  chain: chainConfig.name,
+                  explorerUrl: chainConfig.explorer + wcResult.txHash,
+                  signer: 'walletconnect',
+                };
               }
 
               // Wallet returned signedTransaction — fall through to broadcast via Trading API
@@ -1333,10 +1316,10 @@ EXAMPLES:
                     lastQuoteError = `${quoteName} reverted on-chain`;
                     continue;
                   }
-                  errorOutput(`\n  The trading API reported success, but the contract execution failed.`);
-                  errorOutput(`  This can happen due to: stale quotes, insufficient gas, or liquidity changes.`);
-                  exit(1);
-                  return;
+                  throw Object.assign(
+                    new Error(`Transaction reverted on-chain: ${receiptErr.message}. This can happen due to stale quotes, insufficient gas, or liquidity changes. Tx: ${result.txHash}`),
+                    { code: 'TRADE_REVERTED', status: null }
+                  );
                 }
               }
 
@@ -1354,7 +1337,17 @@ EXAMPLES:
                 });
               }
               errorOutput('');
-              return undefined; // Success — done
+
+              // Return structured data for JSON output (human-readable summary already sent to stderr above)
+              return {
+                status: result.status,
+                txHash: txId,
+                chain: chainConfig.name,
+                chainType: result.chainType,
+                broadcaster: result.broadcaster,
+                explorerUrl,
+                swapEvents: result.swapEvents || [],
+              };
             } else {
               errorOutput(`\n  ✗ Quote ${quoteName} failed: ${result.status}`);
               if (result.error) errorOutput(`    Error:  ${result.error}`);
@@ -1370,15 +1363,14 @@ EXAMPLES:
         }
 
         // All quotes exhausted
-        errorOutput(`\n❌ All quotes failed. Last error: ${lastQuoteError || 'unknown'}`);
-        errorOutput('');
-        exit(1);
-        return undefined;
+        throw Object.assign(
+          new Error(`All quotes failed. Last error: ${lastQuoteError || 'unknown'}`),
+          { code: 'TRADE_FAILED', status: null }
+        );
 
       } catch (err) {
-        errorOutput(`Error: ${err.message}`);
-        if (err.details) errorOutput(`  Details: ${JSON.stringify(err.details)}`);
-        exit(1);
+        // Re-throw so the main runner (cli.js) outputs a structured JSON error to stdout
+        throw err;
       }
     },
   };

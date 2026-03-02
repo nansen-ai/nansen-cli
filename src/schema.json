@@ -1444,8 +1444,145 @@
             "wallet": {
               "type": "string",
               "description": "Wallet name, or \"walletconnect\"/\"wc\" for WalletConnect (EVM only)"
+            },
+            "quote": {
+              "type": "string",
+              "required": true,
+              "description": "Quote ID from 'nansen trade quote' (stored locally, expires after 1 hour)"
             }
           }
+        }
+      }
+    },
+    "wallet": {
+      "description": "Local wallet management for trading and API payments (EVM + Solana)",
+      "subcommands": {
+        "create": {
+          "description": "Generate a new EVM + Solana keypair and store it locally",
+          "options": {
+            "name": {
+              "type": "string",
+              "description": "Wallet name (default: 'default')"
+            }
+          },
+          "envVars": {
+            "NANSEN_WALLET_PASSWORD": "Wallet encryption password (min 12 chars). If unset, interactive prompt is shown."
+          },
+          "returns": [
+            "name",
+            "evm",
+            "solana",
+            "isDefault"
+          ]
+        },
+        "list": {
+          "description": "List all locally stored wallets",
+          "options": {},
+          "returns": [
+            "wallets",
+            "defaultWallet"
+          ]
+        },
+        "show": {
+          "description": "Show details for a specific wallet",
+          "options": {
+            "name": {
+              "type": "string",
+              "required": true,
+              "description": "Wallet name"
+            }
+          },
+          "returns": [
+            "name",
+            "evm",
+            "solana",
+            "createdAt",
+            "isDefault"
+          ]
+        },
+        "default": {
+          "description": "Set the default wallet used by trade commands",
+          "options": {
+            "name": {
+              "type": "string",
+              "required": true,
+              "description": "Wallet name to set as default"
+            }
+          },
+          "returns": [
+            "defaultWallet"
+          ]
+        },
+        "delete": {
+          "description": "Delete a wallet from local storage",
+          "options": {
+            "name": {
+              "type": "string",
+              "required": true,
+              "description": "Wallet name to delete"
+            }
+          },
+          "envVars": {
+            "NANSEN_WALLET_PASSWORD": "Required to decrypt and confirm deletion"
+          },
+          "returns": [
+            "deleted",
+            "newDefault"
+          ]
+        },
+        "send": {
+          "description": "Send native tokens or USDC from a local wallet",
+          "options": {
+            "to": {
+              "type": "string",
+              "required": true,
+              "description": "Recipient address"
+            },
+            "amount": {
+              "type": "string",
+              "required": true,
+              "description": "Amount to send (in token units, not base units)"
+            },
+            "chain": {
+              "type": "string",
+              "required": true,
+              "description": "Chain (solana or base)"
+            },
+            "wallet": {
+              "type": "string",
+              "description": "Wallet name (default: default wallet)"
+            },
+            "token": {
+              "type": "string",
+              "description": "Token symbol to send (SOL, ETH, USDC). Defaults to native token."
+            }
+          },
+          "envVars": {
+            "NANSEN_WALLET_PASSWORD": "Required to decrypt the signing key"
+          },
+          "returns": [
+            "txHash",
+            "chain",
+            "explorerUrl"
+          ]
+        },
+        "export": {
+          "description": "Export wallet private keys (use with caution)",
+          "options": {
+            "name": {
+              "type": "string",
+              "required": true,
+              "description": "Wallet name"
+            }
+          },
+          "envVars": {
+            "NANSEN_WALLET_PASSWORD": "Required to decrypt the wallet"
+          },
+          "returns": [
+            "name",
+            "evm",
+            "solana"
+          ]
         }
       }
     }
