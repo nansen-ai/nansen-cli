@@ -33,10 +33,6 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -74,10 +70,6 @@
                 },
                 "filters": {
                   "type": "object"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -118,10 +110,6 @@
                 },
                 "filters": {
                   "type": "object"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -153,18 +141,6 @@
                 },
                 "labels": {
                   "type": "string|array"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -186,20 +162,8 @@
                 "limit": {
                   "type": "number"
                 },
-                "labels": {
-                  "type": "string|array",
-                  "description": "Smart Money label filter"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., deposit_value_usd:desc)"
-                },
                 "filters": {
                   "type": "object"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -236,22 +200,6 @@
                 },
                 "limit": {
                   "type": "number"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
-                },
-                "labels": {
-                  "type": "string|array",
-                  "description": "Smart Money label filter"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -342,18 +290,6 @@
                 "days": {
                   "type": "number",
                   "default": 30
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., block_timestamp:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -388,18 +324,6 @@
                 },
                 "limit": {
                   "type": "number"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., pnl_usd_realised:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -434,10 +358,6 @@
                 },
                 "limit": {
                   "type": "number"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -461,18 +381,6 @@
                 },
                 "limit": {
                   "type": "number"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -497,14 +405,6 @@
                 },
                 "limit": {
                   "type": "number"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., order:desc)"
                 }
               },
               "returns": [
@@ -534,18 +434,6 @@
                 },
                 "limit": {
                   "type": "number"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., total_volume_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -593,18 +481,6 @@
                 },
                 "limit": {
                   "type": "number"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., position_value_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -635,18 +511,6 @@
                 },
                 "limit": {
                   "type": "number"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -910,10 +774,6 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -959,10 +819,6 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1008,10 +864,6 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1052,10 +904,6 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1099,10 +947,6 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1155,10 +999,6 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1246,10 +1086,6 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1281,10 +1117,6 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1327,10 +1159,6 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1364,10 +1192,6 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1406,10 +1230,6 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1460,10 +1280,6 @@
               "type": "number",
               "default": 25,
               "description": "Max results (1-50)"
-            },
-            "page": {
-              "type": "number",
-              "description": "Page number for paginated results (default: 1)"
             }
           },
           "returns": [
@@ -1490,10 +1306,6 @@
                 },
                 "filters": {
                   "type": "object"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1524,10 +1336,6 @@
                 },
                 "filters": {
                   "type": "object"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1564,6 +1372,324 @@
             }
           }
         },
+        "prediction-market": {
+          "description": "Polymarket prediction market analytics",
+          "aliases": ["pm"],
+          "subcommands": {
+            "ohlcv": {
+              "description": "OHLCV candle data for a market",
+              "options": {
+                "market-id": {
+                  "type": "string",
+                  "required": true,
+                  "description": "Market ID"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort field:direction (e.g., period_start:desc)"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Number of results"
+                }
+              },
+              "returns": [
+                "market_id",
+                "period_start",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "trades"
+              ]
+            },
+            "orderbook": {
+              "description": "Current orderbook levels",
+              "options": {
+                "market-id": {
+                  "type": "string",
+                  "required": true,
+                  "description": "Market ID"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Number of results"
+                }
+              },
+              "returns": [
+                "market_id",
+                "bids",
+                "asks"
+              ]
+            },
+            "top-holders": {
+              "description": "Top holders for a market",
+              "options": {
+                "market-id": {
+                  "type": "string",
+                  "required": true,
+                  "description": "Market ID"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort field:direction"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Number of results"
+                }
+              },
+              "returns": [
+                "market_id",
+                "address",
+                "address_label",
+                "tokens",
+                "value_usd",
+                "avg_price",
+                "current_price",
+                "unrealized_pnl_usd",
+                "pnl_pct"
+              ]
+            },
+            "trades-by-market": {
+              "description": "Recent trades for a market",
+              "options": {
+                "market-id": {
+                  "type": "string",
+                  "required": true,
+                  "description": "Market ID"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Number of results"
+                }
+              },
+              "returns": [
+                "market_id",
+                "address",
+                "address_label",
+                "side",
+                "tokens",
+                "price",
+                "value_usd",
+                "timestamp",
+                "tx_hash"
+              ]
+            },
+            "trades-by-address": {
+              "description": "Trades for a specific address",
+              "options": {
+                "address": {
+                  "type": "string",
+                  "required": true,
+                  "description": "EVM address (Polygon)"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Number of results"
+                }
+              },
+              "returns": [
+                "market_id",
+                "market_title",
+                "side",
+                "tokens",
+                "price",
+                "value_usd",
+                "timestamp",
+                "tx_hash"
+              ]
+            },
+            "market-screener": {
+              "description": "Screen and discover markets",
+              "options": {
+                "sort-by": {
+                  "type": "string",
+                  "default": "volume_24hr",
+                  "enum": ["volume_24hr", "volume", "volume_1wk", "volume_1mo", "liquidity", "open_interest", "unique_traders_24h", "age_hours"],
+                  "description": "Sort field"
+                },
+                "query": {
+                  "type": "string",
+                  "description": "Search text"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["active", "closed"],
+                  "description": "Market status filter (default: active)"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Number of results"
+                }
+              },
+              "returns": [
+                "market_id",
+                "question",
+                "event_title",
+                "outcome",
+                "end_date",
+                "neg_risk",
+                "tags",
+                "last_price",
+                "volume_24hr",
+                "volume",
+                "volume_1wk",
+                "volume_1mo",
+                "volume_change_pct",
+                "one_day_price_change",
+                "liquidity",
+                "open_interest",
+                "unique_traders_24h",
+                "created_at",
+                "age_hours"
+              ]
+            },
+            "event-screener": {
+              "description": "Screen and discover events",
+              "options": {
+                "sort-by": {
+                  "type": "string",
+                  "default": "volume_24hr",
+                  "enum": ["volume_24hr", "volume", "volume_1wk", "volume_1mo", "liquidity", "open_interest", "unique_traders_24h", "age_hours"],
+                  "description": "Sort field"
+                },
+                "query": {
+                  "type": "string",
+                  "description": "Search text"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["active", "closed"],
+                  "description": "Event status filter (default: active)"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Number of results"
+                }
+              },
+              "returns": [
+                "event_id",
+                "event_title",
+                "category",
+                "neg_risk",
+                "market_count",
+                "total_volume",
+                "total_volume_24hr",
+                "total_volume_1wk",
+                "total_volume_1mo",
+                "total_volume_change_pct",
+                "total_liquidity",
+                "total_open_interest",
+                "total_unique_traders_24h",
+                "max_age_hours",
+                "top_market_volume_24hr",
+                "markets"
+              ]
+            },
+            "pnl-by-market": {
+              "description": "PnL leaderboard for a market",
+              "options": {
+                "market-id": {
+                  "type": "string",
+                  "required": true,
+                  "description": "Market ID"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Number of results"
+                }
+              },
+              "returns": [
+                "market_id",
+                "event_id",
+                "event_title",
+                "address",
+                "address_label",
+                "realized_pnl_usd",
+                "unrealized_pnl_usd",
+                "total_pnl_usd",
+                "tokens_held",
+                "avg_entry_price"
+              ]
+            },
+            "pnl-by-address": {
+              "description": "PnL breakdown for an address",
+              "options": {
+                "address": {
+                  "type": "string",
+                  "required": true,
+                  "description": "EVM address (Polygon)"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Number of results"
+                }
+              },
+              "returns": [
+                "market_id",
+                "market_title",
+                "realized_pnl_usd",
+                "unrealized_pnl_usd",
+                "total_pnl_usd",
+                "tokens_held",
+                "avg_entry_price"
+              ]
+            },
+            "position-detail": {
+              "description": "Detailed position data",
+              "options": {
+                "market-id": {
+                  "type": "string",
+                  "required": true,
+                  "description": "Market ID"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Number of results"
+                }
+              },
+              "returns": [
+                "market_id",
+                "address",
+                "address_label",
+                "tokens",
+                "buy_tokens",
+                "sell_tokens",
+                "value_usd",
+                "redemption_value_usd",
+                "avg_price",
+                "current_price",
+                "unrealized_pnl_usd",
+                "realized_pnl_usd",
+                "pnl_pct",
+                "event_id",
+                "event_title",
+                "market_resolved"
+              ]
+            },
+            "categories": {
+              "description": "List market categories",
+              "options": {
+                "limit": {
+                  "type": "number",
+                  "description": "Number of results"
+                }
+              },
+              "returns": [
+                "category",
+                "market_count",
+                "total_volume",
+                "total_volume_24hr",
+                "total_volume_1wk",
+                "total_liquidity",
+                "total_open_interest",
+                "top_market_volume_24hr"
+              ]
+            }
+          }
+        },
         "points": {
           "description": "Nansen Points analytics",
           "subcommands": {
@@ -1576,10 +1702,6 @@
                 },
                 "limit": {
                   "type": "number"
-                },
-                "page": {
-                  "type": "number",
-                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1692,13 +1814,11 @@
     "avalanche",
     "linea",
     "scroll",
-    "zksync",
     "mantle",
     "ronin",
     "sei",
     "plasma",
     "sonic",
-    "unichain",
     "monad",
     "hyperevm",
     "iotaevm"
