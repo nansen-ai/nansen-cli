@@ -646,11 +646,12 @@ export class NansenAPI {
   }
 
   async smartMoneyPerpTrades(params = {}) {
-    const { filters = {}, orderBy, pagination } = params;
+    const { filters = {}, orderBy, pagination, onlyNewPositions } = params;
     return this.request('/api/v1/smart-money/perp-trades', {
       filters,
       order_by: orderBy,
-      pagination
+      pagination,
+      only_new_positions: onlyNewPositions
     });
   }
 
@@ -703,7 +704,7 @@ export class NansenAPI {
   }
 
   async addressLabels(params = {}) {
-    const { address, chain = 'ethereum', pagination = { page: 1, recordsPerPage: 100 } } = params;
+    const { address, chain = 'ethereum', pagination = { page: 1, per_page: 100 } } = params;
     if (address) {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
@@ -814,7 +815,9 @@ export class NansenAPI {
   }
 
   async addressPnlSummary(params = {}) {
-    const { address, chain = 'ethereum', orderBy, pagination, days = 30 } = params;
+    // Note: pnl-summary endpoint is non-paginated (returns aggregate stats, not a list).
+    // Pagination param intentionally omitted from this request.
+    const { address, chain = 'ethereum', orderBy, days = 30 } = params;
     if (address) {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
@@ -823,8 +826,7 @@ export class NansenAPI {
       address,
       chain,
       date: buildDateRange(days),
-      order_by: orderBy,
-      pagination
+      order_by: orderBy
     });
   }
 

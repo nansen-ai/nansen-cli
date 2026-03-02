@@ -78,6 +78,9 @@ nansen research profiler compare --addresses "0xabc,0xdef" --chain ethereum
 
 ## Notes
 
+- `pnl-summary` has no pagination support (returns aggregate stats, not a list).
 - `perp-positions` has no pagination support.
+- `labels` has no pagination support — the API ignores `per_page` and always returns all labels for the address. `--limit` is not available for this sub-command.
+- `transactions` caps at per_page=100 (API limit).
 - `trace` makes many API calls — use `--width` conservatively.
 - `batch` accepts `--file <path>` with one address per line as alternative to `--addresses`.
