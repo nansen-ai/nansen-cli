@@ -260,6 +260,22 @@ describe('status command', () => {
     );
   });
 
+  it('should pass AbortSignal to api.request()', async () => {
+    let capturedOptions;
+    const mockApi = {
+      apiKey: 'test-key',
+      request: vi.fn().mockImplementation((_endpoint, _body, opts) => {
+        capturedOptions = opts;
+        return Promise.resolve({ data: [] });
+      })
+    };
+
+    await commands.status([], mockApi, {}, {});
+
+    expect(capturedOptions).toBeDefined();
+    expect(capturedOptions.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it('should treat empty-string API key as not configured', async () => {
     const mockApi = {
       apiKey: '',

@@ -896,11 +896,11 @@ export function buildCommands(deps = {}) {
           clearTimeout(timeoutId);
           controller.abort();
           apiResult.reachable = true;
-          apiResult.latency_ms = Date.now() - start;
+          apiResult.latency_ms = Math.min(Date.now() - start, 5000);
           authResult.valid = true;
         } catch (err) {
           clearTimeout(timeoutId);
-          apiResult.latency_ms = Date.now() - start;
+          apiResult.latency_ms = Math.min(Date.now() - start, 5000);
           if (err.code === ErrorCode.TIMEOUT) {
             apiResult.reachable = false;
             apiResult.error = err.message;
@@ -911,12 +911,19 @@ export function buildCommands(deps = {}) {
             apiResult.error = err.message;
             apiResult.code = ErrorCode.NETWORK_ERROR;
             authResult.error = 'Could not reach API to validate key';
+          } else if (err.status === 404 || err.status === 503) {
+            // Endpoint unavailable — cannot distinguish auth from down
+            apiResult.reachable = false;
+            apiResult.error = err.message;
+            apiResult.code = err.code;
+            authResult.valid = false;
+            authResult.error = 'Could not verify API key — endpoint unavailable';
           } else {
             // API responded (reachable) but auth or other error
             apiResult.reachable = true;
             authResult.valid = false;
             authResult.error = err.message;
-            authResult.code = err.code || ErrorCode.UNKNOWN;
+            authResult.code = err.code != null ? err.code : ErrorCode.UNKNOWN;
           }
         }
       } else {
@@ -938,7 +945,11 @@ export function buildCommands(deps = {}) {
           walletResult.default = defaultWallet || null;
           walletResult.names = wallets.map(w => w.name);
         } catch (err) {
-          walletResult.error = err.message;
+          let msg = err.message;
+          if (walletsDir) msg = msg.replaceAll(walletsDir, '<wallets-dir>');
+          const home = process.env.HOME || process.env.USERPROFILE || '';
+          if (home) msg = msg.replaceAll(home, '<home>');
+          walletResult.error = msg;
         }
       }
       statusData.wallet = walletResult;
@@ -949,7 +960,7 @@ export function buildCommands(deps = {}) {
         const cacheFile = path.join(process.env.HOME || process.env.USERPROFILE || '', '.nansen', 'update-check.json');
         const raw = fs.readFileSync(cacheFile, 'utf8');
         const { latest } = JSON.parse(raw);
-        if (latest) {
+        if (latest && /^\d+\.\d+\.\d+/.test(latest)) {
           cliResult.latest_version = latest;
           cliResult.update_available = isNewer(latest, VERSION);
         }
