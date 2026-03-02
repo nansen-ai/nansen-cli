@@ -29,6 +29,7 @@ import {
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir } from '../api.js';
 import * as fs from 'fs';
 import * as _path from 'path';
+import os from 'os';
 
 describe('parseArgs', () => {
   it('should parse positional arguments', () => {
@@ -2458,5 +2459,57 @@ describe('SCHEMA structure', () => {
     expect(SCHEMA.commands.perp).toBeUndefined();
     expect(SCHEMA.commands.portfolio).toBeUndefined();
     expect(SCHEMA.commands.points).toBeUndefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// wallet list — stdout purity
+//
+// Regression guard: "nansen wallet list" must emit exactly ONE line on stdout
+// and that line must be valid JSON.  Before this fix the handler called log()
+// (stdout) AND returned a result that the framework also serialised to stdout,
+// producing a non-JSON prefix that breaks every downstream JSON parser.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('wallet list stdout purity', () => {
+  let originalHome;
+  let tempDir;
+  let outputs;
+  let errors;
+
+  beforeEach(() => {
+    originalHome = process.env.HOME;
+    tempDir = fs.mkdtempSync(_path.join(os.tmpdir(), 'nansen-wallet-stdout-'));
+    process.env.HOME = tempDir;
+    outputs = [];
+    errors = [];
+  });
+
+  afterEach(() => {
+    process.env.HOME = originalHome;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const mockDeps = () => ({
+    output: (msg) => outputs.push(msg),
+    errorOutput: (msg) => errors.push(msg),
+    exit: (code) => { throw new Error(`exit(${code})`); }
+  });
+
+  it('emits exactly one stdout write when wallet list is empty', async () => {
+    await runCLI(['wallet', 'list'], mockDeps());
+    expect(outputs).toHaveLength(1);
+  });
+
+  it('stdout write is valid JSON when wallet list is empty', async () => {
+    await runCLI(['wallet', 'list'], mockDeps());
+    expect(() => JSON.parse(outputs[0])).not.toThrow();
+  });
+
+  it('JSON output contains the expected shape when wallet list is empty', async () => {
+    await runCLI(['wallet', 'list'], mockDeps());
+    const json = JSON.parse(outputs[0]);
+    expect(json.success).toBe(true);
+    expect(json.data).toHaveProperty('wallets');
+    expect(json.data.wallets).toEqual([]);
   });
 });
