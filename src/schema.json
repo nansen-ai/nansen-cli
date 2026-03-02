@@ -1635,6 +1635,7 @@
         "api.latency_ms",
         "api.error",
         "api.code",
+        "api.rate_limited",
         "wallet.count",
         "wallet.default",
         "wallet.names",

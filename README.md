@@ -27,6 +27,7 @@ Get your API key at [app.nansen.ai/api](https://app.nansen.ai/api). AI agents ca
 nansen research <category> <subcommand> [options]
 nansen trade <subcommand> [options]
 nansen wallet <subcommand> [options]
+nansen status                         # check environment health — auth, API reachability, wallets, and CLI version
 nansen schema [command] [--pretty]    # full command reference (no API key needed)
 ```
 
