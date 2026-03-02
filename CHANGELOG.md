@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.2
+
+### Patch Changes
+
+- [#176](https://github.com/nansen-ai/nansen-cli/pull/176) [`3bdd00b`](https://github.com/nansen-ai/nansen-cli/commit/3bdd00b5fa8aa7ba461ea21af0e976c2eb3429e7) Thanks [@TimNooren](https://github.com/TimNooren)! - wallet commands (list, create, show, export, default, delete) now output plain-text only
+
 ## 1.10.1
 
 ### Patch Changes
