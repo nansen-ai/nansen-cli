@@ -17,7 +17,7 @@ const { version: VERSION } = require('../package.json');
 
 // ============= Schema Definition =============
 
-import schemaDefinition from './schema.json' with { type: 'json' };
+const schemaDefinition = require('./schema.json');
 
 // SCHEMA is the static definition with version injected at runtime.
 // The schema.json file is the source of truth for command metadata (returns, options, etc.)
