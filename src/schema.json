@@ -47,7 +47,107 @@
                 "trader_count",
                 "token_age_days",
                 "market_cap_usd"
-              ]
+              ],
+              "request": {
+                "schema": "SmartMoneyNetflowRequest",
+                "required": [
+                  "chains"
+                ],
+                "params": {
+                  "chains": {
+                    "type": "array",
+                    "items": "string",
+                    "enum": [
+                      "all",
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "SmartMoneyNetflowFilters",
+                    "fields": {
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "token_address": {
+                        "type": "string"
+                      },
+                      "include_stablecoins": {
+                        "type": "boolean"
+                      },
+                      "include_native_tokens": {
+                        "type": "boolean"
+                      },
+                      "token_sector": {
+                        "type": "array",
+                        "items": "string"
+                      },
+                      "trader_count": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_age_days": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "market_cap_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      }
+                    }
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "dex-trades": {
               "description": "Real-time DEX trading activity",
@@ -89,7 +189,134 @@
                 "token_bought_market_cap",
                 "token_sold_market_cap",
                 "trade_value_usd"
-              ]
+              ],
+              "request": {
+                "schema": "SmartMoneyDexTradesRequest",
+                "required": [
+                  "chains"
+                ],
+                "params": {
+                  "chains": {
+                    "type": "array",
+                    "items": "string",
+                    "enum": [
+                      "all",
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "SmartMoneyDexTradesFilters",
+                    "fields": {
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "chain": {
+                        "type": "string"
+                      },
+                      "transaction_hash": {
+                        "type": "string"
+                      },
+                      "trader_address": {
+                        "type": "string"
+                      },
+                      "trader_address_label": {
+                        "type": "string"
+                      },
+                      "token_bought_address": {
+                        "type": "string"
+                      },
+                      "token_sold_address": {
+                        "type": "string"
+                      },
+                      "token_bought_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_sold_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_bought_symbol": {
+                        "type": "string"
+                      },
+                      "token_sold_symbol": {
+                        "type": "string"
+                      },
+                      "token_bought_age_days": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_sold_age_days": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_bought_market_cap": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_sold_market_cap": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "trade_value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      }
+                    }
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "perp-trades": {
               "description": "Perpetual trading on Hyperliquid",
@@ -124,7 +351,109 @@
                 "type",
                 "block_timestamp",
                 "transaction_hash"
-              ]
+              ],
+              "request": {
+                "schema": "SmartMoneyPerpTradesRequest",
+                "required": [],
+                "params": {
+                  "filters": {
+                    "type": "object",
+                    "schema": "SmartMoneyPerpTradesFilters",
+                    "fields": {
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "trader_address": {
+                        "type": "string"
+                      },
+                      "trader_address_label": {
+                        "type": "string"
+                      },
+                      "token_symbol": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string",
+                        "description": "Enum for trade types",
+                        "enum": [
+                          "Market",
+                          "Limit"
+                        ]
+                      },
+                      "token_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "price_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "side": {
+                        "type": "string",
+                        "description": "Shared enum for position side direction",
+                        "enum": [
+                          "Long",
+                          "Short"
+                        ]
+                      },
+                      "action": {
+                        "type": "string",
+                        "description": "Shared enum for perpetual trade action types (combined buy/sell with position actions)",
+                        "enum": [
+                          "Buy - Add Long",
+                          "Buy - Reduce Short",
+                          "Buy - Open Long",
+                          "Buy - Close Short",
+                          "Sell - Add Short",
+                          "Sell - Reduce Long",
+                          "Sell - Open Short",
+                          "Sell - Close Long"
+                        ]
+                      }
+                    }
+                  },
+                  "only_new_positions": {
+                    "type": "boolean"
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "holdings": {
               "description": "Aggregated token balances",
@@ -154,7 +483,122 @@
                 "share_of_holdings_percent",
                 "token_age_days",
                 "market_cap_usd"
-              ]
+              ],
+              "request": {
+                "schema": "SmartMoneyHoldingsRequest",
+                "required": [
+                  "chains"
+                ],
+                "params": {
+                  "chains": {
+                    "type": "array",
+                    "items": "string",
+                    "enum": [
+                      "all",
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "SmartMoneyHoldingsFilters",
+                    "fields": {
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "include_stablecoins": {
+                        "type": "boolean"
+                      },
+                      "include_native_tokens": {
+                        "type": "boolean"
+                      },
+                      "value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "balance_24h_percent_change": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "holders_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "share_of_holdings_percent": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_age_days": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "market_cap_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_address": {
+                        "type": "string"
+                      },
+                      "token_symbol": {
+                        "type": "string"
+                      },
+                      "token_sectors": {
+                        "type": "array",
+                        "items": "string"
+                      }
+                    }
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "dcas": {
               "description": "DCA strategies on Jupiter",
@@ -182,7 +626,86 @@
                 "input_token_symbol",
                 "output_token_symbol",
                 "deposit_value_usd"
-              ]
+              ],
+              "request": {
+                "schema": "SmartMoneyDcasRequest",
+                "required": [],
+                "params": {
+                  "filters": {
+                    "type": "object",
+                    "schema": "SmartMoneyDcasFilters",
+                    "fields": {
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "dca_created_at": {
+                        "type": "object",
+                        "description": "Filter for date ranges with optional from/to bounds. - Date range"
+                      },
+                      "transaction_hash": {
+                        "type": "string"
+                      },
+                      "trader_address": {
+                        "type": "string"
+                      },
+                      "trader_address_label": {
+                        "type": "string"
+                      },
+                      "input_token_symbol": {
+                        "type": "string"
+                      },
+                      "output_token_symbol": {
+                        "type": "string"
+                      },
+                      "deposit_token_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_spent_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "output_token_redeemed_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      }
+                    }
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "historical-holdings": {
               "description": "Historical holdings over time",
@@ -216,7 +739,117 @@
                 "share_of_holdings_percent",
                 "token_age_days",
                 "market_cap_usd"
-              ]
+              ],
+              "request": {
+                "schema": "SmartMoneyHistoricalHoldingsRequest",
+                "required": [
+                  "date_range",
+                  "chains"
+                ],
+                "params": {
+                  "date_range": {
+                    "type": "object",
+                    "schema": "DateOnlyRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "chains": {
+                    "type": "array",
+                    "items": "string",
+                    "enum": [
+                      "base",
+                      "bnb",
+                      "ethereum",
+                      "monad",
+                      "solana"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "SmartMoneyHistoricalHoldingsFilters",
+                    "fields": {
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "include_stablecoins": {
+                        "type": "boolean"
+                      },
+                      "include_native_tokens": {
+                        "type": "boolean"
+                      },
+                      "balance": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "balance_24h_percent_change": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "holders_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "share_of_holdings_percent": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_age_days": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "market_cap_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_address": {
+                        "type": "string"
+                      },
+                      "token_symbol": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             }
           }
         },
@@ -249,7 +882,95 @@
                 "token_amount",
                 "price_usd",
                 "value_usd"
-              ]
+              ],
+              "request": {
+                "schema": "ProfilerAddressBalancesRequest",
+                "required": [
+                  "chain"
+                ],
+                "params": {
+                  "address": {
+                    "type": "string"
+                  },
+                  "entity_name": {
+                    "type": "string"
+                  },
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bitcoin",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "hide_spam_token": {
+                    "type": "boolean",
+                    "description": "Removes suspicious tokens from the balance list",
+                    "default": true
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "ProfilerAddressBalancesFilters",
+                    "fields": {
+                      "value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "price_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_amount": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "token_symbol": {
+                        "type": "string"
+                      },
+                      "token_address": {
+                        "type": "string"
+                      },
+                      "token_name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "labels": {
               "description": "Behavioral and entity labels",
@@ -266,7 +987,53 @@
               "returns": [
                 "label",
                 "category"
-              ]
+              ],
+              "request": {
+                "schema": "ProfilerAddressLabelsRequest",
+                "required": [
+                  "address",
+                  "chain"
+                ],
+                "params": {
+                  "address": {
+                    "type": "string",
+                    "description": "Wallet address to get labels for"
+                  },
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "hyperliquid",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic"
+                    ]
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  }
+                }
+              }
             },
             "transactions": {
               "description": "Transaction history",
@@ -301,7 +1068,103 @@
                 "block_timestamp",
                 "transaction_hash",
                 "source_type"
-              ]
+              ],
+              "request": {
+                "schema": "ProfilerAddressTransactionsRequest",
+                "required": [
+                  "address",
+                  "chain",
+                  "date"
+                ],
+                "params": {
+                  "address": {
+                    "type": "string",
+                    "description": "Address to get transactions for"
+                  },
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bitcoin",
+                      "bnb",
+                      "ethereum",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "date": {
+                    "type": "object",
+                    "schema": "wrapper__models__common__DateRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "hide_spam_token": {
+                    "type": "boolean",
+                    "description": "Removes suspicious tokens from the transaction list",
+                    "default": true
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "ProfilerAddressTransactionsFilters",
+                    "fields": {
+                      "token_symbol": {
+                        "type": "string"
+                      },
+                      "token_address": {
+                        "type": "string"
+                      },
+                      "counterparty_name": {
+                        "type": "string"
+                      },
+                      "counterparty_address": {
+                        "type": "string"
+                      },
+                      "volume_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "method": {
+                        "type": "string"
+                      },
+                      "source_type": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "ProfilerPaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "pnl": {
               "description": "PnL and trade performance",
@@ -346,7 +1209,72 @@
                 "nof_sells",
                 "max_balance_held",
                 "max_balance_held_usd"
-              ]
+              ],
+              "request": {
+                "schema": "ProfilerAddressPnlRequest",
+                "required": [
+                  "chain"
+                ],
+                "params": {
+                  "address": {
+                    "type": "string"
+                  },
+                  "entity_name": {
+                    "type": "string"
+                  },
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bitcoin",
+                      "bnb",
+                      "ethereum",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic"
+                    ]
+                  },
+                  "date": {
+                    "type": "object",
+                    "description": "Date range model matching the API schema"
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "ProfilerAddressPnlFilters",
+                    "fields": {
+                      "show_realized": {
+                        "type": "boolean"
+                      },
+                      "token_address": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "search": {
               "description": "Search for entities by name",
@@ -362,7 +1290,19 @@
               },
               "returns": [
                 "entity_name"
-              ]
+              ],
+              "request": {
+                "schema": "EntityNameSearchRequest",
+                "required": [
+                  "search_query"
+                ],
+                "params": {
+                  "search_query": {
+                    "type": "string",
+                    "description": "Search query for entity names (minimum 2 characters). Search is case-insensitive and matches anywhere in the entity name"
+                  }
+                }
+              }
             },
             "historical-balances": {
               "description": "Historical balances over time",
@@ -390,7 +1330,95 @@
                 "token_amount",
                 "value_usd",
                 "token_symbol"
-              ]
+              ],
+              "request": {
+                "schema": "ProfilerAddressHistoricalBalancesRequest",
+                "required": [
+                  "chain",
+                  "date"
+                ],
+                "params": {
+                  "address": {
+                    "type": "string"
+                  },
+                  "entity_name": {
+                    "type": "string"
+                  },
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bitcoin",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "date": {
+                    "type": "object",
+                    "schema": "wrapper__models__common__DateRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "ProfilerAddressHistoricalBalancesFilters",
+                    "fields": {
+                      "value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_amount": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "token_symbol": {
+                        "type": "string"
+                      },
+                      "token_address": {
+                        "type": "string"
+                      },
+                      "hide_spam_tokens": {
+                        "type": "boolean"
+                      }
+                    }
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "related-wallets": {
               "description": "Find wallets related to an address",
@@ -415,7 +1443,60 @@
                 "block_timestamp",
                 "order",
                 "chain"
-              ]
+              ],
+              "request": {
+                "schema": "ProfilerAddressRelatedWalletsRequest",
+                "required": [
+                  "address",
+                  "chain"
+                ],
+                "params": {
+                  "address": {
+                    "type": "string",
+                    "description": "Address to get related wallets for"
+                  },
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bitcoin",
+                      "bnb",
+                      "ethereum",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "counterparties": {
               "description": "Top counterparties by volume",
@@ -444,7 +1525,155 @@
                 "volume_in_usd",
                 "volume_out_usd",
                 "tokens_info"
-              ]
+              ],
+              "request": {
+                "schema": "ProfilerAddressCounterpartiesRequest",
+                "required": [
+                  "chain",
+                  "date"
+                ],
+                "params": {
+                  "address": {
+                    "type": "string"
+                  },
+                  "entity_name": {
+                    "type": "string"
+                  },
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bitcoin",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "date": {
+                    "type": "object",
+                    "schema": "wrapper__models__common__DateRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "source_input": {
+                    "type": "string",
+                    "enum": [
+                      "Combined",
+                      "Tokens",
+                      "ETH"
+                    ]
+                  },
+                  "group_by": {
+                    "type": "string",
+                    "enum": [
+                      "wallet",
+                      "entity"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "ProfilerAddressCounterpartiesFilters",
+                    "fields": {
+                      "interaction_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "total_volume_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "volume_in_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "volume_out_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      }
+                    }
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "pnl-summary": {
               "description": "Summarized PnL metrics",
@@ -470,7 +1699,53 @@
                 "realized_pnl_usd",
                 "realized_pnl_percent",
                 "win_rate"
-              ]
+              ],
+              "request": {
+                "schema": "ProfilerAddressPnlSummaryRequest",
+                "required": [
+                  "chain",
+                  "date"
+                ],
+                "params": {
+                  "address": {
+                    "type": "string"
+                  },
+                  "entity_name": {
+                    "type": "string"
+                  },
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bitcoin",
+                      "bnb",
+                      "ethereum",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic"
+                    ]
+                  },
+                  "date": {
+                    "type": "object",
+                    "schema": "wrapper__models__common__DateRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  }
+                }
+              }
             },
             "perp-positions": {
               "description": "Current perpetual positions",
@@ -496,7 +1771,43 @@
                 "margin_summary_total_raw_usd",
                 "time",
                 "withdrawable"
-              ]
+              ],
+              "request": {
+                "schema": "PerpPositionsRequest",
+                "required": [
+                  "address"
+                ],
+                "params": {
+                  "address": {
+                    "type": "string",
+                    "description": "User's Hyperliquid address in 42-character hexadecimal format"
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "PerpPositionsFilters",
+                    "fields": {
+                      "token_symbol": {
+                        "type": "string"
+                      },
+                      "position_value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "position_type": {
+                        "type": "string"
+                      },
+                      "unrealized_pnl_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      }
+                    }
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "perp-trades": {
               "description": "Perpetual trading history",
@@ -530,7 +1841,100 @@
                 "transaction_hash",
                 "user",
                 "oid"
-              ]
+              ],
+              "request": {
+                "schema": "PerpTradeRequest",
+                "required": [
+                  "address",
+                  "date"
+                ],
+                "params": {
+                  "address": {
+                    "type": "string",
+                    "description": "User's Hyperliquid address in 42-character hexadecimal format"
+                  },
+                  "date": {
+                    "type": "object",
+                    "schema": "wrapper__models__common__DateRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "PerpTradeFilters",
+                    "fields": {
+                      "token_symbol": {
+                        "type": "string"
+                      },
+                      "side": {
+                        "type": "string",
+                        "description": "Enum for perp trade position types",
+                        "enum": [
+                          "Long",
+                          "Short"
+                        ]
+                      },
+                      "action": {
+                        "type": "string",
+                        "description": "Enum for perp trade action filters (grouped)",
+                        "enum": [
+                          "Open/Add",
+                          "Close/Reduce",
+                          "Liquidation"
+                        ]
+                      },
+                      "crossed": {
+                        "type": "boolean"
+                      },
+                      "size": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "start_position": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "closed_pnl": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "fee_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "fee_token_symbol": {
+                        "type": "string"
+                      },
+                      "oid": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "price": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      }
+                    }
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "batch": {
               "description": "Batch profile multiple addresses",
@@ -656,7 +2060,48 @@
                 "token_info",
                 "risk_indicators[indicator_type, score, signal, signal_percentile, last_trigger_on]",
                 "reward_indicators[indicator_type, score, signal, signal_percentile, last_trigger_on]"
-              ]
+              ],
+              "request": {
+                "schema": "TGMIndicatorsRequest",
+                "required": [
+                  "chain",
+                  "token_address"
+                ],
+                "params": {
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "token_address": {
+                    "type": "string",
+                    "description": "Token contract address"
+                  }
+                }
+              }
             },
             "ohlcv": {
               "description": "OHLCV candle data for a token",
@@ -697,7 +2142,77 @@
                 "volume",
                 "volume_usd",
                 "market_cap"
-              ]
+              ],
+              "request": {
+                "schema": "TokenOHLCVRequest",
+                "required": [
+                  "chain",
+                  "token_address",
+                  "timeframe"
+                ],
+                "params": {
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "algorand",
+                      "aptos",
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bitcoin",
+                      "bitlayer",
+                      "bnb",
+                      "chiliz",
+                      "ethereum",
+                      "gravity",
+                      "hyperevm",
+                      "hyperliquid",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "stacks",
+                      "starknet",
+                      "stellar",
+                      "sui",
+                      "ton",
+                      "tron",
+                      "viction"
+                    ]
+                  },
+                  "token_address": {
+                    "type": "string",
+                    "description": "Token contract address"
+                  },
+                  "date_range": {
+                    "type": "object",
+                    "description": "Date range for OHLCV data"
+                  },
+                  "timeframe": {
+                    "type": "string",
+                    "enum": [
+                      "1m",
+                      "5m",
+                      "15m",
+                      "30m",
+                      "1h",
+                      "4h",
+                      "1d",
+                      "1w",
+                      "1M"
+                    ]
+                  }
+                }
+              }
             },
             "info": {
               "description": "Get detailed information for a specific token",
@@ -731,7 +2246,60 @@
                 "logo",
                 "token_details",
                 "spot_metrics"
-              ]
+              ],
+              "request": {
+                "schema": "TGMTokenInformationRequest",
+                "required": [
+                  "chain",
+                  "token_address",
+                  "timeframe"
+                ],
+                "params": {
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "token_address": {
+                    "type": "string",
+                    "description": "Token address"
+                  },
+                  "timeframe": {
+                    "type": "string",
+                    "enum": [
+                      "5m",
+                      "1h",
+                      "6h",
+                      "12h",
+                      "1d",
+                      "7d"
+                    ]
+                  }
+                }
+              }
             },
             "screener": {
               "description": "Discover and filter tokens",
@@ -793,7 +2361,199 @@
                 "sell_volume",
                 "volume",
                 "netflow"
-              ]
+              ],
+              "request": {
+                "schema": "TokenScreenerRequest",
+                "required": [
+                  "chains"
+                ],
+                "params": {
+                  "chains": {
+                    "type": "array",
+                    "items": "string",
+                    "enum": [
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bitcoin",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "timeframe": {
+                    "type": "string",
+                    "description": "Token screener timeframe options",
+                    "enum": [
+                      "5m",
+                      "10m",
+                      "1h",
+                      "6h",
+                      "24h",
+                      "7d",
+                      "30d"
+                    ]
+                  },
+                  "date": {
+                    "type": "object",
+                    "description": "Date range model matching the API schema"
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "TokenScreenerFilters",
+                    "fields": {
+                      "token_address": {
+                        "type": "string"
+                      },
+                      "token_symbol": {
+                        "type": "string"
+                      },
+                      "only_smart_money": {
+                        "type": "boolean"
+                      },
+                      "trader_type": {
+                        "type": "string",
+                        "description": "Trader type filter for token screener",
+                        "enum": [
+                          "all",
+                          "sm",
+                          "whale",
+                          "public_figure"
+                        ]
+                      },
+                      "sectors": {
+                        "type": "array",
+                        "items": "string"
+                      },
+                      "token_age_days": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "market_cap_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "liquidity": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "price_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "price_change": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "fdv": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "fdv_mc_ratio": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "nof_buyers": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "nof_traders": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "nof_sellers": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "nof_buys": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "nof_sells": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "buy_volume": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "sell_volume": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "volume": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "netflow": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "inflow_fdv_ratio": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "outflow_fdv_ratio": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      }
+                    }
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "holders": {
               "description": "Token holder analysis",
@@ -832,7 +2592,166 @@
                 "balance_change_30d",
                 "ownership_percentage",
                 "value_usd"
-              ]
+              ],
+              "request": {
+                "schema": "TGMHoldersRequest",
+                "required": [
+                  "chain",
+                  "token_address"
+                ],
+                "params": {
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bitcoin",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "token_address": {
+                    "type": "string",
+                    "description": "Token address"
+                  },
+                  "aggregate_by_entity": {
+                    "type": "boolean",
+                    "description": "Whether to return entity data",
+                    "default": false
+                  },
+                  "label_type": {
+                    "type": "string",
+                    "enum": [
+                      "whale",
+                      "public_figure",
+                      "smart_money",
+                      "all_holders",
+                      "exchange"
+                    ]
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "TGMHoldersFilters",
+                    "fields": {
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "address": {
+                        "type": "string"
+                      },
+                      "address_label": {
+                        "type": "string"
+                      },
+                      "token_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "total_outflow": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "total_inflow": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "balance_change_24h": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "balance_change_7d": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "balance_change_30d": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "ownership_percentage": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      }
+                    }
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "flows": {
               "description": "Token flow metrics",
@@ -874,7 +2793,109 @@
                 "holders_count",
                 "total_inflows_count",
                 "total_outflows_count"
-              ]
+              ],
+              "request": {
+                "schema": "TGMFlowsRequest",
+                "required": [
+                  "chain",
+                  "token_address",
+                  "date"
+                ],
+                "params": {
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "token_address": {
+                    "type": "string",
+                    "description": "Token address"
+                  },
+                  "date": {
+                    "type": "object",
+                    "schema": "wrapper__models__common__DateRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "enum": [
+                      "whale",
+                      "public_figure",
+                      "smart_money",
+                      "top_100_holders",
+                      "exchange"
+                    ]
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "TGMFlowsFilters",
+                    "fields": {
+                      "price_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "holders_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "total_inflows_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "total_outflows_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      }
+                    }
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "dex-trades": {
               "description": "DEX trading activity",
@@ -920,7 +2941,170 @@
                 "traded_token_amount",
                 "estimated_swap_price_usd",
                 "estimated_value_usd"
-              ]
+              ],
+              "request": {
+                "schema": "TGMDexTradesRequest",
+                "required": [
+                  "chain",
+                  "token_address",
+                  "date"
+                ],
+                "params": {
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "token_address": {
+                    "type": "string",
+                    "description": "Token address"
+                  },
+                  "only_smart_money": {
+                    "type": "boolean",
+                    "description": "Returns only the DEX Trades made by Smart Money wallets",
+                    "default": false
+                  },
+                  "date": {
+                    "type": "object",
+                    "schema": "wrapper__models__common__DateRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "TGMDexTradesFilters",
+                    "fields": {
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "block_timestamp": {
+                        "type": "object",
+                        "description": "Filter for date ranges with optional from/to bounds. - Date range"
+                      },
+                      "transaction_hash": {
+                        "type": "string"
+                      },
+                      "trader_address": {
+                        "type": "string"
+                      },
+                      "trader_address_label": {
+                        "type": "string"
+                      },
+                      "token_address": {
+                        "type": "string"
+                      },
+                      "action": {
+                        "type": "string"
+                      },
+                      "token_name": {
+                        "type": "string"
+                      },
+                      "token_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "traded_token_address": {
+                        "type": "string"
+                      },
+                      "traded_token_name": {
+                        "type": "string"
+                      },
+                      "traded_token_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "estimated_swap_price_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "estimated_value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      }
+                    }
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "pnl": {
               "description": "PnL leaderboard",
@@ -967,7 +3151,111 @@
                 "roi_percent_unrealised",
                 "pnl_usd_total",
                 "nof_trades"
-              ]
+              ],
+              "request": {
+                "schema": "TGMPnlLeaderboardRequest",
+                "required": [
+                  "chain",
+                  "token_address",
+                  "date"
+                ],
+                "params": {
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic"
+                    ]
+                  },
+                  "token_address": {
+                    "type": "string",
+                    "description": "Token address"
+                  },
+                  "date": {
+                    "type": "object",
+                    "schema": "wrapper__models__common__DateRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "TGMPnlLeaderboardFilters",
+                    "fields": {
+                      "trader_address": {
+                        "type": "string"
+                      },
+                      "trader_address_label": {
+                        "type": "string"
+                      },
+                      "token_price": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "pnl_usd_realised": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "pnl_usd_unrealised": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "holding_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "holding_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "max_balance_held": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "max_balance_held_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "still_holding_balance_ratio": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "nof_trades": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      }
+                    }
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "who-bought-sold": {
               "description": "Recent buyers and sellers",
@@ -1010,7 +3298,158 @@
                 "bought_volume_usd",
                 "sold_volume_usd",
                 "trade_volume_usd"
-              ]
+              ],
+              "request": {
+                "schema": "TGMWhoBoughtSoldRequest",
+                "required": [
+                  "chain",
+                  "token_address",
+                  "date"
+                ],
+                "params": {
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "token_address": {
+                    "type": "string",
+                    "description": "Address of token"
+                  },
+                  "buy_or_sell": {
+                    "type": "string",
+                    "enum": [
+                      "BUY",
+                      "SELL"
+                    ]
+                  },
+                  "date": {
+                    "type": "object",
+                    "schema": "wrapper__models__common__DateRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "TGMWhoBoughtSoldFilters",
+                    "fields": {
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "address": {
+                        "type": "string"
+                      },
+                      "address_label": {
+                        "type": "string"
+                      },
+                      "bought_token_volume": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "sold_token_volume": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "token_trade_volume": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "bought_volume_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "sold_volume_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "trade_volume_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      }
+                    }
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "flow-intelligence": {
               "description": "Detailed flow intelligence by label",
@@ -1047,7 +3486,137 @@
                 "fresh_wallets_net_flow_usd",
                 "fresh_wallets_avg_flow_usd",
                 "fresh_wallets_wallet_count"
-              ]
+              ],
+              "request": {
+                "schema": "TGMFlowIntelligenceRequest",
+                "required": [
+                  "chain",
+                  "token_address"
+                ],
+                "params": {
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "token_address": {
+                    "type": "string",
+                    "description": "Token address"
+                  },
+                  "timeframe": {
+                    "type": "string",
+                    "enum": [
+                      "5m",
+                      "1h",
+                      "6h",
+                      "12h",
+                      "1d",
+                      "7d"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "TGMFlowIntelligenceFilters",
+                    "fields": {
+                      "public_figure_net_flow_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "public_figure_avg_flow_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "public_figure_wallet_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "top_pnl_net_flow_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "top_pnl_avg_flow_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "top_pnl_wallet_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "whale_net_flow_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "whale_avg_flow_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "whale_wallet_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "smart_trader_net_flow_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "smart_trader_avg_flow_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "smart_trader_wallet_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "exchange_net_flow_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "exchange_avg_flow_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "exchange_wallet_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "fresh_wallets_net_flow_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "fresh_wallets_avg_flow_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "fresh_wallets_wallet_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      }
+                    }
+                  }
+                }
+              }
             },
             "transfers": {
               "description": "Token transfer history",
@@ -1098,7 +3667,206 @@
                 "transaction_type",
                 "transfer_amount",
                 "transfer_value_usd"
-              ]
+              ],
+              "request": {
+                "schema": "TGMTransfersRequest",
+                "required": [
+                  "chain",
+                  "token_address",
+                  "date"
+                ],
+                "params": {
+                  "chain": {
+                    "type": "string",
+                    "enum": [
+                      "arbitrum",
+                      "avalanche",
+                      "base",
+                      "bitcoin",
+                      "bnb",
+                      "ethereum",
+                      "hyperevm",
+                      "iotaevm",
+                      "linea",
+                      "mantle",
+                      "monad",
+                      "near",
+                      "optimism",
+                      "plasma",
+                      "polygon",
+                      "ronin",
+                      "scroll",
+                      "sei",
+                      "solana",
+                      "sonic",
+                      "starknet",
+                      "sui",
+                      "ton",
+                      "tron"
+                    ]
+                  },
+                  "token_address": {
+                    "type": "string",
+                    "description": "Token address"
+                  },
+                  "date": {
+                    "type": "object",
+                    "schema": "DateRangeMaxOneYear",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "TGMTransfersFilters",
+                    "fields": {
+                      "include_dex": {
+                        "type": "boolean"
+                      },
+                      "include_cex": {
+                        "type": "boolean"
+                      },
+                      "non_exchange_transfers": {
+                        "type": "boolean"
+                      },
+                      "only_smart_money": {
+                        "type": "boolean"
+                      },
+                      "from_include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "from_exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "to_include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "to_exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "transaction_hash": {
+                        "type": "string"
+                      },
+                      "from_address": {
+                        "type": "string"
+                      },
+                      "to_address": {
+                        "type": "string"
+                      },
+                      "from_address_label": {
+                        "type": "string"
+                      },
+                      "to_address_label": {
+                        "type": "string"
+                      },
+                      "transaction_type": {
+                        "type": "string"
+                      },
+                      "transfer_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "transfer_value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      }
+                    }
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "jup-dca": {
               "description": "Jupiter DCA orders for token",
@@ -1135,7 +3903,122 @@
                 "token_input",
                 "token_output",
                 "deposit_usd_value"
-              ]
+              ],
+              "request": {
+                "schema": "TGMJupDcaRequest",
+                "required": [
+                  "token_address"
+                ],
+                "params": {
+                  "token_address": {
+                    "type": "string",
+                    "description": "Token address on Solana"
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "TGMJupDcaFilters",
+                    "fields": {
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "trader_address": {
+                        "type": "string"
+                      },
+                      "trader_label": {
+                        "type": "string"
+                      },
+                      "creation_hash": {
+                        "type": "string"
+                      },
+                      "dca_vault_address": {
+                        "type": "string"
+                      },
+                      "input_mint_address": {
+                        "type": "string"
+                      },
+                      "output_mint_address": {
+                        "type": "string"
+                      },
+                      "deposit_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "deposit_spent": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "other_token_redeemed": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "token_input": {
+                        "type": "string"
+                      },
+                      "token_output": {
+                        "type": "string"
+                      },
+                      "deposit_usd_value": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      }
+                    }
+                  }
+                }
+              }
             },
             "perp-trades": {
               "description": "Perp trades by token symbol",
@@ -1173,7 +4056,118 @@
                 "type",
                 "block_timestamp",
                 "transaction_hash"
-              ]
+              ],
+              "request": {
+                "schema": "TGMPerpTradesRequest",
+                "required": [
+                  "token_symbol",
+                  "date"
+                ],
+                "params": {
+                  "token_symbol": {
+                    "type": "string",
+                    "description": "Token symbol"
+                  },
+                  "date": {
+                    "type": "object",
+                    "schema": "wrapper__models__common__DateRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "TGMPerpTradesFilters",
+                    "fields": {
+                      "trader_address": {
+                        "type": "string"
+                      },
+                      "trader_address_label": {
+                        "type": "string"
+                      },
+                      "side": {
+                        "type": "string",
+                        "description": "Shared enum for position side direction",
+                        "enum": [
+                          "Long",
+                          "Short"
+                        ]
+                      },
+                      "action": {
+                        "type": "string",
+                        "description": "Shared enum for perpetual trade action types (combined buy/sell with position actions)",
+                        "enum": [
+                          "Buy - Add Long",
+                          "Buy - Reduce Short",
+                          "Buy - Open Long",
+                          "Buy - Close Short",
+                          "Sell - Add Short",
+                          "Sell - Reduce Long",
+                          "Sell - Open Short",
+                          "Sell - Close Long"
+                        ]
+                      },
+                      "order_type": {
+                        "type": "string",
+                        "description": "Order type",
+                        "enum": [
+                          "MARKET",
+                          "LIMIT"
+                        ]
+                      },
+                      "token_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "price_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      }
+                    }
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "perp-positions": {
               "description": "Open perp positions by token symbol",
@@ -1207,7 +4201,126 @@
                 "liquidation_price",
                 "funding_usd",
                 "upnl_usd"
-              ]
+              ],
+              "request": {
+                "schema": "TGMPerpPositionsRequest",
+                "required": [
+                  "token_symbol"
+                ],
+                "params": {
+                  "token_symbol": {
+                    "type": "string",
+                    "description": "Token symbol"
+                  },
+                  "label_type": {
+                    "type": "string",
+                    "enum": [
+                      "smart_money",
+                      "all_traders",
+                      "whale",
+                      "public_figure"
+                    ]
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "TGMPerpPositionsFilters",
+                    "fields": {
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Fund",
+                          "Smart Trader",
+                          "Public Figure",
+                          "Exchange",
+                          "Whale",
+                          "BananaGun Bot User",
+                          "Top Maestro Bot User",
+                          "Top BananaGun Bot User",
+                          "Maestro Bot User",
+                          "Early MAGIC Miner",
+                          "First Mover LP",
+                          "First Mover Staking",
+                          "Profitable LP",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "address": {
+                        "type": "string"
+                      },
+                      "address_label": {
+                        "type": "string"
+                      },
+                      "side": {
+                        "type": "string",
+                        "description": "Shared enum for position side direction",
+                        "enum": [
+                          "Long",
+                          "Short"
+                        ]
+                      },
+                      "position_value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "position_size": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "entry_price": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "upnl_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "funding_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      }
+                    }
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "perp-pnl-leaderboard": {
               "description": "Perp PnL leaderboard by token",
@@ -1250,7 +4363,112 @@
                 "roi_percent_unrealised",
                 "pnl_usd_total",
                 "nof_trades"
-              ]
+              ],
+              "request": {
+                "schema": "TGMPerpPnlLeaderboardRequest",
+                "required": [
+                  "token_symbol",
+                  "date"
+                ],
+                "params": {
+                  "token_symbol": {
+                    "type": "string",
+                    "description": "Perpetual contract symbol (e.g., BTC, ETH, SOL)"
+                  },
+                  "date": {
+                    "type": "object",
+                    "schema": "wrapper__models__common__DateRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "TGMPerpPnlLeaderboardFilters",
+                    "fields": {
+                      "trader_address": {
+                        "type": "string"
+                      },
+                      "trader_address_label": {
+                        "type": "string"
+                      },
+                      "token_price": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "pnl_usd_realised": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "pnl_usd_unrealised": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "holding_amount": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "position_value_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "max_balance_held": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "max_balance_held_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "still_holding_balance_ratio": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "nof_trades": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      }
+                    }
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             }
           }
         },
@@ -1286,7 +4504,37 @@
             "tokens[name, symbol, chain, address, price]",
             "entities[name, tags, rank]",
             "total_results"
-          ]
+          ],
+          "request": {
+            "schema": "GeneralSearchRequest",
+            "required": [
+              "search_query"
+            ],
+            "params": {
+              "search_query": {
+                "type": "string",
+                "description": "Search query - token name, symbol, contract address, or entity name"
+              },
+              "result_type": {
+                "type": "string",
+                "description": "Type filter - 'token' for tokens only, 'entity' for entities only, 'any' for both",
+                "enum": [
+                  "token",
+                  "entity",
+                  "any"
+                ],
+                "default": "any"
+              },
+              "chain": {
+                "type": "string"
+              },
+              "limit": {
+                "type": "integer",
+                "description": "Maximum number of results to return (default: 25, max: 50)",
+                "default": 25
+              }
+            }
+          }
         },
         "perp": {
           "description": "Perpetual futures analytics",
@@ -1319,7 +4567,115 @@
                 "funding",
                 "open_interest",
                 "previous_price_usd"
-              ]
+              ],
+              "request": {
+                "schema": "PerpScreenerRequest",
+                "required": [
+                  "date"
+                ],
+                "params": {
+                  "date": {
+                    "type": "object",
+                    "schema": "wrapper__models__common__DateRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "PerpScreenerFilters",
+                    "fields": {
+                      "only_smart_money": {
+                        "type": "boolean"
+                      },
+                      "token_symbol": {
+                        "type": "string"
+                      },
+                      "volume": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "buy_volume": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "sell_volume": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "buy_sell_pressure": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "trader_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "mark_price": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "funding": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "previous_price_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "open_interest": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "smart_money_volume": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "smart_money_buy_volume": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "smart_money_sell_volume": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "net_position_change": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "current_smart_money_position_longs_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "current_smart_money_position_shorts_usd": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "smart_money_longs_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      },
+                      "smart_money_shorts_count": {
+                        "type": "object",
+                        "description": "Filter for integer values with optional min/max bounds"
+                      }
+                    }
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             },
             "leaderboard": {
               "description": "Perpetual futures PnL leaderboard",
@@ -1344,7 +4700,83 @@
                 "total_pnl",
                 "roi",
                 "account_value"
-              ]
+              ],
+              "request": {
+                "schema": "PerpLeaderboardRequest",
+                "required": [
+                  "date"
+                ],
+                "params": {
+                  "date": {
+                    "type": "object",
+                    "schema": "DateOnlyRange",
+                    "fields": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "schema": "PaginationRequest",
+                    "fields": [
+                      "page",
+                      "per_page"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "schema": "PerpLeaderboardFilters",
+                    "fields": {
+                      "trader_address": {
+                        "type": "string"
+                      },
+                      "trader_address_label": {
+                        "type": "string"
+                      },
+                      "total_pnl": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "roi": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "account_value": {
+                        "type": "object",
+                        "description": "Filter for numeric values (floats) with optional min/max bounds"
+                      },
+                      "include_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      },
+                      "exclude_smart_money_labels": {
+                        "type": "array",
+                        "items": "string",
+                        "enum": [
+                          "Fund",
+                          "Smart Trader",
+                          "30D Smart Trader",
+                          "90D Smart Trader",
+                          "180D Smart Trader",
+                          "Smart HL Perps Trader"
+                        ]
+                      }
+                    }
+                  },
+                  "order_by": {
+                    "type": "array",
+                    "description": "Sort order: [{\"field\": \"<field>\", \"direction\": \"ASC|DESC\"}]"
+                  }
+                }
+              }
             }
           }
         },
@@ -1368,7 +4800,19 @@
                 "total_debts_usd",
                 "total_rewards_usd",
                 "tokens"
-              ]
+              ],
+              "request": {
+                "schema": "PortfolioDefiHoldingsRequest",
+                "required": [
+                  "wallet_address"
+                ],
+                "params": {
+                  "wallet_address": {
+                    "type": "string",
+                    "description": "Wallet address to get DeFi holdings for"
+                  }
+                }
+              }
             }
           }
         },
