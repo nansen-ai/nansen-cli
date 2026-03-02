@@ -66,6 +66,15 @@ nansen trade execute --quote "$QUOTE_ID"
 | `--quote` | Quote ID for execute |
 | `--no-simulate` | Skip pre-broadcast simulation |
 
+## Environment Variables
+
+| Var | Purpose |
+|-----|---------|
+| `NANSEN_WALLET_PASSWORD` | **Required for `trade execute`.** Wallet encryption password — must be pre-configured in the environment, never generated at runtime. If not set, ask the user to configure it. |
+| `NANSEN_API_KEY` | API key (also set via `nansen login`) |
+
+> **Agents:** Never generate or hardcode a wallet password. If `NANSEN_WALLET_PASSWORD` is not set, ask the user to configure it before proceeding. Lost passwords lock wallets permanently.
+
 ## Notes
 
 - Quotes expire after ~1 hour. If execute fails, get a fresh quote.
