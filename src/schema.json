@@ -1618,13 +1618,14 @@
       }
     },
     "status": {
-      "description": "Environment health check — verify auth, API connectivity, wallets, and CLI version before running workflows. Note: success: true means the status command completed without error. Check data.ready for environment readiness.",
+      "description": "Environment health check — verify auth, API connectivity, wallets, and CLI version before running workflows. Returns the status object directly (no { success, data } envelope). Exit codes: 0 = ready (ready === true), 2 = not ready (ready === false/null), 3 = status command itself threw an unexpected exception.",
       "options": {
         "skip-api": {
           "type": "boolean",
           "description": "Skip the API health check. Use in logged environments to prevent API key from appearing in request headers."
         }
       },
+      "envelope": false,
       "returns": [
         {
           "field": "ready",
@@ -1650,6 +1651,17 @@
         {
           "field": "cli.checked",
           "description": "true if the update cache file was read successfully, false if the check was skipped (file missing or unreadable). When false, update_available and latest_version are not meaningful."
+        },
+        {
+          "field": "problems",
+          "description": "Flat array of non-OK conditions found during the status check. Empty array if no problems. Each entry: { check, severity, code, message }.",
+          "type": "array",
+          "items": {
+            "check": "auth|api|wallet|cli|client — which section the problem belongs to",
+            "severity": "error|warning|info — error: blocks readiness, warning: may affect workflows, info: advisory",
+            "code": "Machine-readable error code string (e.g. UNAUTHORIZED, NETWORK_ERROR, NO_WALLETS, UPDATE_AVAILABLE, RATE_LIMITED, NOT_TESTED, UPDATE_CHECK_SKIPPED)",
+            "message": "Short single-line agent-safe message (no secrets, no file paths)"
+          }
         }
       ]
     }

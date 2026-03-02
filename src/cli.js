@@ -1017,6 +1017,33 @@ export function buildCommands(deps = {}) {
         }
       }
 
+      // --- Derive problems[] ---
+      const problems = [];
+      if (authResult.valid === false) {
+        problems.push({ check: 'auth', severity: 'error', code: authResult.code, message: authResult.error });
+      }
+      if (apiResult.reachable === false) {
+        problems.push({ check: 'api', severity: 'error', code: apiResult.code, message: apiResult.error });
+      } else if (apiResult.reachable === null && !flags['skip-api']) {
+        problems.push({ check: 'api', severity: 'info', code: 'NOT_TESTED', message: 'API reachability not tested' });
+      }
+      if (statusData.client.rate_limited === true) {
+        problems.push({ check: 'client', severity: 'info', code: 'RATE_LIMITED', message: 'Status call skipped due to client cooldown' });
+      }
+      if (walletResult.count === 0 && walletResult.error === null) {
+        problems.push({ check: 'wallet', severity: 'warning', code: 'NO_WALLETS', message: 'No wallets configured' });
+      }
+      if (walletResult.error !== null) {
+        problems.push({ check: 'wallet', severity: 'error', code: walletResult.code, message: walletResult.error });
+      }
+      if (cliResult.update_available === true) {
+        problems.push({ check: 'cli', severity: 'info', code: 'UPDATE_AVAILABLE', message: `CLI update available: ${cliResult.latest_version}` });
+      }
+      if (cliResult.checked === false) {
+        problems.push({ check: 'cli', severity: 'info', code: 'UPDATE_CHECK_SKIPPED', message: 'CLI update check skipped (cache unavailable)' });
+      }
+      statusData.problems = problems;
+
       return statusData;
     },
 
@@ -1595,6 +1622,17 @@ export async function runCLI(rawArgs, deps = {}) {
       return { type: 'no-output', command };
     }
 
+    // Status returns data directly (no success envelope); exit code signals readiness
+    if (command === 'status') {
+      const fields = parseFields(options.fields);
+      const out = fields ? filterFields(result, fields) : result;
+      const formatted = formatOutput(out, { pretty, table: false });
+      output(formatted.text);
+      notify();
+      exit(result.ready === true ? 0 : 2);
+      return { type: 'status', data: result };
+    }
+
     // Schema returns data directly (not wrapped in { success, data })
     if (command === 'schema') {
       const formatted = formatOutput(result, { pretty, table: false });
@@ -1630,7 +1668,7 @@ export async function runCLI(rawArgs, deps = {}) {
     const formatted = formatOutput(errorData, { pretty, table, csv });
     output(formatted.text);
     notify();
-    exit(1);
+    exit(command === 'status' ? 3 : 1);
     return { type: 'error', data: errorData };
   }
 }
