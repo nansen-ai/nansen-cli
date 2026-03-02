@@ -10,7 +10,7 @@ import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck, isNewer, getCachedLatest } from './update-check.js';
+import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck, getCachedLatest } from './update-check.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
 
