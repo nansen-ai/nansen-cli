@@ -57,12 +57,12 @@ export const ErrorCode = {
  * Custom error class with structured error codes
  */
 export class NansenError extends Error {
-  constructor(message, code = ErrorCode.UNKNOWN, status = null, data = null) {
+  constructor(message, code = ErrorCode.UNKNOWN, status = null, details = null) {
     super(message);
     this.name = 'NansenError';
     this.code = code;
     this.status = status;
-    this.details = data;
+    this.details = details;
   }
 
   toJSON() {

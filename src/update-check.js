@@ -19,7 +19,7 @@ const PACKAGE_NAME = 'nansen-cli';
 /**
  * Compare two semver strings. Returns true if latest > current.
  */
-function isNewer(latest, current) {
+export function isNewer(latest, current) {
   const parse = v => v.replace(/^v/, '').split('.').map(Number);
   const [lM, lm, lp] = parse(latest);
   const [cM, cm, cp] = parse(current);

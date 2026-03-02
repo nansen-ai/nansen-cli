@@ -136,7 +136,7 @@ describe('status command', () => {
     const mockApi = {
       apiKey: 'some-key',
       request: vi.fn().mockRejectedValue(
-        new NansenError('Network error: fetch failed', 'NETWORK_ERROR')
+        new NansenError('Network error: fetch failed', ErrorCode.NETWORK_ERROR)
       )
     };
 

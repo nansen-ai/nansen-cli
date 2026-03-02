@@ -9,7 +9,7 @@ import { buildTradingCommands } from './trading.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import path from 'path';
-import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
+import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck, isNewer } from './update-check.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
 
@@ -324,6 +324,7 @@ export function formatOutput(data, { pretty = false, table = false, csv = false 
 
 // Format error data (returns object, does not exit)
 export function formatError(error) {
+  // Fallback: legacy errors may use .data instead of .details
   const details = error.details ?? error.data ?? null;
   const result = {
     success: false,
@@ -901,8 +902,8 @@ export function buildCommands(deps = {}) {
             apiResult.reachable = false;
             apiResult.error = err.message;
             apiResult.code = ErrorCode.TIMEOUT;
-            authResult.error = 'Health check timed out';
-          } else if (err.code === 'NETWORK_ERROR') {
+            authResult.error = err.message;
+          } else if (err.code === ErrorCode.NETWORK_ERROR) {
             apiResult.reachable = false;
             apiResult.error = err.message;
             apiResult.code = ErrorCode.NETWORK_ERROR;
@@ -942,17 +943,12 @@ export function buildCommands(deps = {}) {
       // --- CLI version check ---
       const cliResult = { version: VERSION, update_available: false, latest_version: null };
       try {
-        const cacheFile = path.join(
-          process.env.HOME || process.env.USERPROFILE || '', '.nansen', 'update-check.json'
-        );
+        const cacheFile = path.join(process.env.HOME || process.env.USERPROFILE || '', '.nansen', 'update-check.json');
         const raw = fs.readFileSync(cacheFile, 'utf8');
         const { latest } = JSON.parse(raw);
         if (latest) {
           cliResult.latest_version = latest;
-          const parse = v => v.replace(/^v/, '').split('.').map(Number);
-          const [lM, lm, lp] = parse(latest);
-          const [cM, cm, cp] = parse(VERSION);
-          cliResult.update_available = lM > cM || (lM === cM && (lm > cm || (lm === cm && lp > cp)));
+          cliResult.update_available = isNewer(latest, VERSION);
         }
       } catch {
         // Cache file missing or unreadable — skip gracefully
