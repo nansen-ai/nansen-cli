@@ -1,5 +1,5 @@
 ---
-"nansen-cli": major
+"nansen-cli": patch
 ---
 
-Restrict trading to Base and Solana only (remove Ethereum and BSC support)
+Fix trading docs and config to reflect actual supported chains (Base and Solana only)
