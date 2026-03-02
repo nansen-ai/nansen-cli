@@ -1399,15 +1399,15 @@
       }
     },
     "trade": {
-      "description": "DEX trading commands",
+      "description": "DEX trading commands (Base and Solana only)",
       "subcommands": {
         "quote": {
           "description": "Get a DEX swap quote (chain, tokens, amount)",
           "options": {
             "chain": {
               "type": "string",
-              "default": "ethereum",
-              "description": "Blockchain"
+              "default": "base",
+              "description": "Blockchain (base or solana)"
             },
             "from": {
               "type": "string",
@@ -1435,8 +1435,8 @@
           "options": {
             "chain": {
               "type": "string",
-              "default": "ethereum",
-              "description": "Blockchain"
+              "default": "base",
+              "description": "Blockchain (base or solana)"
             },
             "wallet": {
               "type": "string",

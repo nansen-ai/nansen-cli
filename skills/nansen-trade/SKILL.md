@@ -1,6 +1,6 @@
 ---
 name: nansen-trade
-description: Execute DEX swaps on Solana, Ethereum, Base, or BSC. Use when buying or selling a token, getting a swap quote, or executing a trade.
+description: Execute DEX swaps on Base or Solana. Use when buying or selling a token, getting a swap quote, or executing a trade.
 allowed-tools: Bash
 ---
 
@@ -20,7 +20,7 @@ nansen trade quote \
   --amount 1000000000
 ```
 
-Symbols resolve automatically: `SOL`, `ETH`, `BNB`, `USDC`, `USDT`, `WETH`, `WBNB`. Raw addresses also work.
+Symbols resolve automatically: `SOL`, `ETH`, `USDC`, `USDT`, `WETH`. Raw addresses also work.
 
 ## Execute
 
@@ -57,7 +57,7 @@ nansen trade execute --quote "$QUOTE_ID"
 
 | Flag | Purpose |
 |------|---------|
-| `--chain` | `solana`, `ethereum`, `base`, or `bsc` |
+| `--chain` | `solana` or `base` |
 | `--from` | Source token (symbol or address) |
 | `--to` | Destination token (symbol or address) |
 | `--amount` | Amount in base units (integer) |
