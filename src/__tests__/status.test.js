@@ -226,6 +226,59 @@ describe('status command', () => {
       { retry: false, skipX402: true }
     );
   });
+
+  it('should treat empty-string API key as not configured', async () => {
+    const mockApi = {
+      apiKey: '',
+      request: vi.fn()
+    };
+
+    const result = await commands.status([], mockApi, {}, {});
+
+    expect(result.auth.configured).toBe(false);
+    expect(result.auth.valid).toBe(false);
+    expect(result.api.reachable).toBeNull();
+    expect(mockApi.request).not.toHaveBeenCalled();
+  });
+
+  it('should handle health check timeout', async () => {
+    const mockApi = {
+      apiKey: 'test-key',
+      request: vi.fn().mockImplementation(() => new Promise(() => {})) // never resolves
+    };
+
+    // Use fake timers to avoid waiting 5 real seconds
+    vi.useFakeTimers();
+    const statusPromise = commands.status([], mockApi, {}, {});
+    await vi.advanceTimersByTimeAsync(5000);
+    const result = await statusPromise;
+    vi.useRealTimers();
+
+    expect(result.ready).toBe(false);
+    expect(result.auth.configured).toBe(true);
+    expect(result.auth.valid).toBe(false);
+    expect(result.auth.error).toContain('timed out');
+    expect(result.api.reachable).toBe(false);
+    expect(result.api.error).toContain('timed out');
+    expect(result.api.code).toBe(ErrorCode.TIMEOUT);
+  });
+
+  it('should include error field when listWallets throws', async () => {
+    // Create a corrupt wallet file to trigger a parse error
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.mkdirSync(walletsDir, { recursive: true });
+    fs.writeFileSync(path.join(walletsDir, 'config.json'), JSON.stringify({}));
+    fs.writeFileSync(path.join(walletsDir, 'corrupt.json'), 'NOT VALID JSON{{{');
+
+    const mockApi = { apiKey: null, request: vi.fn() };
+    const result = await commands.status([], mockApi, {}, {});
+
+    expect(result.wallet.count).toBe(0);
+    expect(result.wallet.default).toBeNull();
+    expect(result.wallet.names).toEqual([]);
+    expect(result.wallet.error).toBeDefined();
+    expect(typeof result.wallet.error).toBe('string');
+  });
 });
 
 describe('status command via runCLI', () => {

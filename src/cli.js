@@ -874,17 +874,32 @@ export function buildCommands(deps = {}) {
 
       if (authConfigured) {
         const start = Date.now();
+        let timeoutId;
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new NansenError('Health check timed out', ErrorCode.TIMEOUT));
+          }, 5000);
+        });
         try {
-          await apiInstance.request('/api/v1/smart-money/netflow', {
-            chains: ['ethereum'], pagination: { page: 1, per_page: 1 }
-          }, { retry: false, skipX402: true });
+          await Promise.race([
+            apiInstance.request('/api/v1/smart-money/netflow', {
+              chains: ['ethereum'], pagination: { page: 1, per_page: 1 }
+            }, { retry: false, skipX402: true }),
+            timeoutPromise
+          ]);
+          clearTimeout(timeoutId);
           apiResult.reachable = true;
           apiResult.latency_ms = Date.now() - start;
           authResult.valid = true;
         } catch (err) {
+          clearTimeout(timeoutId);
           apiResult.latency_ms = Date.now() - start;
-          // Distinguish connectivity from auth errors
-          if (err.code === 'NETWORK_ERROR') {
+          if (err.code === ErrorCode.TIMEOUT) {
+            apiResult.reachable = false;
+            apiResult.error = err.message;
+            apiResult.code = ErrorCode.TIMEOUT;
+            authResult.error = 'Health check timed out';
+          } else if (err.code === 'NETWORK_ERROR') {
             apiResult.reachable = false;
             apiResult.error = err.message;
             apiResult.code = ErrorCode.NETWORK_ERROR;
@@ -915,8 +930,8 @@ export function buildCommands(deps = {}) {
           walletResult.count = wallets.length;
           walletResult.default = defaultWallet || null;
           walletResult.names = wallets.map(w => w.name);
-        } catch {
-          // Read error — keep defaults
+        } catch (err) {
+          walletResult.error = err.message;
         }
       }
       statusData.wallet = walletResult;
