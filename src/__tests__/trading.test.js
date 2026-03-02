@@ -546,7 +546,7 @@ describe('buildTradingCommands', () => {
     const logs = [];
     let exitCalled = false;
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => { exitCalled = true; },
     });
 
@@ -559,7 +559,7 @@ describe('buildTradingCommands', () => {
     const logs = [];
     let exitCalled = false;
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => { exitCalled = true; },
     });
 
@@ -580,7 +580,7 @@ describe('buildTradingCommands', () => {
     });
 
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => { exitCalled = true; },
     });
 
@@ -613,7 +613,7 @@ describe('buildTradingCommands', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => {},
     });
 
@@ -641,7 +641,7 @@ describe('buildTradingCommands', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => {},
     });
 
@@ -669,7 +669,7 @@ describe('buildTradingCommands', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => {},
     });
 
@@ -699,7 +699,7 @@ describe('buildTradingCommands', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => {},
     });
 
@@ -729,7 +729,7 @@ describe('buildTradingCommands', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => {},
     });
 
@@ -749,7 +749,7 @@ describe('buildTradingCommands', () => {
     const logs = [];
     let exitCalled = false;
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => { exitCalled = true; },
     });
 
@@ -788,7 +788,7 @@ describe('WalletConnect quote support', () => {
     const logs = [];
     let exitCalled = false;
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => { exitCalled = true; },
     });
 
@@ -812,7 +812,7 @@ describe('WalletConnect quote support', () => {
     const logs = [];
     let exitCalled = false;
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => { exitCalled = true; },
     });
 
@@ -836,7 +836,7 @@ describe('WalletConnect quote support', () => {
     const logs = [];
     let exitCalled = false;
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => { exitCalled = true; },
     });
 
@@ -880,7 +880,7 @@ describe('WalletConnect execute support', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => {},
     });
 
@@ -912,7 +912,7 @@ describe('WalletConnect execute support', () => {
     const logs = [];
     let exitCalled = false;
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => { exitCalled = true; },
     });
 
@@ -936,7 +936,7 @@ describe('WalletConnect execute support', () => {
     const logs = [];
     let exitCalled = false;
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => { exitCalled = true; },
     });
 
@@ -1047,7 +1047,7 @@ describe('quote handler rejects decimal amounts before API call', () => {
     const logs = [];
     let exitCalled = false;
     const cmds = buildTradingCommands({
-      errorOutput: (msg) => logs.push(msg),
+      log: (msg) => logs.push(msg),
       exit: () => { exitCalled = true; },
     });
 

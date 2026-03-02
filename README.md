@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/nansen-cli.svg)](https://www.npmjs.com/package/nansen-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **Built by agents, for agents.** Command-line interface for the [Nansen API](https://docs.nansen.ai) with structured JSON output.
+> **Built by agents, for agents.** Command-line interface for the [Nansen API](https://docs.nansen.ai), designed for AI agents.
 
 ## Installation
 

@@ -756,7 +756,7 @@ export function formatQuote(quote, index) {
  * Build trading command handlers for CLI integration.
  */
 export function buildTradingCommands(deps = {}) {
-  const { errorOutput = console.error, exit = process.exit } = deps;
+  const { log = console.log, exit = process.exit } = deps;
 
   return {
     'quote': async (args, apiInstance, flags, options) => {
@@ -773,7 +773,7 @@ export function buildTradingCommands(deps = {}) {
       const swapMode = options['swap-mode'] || 'exactIn';
 
       if (!chain || !from || !to || !amount) {
-        errorOutput(`
+        log(`
 Usage: nansen trade quote --chain <chain> --from <token> --to <token> --amount <baseUnits>
 
 PREREQUISITE:
@@ -803,7 +803,7 @@ EXAMPLES:
 
       const amountError = validateBaseUnitAmount(amount);
       if (amountError) {
-        errorOutput(`Error: ${amountError}`);
+        log(`Error: ${amountError}`);
         exit(1);
         return;
       }
@@ -817,13 +817,13 @@ EXAMPLES:
         let walletAddress;
         if (isWalletConnect) {
           if (chainType !== 'evm') {
-            errorOutput('WalletConnect is only supported for EVM chains');
+            log('WalletConnect is only supported for EVM chains');
             exit(1);
             return;
           }
           walletAddress = await getWalletConnectAddress();
           if (!walletAddress) {
-            errorOutput('No WalletConnect session active. Run: walletconnect connect');
+            log('No WalletConnect session active. Run: walletconnect connect');
             exit(1);
             return;
           }
@@ -839,16 +839,16 @@ EXAMPLES:
         }
 
         if (!walletAddress) {
-          errorOutput('No wallet found. A wallet address is required for quotes because the trading API builds a transaction specific to the sender.\nCreate one with: nansen wallet create');
+          log('No wallet found. A wallet address is required for quotes because the trading API builds a transaction specific to the sender.\nCreate one with: nansen wallet create');
           exit(1);
           return;
         }
 
-        errorOutput(`\nFetching quote on ${chainConfig.name}...`);
-        errorOutput(`  Wallet: ${walletAddress}`);
+        log(`\nFetching quote on ${chainConfig.name}...`);
+        log(`  Wallet: ${walletAddress}`);
 
         const fromWarning = getWrappedNativeFromWarning(from, chain);
-        if (fromWarning) errorOutput(`  ${fromWarning}`);
+        if (fromWarning) log(`  ${fromWarning}`);
 
         const params = {
           chainIndex: chainConfig.index,
@@ -865,30 +865,30 @@ EXAMPLES:
         const response = await getQuote(params);
 
         if (!response.success || !response.quotes?.length) {
-          errorOutput('No quotes available');
+          log('No quotes available');
           if (response.warnings?.length) {
-            response.warnings.forEach(w => errorOutput(`  Warning: ${w}`));
+            response.warnings.forEach(w => log(`  Warning: ${w}`));
           }
           exit(1);
           return;
         }
 
-        errorOutput('');
-        response.quotes.forEach((q, i) => errorOutput(formatQuote(q, i)));
+        log('');
+        response.quotes.forEach((q, i) => log(formatQuote(q, i)));
 
         const quoteId = saveQuote(response, chain, isWalletConnect ? 'walletconnect' : 'local');
-        errorOutput(`\n  Quote ID: ${quoteId}`);
-        errorOutput(`  Execute:  nansen trade execute --quote ${quoteId}`);
+        log(`\n  Quote ID: ${quoteId}`);
+        log(`  Execute:  nansen trade execute --quote ${quoteId}`);
         if (response.quotes.length > 1) {
-          errorOutput(`  Pin #1:  nansen trade execute --quote ${quoteId} --quote-index 0`);
+          log(`  Pin #1:  nansen trade execute --quote ${quoteId} --quote-index 0`);
         }
 
         if (response.quotes[0]?.approvalAddress && !isNativeToken(response.quotes[0]?.inputMint)) {
-          errorOutput(`\n  Warning: This token swap requires an ERC-20 approval step.`);
-          errorOutput(`    The execute command will handle this automatically.`);
+          log(`\n  Warning: This token swap requires an ERC-20 approval step.`);
+          log(`    The execute command will handle this automatically.`);
         }
 
-        errorOutput('');
+        log('');
         return undefined; // Output already printed above
 
       } catch (err) {
@@ -896,8 +896,8 @@ EXAMPLES:
         if (err.code === 'INVALID_AMOUNT' || /amount/i.test(err.message)) {
           message += '. Amounts must be in base units (e.g., 1000000000 lamports for 1 SOL, 1000000000000000000 wei for 1 ETH)';
         }
-        errorOutput(`Error: ${message}`);
-        if (err.details) errorOutput(`  Details: ${JSON.stringify(err.details)}`);
+        log(`Error: ${message}`);
+        if (err.details) log(`  Details: ${JSON.stringify(err.details)}`);
         exit(1);
       }
     },
@@ -908,7 +908,7 @@ EXAMPLES:
       const noSimulate = flags['no-simulate'] || flags.noSimulate;
 
       if (!quoteId) {
-        errorOutput(`
+        log(`
 Usage: nansen trade execute --quote <quoteId> [options]
 
 OPTIONS:
@@ -931,7 +931,7 @@ EXAMPLES:
 
         const allQuotes = quoteData.response.quotes || [];
         if (!allQuotes.length) {
-          errorOutput('❌ No quote data found');
+          log('❌ No quote data found');
           exit(1);
           return;
         }
@@ -944,8 +944,8 @@ EXAMPLES:
         // Check if any quote in range has transaction data before prompting for password
         const hasAnyTransaction = allQuotes.slice(startIndex, endIndex).some(q => q?.transaction);
         if (!hasAnyTransaction) {
-          errorOutput('❌ No quotes contain transaction data.');
-          errorOutput('  Ensure userWalletAddress was provided when fetching the quote.');
+          log('❌ No quotes contain transaction data.');
+          log('  Ensure userWalletAddress was provided when fetching the quote.');
           exit(1);
           return;
         }
@@ -965,7 +965,7 @@ EXAMPLES:
             effectiveWalletName = list.defaultWallet;
           }
           if (!effectiveWalletName) {
-            errorOutput('No wallet found. Create one with: nansen wallet create');
+            log('No wallet found. Create one with: nansen wallet create');
             exit(1);
             return;
           }
@@ -974,13 +974,13 @@ EXAMPLES:
         } else {
           // Verify WalletConnect session is still active and address matches quote
           if (chainType !== 'evm') {
-            errorOutput('WalletConnect is only supported for EVM chains');
+            log('WalletConnect is only supported for EVM chains');
             exit(1);
             return;
           }
           const wcAddress = await getWalletConnectAddress();
           if (!wcAddress) {
-            errorOutput('No WalletConnect session active. Run: walletconnect connect');
+            log('No WalletConnect session active. Run: walletconnect connect');
             exit(1);
             return;
           }
@@ -988,7 +988,7 @@ EXAMPLES:
           const quoteWallet = quoteData.response?.quotes?.[0]?.transaction?.from
             || quoteData.response?.metadata?.userWalletAddress;
           if (quoteWallet && wcAddress.toLowerCase() !== quoteWallet.toLowerCase()) {
-            errorOutput(`Connected wallet (${wcAddress}) doesn't match quote. Get a new quote with --wallet walletconnect`);
+            log(`Connected wallet (${wcAddress}) doesn't match quote. Get a new quote with --wallet walletconnect`);
             exit(1);
             return;
           }
@@ -1004,17 +1004,17 @@ EXAMPLES:
 
           // Verify transaction data exists
           if (!currentQuote.transaction) {
-            errorOutput(`  ⚠ Quote ${quoteName}: no transaction data, skipping...`);
+            log(`  ⚠ Quote ${quoteName}: no transaction data, skipping...`);
             lastQuoteError = `Quote ${quoteName} has no transaction data`;
             continue;
           }
 
-          errorOutput(`\nExecuting trade on ${chainConfig.name}...`);
+          log(`\nExecuting trade on ${chainConfig.name}...`);
           if (endIndex - startIndex > 1) {
-            errorOutput(`  Trying quote ${qi + 1}/${allQuotes.length} (${quoteName})...`);
+            log(`  Trying quote ${qi + 1}/${allQuotes.length} (${quoteName})...`);
           }
-          errorOutput(formatQuote(currentQuote));
-          errorOutput('');
+          log(formatQuote(currentQuote));
+          log('');
 
           try {
             let signedTransaction;
@@ -1027,7 +1027,7 @@ EXAMPLES:
               if (typeof txBase64 === 'object' && txBase64.data) {
                 txBase64 = base58Decode(txBase64.data).toString('base64');
               }
-              errorOutput('  Signing Solana transaction...');
+              log('  Signing Solana transaction...');
               signedTransaction = signSolanaTransaction(txBase64, exported.solana.privateKey);
               requestId = currentQuote.metadata?.requestId;
 
@@ -1041,15 +1041,15 @@ EXAMPLES:
               if (isNative) {
                 const expectedValue = BigInt(currentQuote.inAmount || currentQuote.inputAmount || '0');
                 if (txValue !== expectedValue) {
-                  errorOutput(`  ❌ Transaction value mismatch for ${quoteName}: tx.value=${txValue}, expected=${expectedValue}`);
-                  if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+                  log(`  ❌ Transaction value mismatch for ${quoteName}: tx.value=${txValue}, expected=${expectedValue}`);
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   lastQuoteError = `${quoteName} transaction value mismatch`;
                   continue;
                 }
               } else {
                 if (txValue > 0n) {
-                  errorOutput(`  ❌ ERC-20 swap has non-zero tx.value (${txValue}) for ${quoteName} — aborting`);
-                  if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+                  log(`  ❌ ERC-20 swap has non-zero tx.value (${txValue}) for ${quoteName} — aborting`);
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   lastQuoteError = `${quoteName} unexpected tx.value`;
                   continue;
                 }
@@ -1063,10 +1063,10 @@ EXAMPLES:
                 );
 
                 if (existingAllowance >= inputAmount && existingAllowance > 0n) {
-                  errorOutput(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
+                  log(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
                 } else {
-                  errorOutput(`  ⚠ Approval required → ${currentQuote.approvalAddress}`);
-                  errorOutput(`  Sending approval via WalletConnect...`);
+                  log(`  ⚠ Approval required → ${currentQuote.approvalAddress}`);
+                  log(`  Sending approval via WalletConnect...`);
                   try {
                     const approvalResult = await sendApprovalViaWalletConnect(
                       currentQuote.inputMint,
@@ -1076,7 +1076,7 @@ EXAMPLES:
                     let approvalTxHash = approvalResult.txHash;
                     if (!approvalTxHash && approvalResult.signedTransaction) {
                       // Wallet returned a signed tx instead of broadcasting — broadcast via Trading API
-                      errorOutput(`  Broadcasting approval via Trading API...`);
+                      log(`  Broadcasting approval via Trading API...`);
                       const broadcastResult = await executeTransaction({
                         signedTransaction: approvalResult.signedTransaction,
                         chain,
@@ -1088,18 +1088,18 @@ EXAMPLES:
                       approvalTxHash = broadcastResult.txHash;
                     }
                     if (approvalTxHash) {
-                      errorOutput(`  Waiting for approval confirmation...`);
+                      log(`  Waiting for approval confirmation...`);
                       const receipt = await waitForReceipt(chain, approvalTxHash);
-                      errorOutput(`  ✓ Approval confirmed in block ${parseInt(receipt.blockNumber, 16)}: ${approvalTxHash}`);
+                      log(`  ✓ Approval confirmed in block ${parseInt(receipt.blockNumber, 16)}: ${approvalTxHash}`);
                     }
                   } catch (approvalErr) {
-                    errorOutput(`  ❌ Approval failed for ${quoteName}: ${approvalErr.message}`);
-                    if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+                    log(`  ❌ Approval failed for ${quoteName}: ${approvalErr.message}`);
+                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
                     lastQuoteError = `${quoteName} approval failed`;
                     continue;
                   }
                   await new Promise(r => setTimeout(r, 2000));
-                  errorOutput('');
+                  log('');
                 }
               }
 
@@ -1113,8 +1113,8 @@ EXAMPLES:
                   value: txData.value ? '0x' + BigInt(txData.value).toString(16) : '0x0',
                 });
                 if (!sim.success) {
-                  errorOutput(`  ⚠ Simulation failed for ${quoteName}: ${sim.reason}`);
-                  if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+                  log(`  ⚠ Simulation failed for ${quoteName}: ${sim.reason}`);
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   lastQuoteError = `${quoteName} simulation failed: ${sim.reason}`;
                   continue;
                 }
@@ -1127,7 +1127,7 @@ EXAMPLES:
               const finalGas = apiGas > 0 ? apiGas : txGas;
 
               // Send transaction via WalletConnect
-              errorOutput('  Sending transaction via WalletConnect...');
+              log('  Sending transaction via WalletConnect...');
               let wcResult;
               try {
                 wcResult = await sendTransactionViaWalletConnect({
@@ -1138,24 +1138,24 @@ EXAMPLES:
                   chainId: chainConfig.chainId,
                 });
               } catch (wcErr) {
-                errorOutput(`  ❌ WalletConnect transaction failed for ${quoteName}: ${wcErr.message}`);
-                if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+                log(`  ❌ WalletConnect transaction failed for ${quoteName}: ${wcErr.message}`);
+                if (qi + 1 < endIndex) log(`  Trying next quote...`);
                 lastQuoteError = `${quoteName}: ${wcErr.message}`;
                 continue;
               }
 
               if (wcResult.txHash) {
                 // Wallet broadcast — verify on-chain
-                errorOutput('  Verifying on-chain status...');
+                log('  Verifying on-chain status...');
                 try {
                   await waitForReceipt(chain, wcResult.txHash);
                 } catch (receiptErr) {
-                  errorOutput(`\n  ⚠ Transaction was broadcast but REVERTED on-chain!`);
-                  errorOutput(`    Tx Hash:   ${wcResult.txHash}`);
-                  errorOutput(`    Explorer:  ${chainConfig.explorer}${wcResult.txHash}`);
-                  errorOutput(`    Error:     ${receiptErr.message}`);
+                  log(`\n  ⚠ Transaction was broadcast but REVERTED on-chain!`);
+                  log(`    Tx Hash:   ${wcResult.txHash}`);
+                  log(`    Explorer:  ${chainConfig.explorer}${wcResult.txHash}`);
+                  log(`    Error:     ${receiptErr.message}`);
                   if (qi + 1 < endIndex) {
-                    errorOutput(`  Trying next quote...`);
+                    log(`  Trying next quote...`);
                     lastQuoteError = `${quoteName} reverted on-chain`;
                     continue;
                   }
@@ -1163,11 +1163,11 @@ EXAMPLES:
                   return;
                 }
 
-                errorOutput(`\n  ✓ Transaction successful!`);
-                errorOutput(`    Tx Hash:   ${wcResult.txHash}`);
-                errorOutput(`    Chain:       ${chainConfig.name}`);
-                errorOutput(`    Explorer:    ${chainConfig.explorer}${wcResult.txHash}`);
-                errorOutput('');
+                log(`\n  ✓ Transaction successful!`);
+                log(`    Tx Hash:   ${wcResult.txHash}`);
+                log(`    Chain:       ${chainConfig.name}`);
+                log(`    Explorer:    ${chainConfig.explorer}${wcResult.txHash}`);
+                log('');
                 return undefined; // Success
               }
 
@@ -1191,15 +1191,15 @@ EXAMPLES:
               if (isNative) {
                 const expectedValue = BigInt(currentQuote.inAmount || currentQuote.inputAmount || '0');
                 if (txValue !== expectedValue) {
-                  errorOutput(`  ❌ Transaction value mismatch for ${quoteName}: tx.value=${txValue}, expected=${expectedValue}`);
-                  if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+                  log(`  ❌ Transaction value mismatch for ${quoteName}: tx.value=${txValue}, expected=${expectedValue}`);
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   lastQuoteError = `${quoteName} transaction value mismatch`;
                   continue;
                 }
               } else {
                 if (txValue > 0n) {
-                  errorOutput(`  ❌ ERC-20 swap has non-zero tx.value (${txValue}) for ${quoteName} — aborting`);
-                  if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+                  log(`  ❌ ERC-20 swap has non-zero tx.value (${txValue}) for ${quoteName} — aborting`);
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   lastQuoteError = `${quoteName} unexpected tx.value`;
                   continue;
                 }
@@ -1213,10 +1213,10 @@ EXAMPLES:
                 );
 
                 if (existingAllowance >= inputAmount && existingAllowance > 0n) {
-                  errorOutput(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
+                  log(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
                 } else {
-                  errorOutput(`  ⚠ Approval required → ${currentQuote.approvalAddress}`);
-                  errorOutput(`  Sending approval tx...`);
+                  log(`  ⚠ Approval required → ${currentQuote.approvalAddress}`);
+                  log(`  Sending approval tx...`);
                   const approvalNonce = await getEvmNonce(chain, walletAddress);
 
                   const approvalGasPrice = currentQuote.transaction?.gasPrice || currentQuote.transaction?.maxFeePerGas || '1000000';
@@ -1236,25 +1236,25 @@ EXAMPLES:
                   });
 
                   if (approvalResult.status !== 'Success') {
-                    errorOutput(`  ❌ Approval failed for ${quoteName}: ${approvalResult.error || 'unknown error'}`);
-                    if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+                    log(`  ❌ Approval failed for ${quoteName}: ${approvalResult.error || 'unknown error'}`);
+                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
                     lastQuoteError = `${quoteName} approval failed`;
                     continue;
                   }
 
-                  errorOutput(`  Waiting for approval confirmation...`);
+                  log(`  Waiting for approval confirmation...`);
                   try {
                     const receipt = await waitForReceipt(chain, approvalResult.txHash);
-                    errorOutput(`  ✓ Approval confirmed in block ${parseInt(receipt.blockNumber, 16)}: ${approvalResult.txHash}`);
+                    log(`  ✓ Approval confirmed in block ${parseInt(receipt.blockNumber, 16)}: ${approvalResult.txHash}`);
                   } catch (receiptErr) {
-                    errorOutput(`  ❌ Approval may not have confirmed: ${receiptErr.message}`);
-                    if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+                    log(`  ❌ Approval may not have confirmed: ${receiptErr.message}`);
+                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
                     lastQuoteError = `${quoteName} approval unconfirmed`;
                     continue;
                   }
                   // Wait for RPC state propagation after approval
                   await new Promise(r => setTimeout(r, 2000));
-                  errorOutput('');
+                  log('');
                 }
               }
 
@@ -1270,8 +1270,8 @@ EXAMPLES:
                   value: txData.value ? '0x' + BigInt(txData.value).toString(16) : '0x0',
                 });
                 if (!sim.success) {
-                  errorOutput(`  ⚠ Simulation failed for ${quoteName}: ${sim.reason}`);
-                  if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+                  log(`  ⚠ Simulation failed for ${quoteName}: ${sim.reason}`);
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   lastQuoteError = `${quoteName} simulation failed: ${sim.reason}`;
                   continue;
                 }
@@ -1285,17 +1285,17 @@ EXAMPLES:
               const txGas = parseInt(txData.gas || txData.gasLimit || "0");
               const finalGas = apiGas > 0 ? apiGas : txGas;
               if (finalGas !== txGas) {
-                errorOutput(`  ℹ Using API gas ${finalGas} (tx.gas was ${txGas})`);
+                log(`  ℹ Using API gas ${finalGas} (tx.gas was ${txGas})`);
               }
               if (txData.gasLimit) txData.gasLimit = String(finalGas);
               else txData.gas = String(finalGas);
 
-              errorOutput('  Fetching nonce...');
+              log('  Fetching nonce...');
               await new Promise(r => setTimeout(r, 1000));
               const nonce = await getEvmNonce(chain, walletAddress);
-              errorOutput(`  Nonce: ${nonce}`);
+              log(`  Nonce: ${nonce}`);
 
-              errorOutput('  Signing EVM transaction...');
+              log('  Signing EVM transaction...');
               signedTransaction = signEvmTransaction(
                 currentQuote.transaction,
                 exported.evm.privateKey,
@@ -1304,7 +1304,7 @@ EXAMPLES:
               );
             }
 
-            errorOutput('  Broadcasting...');
+            log('  Broadcasting...');
             const execParams = {
               signedTransaction,
               chain,
@@ -1320,64 +1320,64 @@ EXAMPLES:
 
               // For EVM: verify the tx actually succeeded on-chain
               if (chainType === 'evm' && result.txHash) {
-                errorOutput('  Verifying on-chain status...');
+                log('  Verifying on-chain status...');
                 try {
                   await waitForReceipt(chain, result.txHash);
                 } catch (receiptErr) {
-                  errorOutput(`\n  ⚠ Transaction was broadcast but REVERTED on-chain!`);
-                  errorOutput(`    Tx Hash:   ${result.txHash}`);
-                  errorOutput(`    Explorer:  ${explorerUrl}`);
-                  errorOutput(`    Error:     ${receiptErr.message}`);
+                  log(`\n  ⚠ Transaction was broadcast but REVERTED on-chain!`);
+                  log(`    Tx Hash:   ${result.txHash}`);
+                  log(`    Explorer:  ${explorerUrl}`);
+                  log(`    Error:     ${receiptErr.message}`);
                   if (qi + 1 < endIndex) {
-                    errorOutput(`  Trying next quote...`);
+                    log(`  Trying next quote...`);
                     lastQuoteError = `${quoteName} reverted on-chain`;
                     continue;
                   }
-                  errorOutput(`\n  The trading API reported success, but the contract execution failed.`);
-                  errorOutput(`  This can happen due to: stale quotes, insufficient gas, or liquidity changes.`);
+                  log(`\n  The trading API reported success, but the contract execution failed.`);
+                  log(`  This can happen due to: stale quotes, insufficient gas, or liquidity changes.`);
                   exit(1);
                   return;
                 }
               }
 
-              errorOutput(`\n  ✓ Transaction successful!`);
-              errorOutput(`    Status:      ${result.status}`);
-              errorOutput(`    ${result.signature ? 'Signature' : 'Tx Hash'}:   ${txId}`);
-              errorOutput(`    Chain:       ${chainConfig.name} (${result.chainType})`);
-              errorOutput(`    Broadcaster: ${result.broadcaster}`);
-              errorOutput(`    Explorer:    ${explorerUrl}`);
+              log(`\n  ✓ Transaction successful!`);
+              log(`    Status:      ${result.status}`);
+              log(`    ${result.signature ? 'Signature' : 'Tx Hash'}:   ${txId}`);
+              log(`    Chain:       ${chainConfig.name} (${result.chainType})`);
+              log(`    Broadcaster: ${result.broadcaster}`);
+              log(`    Explorer:    ${explorerUrl}`);
 
               if (result.swapEvents?.length) {
-                errorOutput(`    Swaps:`);
+                log(`    Swaps:`);
                 result.swapEvents.forEach(e => {
-                  errorOutput(`      ${e.inputAmount} ${e.inputMint?.slice(0, 8)}... → ${e.outputAmount} ${e.outputMint?.slice(0, 8)}...`);
+                  log(`      ${e.inputAmount} ${e.inputMint?.slice(0, 8)}... → ${e.outputAmount} ${e.outputMint?.slice(0, 8)}...`);
                 });
               }
-              errorOutput('');
+              log('');
               return undefined; // Success — done
             } else {
-              errorOutput(`\n  ✗ Quote ${quoteName} failed: ${result.status}`);
-              if (result.error) errorOutput(`    Error:  ${result.error}`);
+              log(`\n  ✗ Quote ${quoteName} failed: ${result.status}`);
+              if (result.error) log(`    Error:  ${result.error}`);
               lastQuoteError = `${quoteName}: ${result.error || result.status}`;
-              if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+              if (qi + 1 < endIndex) log(`  Trying next quote...`);
             }
 
           } catch (quoteErr) {
-            errorOutput(`  ❌ Quote ${quoteName} failed: ${quoteErr.message}`);
+            log(`  ❌ Quote ${quoteName} failed: ${quoteErr.message}`);
             lastQuoteError = `${quoteName}: ${quoteErr.message}`;
-            if (qi + 1 < endIndex) errorOutput(`  Trying next quote...`);
+            if (qi + 1 < endIndex) log(`  Trying next quote...`);
           }
         }
 
         // All quotes exhausted
-        errorOutput(`\n❌ All quotes failed. Last error: ${lastQuoteError || 'unknown'}`);
-        errorOutput('');
+        log(`\n❌ All quotes failed. Last error: ${lastQuoteError || 'unknown'}`);
+        log('');
         exit(1);
         return undefined;
 
       } catch (err) {
-        errorOutput(`Error: ${err.message}`);
-        if (err.details) errorOutput(`  Details: ${JSON.stringify(err.details)}`);
+        log(`Error: ${err.message}`);
+        if (err.details) log(`  Details: ${JSON.stringify(err.details)}`);
         exit(1);
       }
     },

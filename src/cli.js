@@ -610,7 +610,7 @@ export async function compareWallets(api, params = {}) {
 
 export const BANNER = '';
 
-export const HELP = `Nansen CLI v${VERSION} — structured JSON output for AI agents.
+export const HELP = `Nansen CLI v${VERSION} — designed for AI agents.
 
 USAGE: nansen <command> [subcommand] [options]
 

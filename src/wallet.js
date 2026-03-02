@@ -519,7 +519,7 @@ export function buildWalletCommands(deps = {}) {
             log(`    Base (recommended, lower fees): send USDC to ${result.evm}`);
             log(`    Solana: send USDC to ${result.solana}`);
             log('');
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -530,7 +530,7 @@ export function buildWalletCommands(deps = {}) {
           const result = listWallets();
           if (result.wallets.length === 0) {
             log('No wallets found. Create one with: nansen wallet create');
-            return result;
+            return;
           }
           log('');
           for (const w of result.wallets) {
@@ -540,7 +540,6 @@ export function buildWalletCommands(deps = {}) {
             log(`    Solana: ${w.solana}`);
             log('');
           }
-          return result;
         },
 
         'show': async () => {
@@ -557,7 +556,7 @@ export function buildWalletCommands(deps = {}) {
             log(`    EVM:    ${result.evm}`);
             log(`    Solana: ${result.solana}`);
             log(`    Created: ${result.createdAt}\n`);
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -582,7 +581,7 @@ export function buildWalletCommands(deps = {}) {
             log(`    Address:     ${result.solana.address}`);
             log(`    Private Key: ${result.solana.privateKey}`);
             log('');
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -599,7 +598,7 @@ export function buildWalletCommands(deps = {}) {
           try {
             const result = setDefaultWallet(name);
             log(`✓ Default wallet set to "${result.defaultWallet}"`);
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -620,7 +619,7 @@ export function buildWalletCommands(deps = {}) {
             if (result.newDefault) {
               log(`  New default: ${result.newDefault}`);
             }
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -675,37 +674,32 @@ export function buildWalletCommands(deps = {}) {
             if (dryRun) {
               // Build the transaction but don't broadcast
               const result = await sendTokens(sendOpts);
-              const output = {
-                dryRun: true,
-                from: result.from,
-                to: options.to,
-                amount: result.amount || (isMax ? 'max' : String(options.amount)),
-                token: options.token || '(native)',
-                chain: options.chain,
-                ...(result.estimatedFee ? { estimatedFee: result.estimatedFee } : {}),
-              };
-              log(JSON.stringify(output, null, 2));
-              return output;
+              log(`\nDry run — transaction not broadcast\n`);
+              log(`  From:   ${result.from}`);
+              log(`  To:     ${options.to}`);
+              log(`  Amount: ${result.amount || (isMax ? 'max' : String(options.amount))}`);
+              log(`  Token:  ${options.token || '(native)'}`);
+              log(`  Chain:  ${options.chain}`);
+              if (result.estimatedFee) log(`  Fee:    ${result.estimatedFee}`);
+              log('');
+              return;
             }
 
             const result = await sendTokens(sendOpts);
-            
-            const output = {
-              success: true,
-              transactionHash: result.transactionHash,
-              confirmed: result.confirmed,
-              ...(result.blockNumber ? { blockNumber: result.blockNumber } : {}),
-              from: result.from,
-              to: result.to,
-              amount: result.amount,
-              token: result.token,
-              chain: result.chain,
-              explorer: result.explorer,
-            };
-            log(JSON.stringify(output, null, 2));
-            return output;
+            log(`\n✓ Transaction sent\n`);
+            log(`  Tx Hash: ${result.transactionHash}`);
+            log(`  Chain:   ${result.chain}`);
+            log(`  From:    ${result.from}`);
+            log(`  To:      ${result.to}`);
+            log(`  Amount:  ${result.amount}`);
+            log(`  Token:   ${result.token}`);
+            if (result.blockNumber) log(`  Block:   ${result.blockNumber}`);
+            log(`  Status:  ${result.confirmed ? 'confirmed' : 'pending'}`);
+            log(`  Explorer: ${result.explorer}`);
+            log('');
+            return;
           } catch (err) {
-            log(JSON.stringify({ success: false, error: err.message }));
+            log(`Error: ${err.message}`);
             exit(1);
           }
         },
@@ -749,15 +743,14 @@ EXAMPLES:
   nansen wallet send --to 0x742d35Cc... --amount 1.5 --chain evm
   nansen wallet send --to 9WzDXw... --amount 0.1 --chain solana --token So11...
 `);
-          return {
-            commands: ['create', 'list', 'show', 'export', 'default', 'delete', 'send'],
-            description: 'Local wallet management for EVM and Solana',
-          };
+          return;
         },
       };
 
       if (!handlers[subcommand]) {
-        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+        log(`Unknown subcommand: ${subcommand}. Available: ${Object.keys(handlers).join(', ')}`);
+        exit(1);
+        return;
       }
 
       return handlers[subcommand]();

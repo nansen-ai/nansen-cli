@@ -1,6 +1,6 @@
 # AGENTS.md
 
-CLI for the [Nansen API](https://docs.nansen.ai) — structured JSON output, designed for AI agents.
+CLI for the [Nansen API](https://docs.nansen.ai) — designed for AI agents.
 30+ endpoints across Smart Money, Profiler, Token God Mode, Portfolio, Perps.
 
 ## Commands
@@ -41,7 +41,8 @@ x402:   any API call → 402 → x402.js ranks requirements → sign USDC (EVM f
 
 - **ESM only** — `import`/`export`, no TypeScript, no transpilation
 - **BigInt for token amounts** — never floating point
-- **No `console.log` in core** — return data, CLI layer formats via `formatOutput()`
+- **Research commands** — return data objects, CLI layer formats via `formatOutput()` to stdout
+- **Operational commands** (trade, wallet, login) — print human-readable text via `log()` to stdout, return `undefined`
 - **No interactive prompts in core** — use env vars (`NANSEN_WALLET_PASSWORD`, `NANSEN_API_KEY`)
 - **Actionable errors** — `"Not logged in. Run: nansen login"` not `"Authentication failed"`
 

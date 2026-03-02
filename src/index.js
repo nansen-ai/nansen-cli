@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
  * Nansen CLI - Command-line interface for Nansen API
- * Designed for AI agents with structured JSON output
- * 
+ * Designed for AI agents.
+ *
  * Usage: nansen <command> [options]
- * 
- * All output is JSON for easy parsing by AI agents.
+ *
+ * Research commands return JSON; operational commands print human-readable text.
  * Use --pretty for human-readable formatting.
  * 
  * Core logic lives in cli.js for testability.
