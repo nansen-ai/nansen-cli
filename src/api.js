@@ -733,7 +733,7 @@ export class NansenAPI {
   }
 
   async addressPnl(params = {}) {
-    const { address, chain = 'ethereum', date, days = 30, pagination } = params;
+    const { address, chain = 'ethereum', date, days = 30, filters = {}, orderBy, pagination } = params;
     if (address) {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
@@ -743,6 +743,8 @@ export class NansenAPI {
       address,
       chain,
       date: dateRange,
+      filters,
+      order_by: orderBy,
       pagination
     });
   }
