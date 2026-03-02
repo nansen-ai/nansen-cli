@@ -776,13 +776,13 @@ export function buildTradingCommands(deps = {}) {
         const missing = ['chain', 'from', 'to', 'amount'].filter(k => !({ chain, from, to, amount }[k]));
         throw Object.assign(
           new Error(`Missing required options: --${missing.join(', --')}. Usage: nansen trade quote --chain <chain> --from <token> --to <token> --amount <baseUnits>`),
-          { code: 'MISSING_PARAM', status: null }
+          { code: 'MISSING_PARAM' }
         );
       }
 
       const amountError = validateBaseUnitAmount(amount);
       if (amountError) {
-        throw Object.assign(new Error(amountError), { code: 'INVALID_AMOUNT', status: null });
+        throw Object.assign(new Error(amountError), { code: 'INVALID_AMOUNT' });
       }
 
       try {
@@ -794,11 +794,11 @@ export function buildTradingCommands(deps = {}) {
         let walletAddress;
         if (isWalletConnect) {
           if (chainType !== 'evm') {
-            throw Object.assign(new Error('WalletConnect is only supported for EVM chains'), { code: 'UNSUPPORTED_CHAIN', status: null });
+            throw Object.assign(new Error('WalletConnect is only supported for EVM chains'), { code: 'UNSUPPORTED_CHAIN' });
           }
           walletAddress = await getWalletConnectAddress();
           if (!walletAddress) {
-            throw Object.assign(new Error('No WalletConnect session active. Run: walletconnect connect'), { code: 'WALLET_REQUIRED', status: null });
+            throw Object.assign(new Error('No WalletConnect session active. Run: walletconnect connect'), { code: 'WALLET_REQUIRED' });
           }
         } else if (walletName) {
           const wallet = showWallet(walletName);
@@ -813,8 +813,8 @@ export function buildTradingCommands(deps = {}) {
 
         if (!walletAddress) {
           throw Object.assign(
-            new Error('No wallet configured. A wallet address is required because the trading API builds a transaction specific to the sender. Create one with: nansen wallet create'),
-            { code: 'WALLET_REQUIRED', status: null }
+            new Error('No wallet configured. Create one with: nansen wallet create'),
+            { code: 'WALLET_REQUIRED' }
           );
         }
 
@@ -842,7 +842,7 @@ export function buildTradingCommands(deps = {}) {
           const warnings = response.warnings?.length ? response.warnings : [];
           throw Object.assign(
             new Error('No quotes available for this swap'),
-            { code: 'NO_QUOTES', status: null, details: warnings.length ? { warnings } : null }
+            { code: 'NO_QUOTES', details: warnings.length ? { warnings } : null }
           );
         }
 
@@ -885,11 +885,11 @@ export function buildTradingCommands(deps = {}) {
         };
 
       } catch (err) {
-        // Re-throw so the main runner outputs a structured JSON error to stdout
-        if (err.code === 'INVALID_AMOUNT' || (!err.code && /amount/i.test(err.message))) {
+        // Augment uncoded amount-related errors with base-unit guidance
+        if (!err.code && /amount/i.test(err.message)) {
           throw Object.assign(
             new Error(err.message + '. Amounts must be in base units (e.g. 1000000000 lamports = 1 SOL, 1000000000000000000 wei = 1 ETH)'),
-            { code: 'INVALID_AMOUNT', status: err.status || null, details: err.details || null }
+            { code: 'INVALID_AMOUNT', status: err.status || null }
           );
         }
         throw err;
@@ -903,8 +903,8 @@ export function buildTradingCommands(deps = {}) {
 
       if (!quoteId) {
         throw Object.assign(
-          new Error("Missing required option: --quote <quoteId>. Get a quote first with: nansen trade quote --chain <chain> --from <token> --to <token> --amount <baseUnits>"),
-          { code: 'MISSING_PARAM', status: null }
+          new Error("Missing required option: --quote <quoteId>. Get a quote first with: nansen trade quote"),
+          { code: 'MISSING_PARAM' }
         );
       }
 
@@ -916,7 +916,7 @@ export function buildTradingCommands(deps = {}) {
 
         const allQuotes = quoteData.response.quotes || [];
         if (!allQuotes.length) {
-          throw Object.assign(new Error('No quote data found in stored quote'), { code: 'INVALID_QUOTE', status: null });
+          throw Object.assign(new Error('No quote data found in stored quote'), { code: 'INVALID_QUOTE' });
         }
 
         // --quote-index pins a specific quote (no fallback)
@@ -929,7 +929,7 @@ export function buildTradingCommands(deps = {}) {
         if (!hasAnyTransaction) {
           throw Object.assign(
             new Error('No quotes contain transaction data. Ensure userWalletAddress was provided when fetching the quote.'),
-            { code: 'INVALID_QUOTE', status: null }
+            { code: 'INVALID_QUOTE' }
           );
         }
 
@@ -948,18 +948,18 @@ export function buildTradingCommands(deps = {}) {
             effectiveWalletName = list.defaultWallet;
           }
           if (!effectiveWalletName) {
-            throw Object.assign(new Error('No wallet found. Create one with: nansen wallet create'), { code: 'WALLET_REQUIRED', status: null });
+            throw Object.assign(new Error('No wallet found. Create one with: nansen wallet create'), { code: 'WALLET_REQUIRED' });
           }
 
           exported = exportWallet(effectiveWalletName, password);
         } else {
           // Verify WalletConnect session is still active and address matches quote
           if (chainType !== 'evm') {
-            throw Object.assign(new Error('WalletConnect is only supported for EVM chains'), { code: 'UNSUPPORTED_CHAIN', status: null });
+            throw Object.assign(new Error('WalletConnect is only supported for EVM chains'), { code: 'UNSUPPORTED_CHAIN' });
           }
           const wcAddress = await getWalletConnectAddress();
           if (!wcAddress) {
-            throw Object.assign(new Error('No WalletConnect session active. Run: walletconnect connect'), { code: 'WALLET_REQUIRED', status: null });
+            throw Object.assign(new Error('No WalletConnect session active. Run: walletconnect connect'), { code: 'WALLET_REQUIRED' });
           }
           // Check address matches the one used during quoting
           const quoteWallet = quoteData.response?.quotes?.[0]?.transaction?.from
@@ -967,7 +967,7 @@ export function buildTradingCommands(deps = {}) {
           if (quoteWallet && wcAddress.toLowerCase() !== quoteWallet.toLowerCase()) {
             throw Object.assign(
               new Error(`Connected wallet (${wcAddress}) does not match the wallet used when fetching the quote. Get a new quote with --wallet walletconnect`),
-              { code: 'WALLET_MISMATCH', status: null }
+              { code: 'WALLET_MISMATCH' }
             );
           }
         }
@@ -1137,7 +1137,7 @@ export function buildTradingCommands(deps = {}) {
                     lastQuoteError = `${quoteName} reverted on-chain`;
                     continue;
                   }
-                  throw Object.assign(new Error(`Transaction reverted on-chain: ${receiptErr.message}. Tx: ${wcResult.txHash}`), { code: 'TRADE_REVERTED', status: null });
+                  throw Object.assign(new Error(`Transaction reverted on-chain: ${receiptErr.message}. Tx: ${wcResult.txHash}`), { code: 'TRADE_REVERTED' });
                 }
 
                 errorOutput(`\n  ✓ Transaction successful!`);
@@ -1317,8 +1317,8 @@ export function buildTradingCommands(deps = {}) {
                     continue;
                   }
                   throw Object.assign(
-                    new Error(`Transaction reverted on-chain: ${receiptErr.message}. This can happen due to stale quotes, insufficient gas, or liquidity changes. Tx: ${result.txHash}`),
-                    { code: 'TRADE_REVERTED', status: null }
+                    new Error(`Transaction reverted on-chain: ${receiptErr.message}. Tx: ${result.txHash}`),
+                    { code: 'TRADE_REVERTED' }
                   );
                 }
               }
@@ -1365,13 +1365,13 @@ export function buildTradingCommands(deps = {}) {
         // All quotes exhausted
         throw Object.assign(
           new Error(`All quotes failed. Last error: ${lastQuoteError || 'unknown'}`),
-          { code: 'TRADE_FAILED', status: null }
+          { code: 'TRADE_FAILED' }
         );
 
       } catch (err) {
         // Normalize errors without a code so the main runner can format them consistently
         if (!err.code) {
-          throw Object.assign(new Error(err.message), { code: 'TRADE_ERROR', status: err.status || null, details: err.details || null });
+          throw Object.assign(new Error(err.message), { code: 'TRADE_ERROR', status: err.status || null });
         }
         throw err;
       }

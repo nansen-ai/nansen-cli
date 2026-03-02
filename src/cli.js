@@ -816,7 +816,7 @@ export function buildCommands(deps = {}) {
         // Unknown subcommand — return an error instead of silently dumping full schema
         throw Object.assign(
           new Error(`Unknown schema command: ${subcommand}. Available: ${Object.keys(SCHEMA.commands).join(', ')}`),
-          { code: 'UNKNOWN_COMMAND', status: null }
+          { code: 'UNKNOWN_COMMAND' }
         );
       }
 
