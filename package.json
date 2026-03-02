@@ -1,12 +1,17 @@
 {
   "name": "nansen-cli",
-  "version": "1.8.0",
+  "version": "1.10.1",
   "description": "Command-line interface for Nansen API - designed for AI agents",
   "main": "src/index.js",
   "type": "module",
   "bin": {
     "nansen": "./src/index.js"
   },
+  "files": [
+    "src/*.js",
+    "src/*.json",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "start": "node src/index.js",
     "pretest": "node scripts/check-changeset.js",
@@ -14,7 +19,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:live": "NANSEN_LIVE_TEST=1 vitest run",
-    "test:swap": "vitest run --config vitest.e2e.config.js",
+    "test:trade": "vitest run --config vitest.e2e.config.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "changeset": "changeset",
     "changeset:version": "changeset version",
     "changeset:publish": "changeset publish"
@@ -48,7 +55,10 @@
   "devDependencies": {
     "@changesets/changelog-github": "^0.5.1",
     "@changesets/cli": "^2.29.4",
+    "@eslint/js": "^10.0.1",
     "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^10.0.2",
+    "globals": "^17.4.0",
     "vitest": "^4.0.18"
   }
 }

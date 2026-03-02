@@ -16,7 +16,7 @@ import {
   validateSolanaAddress,
   bigIntToHex,
 } from '../transfer.js';
-import { keccak256, signSecp256k1, rlpEncode } from '../crypto.js';
+import { signSecp256k1, rlpEncode } from '../crypto.js';
 import { base58Encode } from '../wallet.js';
 import * as wallet from '../wallet.js';
 import * as wcTrading from '../walletconnect-trading.js';
@@ -207,7 +207,7 @@ describe('secp256k1 ECDSA Signing', () => {
 
 describe('Ed25519 Signing', () => {
   test('produces 64-byte signature', () => {
-    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519', {
+    const { publicKey: _publicKey, privateKey } = crypto.generateKeyPairSync('ed25519', {
       publicKeyEncoding: { type: 'spki', format: 'der' },
       privateKeyEncoding: { type: 'pkcs8', format: 'der' },
     });

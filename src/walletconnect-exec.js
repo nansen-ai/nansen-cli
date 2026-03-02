@@ -11,7 +11,7 @@ import { execFile } from 'child_process';
  */
 export function wcExec(cmd, args, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: timeoutMs }, (err, stdout, stderr) => {
+    execFile(cmd, args, { timeout: timeoutMs }, (err, stdout, _stderr) => {
       if (err) {
         reject(new Error(err.message));
         return;

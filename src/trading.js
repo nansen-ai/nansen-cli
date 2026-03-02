@@ -1,7 +1,7 @@
 /**
  * Nansen CLI - Trading Commands
  * Quote and execute DEX swaps via the Nansen Trading API.
- * Supports Solana and EVM chains (Ethereum, Base, BSC).
+ * Supports Solana and Base.
  * Zero external dependencies — uses Node.js built-in crypto only.
  */
 
@@ -19,21 +19,17 @@ const TRADING_API_URL = process.env.NANSEN_TRADING_API_URL || 'https://trading-a
 
 const CHAIN_MAP = {
   solana:   { index: '501', type: 'solana', chainId: 501,  name: 'Solana',   explorer: 'https://solscan.io/tx/' },
-  ethereum: { index: '1',   type: 'evm',    chainId: 1,    name: 'Ethereum', explorer: 'https://etherscan.io/tx/' },
   base:     { index: '8453', type: 'evm',   chainId: 8453, name: 'Base',     explorer: 'https://basescan.org/tx/' },
-  bsc:      { index: '56',  type: 'evm',    chainId: 56,   name: 'BSC',      explorer: 'https://bscscan.com/tx/' },
 };
 
 // Extend when adding new EVM chains (e.g. arbitrum WETH, polygon WMATIC)
 const WRAPPED_NATIVE_TOKENS = {
-  ethereum: { address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', symbol: 'WETH', nativeSymbol: 'ETH' },
   base:     { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', nativeSymbol: 'ETH' },
-  bsc:      { address: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', symbol: 'WBNB', nativeSymbol: 'BNB' },
 };
 
 // Common token symbol → address lookup per chain.
 // Native sentinels: Solana uses native mint, EVM uses 0xeee…eee.
-// Wrapped-native addresses (WETH, WBNB) are derived from WRAPPED_NATIVE_TOKENS
+// Wrapped-native addresses (WETH) are derived from WRAPPED_NATIVE_TOKENS
 // to avoid duplication — keep that map as the single source of truth.
 const EVM_NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 const TOKEN_SYMBOLS = {
@@ -43,12 +39,6 @@ const TOKEN_SYMBOLS = {
     USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
   },
-  ethereum: {
-    ETH:  EVM_NATIVE,
-    WETH: WRAPPED_NATIVE_TOKENS.ethereum.address,
-    USDC: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
-    USDT: '0xdac17f958d2ee523a2206206994597c13d831ec7',
-  },
   base: {
     ETH:  EVM_NATIVE,
     WETH: WRAPPED_NATIVE_TOKENS.base.address,
@@ -56,12 +46,6 @@ const TOKEN_SYMBOLS = {
     // NOTE: Legacy L2-bridged USDT on Base. If Tether deploys natively on Base
     // (like Circle did with USDC), this address will need updating.
     USDT: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
-  },
-  bsc: {
-    BNB:  EVM_NATIVE,
-    WBNB: WRAPPED_NATIVE_TOKENS.bsc.address,
-    USDC: '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',
-    USDT: '0x55d398326f99059ff775485246999027b3197955',
   },
 };
 
@@ -80,9 +64,7 @@ export function resolveTokenAddress(symbolOrAddress, chainName) {
 
 // Default public RPC endpoints (used for nonce fetching)
 const EVM_RPC_URLS = {
-  ethereum: process.env.NANSEN_RPC_ETHEREUM || 'https://eth.llamarpc.com',
   base:     process.env.NANSEN_RPC_BASE     || 'https://mainnet.base.org',
-  bsc:      process.env.NANSEN_RPC_BSC      || 'https://bsc-dataseed.binance.org',
 };
 
 function getQuotesDir() {
@@ -321,7 +303,7 @@ export function signSolanaTransaction(transactionBase64, privateKeyHex) {
  *
  * @param {object} txData - Transaction fields from quote.transaction { to, data, value, gas, gasPrice }
  * @param {string} privateKeyHex - 64-char hex (32-byte secp256k1 private key)
- * @param {string} chain - Chain name (ethereum, base, bsc)
+ * @param {string} chain - Chain name
  * @param {number} nonce - Account nonce
  * @returns {string} 0x-prefixed signed transaction hex
  */
@@ -742,7 +724,7 @@ export function validateBaseUnitAmount(amount) {
   return null;
 }
 
-function formatQuote(quote, index) {
+export function formatQuote(quote, index) {
   const lines = [];
   const label = index !== undefined ? `  Quote #${index + 1}` : '  Best Quote';
   lines.push(`${label} (${quote.aggregator || 'unknown'})`);
@@ -750,10 +732,21 @@ function formatQuote(quote, index) {
   lines.push(`    Output:       ${quote.outAmount} → ${quote.outputMint?.slice(0, 12)}...`);
   if (quote.inUsdValue)  lines.push(`    In USD:       $${quote.inUsdValue}`);
   if (quote.outUsdValue) lines.push(`    Out USD:      $${quote.outUsdValue}`);
-  if (quote.priceImpactPct) lines.push(`    Price Impact: ${quote.priceImpactPct}%`);
+  if (quote.priceImpactPct) {
+    const impactAbs = Math.abs(parseFloat(quote.priceImpactPct));
+    if (impactAbs <= 5) {
+      lines.push(`    Price Impact: ${impactAbs}%`);
+    }
+  }
   if (quote.tradingFeeInUsd) lines.push(`    Trading Fee:  $${quote.tradingFeeInUsd}`);
   if (quote.networkFeeInUsd) lines.push(`    Network Fee:  $${quote.networkFeeInUsd}`);
   if (quote.approvalAddress && !isNativeToken(quote.inputMint)) lines.push(`    ⚠ Requires token approval to: ${quote.approvalAddress}`);
+  if (quote.priceImpactPct) {
+    const impactAbs = Math.abs(parseFloat(quote.priceImpactPct));
+    if (impactAbs > 5) {
+      lines.push(`    ⚠ Price impact is ${impactAbs}%! You may lose significant value.`);
+    }
+  }
   return lines.join('\n');
 }
 
@@ -781,23 +774,28 @@ export function buildTradingCommands(deps = {}) {
 
       if (!chain || !from || !to || !amount) {
         errorOutput(`
-Usage: nansen quote --chain <chain> --from <token> --to <token> --amount <baseUnits>
+Usage: nansen trade quote --chain <chain> --from <token> --to <token> --amount <baseUnits>
+
+PREREQUISITE:
+  A wallet must be configured before using this command (the trading API builds
+  a transaction specific to your sender address).
+  Set one up with: nansen wallet create
 
 OPTIONS:
-  --chain <chain>           Chain: solana, ethereum, base, bsc
+  --chain <chain>           Chain: solana, base
   --from <symbol|address>   Input token (symbol like SOL, USDC or address)
   --to <symbol|address>     Output token (symbol like USDC, ETH or address)
   --amount <units>          Amount in BASE UNITS (e.g. lamports, wei)
-  --wallet <name>           Wallet name (default: default wallet)
+  --wallet <name>           Wallet name (default: default wallet). Use "walletconnect" or "wc" for WalletConnect (EVM only).
   --slippage <pct>          Slippage as decimal (e.g. 0.03 for 3%). Default: 0.03
   --auto-slippage           Enable auto slippage calculation
   --max-auto-slippage <pct> Max auto slippage when auto-slippage enabled
   --swap-mode <mode>        exactIn (default) or exactOut
 
 EXAMPLES:
-  nansen quote --chain solana --from SOL --to USDC --amount 1000000000
-  nansen quote --chain base --from ETH --to USDC --amount 1000000000000000000
-  nansen quote --chain solana --from So11111111111111111111111111111111111111112 --to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 1000000000
+  nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
+  nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000
+  nansen trade quote --chain solana --from So11111111111111111111111111111111111111112 --to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 1000000000
 `);
         exit(1);
         return;
@@ -833,11 +831,15 @@ EXAMPLES:
           const wallet = showWallet(walletName);
           walletAddress = chainType === 'solana' ? wallet.solana : wallet.evm;
         } else {
-          walletAddress = getDefaultAddress(chainType);
+          try {
+            walletAddress = getDefaultAddress(chainType);
+          } catch {
+            // No wallet configured — fall through to the check below
+          }
         }
 
         if (!walletAddress) {
-          errorOutput('No wallet found. Create one with: nansen wallet create');
+          errorOutput('No wallet found. A wallet address is required for quotes because the trading API builds a transaction specific to the sender.\nCreate one with: nansen wallet create');
           exit(1);
           return;
         }
@@ -877,6 +879,9 @@ EXAMPLES:
         const quoteId = saveQuote(response, chain, isWalletConnect ? 'walletconnect' : 'local');
         errorOutput(`\n  Quote ID: ${quoteId}`);
         errorOutput(`  Execute:  nansen trade execute --quote ${quoteId}`);
+        if (response.quotes.length > 1) {
+          errorOutput(`  Pin #1:  nansen trade execute --quote ${quoteId} --quote-index 0`);
+        }
 
         if (response.quotes[0]?.approvalAddress && !isNativeToken(response.quotes[0]?.inputMint)) {
           errorOutput(`\n  Warning: This token swap requires an ERC-20 approval step.`);

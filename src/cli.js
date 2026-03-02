@@ -17,175 +17,12 @@ const { version: VERSION } = require('../package.json');
 
 // ============= Schema Definition =============
 
-export const SCHEMA = {
-  version: VERSION,
-  commands: {
-    'research': {
-      description: 'Research and analytics commands',
-      subcommands: {
-        'smart-money': {
-          description: 'Smart Money analytics - track sophisticated market participants',
-          subcommands: {
-            'netflow': {
-              description: 'Net capital flows (inflows vs outflows)',
-              options: {
-                chain: { type: 'string', default: 'solana', description: 'Blockchain to query' },
-                chains: { type: 'array', description: 'Multiple chains as JSON array' },
-                limit: { type: 'number', description: 'Number of results' },
-                labels: { type: 'string|array', description: 'Smart Money label filter' },
-                sort: { type: 'string', description: 'Sort field:direction (e.g., value_usd:desc)' },
-                filters: { type: 'object', description: 'Additional filters as JSON' }
-              },
-              returns: ['token_address', 'token_symbol', 'token_name', 'chain', 'inflow_usd', 'outflow_usd', 'net_flow_usd']
-            },
-            'dex-trades': {
-              description: 'Real-time DEX trading activity',
-              options: { chain: { type: 'string', default: 'solana' }, chains: { type: 'array' }, limit: { type: 'number' }, labels: { type: 'string|array' }, sort: { type: 'string' }, filters: { type: 'object' } },
-              returns: ['chain', 'block_timestamp', 'transaction_hash', 'trader_address', 'trader_address_label', 'token_bought_address', 'token_sold_address', 'token_bought_amount', 'token_sold_amount', 'token_bought_symbol', 'token_sold_symbol', 'trade_value_usd']
-            },
-            'perp-trades': {
-              description: 'Perpetual trading on Hyperliquid',
-              options: { limit: { type: 'number' }, sort: { type: 'string' }, filters: { type: 'object' } },
-              returns: ['trader_address', 'trader_address_label', 'token_symbol', 'side', 'action', 'token_amount', 'price_usd', 'value_usd', 'type', 'block_timestamp', 'transaction_hash']
-            },
-            'holdings': {
-              description: 'Aggregated token balances',
-              options: { chain: { type: 'string', default: 'solana' }, chains: { type: 'array' }, limit: { type: 'number' }, labels: { type: 'string|array' } },
-              returns: ['chain', 'token_address', 'token_symbol', 'token_sectors', 'value_usd', 'balance_24h_percent_change', 'holders_count', 'share_of_holdings_percent', 'token_age_days', 'market_cap_usd']
-            },
-            'dcas': {
-              description: 'DCA strategies on Jupiter',
-              options: { limit: { type: 'number' }, filters: { type: 'object' } },
-              returns: ['dca_created_at', 'dca_updated_at', 'trader_address', 'trader_address_label', 'dca_vault_address', 'input_token_address', 'output_token_address', 'deposit_token_amount', 'token_spent_amount', 'output_token_redeemed_amount', 'dca_status', 'input_token_symbol', 'output_token_symbol', 'deposit_value_usd']
-            },
-            'historical-holdings': {
-              description: 'Historical holdings over time',
-              options: { chain: { type: 'string', default: 'solana' }, chains: { type: 'array' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } },
-              returns: ['date', 'token_address', 'token_symbol', 'balance', 'balance_usd']
-            }
-          }
-        },
-        'profiler': {
-          description: 'Wallet profiling - detailed information about any blockchain address',
-          subcommands: {
-            'balance': { description: 'Current token holdings', options: { address: { type: 'string', required: true, description: 'Wallet address to query' }, chain: { type: 'string', default: 'ethereum' }, entity: { type: 'string', description: 'Entity name instead of address' } }, returns: ['chain', 'address', 'token_address', 'token_symbol', 'token_name', 'token_amount', 'price_usd', 'value_usd'] },
-            'labels': { description: 'Behavioral and entity labels', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' } }, returns: ['label', 'label_type', 'label_subtype'] },
-            'transactions': { description: 'Transaction history', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, date: { type: 'string', required: true, description: 'Date or date range' }, limit: { type: 'number' }, days: { type: 'number', default: 30 } }, returns: ['chain', 'method', 'tokens_sent', 'tokens_received', 'volume_usd', 'block_timestamp', 'transaction_hash'] },
-            'pnl': { description: 'PnL and trade performance', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, date: { type: 'string', description: 'Date or date range' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['token_address', 'token_symbol', 'realized_pnl_usd', 'unrealized_pnl_usd', 'total_pnl_usd'] },
-            'search': { description: 'Search for entities by name', options: { query: { type: 'string', required: true, description: 'Search query' }, limit: { type: 'number' } }, returns: ['entity_name'] },
-            'historical-balances': { description: 'Historical balances over time', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } }, returns: ['date', 'token_address', 'token_symbol', 'balance', 'balance_usd'] },
-            'related-wallets': { description: 'Find wallets related to an address', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, limit: { type: 'number' } }, returns: ['address', 'address_label', 'relation', 'transaction_hash', 'block_timestamp', 'order', 'chain'] },
-            'counterparties': { description: 'Top counterparties by volume', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } }, returns: ['counterparty_address', 'counterparty_address_label', 'interaction_count', 'total_volume_usd', 'volume_in_usd', 'volume_out_usd', 'tokens_info'] },
-            'pnl-summary': { description: 'Summarized PnL metrics', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } }, returns: ['top5_tokens', 'traded_token_count', 'traded_times', 'realized_pnl_usd', 'realized_pnl_percent', 'win_rate'] },
-            'perp-positions': { description: 'Current perpetual positions', options: { address: { type: 'string', required: true }, limit: { type: 'number' } }, returns: ['symbol', 'side', 'size', 'entry_price', 'mark_price', 'unrealized_pnl', 'leverage'] },
-            'perp-trades': { description: 'Perpetual trading history', options: { address: { type: 'string', required: true }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['symbol', 'side', 'size', 'price', 'value_usd', 'pnl_usd', 'timestamp'] },
-            'batch': { description: 'Batch profile multiple addresses', options: { addresses: { type: 'string', description: 'Comma-separated addresses' }, file: { type: 'string', description: 'File with one address per line' }, chain: { type: 'string', default: 'ethereum' }, include: { type: 'string', default: 'labels,balance', description: 'Comma-separated: labels,balance,pnl' }, delay: { type: 'number', default: 1000, description: 'Delay between requests in ms' } }, returns: ['address', 'chain', 'labels', 'balance', 'pnl', 'error'] },
-            'trace': { description: 'Multi-hop counterparty trace (BFS)', options: { address: { type: 'string', required: true }, chain: { type: 'string', default: 'ethereum' }, depth: { type: 'number', default: 2, description: 'Max hops (1-5)' }, width: { type: 'number', default: 10, description: 'Top N counterparties per hop' }, days: { type: 'number', default: 30 }, delay: { type: 'number', default: 1000, description: 'Delay between requests in ms' } }, returns: ['root', 'chain', 'depth', 'nodes', 'edges', 'stats'] },
-            'compare': { description: 'Compare two wallets (shared counterparties, tokens)', options: { addresses: { type: 'string', required: true, description: 'Two comma-separated addresses' }, chain: { type: 'string', default: 'ethereum' }, days: { type: 'number', default: 30 } }, returns: ['addresses', 'chain', 'shared_counterparties', 'shared_tokens', 'balances'] }
-          }
-        },
-        'token': {
-          description: 'Token God Mode - deep analytics for any token',
-          subcommands: {
-            'indicators': { description: 'Risk and reward indicators for a token (Nansen Score)', options: { token: { type: 'string', required: true, description: 'Token address' }, chain: { type: 'string', default: 'ethereum' } }, returns: ['token_info[market_cap_usd, market_cap_group, is_stablecoin]', 'risk_indicators[indicator_type, score, signal, signal_percentile, last_trigger_on]', 'reward_indicators[indicator_type, score, signal, signal_percentile, last_trigger_on]'] },
-            'ohlcv': { description: 'OHLCV candle data for a token', options: { token: { type: 'string', required: true, description: 'Token address' }, chain: { type: 'string', default: 'solana' }, timeframe: { type: 'string', default: '1h', enum: ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w', '1M'], description: 'Candle timeframe (e.g., 1h, 4h, 1d)' }, limit: { type: 'number' } }, returns: ['timestamp', 'open', 'high', 'low', 'close', 'volume'] },
-            'info': { description: 'Get detailed information for a specific token', options: { token: { type: 'string', required: true, description: 'Token address' }, chain: { type: 'string', default: 'solana' }, timeframe: { type: 'string', default: '1d', enum: ['5m', '1h', '6h', '12h', '1d', '7d'] } }, returns: ['token_address', 'token_symbol', 'token_name', 'chain', 'price_usd', 'volume_usd', 'market_cap', 'holder_count', 'liquidity_usd'] },
-            'screener': { description: 'Discover and filter tokens', options: { chain: { type: 'string', default: 'solana' }, chains: { type: 'array' }, timeframe: { type: 'string', default: '24h', enum: ['5m', '10m', '1h', '6h', '24h', '7d', '30d'] }, 'smart-money': { type: 'boolean', description: 'Filter for Smart Money only' }, search: { type: 'string', description: 'Filter results by token symbol or name (client-side)' }, limit: { type: 'number' }, sort: { type: 'string' } }, returns: ['token_address', 'token_symbol', 'token_name', 'chain', 'price_usd', 'volume_usd', 'market_cap', 'holder_count', 'smart_money_holders'] },
-            'holders': { description: 'Token holder analysis', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, 'smart-money': { type: 'boolean' }, limit: { type: 'number' } }, returns: ['address', 'address_label', 'token_amount', 'total_outflow', 'total_inflow', 'balance_change_24h', 'balance_change_7d', 'balance_change_30d', 'ownership_percentage', 'value_usd'] },
-            'flows': { description: 'Token flow metrics', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, date: { type: 'string', required: true, description: 'Date or date range' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['date', 'price_usd', 'token_amount', 'value_usd', 'holders_count', 'total_inflows_count', 'total_outflows_count'] },
-            'dex-trades': { description: 'DEX trading activity', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, 'smart-money': { type: 'boolean' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['tx_hash', 'wallet_address', 'side', 'amount', 'price_usd', 'value_usd', 'timestamp'] },
-            'pnl': { description: 'PnL leaderboard', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 }, limit: { type: 'number' }, sort: { type: 'string' } }, returns: ['wallet_address', 'realized_pnl_usd', 'unrealized_pnl_usd', 'total_pnl_usd', 'labels'] },
-            'who-bought-sold': { description: 'Recent buyers and sellers', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, date: { type: 'string', required: true, description: 'Date or date range' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['address', 'address_label', 'bought_token_volume', 'sold_token_volume', 'token_trade_volume', 'bought_volume_usd', 'sold_volume_usd', 'trade_volume_usd'] },
-            'flow-intelligence': { description: 'Detailed flow intelligence by label', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 } }, returns: ['public_figure_net_flow_usd', 'public_figure_wallet_count', 'top_pnl_net_flow_usd', 'top_pnl_wallet_count', 'whale_net_flow_usd', 'whale_wallet_count', 'smart_trader_net_flow_usd', 'smart_trader_wallet_count', 'exchange_net_flow_usd', 'exchange_wallet_count', 'fresh_wallets_net_flow_usd', 'fresh_wallets_wallet_count'] },
-            'transfers': { description: 'Token transfer history', options: { token: { type: 'string', required: true }, chain: { type: 'string', default: 'solana' }, days: { type: 'number', default: 30 }, limit: { type: 'number' }, from: { type: 'string', description: 'Filter by sender address' }, to: { type: 'string', description: 'Filter by recipient address' }, enrich: { type: 'boolean', description: 'Enrich addresses with Nansen labels' } }, returns: ['tx_hash', 'from', 'to', 'amount', 'value_usd', 'timestamp'] },
-            'jup-dca': { description: 'Jupiter DCA orders for token', options: { token: { type: 'string', required: true }, limit: { type: 'number' } }, returns: ['wallet_address', 'input_token', 'output_token', 'total_input', 'executed', 'remaining'] },
-            'perp-trades': { description: 'Perp trades by token symbol', options: { symbol: { type: 'string', required: true, description: 'Token symbol (e.g., BTC, ETH)' }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['wallet_address', 'side', 'size', 'price', 'value_usd', 'pnl_usd', 'timestamp'] },
-            'perp-positions': { description: 'Open perp positions by token symbol', options: { symbol: { type: 'string', required: true }, limit: { type: 'number' } }, returns: ['wallet_address', 'side', 'size', 'entry_price', 'mark_price', 'unrealized_pnl', 'leverage'] },
-            'perp-pnl-leaderboard': { description: 'Perp PnL leaderboard by token', options: { symbol: { type: 'string', required: true }, days: { type: 'number', default: 30 }, limit: { type: 'number' } }, returns: ['wallet_address', 'realized_pnl', 'unrealized_pnl', 'total_pnl', 'trade_count'] }
-          }
-        },
-        'search': {
-          description: 'Search for tokens and entities across Nansen',
-          options: {
-            query: { type: 'string', required: true, description: 'Search query (token name, symbol, address, or entity)' },
-            type: { type: 'string', default: 'any', enum: ['token', 'entity', 'any'], description: 'Result type filter' },
-            chain: { type: 'string', description: 'Filter by chain (e.g., ethereum, solana)' },
-            limit: { type: 'number', default: 25, description: 'Max results (1-50)' }
-          },
-          returns: ['tokens[name, symbol, chain, address, price, volume_24h, market_cap, rank]', 'entities[name, tags, rank]', 'total_results']
-        },
-        'perp': {
-          description: 'Perpetual futures analytics',
-          subcommands: {
-            'screener': { description: 'Screen perpetual futures contracts', options: { days: { type: 'number', default: 30 }, limit: { type: 'number' }, sort: { type: 'string' }, filters: { type: 'object' } }, returns: ['token_symbol', 'volume_usd', 'open_interest', 'funding_rate', 'price_change_24h'] },
-            'leaderboard': { description: 'Perpetual futures PnL leaderboard', options: { days: { type: 'number', default: 30 }, limit: { type: 'number' }, sort: { type: 'string' }, filters: { type: 'object' } }, returns: ['address', 'address_label', 'realized_pnl', 'unrealized_pnl', 'total_pnl', 'trade_count', 'win_rate'] }
-          }
-        },
-        'portfolio': {
-          description: 'Portfolio analytics',
-          subcommands: {
-            'defi': { description: 'DeFi holdings across protocols', options: { wallet: { type: 'string', required: true, description: 'Wallet address' } }, returns: ['protocol', 'chain', 'position_type', 'token_symbol', 'balance', 'balance_usd'] }
-          }
-        },
-        'points': {
-          description: 'Nansen Points analytics',
-          subcommands: {
-            'leaderboard': { description: 'Points leaderboard', options: { tier: { type: 'string', description: 'Filter by tier' }, limit: { type: 'number' } }, returns: ['rank', 'address', 'address_label', 'points', 'tier'] }
-          }
-        },
-        'prediction-market': {
-          description: 'Polymarket prediction market analytics',
-          subcommands: {
-            'ohlcv': { description: 'OHLCV candle data for a market', options: { 'market-id': { type: 'string', required: true, description: 'Polymarket market ID' }, sort: { type: 'string', description: 'Sort field:direction (e.g., period_start:desc)' }, limit: { type: 'number' } }, returns: ['market_id', 'token_id', 'side', 'outcome_index', 'period_start', 'open', 'high', 'low', 'close', 'volume_usd', 'trade_count', 'unique_traders'] },
-            'orderbook': { description: 'Current orderbook levels for a market', options: { 'market-id': { type: 'string', required: true, description: 'Polymarket market ID' }, limit: { type: 'number' } }, returns: ['market_id', 'event_id', 'outcome', 'outcome_index', 'asset_id', 'side', 'price', 'size', 'cumulative_size', 'snapshot_timestamp'] },
-            'top-holders': { description: 'Top holders for a market', options: { 'market-id': { type: 'string', required: true, description: 'Polymarket market ID' }, sort: { type: 'string', description: 'Sort field:direction (e.g., position_size:desc)' }, limit: { type: 'number' } }, returns: ['market_id', 'outcome_index', 'address', 'owner_address', 'side', 'position_size', 'avg_entry_price', 'current_price', 'unrealized_pnl_usd'] },
-            'trades-by-market': { description: 'Recent trades for a market', options: { 'market-id': { type: 'string', required: true, description: 'Polymarket market ID' }, limit: { type: 'number' } }, returns: ['timestamp', 'seller', 'buyer', 'taker_action', 'side', 'outcome_index', 'size', 'price', 'usdc_value', 'tx_hash', 'market_id'] },
-            'trades-by-address': { description: 'Trades for a specific address', options: { address: { type: 'string', required: true, description: 'Wallet address (Polygon)' }, limit: { type: 'number' } }, returns: ['timestamp', 'seller', 'buyer', 'taker_action', 'side', 'outcome_index', 'size', 'price', 'usdc_value', 'tx_hash', 'market_id', 'market_question', 'event_id', 'event_title'] },
-            'market-screener': { description: 'Screen and discover prediction markets', options: { 'sort-by': { type: 'string', default: 'volume_24hr', description: 'Sort column (volume_24hr, volume, volume_1wk, volume_1mo, liquidity, open_interest, unique_traders_24h, age_hours)' }, query: { type: 'string', description: 'Search query to filter results (max 200 chars)' }, status: { type: 'string', description: 'Filter by status (active, closed)' }, limit: { type: 'number' } }, returns: ['market_id', 'question', 'slug', 'event_id', 'event_title', 'active', 'closed', 'end_date', 'neg_risk', 'tags', 'volume', 'volume_24hr', 'volume_1wk', 'volume_1mo', 'liquidity', 'volume_change_pct', 'open_interest', 'best_bid', 'best_ask', 'last_trade_price', 'one_day_price_change', 'unique_traders_24h', 'created_at', 'age_hours'] },
-            'event-screener': { description: 'Screen and discover prediction market events', options: { 'sort-by': { type: 'string', default: 'volume_24hr', description: 'Sort column (volume_24hr, volume, volume_1wk, volume_1mo, liquidity, open_interest, unique_traders_24h, age_hours)' }, query: { type: 'string', description: 'Search query to filter results (max 200 chars)' }, status: { type: 'string', description: 'Filter by status (active, closed)' }, limit: { type: 'number' } }, returns: ['event_id', 'event_title', 'tags', 'neg_risk', 'market_count', 'total_volume', 'total_volume_24hr', 'total_volume_1wk', 'total_volume_1mo', 'total_liquidity', 'total_open_interest', 'total_volume_change_pct', 'total_traders_24h', 'max_age_hours', 'top_market_id', 'top_market_question', 'top_market_volume_24hr', 'markets'] },
-            'pnl-by-market': { description: 'PnL leaderboard for a market', options: { 'market-id': { type: 'string', required: true, description: 'Polymarket market ID' }, limit: { type: 'number' } }, returns: ['address', 'owner_address', 'side_held', 'net_buy_cost_usd', 'net_sell_proceeds_usd', 'redemption_value_usd', 'unrealized_value_usd', 'total_pnl_usd', 'question', 'event_id', 'event_title', 'market_resolved', 'size_bucket', 'market_id'] },
-            'pnl-by-address': { description: 'PnL breakdown for an address across markets', options: { address: { type: 'string', required: true, description: 'Wallet address (Polygon)' }, limit: { type: 'number' } }, returns: ['address', 'market_id', 'question', 'event_id', 'event_title', 'side', 'net_buy_cost_usd', 'net_sell_proceeds_usd', 'redemption_value_usd', 'unrealized_value_usd', 'total_pnl_usd', 'market_resolved'] },
-            'position-detail': { description: 'Detailed position data for a market', options: { 'market-id': { type: 'string', required: true, description: 'Polymarket market ID' }, limit: { type: 'number' } }, returns: ['address', 'owner_address', 'outcome', 'outcome_index', 'token_id', 'balance', 'buy_cost_usd', 'buy_tokens', 'sell_proceeds_usd', 'sell_tokens', 'avg_entry_price', 'current_price', 'unrealized_value_usd', 'redemption_value_usd', 'token_pnl_usd', 'event_id', 'event_title', 'market_resolved', 'market_id'] },
-            'categories': { description: 'List prediction market categories', options: { limit: { type: 'number' } }, returns: ['category', 'active_markets', 'total_open_interest', 'total_volume', 'total_volume_24hr', 'total_volume_1wk', 'total_traders_24h', 'top_market_id', 'top_market_question', 'top_market_volume_24hr'] }
-          }
-        }
-      }
-    },
-    'trade': {
-      description: 'DEX trading commands',
-      subcommands: {
-        'quote': {
-          description: 'Get a DEX swap quote (chain, tokens, amount)',
-          options: {
-            chain: { type: 'string', default: 'ethereum', description: 'Blockchain' },
-            from: { type: 'string', required: true, description: 'Token to sell (address or symbol)' },
-            to: { type: 'string', required: true, description: 'Token to buy (address or symbol)' },
-            amount: { type: 'string', required: true, description: 'Amount to swap' },
-            wallet: { type: 'string', description: 'Wallet name, or "walletconnect"/"wc" for WalletConnect (EVM only)' }
-          }
-        },
-        'execute': {
-          description: 'Sign and broadcast a quoted trade',
-          options: {
-            chain: { type: 'string', default: 'ethereum', description: 'Blockchain' },
-            wallet: { type: 'string', description: 'Wallet name, or "walletconnect"/"wc" for WalletConnect (EVM only)' }
-          }
-        }
-      }
-    }
-  },
-  globalOptions: {
-    pretty: { type: 'boolean', description: 'Format JSON output for readability' },
-    table: { type: 'boolean', description: 'Format output as human-readable table' },
-    fields: { type: 'string', description: 'Comma-separated list of fields to include in output' },
-    'no-retry': { type: 'boolean', description: 'Disable automatic retry on rate limits/errors' },
-    retries: { type: 'number', default: 3, description: 'Max retry attempts' },
-    format: { type: 'string', enum: ['json', 'csv'], description: 'Output format (default: json)' },
-    'x402-payment-signature': { type: 'string', description: 'Pre-signed x402 payment signature header' }
-  },
-  chains: ['ethereum', 'solana', 'base', 'bnb', 'arbitrum', 'polygon', 'optimism', 'avalanche', 'linea', 'scroll', 'mantle', 'ronin', 'sei', 'plasma', 'sonic', 'monad', 'hyperevm', 'iotaevm'],
-  smartMoneyLabels: ['Fund', 'Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader', 'Smart HL Perps Trader']
-};
+const schemaDefinition = require('./schema.json');
+
+// SCHEMA is the static definition with version injected at runtime.
+// The schema.json file is the source of truth for command metadata (returns, options, etc.)
+// and should be updated whenever the API changes — do not edit returns arrays here.
+export const SCHEMA = { version: VERSION, ...schemaDefinition };
 
 // ============= Field Filtering =============
 
@@ -236,7 +73,52 @@ export function parseFields(fieldsOption) {
   return fieldsOption.split(',').map(f => f.trim()).filter(f => f.length > 0);
 }
 
-// Parse command line arguments
+/**
+ * Produce a compact schema listing commands with params* notation.
+ * Use `nansen schema --full` for the verbose version.
+ */
+export function compactSchema(schema) {
+  function compactOptions(opts) {
+    if (!opts) return '';
+    return Object.entries(opts)
+      .map(([name, o]) => `${name}${o.required ? '*' : ''}`)
+      .join(', ');
+  }
+
+  function compactCmd(prefix, cmd) {
+    const entries = [];
+    if (cmd.subcommands) {
+      for (const [name, sub] of Object.entries(cmd.subcommands)) {
+        const path = prefix ? `${prefix} ${name}` : name;
+        if (sub.subcommands) {
+          entries.push(...compactCmd(path, sub));
+        } else {
+          const params = compactOptions(sub.options);
+          entries.push({ command: path, description: sub.description, params, returns: sub.returns });
+        }
+      }
+    } else {
+      const params = compactOptions(cmd.options);
+      entries.push({ command: prefix, description: cmd.description, params, returns: cmd.returns });
+    }
+    return entries;
+  }
+
+  const commands = [];
+  for (const [name, cmd] of Object.entries(schema.commands)) {
+    commands.push(...compactCmd(name, cmd));
+  }
+
+  return {
+    version: schema.version,
+    params_legend: '* = required',
+    commands,
+    globalOptions: Object.keys(schema.globalOptions).join(', '),
+    chains: schema.chains,
+    smartMoneyLabels: schema.smartMoneyLabels
+  };
+}
+
 /**
  * Compare two semver strings. Returns 1 if a > b, -1 if a < b, 0 if equal.
  */
@@ -260,7 +142,7 @@ export function parseArgs(args) {
       const key = arg.slice(2);
       const next = args[i + 1];
       
-      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich') {
+      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full') {
         result.flags[key] = true;
       } else if (next && !next.startsWith('-')) {
         // Try to parse as JSON first (for objects/arrays/booleans),
@@ -651,7 +533,7 @@ export async function traceCounterparties(api, params = {}) {
           queue.push({ addr: cpAddr, hop: hop + 1 });
         }
       }
-    } catch (err) {
+    } catch {
       // Skip addresses that fail (404, etc) but continue the traversal
     }
 
@@ -722,91 +604,41 @@ export async function compareWallets(api, params = {}) {
   };
 }
 
-// ASCII Art Banner
-export const BANNER = `
- ███╗   ██╗ █████╗ ███╗   ██╗███████╗███████╗███╗   ██╗
- ████╗  ██║██╔══██╗████╗  ██║██╔════╝██╔════╝████╗  ██║
- ██╔██╗ ██║███████║██╔██╗ ██║███████╗█████╗  ██╔██╗ ██║
- ██║╚██╗██║██╔══██║██║╚██╗██║╚════██║██╔══╝  ██║╚██╗██║
- ██║ ╚████║██║  ██║██║ ╚████║███████║███████╗██║ ╚████║
- ╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═══╝
-                   Surface The Signal
-`;
+export const BANNER = '';
 
-// Help text
-export const HELP = `
-Nansen CLI - Command-line interface for Nansen API
-Designed for AI agents with structured JSON output.
+export const HELP = `Nansen CLI v${VERSION} — structured JSON output for AI agents.
 
-USAGE:
-  nansen <command> [subcommand] [options]
+USAGE: nansen <command> [subcommand] [options]
 
 COMMANDS:
-  research       Research & analytics (smart-money, profiler, token, search, perp, portfolio, points)
-  trade          DEX trading (quote, execute)
-  wallet         Local wallet management (create, list, show, export, default, delete)
-  login/logout   API key management
-  schema         Output JSON schema for all commands (for agent introspection)
-  cache          Cache management (clear)
-  changelog      Show what's new (use --since <version> to filter)
-  help           Show this help message
+  research    smart-money, profiler, token, search, perp, portfolio, points
+  trade       quote, execute
+  wallet      create, list, show, export, default, delete
+  login       Save API key (--api-key <key> or interactive)
+  logout      Remove saved API key
+  schema      JSON schema for all commands (use "nansen schema <cmd>" for one)
+  cache       clear
+  changelog   --since <version> to filter
 
-GLOBAL OPTIONS:
-  --pretty       Format JSON output for readability
-  --table        Format output as human-readable table
-  --fields       Comma-separated list of fields to include (e.g., --fields address,value_usd)
-  --chain        Blockchain to query (ethereum, solana, base, etc.)
-  --chains       Multiple chains as JSON array
-  --limit        Number of results (shorthand for pagination)
-  --filters      JSON object with filters
-  --sort         Sort by field (e.g., --sort value_usd:desc)
-  --order-by     JSON array with sort order (advanced)
-  --days         Date range in days (default: 30 for most endpoints)
-  --symbol       Token symbol (for perp endpoints)
-  --no-retry     Disable automatic retry on rate limits/errors
-  --retries <n>  Max retry attempts (default: 3)
-  --x402-payment-signature <sig>  Pre-signed x402 payment signature header
-  --cache        Enable response caching (default: off)
-  --no-cache     Disable cache for this request
-  --cache-ttl <s> Cache TTL in seconds (default: 300)
-  --stream       Output as JSON lines (NDJSON) for incremental processing
-  --format csv   Output as CSV with header row
+OPTIONS: --chain --limit --sort field:dir --fields a,b --days N --filters '{}'
+FORMAT:  --pretty --table --format csv --stream (NDJSON)
+RETRY:   --no-retry --retries N --cache --cache-ttl N
 
 EXAMPLES:
-  # Get Smart Money netflow on Solana
   nansen research smart-money netflow --chain solana
-
-  # Get top tokens by Smart Money activity
-  nansen research token screener --chain solana --timeframe 24h --pretty
-
-  # Get wallet balance
-  nansen research profiler balance --address 0x123... --chain ethereum
-
-  # Search for tokens/entities
-  nansen research search "Vitalik"
-
-  # Get a DEX swap quote
+  nansen research token screener --chain solana --timeframe 24h
+  nansen research profiler balance --address 0x... --chain ethereum
   nansen trade quote --chain ethereum --from ETH --to USDC --amount 1
 
-SMART MONEY LABELS:
-  Fund, Smart Trader, 30D Smart Trader, 90D Smart Trader, 
-  180D Smart Trader, Smart HL Perps Trader
+Chains: ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, linea, scroll, mantle, ronin, sei, plasma, sonic, monad, hyperevm, iotaevm
+Labels: Fund, Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader
 
-SUPPORTED CHAINS:
-  ethereum, solana, base, bnb, arbitrum, polygon, optimism,
-  avalanche, linea, scroll, mantle, ronin, sei,
-  plasma, sonic, monad, hyperevm, iotaevm
-
-For more info: https://docs.nansen.ai
+Docs: https://docs.nansen.ai
+Skills: npx skills add nansen-ai/nansen-cli (agent-optimised docs per command group)
 `;
 
 // Helper to prompt for input (exported for mocking)
 export async function prompt(question, hidden = false) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-  
   return new Promise((resolve) => {
     if (hidden && process.stdout.isTTY) {
       process.stdout.write(question);
@@ -821,7 +653,6 @@ export async function prompt(question, hidden = false) {
           process.stdin.pause();
           process.stdin.removeListener('data', onData);
           process.stdout.write('\n');
-          rl.close();
           resolve(input);
         } else if (char === '\u0003') {
           // Ctrl+C
@@ -840,6 +671,10 @@ export async function prompt(question, hidden = false) {
       
       process.stdin.on('data', onData);
     } else {
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
       rl.question(question, (answer) => {
         rl.close();
         resolve(answer);
@@ -852,11 +687,11 @@ export async function prompt(question, hidden = false) {
 export function buildCommands(deps = {}) {
   // Allow dependency injection for testing
   const {
-    api = null,
+    api: _api = null,
     promptFn = prompt,
     log = console.log,
-    errorOutput = console.error,
-    NansenAPIClass = NansenAPI,
+    errorOutput: _errorOutput = console.error,
+    NansenAPIClass: _NansenAPIClass = NansenAPI,
     saveConfigFn = saveConfig,
     deleteConfigFn = deleteConfig,
     getConfigFileFn = getConfigFile,
@@ -866,6 +701,18 @@ export function buildCommands(deps = {}) {
 
   const cmds = {
     'login': async (args, apiInstance, flags, options) => {
+      if (flags.help || flags.h) {
+        log('nansen login - Save your Nansen API key\n');
+        log('USAGE:');
+        log('  nansen login                    (interactive)');
+        log('  nansen login --api-key <key>    (non-interactive)\n');
+        log('OPTIONS:');
+        log('  --api-key <key>   Your Nansen API key');
+        log('  --help            Show this help\n');
+        log('Get your API key at: https://app.nansen.ai/api');
+        return;
+      }
+
       // Support non-interactive: nansen login --api-key <key>
       let apiKey = options['api-key'] || options.apiKey;
 
@@ -874,7 +721,7 @@ export function buildCommands(deps = {}) {
           // Non-interactive mode: check env var fallback
           apiKey = process.env.NANSEN_API_KEY;
           if (!apiKey) {
-            log('❌ No API key provided. Use: nansen login --api-key <key>\n   Or set NANSEN_API_KEY environment variable.');
+            log('❌ No API key provided. Use: nansen login --api-key <key>\n   Or set NANSEN_API_KEY environment variable.\n   Get your API key at: https://app.nansen.ai/api');
             exit(1);
             return;
           }
@@ -901,10 +748,10 @@ export function buildCommands(deps = {}) {
 
       log(`✓ Saved to ${getConfigFileFn()}\n`);
       log('You can now use the Nansen CLI. Try:');
-      log('  nansen token screener --chain solana --pretty');
+      log('  nansen research token screener --chain solana --pretty');
     },
 
-    'logout': async (args, apiInstance, flags, options) => {
+    'logout': async (_args, _apiInstance, _flags, _options) => {
       const deleted = deleteConfigFn();
       if (deleted) {
         log(`✓ Removed ${getConfigFileFn()}`);
@@ -913,11 +760,11 @@ export function buildCommands(deps = {}) {
       }
     },
 
-    'help': async (args, apiInstance, flags, options) => {
+    'help': async (_args, _apiInstance, _flags, _options) => {
       log(HELP);
     },
 
-    'changelog': async (args, apiInstance, flags, options) => {
+    'changelog': async (_args, _apiInstance, _flags, _options) => {
       const changelogPath = new URL('../CHANGELOG.md', import.meta.url).pathname;
       let content;
       try {
@@ -926,7 +773,7 @@ export function buildCommands(deps = {}) {
         log('CHANGELOG.md not found. Visit https://github.com/nansen-ai/nansen-cli/blob/main/CHANGELOG.md');
         return;
       }
-      const since = options.since;
+      const since = _options.since;
       if (since) {
         // Show only entries from the given version onwards
         const lines = content.split('\n');
@@ -952,8 +799,7 @@ export function buildCommands(deps = {}) {
       }
     },
 
-    'schema': async (args, apiInstance, flags, options) => {
-      // Return schema for agent introspection
+    'schema': async (args, _apiInstance, flags, _options) => {
       const subcommand = args[0];
       const schemaEntry = subcommand && (SCHEMA.commands[subcommand] || SCHEMA.commands.research.subcommands[subcommand]);
 
@@ -967,11 +813,14 @@ export function buildCommands(deps = {}) {
         };
       }
 
-      // Return full schema
-      return SCHEMA;
+      if (flags.full) {
+        return SCHEMA;
+      }
+
+      return compactSchema(SCHEMA);
     },
 
-    'cache': async (args, apiInstance, flags, options) => {
+    'cache': async (args, _apiInstance, _flags, _options) => {
       const subcommand = args[0] || 'help';
       
       const handlers = {
@@ -1020,7 +869,7 @@ export function buildCommands(deps = {}) {
       const handlers = {
         'netflow': () => apiInstance.smartMoneyNetflow({ chains, filters, orderBy, pagination }),
         'dex-trades': () => apiInstance.smartMoneyDexTrades({ chains, filters, orderBy, pagination }),
-        'perp-trades': () => apiInstance.smartMoneyPerpTrades({ filters, orderBy, pagination }),
+        'perp-trades': () => apiInstance.smartMoneyPerpTrades({ filters, orderBy, pagination, onlyNewPositions: options['only-new-positions'] ?? flags['only-new-positions'] }),
         'holdings': () => apiInstance.smartMoneyHoldings({ chains, filters, orderBy, pagination }),
         'dcas': () => apiInstance.smartMoneyDcas({ filters, orderBy, pagination }),
         'historical-holdings': () => apiInstance.smartMoneyHistoricalHoldings({ chains, filters, orderBy, pagination, days }),
@@ -1057,7 +906,7 @@ export function buildCommands(deps = {}) {
       }
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
-      const pagination = options.limit ? { page: 1, recordsPerPage: options.limit } : undefined;
+      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
       const days = options.days ? parseInt(options.days) : 30;
 
       const handlers = {
@@ -1155,7 +1004,7 @@ export function buildCommands(deps = {}) {
 
       const handlers = {
         'indicators': () => apiInstance.tokenIndicators({ tokenAddress, chain }),
-        'ohlcv': () => apiInstance.tokenOhlcv({ tokenAddress, chain, timeframe: options.timeframe || '1d', pagination }),
+        'ohlcv': () => apiInstance.tokenOhlcv({ tokenAddress, chain, timeframe: options.timeframe || '1d' }),
         'info': () => apiInstance.tokenInformation({ tokenAddress, chain, timeframe: options.timeframe }),
         'screener': async () => {
           const search = options.search;
@@ -1351,7 +1200,7 @@ export function buildCommands(deps = {}) {
     }
     const category = RESEARCH_CATEGORY_ALIASES[rawCategory] || rawCategory;
     if (!RESEARCH_CATEGORIES.has(category)) {
-      return { error: `Unknown research category: ${rawCategory}`, available: [...RESEARCH_CATEGORIES] };
+      throw new NansenError(`Unknown research category: ${rawCategory}. Available: ${[...RESEARCH_CATEGORIES].join(', ')}`, ErrorCode.UNKNOWN);
     }
     return cmds[category](args.slice(1), apiInstance, flags, options);
   };
@@ -1368,24 +1217,26 @@ SUBCOMMANDS:
   execute     Sign and broadcast a quoted swap
 
 USAGE:
-  nansen trade quote --chain <chain> --from <token> --to <token> --amount <units>
-  nansen trade execute --quote <quoteId>
+  nansen trade quote --chain <chain> --from <token> --to <token> --amount <units> [--wallet <name>]
+  nansen trade execute --quote <quoteId> [--wallet <name>]
 
 EXAMPLES:
   nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
   nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000
+  nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000 --wallet walletconnect
   nansen trade execute --quote 1708900000000-abc123
 
+WALLET:
+  --wallet <name>   Use a named wallet, or "walletconnect" / "wc" for WalletConnect (EVM only).
+                    Defaults to the default local wallet if omitted.
+
 SYMBOLS:
-  Common tokens resolve automatically: SOL, ETH, BNB, USDC, USDT, WETH, WBNB
+  Common tokens resolve automatically: SOL, ETH, USDC, USDT, WETH
   Raw addresses are also accepted.`);
       return;
     }
     if (!tradingCmds[sub]) {
-      log(`Unknown trade subcommand: ${sub}`);
-      log(`Available: quote, execute`);
-      log(`Run 'nansen trade help' for usage.`);
-      return;
+      throw new NansenError(`Unknown trade subcommand: ${sub}. Available: quote, execute`, ErrorCode.UNKNOWN);
     }
     return tradingCmds[sub](args.slice(1), apiInstance, flags, options);
   };
@@ -1397,9 +1248,6 @@ SYMBOLS:
 export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points']);
 // Subcommands that moved under 'trade'
 export const DEPRECATED_TO_TRADE = new Set(['quote', 'execute']);
-
-// Commands that don't require API authentication
-export const NO_AUTH_COMMANDS = ['login', 'logout', 'help', 'schema', 'cache', 'wallet', 'trade', 'quote', 'execute', 'changelog'];
 
 // Command aliases: top-level shortcuts that resolve before routing
 export const COMMAND_ALIASES = {
@@ -1420,7 +1268,6 @@ export const RESEARCH_CATEGORY_ALIASES = {
 
 // Generate help text for a specific subcommand using SCHEMA
 export function generateSubcommandHelp(command, subcommand) {
-  // Look up in top-level commands, then fall back to research subcommands
   const cmdSchema = SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command];
   if (!cmdSchema) return null;
 
@@ -1428,100 +1275,36 @@ export function generateSubcommandHelp(command, subcommand) {
   if (!subSchema) return null;
 
   const lines = [];
-  lines.push(`\n${command} ${subcommand} - ${subSchema.description || 'No description'}\n`);
-  
-  // Usage
-  const requiredOpts = [];
-  const optionalOpts = [];
-  
+  lines.push(`${command} ${subcommand} — ${subSchema.description || 'No description'}`);
+
+  if (subSchema.options) {
+    const params = Object.entries(subSchema.options).map(([name, opt]) => {
+      const parts = [`--${name}`];
+      if (opt.required) parts[0] += '*';
+      if (opt.default !== undefined) parts.push(`(${opt.default})`);
+      if (opt.enum) parts.push(`[${opt.enum.join('|')}]`);
+      return parts.join(' ');
+    });
+    lines.push(`Params (* required): ${params.join(', ')}`);
+  }
+
+  if (subSchema.returns?.length) {
+    lines.push(`Returns: ${subSchema.returns.join(', ')}`);
+  }
+
+  const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
+  const chain = subSchema.options?.chain?.default || 'solana';
+  let example = `nansen ${command} ${subcommand}`;
   if (subSchema.options) {
     for (const [name, opt] of Object.entries(subSchema.options)) {
-      if (opt.required) {
-        requiredOpts.push(name);
-      } else {
-        optionalOpts.push(name);
-      }
+      if (opt.required) example += ` --${name} ${exampleValues[name] || '<val>'}`;
     }
   }
-  
-  let usage = `USAGE:\n  nansen ${command} ${subcommand}`;
-  if (requiredOpts.length) {
-    usage += ' ' + requiredOpts.map(o => `--${o} <value>`).join(' ');
-  }
-  if (optionalOpts.length) {
-    usage += ' [options]';
-  }
-  lines.push(usage);
-  
-  // Required options
-  if (requiredOpts.length) {
-    lines.push('\nREQUIRED:');
-    for (const name of requiredOpts) {
-      const opt = subSchema.options[name];
-      const desc = opt.description || `${opt.type}`;
-      lines.push(`  --${name.padEnd(16)} ${desc}`);
-    }
-  }
-  
-  // Optional options
-  if (optionalOpts.length) {
-    lines.push('\nOPTIONS:');
-    for (const name of optionalOpts) {
-      const opt = subSchema.options[name];
-      const defaultStr = opt.default !== undefined ? ` (default: ${opt.default})` : '';
-      const desc = (opt.description || opt.type) + defaultStr;
-      lines.push(`  --${name.padEnd(16)} ${desc}`);
-    }
-  }
-  
-  // Return fields
-  if (subSchema.returns && subSchema.returns.length) {
-    lines.push('\nRETURNS:');
-    lines.push(`  ${subSchema.returns.join(', ')}`);
-  }
-  
-  // Examples
-  lines.push('\nEXAMPLES:');
-  const chain = subSchema.options?.chain?.default || 'solana';
-  
-  // Example values for common required options
-  const exampleValues = {
-    address: '0x123...',
-    token: '0x123...',
-    query: '"search term"',
-    symbol: 'BTC',
-    date: '2024-01-01'
-  };
-  
-  // Build example based on required options
-  let example = `  nansen ${command} ${subcommand}`;
-  for (const name of requiredOpts) {
-    const value = exampleValues[name] || '<value>';
-    example += ` --${name} ${value}`;
-  }
-  if (subSchema.options?.chain && !requiredOpts.includes('chain')) {
+  if (subSchema.options?.chain && !subSchema.options.chain.required) {
     example += ` --chain ${chain}`;
   }
-  example += ' --pretty';
-  lines.push(example);
-  
-  // Add a filtered example if filters are supported
-  if (subSchema.options?.filters || subSchema.options?.labels) {
-    let filterExample = `  nansen ${command} ${subcommand}`;
-    for (const name of requiredOpts) {
-      const value = exampleValues[name] || '<value>';
-      filterExample += ` --${name} ${value}`;
-    }
-    if (subSchema.options?.chain && !requiredOpts.includes('chain')) {
-      filterExample += ` --chain ${chain}`;
-    }
-    if (subSchema.options?.labels) {
-      filterExample += ' --labels "Smart Trader"';
-    }
-    filterExample += ' --limit 10 --table';
-    lines.push(filterExample);
-  }
-  
+  lines.push(`Example: ${example}`);
+
   return lines.join('\n');
 }
 
@@ -1590,13 +1373,10 @@ export async function runCLI(rawArgs, deps = {}) {
         const researchCat = SCHEMA.commands.research.subcommands[category];
         if (researchCat) {
           const catSchema = researchCat;
-          const lines = [`\nresearch ${category} - ${catSchema.description}\n`];
+          const lines = [`research ${category} — ${catSchema.description}`];
           if (catSchema.subcommands) {
-            lines.push('SUBCOMMANDS:');
-            for (const [sub, subSchema] of Object.entries(catSchema.subcommands)) {
-              lines.push(`  ${sub.padEnd(20)} ${subSchema.description || ''}`);
-            }
-            lines.push(`\nFor detailed help: nansen research ${category} <subcommand> --help`);
+            lines.push('Subcommands: ' + Object.keys(catSchema.subcommands).join(', '));
+            lines.push(`Use: nansen research ${category} <subcommand> --help`);
           }
           output(lines.join('\n'));
           notify();
@@ -1625,13 +1405,10 @@ export async function runCLI(rawArgs, deps = {}) {
       const cmdSchemaLookup = SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command];
       if (command && cmdSchemaLookup) {
         const cmdSchema = cmdSchemaLookup;
-        const lines = [`\n${command} - ${cmdSchema.description}\n`];
+        const lines = [`${command} — ${cmdSchema.description}`];
         if (cmdSchema.subcommands) {
-          lines.push('SUBCOMMANDS:');
-          for (const [sub, subSchema] of Object.entries(cmdSchema.subcommands)) {
-            lines.push(`  ${sub.padEnd(20)} ${subSchema.description || ''}`);
-          }
-          lines.push(`\nFor detailed help: nansen ${command} <subcommand> --help`);
+          lines.push('Subcommands: ' + Object.keys(cmdSchema.subcommands).join(', '));
+          lines.push(`Use: nansen ${command} <subcommand> --help`);
         }
         output(lines.join('\n'));
         notify();
@@ -1658,48 +1435,46 @@ export async function runCLI(rawArgs, deps = {}) {
     return { type: 'error', data: errorData };
   }
 
-  // Commands that don't require API authentication
-  if (NO_AUTH_COMMANDS.includes(command)) {
-    const result = await commands[command](subArgs, null, flags, options);
-    
-    // Schema command returns data that should be output
-    if (command === 'schema' && result) {
-      const formatted = formatOutput(result, { pretty, table: false });
-      output(formatted.text);
-      notify();
-      return { type: 'schema', data: result };
-    }
-
-    notify();
-    return { type: 'no-auth', command };
-  }
-
   try {
     // Configure retry options
-    const retryOptions = flags['no-retry'] 
-      ? { maxRetries: 0 } 
+    const retryOptions = flags['no-retry']
+      ? { maxRetries: 0 }
       : { maxRetries: options.retries !== undefined ? (Number.isNaN(parseInt(options.retries, 10)) ? 3 : parseInt(options.retries, 10)) : 3 };
-    
+
     // Configure cache options
     const cacheTtl = options['cache-ttl'] !== undefined ? parseInt(options['cache-ttl'], 10) : 300;
     const cacheOptions = {
       enabled: flags['cache'] && !flags['no-cache'],
       ttl: Number.isNaN(cacheTtl) ? 300 : cacheTtl
     };
-    
+
     const defaultHeaders = {};
     if (options['x402-payment-signature']) {
       defaultHeaders['Payment-Signature'] = options['x402-payment-signature'];
     }
     const api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders });
     let result = await commands[command](subArgs, api, flags, options);
-    
+
+    // Commands that handle their own output return undefined
+    if (result === undefined) {
+      notify();
+      return { type: 'no-output', command };
+    }
+
+    // Schema returns data directly (not wrapped in { success, data })
+    if (command === 'schema') {
+      const formatted = formatOutput(result, { pretty, table: false });
+      output(formatted.text);
+      notify();
+      return { type: 'schema', data: result };
+    }
+
     // Apply field filtering if --fields is specified
     const fields = parseFields(options.fields);
     if (fields) {
       result = filterFields(result, fields);
     }
-    
+
     // Output in requested format
     if (stream) {
       // Stream mode: output each record as a JSON line (NDJSON)

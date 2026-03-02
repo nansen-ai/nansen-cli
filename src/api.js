@@ -194,9 +194,9 @@ export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL
     }
     
     return { ...cached.data, _meta: { ...cached.data._meta, fromCache: true, cacheAge: Math.round(age) } };
-  } catch (e) {
+  } catch (_e) {
     // Invalid cache file, delete it
-    try { fs.unlinkSync(cacheFile); } catch {}
+    try { fs.unlinkSync(cacheFile); } catch { /* ignore */ }
     return null;
   }
 }
@@ -305,7 +305,7 @@ function loadConfig() {
 
   // ~/.nansen/config.json (from `nansen login`)
   if (fs.existsSync(CONFIG_FILE)) {
-    try { config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (e) {}
+    try { config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (_e) { /* ignore */ }
   }
 
   // Local config.json (for development)
@@ -476,7 +476,7 @@ export class NansenAPI {
       let data;
       try {
         data = await response.json();
-      } catch (err) {
+      } catch (_err) {
         // Non-JSON response (rare, usually server errors)
         const error = new NansenError(
           `Invalid response from API (status ${response.status})`,
@@ -646,11 +646,12 @@ export class NansenAPI {
   }
 
   async smartMoneyPerpTrades(params = {}) {
-    const { filters = {}, orderBy, pagination } = params;
+    const { filters = {}, orderBy, pagination, onlyNewPositions } = params;
     return this.request('/api/v1/smart-money/perp-trades', {
       filters,
       order_by: orderBy,
-      pagination
+      pagination,
+      only_new_positions: onlyNewPositions
     });
   }
 
@@ -703,7 +704,7 @@ export class NansenAPI {
   }
 
   async addressLabels(params = {}) {
-    const { address, chain = 'ethereum', pagination = { page: 1, recordsPerPage: 100 } } = params;
+    const { address, chain = 'ethereum', pagination = { page: 1, per_page: 100 } } = params;
     if (address) {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
@@ -814,7 +815,9 @@ export class NansenAPI {
   }
 
   async addressPnlSummary(params = {}) {
-    const { address, chain = 'ethereum', orderBy, pagination, days = 30 } = params;
+    // Note: pnl-summary endpoint is non-paginated (returns aggregate stats, not a list).
+    // Pagination param intentionally omitted from this request.
+    const { address, chain = 'ethereum', orderBy, days = 30 } = params;
     if (address) {
       const validation = validateAddress(address, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
@@ -823,8 +826,7 @@ export class NansenAPI {
       address,
       chain,
       date: buildDateRange(days),
-      order_by: orderBy,
-      pagination
+      order_by: orderBy
     });
   }
 
@@ -1039,7 +1041,7 @@ export class NansenAPI {
   }
 
   async tokenOhlcv(params = {}) {
-    const { tokenAddress, chain = 'solana', timeframe, pagination } = params;
+    const { tokenAddress, chain = 'solana', timeframe } = params;
     if (tokenAddress) {
       const validation = validateTokenAddress(tokenAddress, chain);
       if (!validation.valid) throw new NansenError(validation.error, validation.code);
@@ -1048,7 +1050,6 @@ export class NansenAPI {
       token_address: tokenAddress,
       chain,
       timeframe,
-      pagination
     });
   }
 

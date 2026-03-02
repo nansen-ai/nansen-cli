@@ -26,7 +26,7 @@ const SCRYPT_P = 1;
 const SCRYPT_KEYLEN = 32;
 const SALT_LEN = 16;
 const IV_LEN = 12;
-const AUTH_TAG_LEN = 16;
+const _AUTH_TAG_LEN = 16;
 
 import { keccak256 } from './crypto.js';
 
@@ -481,7 +481,7 @@ export function getDefaultAddress(chainType = 'evm') {
  * Build wallet command handlers for integration into CLI.
  */
 export function buildWalletCommands(deps = {}) {
-  const { log = console.log, promptFn, exit = process.exit } = deps;
+  const { log = console.log, promptFn: _promptFn, exit = process.exit } = deps;
 
   return {
     'wallet': async (args, apiInstance, flags, options) => {
@@ -519,7 +519,7 @@ export function buildWalletCommands(deps = {}) {
             log(`    Base (recommended, lower fees): send USDC to ${result.evm}`);
             log(`    Solana: send USDC to ${result.solana}`);
             log('');
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -529,18 +529,17 @@ export function buildWalletCommands(deps = {}) {
         'list': async () => {
           const result = listWallets();
           if (result.wallets.length === 0) {
-            log('No wallets found. Create one with: nansen wallet create');
-            return result;
+            log("No wallets found. Create one with: nansen wallet create");
+            return;
           }
-          log('');
+          log("");
           for (const w of result.wallets) {
-            const star = w.isDefault ? ' ★' : '';
+            const star = w.isDefault ? " ★" : "";
             log(`  ${w.name}${star}`);
             log(`    EVM:    ${w.evm}`);
             log(`    Solana: ${w.solana}`);
-            log('');
+            log("");
           }
-          return result;
         },
 
         'show': async () => {
@@ -557,7 +556,7 @@ export function buildWalletCommands(deps = {}) {
             log(`    EVM:    ${result.evm}`);
             log(`    Solana: ${result.solana}`);
             log(`    Created: ${result.createdAt}\n`);
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -582,7 +581,7 @@ export function buildWalletCommands(deps = {}) {
             log(`    Address:     ${result.solana.address}`);
             log(`    Private Key: ${result.solana.privateKey}`);
             log('');
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -599,7 +598,7 @@ export function buildWalletCommands(deps = {}) {
           try {
             const result = setDefaultWallet(name);
             log(`✓ Default wallet set to "${result.defaultWallet}"`);
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -620,7 +619,7 @@ export function buildWalletCommands(deps = {}) {
             if (result.newDefault) {
               log(`  New default: ${result.newDefault}`);
             }
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);

@@ -28,6 +28,7 @@ import {
   getWrappedNativeFromWarning,
   validateBaseUnitAmount,
   resolveTokenAddress,
+  formatQuote,
 } from '../trading.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
@@ -36,7 +37,6 @@ import {
   generateEvmWallet,
   generateSolanaWallet,
   createWallet,
-  listWallets,
 } from '../wallet.js';
 import * as wcTrading from '../walletconnect-trading.js';
 
@@ -60,9 +60,7 @@ describe('resolveChain', () => {
   it('should resolve all supported chains', () => {
     const expected = {
       solana:   { index: '501', type: 'solana', chainId: 501 },
-      ethereum: { index: '1',   type: 'evm',    chainId: 1 },
       base:     { index: '8453', type: 'evm',   chainId: 8453 },
-      bsc:      { index: '56',  type: 'evm',    chainId: 56 },
     };
     for (const [name, exp] of Object.entries(expected)) {
       const chain = resolveChain(name);
@@ -76,11 +74,12 @@ describe('resolveChain', () => {
   it('should be case-insensitive', () => {
     expect(resolveChain('SOLANA').index).toBe('501');
     expect(resolveChain('Base').index).toBe('8453');
-    expect(resolveChain('BSC').chainId).toBe(56);
   });
 
   it('should throw for unsupported chain', () => {
     expect(() => resolveChain('polygon')).toThrow('Unsupported chain');
+    expect(() => resolveChain('ethereum')).toThrow('Unsupported chain');
+    expect(() => resolveChain('bsc')).toThrow('Unsupported chain');
     expect(() => resolveChain('')).toThrow('Unsupported chain');
     expect(() => resolveChain(null)).toThrow('Unsupported chain');
     expect(() => resolveChain(undefined)).toThrow('Unsupported chain');
@@ -93,19 +92,17 @@ describe('resolveTokenAddress', () => {
     expect(resolveTokenAddress('USDC', 'solana')).toBe('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
     expect(resolveTokenAddress('ETH', 'base')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
     expect(resolveTokenAddress('USDC', 'base')).toBe('0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
-    expect(resolveTokenAddress('BNB', 'bsc')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
-    expect(resolveTokenAddress('ETH', 'ethereum')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
   });
 
   it('should be case-insensitive for symbols', () => {
     expect(resolveTokenAddress('sol', 'solana')).toBe('So11111111111111111111111111111111111111112');
-    expect(resolveTokenAddress('usdc', 'ethereum')).toBe('0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
+    expect(resolveTokenAddress('usdc', 'base')).toBe('0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
     expect(resolveTokenAddress('Eth', 'base')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
   });
 
   it('should pass through raw addresses unchanged', () => {
     const addr = '0x1234567890abcdef1234567890abcdef12345678';
-    expect(resolveTokenAddress(addr, 'ethereum')).toBe(addr);
+    expect(resolveTokenAddress(addr, 'base')).toBe(addr);
     expect(resolveTokenAddress('So11111111111111111111111111111111111111112', 'solana'))
       .toBe('So11111111111111111111111111111111111111112');
   });
@@ -126,7 +123,7 @@ describe('getWalletChainType', () => {
     expect(getWalletChainType('solana')).toBe('solana');
   });
   it('should return evm for all EVM chains', () => {
-    for (const chain of ['ethereum', 'base', 'bsc']) {
+    for (const chain of ['base']) {
       expect(getWalletChainType(chain)).toBe('evm');
     }
   });
@@ -416,7 +413,7 @@ describe('signLegacyTransaction', () => {
       nonce: 0, gasPrice: '0x3B9ACA00', gasLimit: '0x5208',
       to: '0x' + 'ab'.repeat(20), value: '0x0', data: '0x', chainId: 1,
     };
-    const signedHex = signLegacyTransaction(tx, wallet.privateKey);
+    const _signedHex = signLegacyTransaction(tx, wallet.privateKey);
 
     // Decode the signed tx to extract v, r, s and recover the address
     // We'll re-hash the unsigned portion and use ecRecover
@@ -555,7 +552,7 @@ describe('buildTradingCommands', () => {
 
     await cmds.quote([], null, {}, {});
     expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('Usage: nansen quote'))).toBe(true);
+    expect(logs.some(l => l.includes('Usage: nansen trade quote'))).toBe(true);
   });
 
   it('should show help when quote-id missing for execute', async () => {
@@ -606,13 +603,13 @@ describe('buildTradingCommands', () => {
       success: true,
       quotes: [{
         aggregator: 'test',
-        inputMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC (ERC-20)
+        inputMint: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // USDC (ERC-20)
         outputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
         inAmount: '1000000',
         outAmount: '500000000000000',
         transaction: { to: '0xabc', data: '0x1234', value: '5000000000000000000', gas: '200000' },
       }],
-    }, 'ethereum');
+    }, 'base');
 
     const logs = [];
     const cmds = buildTradingCommands({
@@ -635,12 +632,12 @@ describe('buildTradingCommands', () => {
       quotes: [{
         aggregator: 'test',
         inputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-        outputMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        outputMint: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
         // no inAmount or inputAmount — malformed quote
         outAmount: '3000000000',
         transaction: { to: '0xabc', data: '0x1234', value: '5000000000000000000', gas: '200000' },
       }],
-    }, 'ethereum');
+    }, 'base');
 
     const logs = [];
     const cmds = buildTradingCommands({
@@ -662,13 +659,13 @@ describe('buildTradingCommands', () => {
       success: true,
       quotes: [{
         aggregator: 'test',
-        inputMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        inputMint: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
         outputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
         inAmount: '1000000',
         outAmount: '500000000000000',
         transaction: { to: '0xabc', data: '0x1234', value: '0', gas: '200000' },
       }],
-    }, 'ethereum');
+    }, 'base');
 
     const logs = [];
     const cmds = buildTradingCommands({
@@ -693,12 +690,12 @@ describe('buildTradingCommands', () => {
       quotes: [{
         aggregator: 'test',
         inputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-        outputMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        outputMint: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
         inAmount: '1000000000000000000',
         outAmount: '3000000000',
         transaction: { to: '0xabc', data: '0x1234', value: '1000000000000000000', gas: '200000' },
       }],
-    }, 'ethereum');
+    }, 'base');
 
     const logs = [];
     const cmds = buildTradingCommands({
@@ -723,12 +720,12 @@ describe('buildTradingCommands', () => {
       quotes: [{
         aggregator: 'test',
         inputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', // native ETH
-        outputMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        outputMint: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
         inAmount: '1000000000000000000', // 1 ETH
         outAmount: '3000000000',
         transaction: { to: '0xabc', data: '0x1234', value: '5000000000000000000', gas: '200000' },
       }],
-    }, 'ethereum');
+    }, 'base');
 
     const logs = [];
     const cmds = buildTradingCommands({
@@ -984,32 +981,11 @@ describe('getWrappedNativeFromWarning', () => {
     expect(warning).toContain('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
   });
 
-  it('should warn when --from is WETH on Ethereum', () => {
-    const warning = getWrappedNativeFromWarning('0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', 'ethereum');
-    expect(warning).toContain('WETH');
-    expect(warning).toContain('wrapped ETH');
-    expect(warning).toContain('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
-  });
-
-  it('should warn when --from is WBNB on BSC', () => {
-    const warning = getWrappedNativeFromWarning('0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', 'bsc');
-    expect(warning).toContain('WBNB');
-    expect(warning).toContain('wrapped BNB');
-    expect(warning).toContain('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
-  });
-
   it('should warn when --from is native sentinel on Base', () => {
     const warning = getWrappedNativeFromWarning('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 'base');
     expect(warning).toContain('native ETH');
     expect(warning).toContain('WETH');
     expect(warning).toContain('0x4200000000000000000000000000000000000006');
-  });
-
-  it('should warn when --from is native sentinel on BSC', () => {
-    const warning = getWrappedNativeFromWarning('0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', 'bsc');
-    expect(warning).toContain('native BNB');
-    expect(warning).toContain('WBNB');
-    expect(warning).toContain('0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c');
   });
 
   it('should match addresses case-insensitively', () => {
@@ -1179,5 +1155,31 @@ describe('API error handling', () => {
     })).rejects.toThrow(); // Should throw, not hang
 
     global.fetch = origFetch;
+  });
+});
+
+describe('formatQuote price impact warning', () => {
+  it('should show warning when priceImpactPct exceeds 5%', () => {
+    const output = formatQuote({ aggregator: 'jupiter', inputMint: 'So11111111111111111111111111111111111111112', outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', inAmount: '1000', outAmount: '500', priceImpactPct: '22.59' });
+    expect(output).toContain('⚠ Price impact is 22.59%!');
+    expect(output).not.toContain('Price Impact: 22.59%');
+  });
+
+  it('should show warning when priceImpactPct is negative and exceeds -5%', () => {
+    const output = formatQuote({ aggregator: 'okx', inputMint: '0x4ed4e862860bed51a9570b96d89af5e1b0efefed', outputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', inAmount: '100000000000000000000000000', outAmount: '31932262114904620119', priceImpactPct: '-10.03' });
+    expect(output).toContain('⚠ Price impact is 10.03%!');
+    expect(output).not.toContain('-10.03');
+  });
+
+  it('should show normal line when priceImpactPct is low', () => {
+    const output = formatQuote({ aggregator: 'jupiter', inputMint: 'So11111111111111111111111111111111111111112', outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', inAmount: '1000', outAmount: '500', priceImpactPct: '0.05' });
+    expect(output).toContain('Price Impact: 0.05%');
+    expect(output).not.toContain('WARNING');
+  });
+
+  it('should not show price impact line when priceImpactPct is absent', () => {
+    const output = formatQuote({ aggregator: 'jupiter', inputMint: 'So11111111111111111111111111111111111111112', outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', inAmount: '1000', outAmount: '500' });
+    expect(output).not.toContain('Price Impact');
+    expect(output).not.toContain('WARNING');
   });
 });

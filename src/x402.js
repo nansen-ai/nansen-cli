@@ -154,7 +154,7 @@ export async function createPaymentSignature(response, url, options = {}) {
  */
 export async function checkX402Balance(network) {
   try {
-    const { listWallets, exportWallet } = await import('./wallet.js');
+    const { listWallets, exportWallet: _exportWallet } = await import('./wallet.js');
     const wallets = listWallets();
     if (!wallets.defaultWallet) return null;
 

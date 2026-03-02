@@ -16,7 +16,6 @@ import {
   parseSort,
   buildCommands,
   runCLI,
-  NO_AUTH_COMMANDS,
   DEPRECATED_TO_RESEARCH,
   DEPRECATED_TO_TRADE,
   HELP,
@@ -29,7 +28,7 @@ import {
 } from '../cli.js';
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir } from '../api.js';
 import * as fs from 'fs';
-import * as path from 'path';
+import * as _path from 'path';
 
 describe('parseArgs', () => {
   it('should parse positional arguments', () => {
@@ -262,15 +261,8 @@ describe('HELP', () => {
     expect(HELP).toContain('trade');
     expect(HELP).toContain('wallet');
     expect(HELP).toContain('schema');
-    expect(HELP).toContain('login/logout');
-  });
-});
-
-describe('NO_AUTH_COMMANDS', () => {
-  it('should include login, logout, help', () => {
-    expect(NO_AUTH_COMMANDS).toContain('login');
-    expect(NO_AUTH_COMMANDS).toContain('logout');
-    expect(NO_AUTH_COMMANDS).toContain('help');
+    expect(HELP).toContain('login');
+    expect(HELP).toContain('logout');
   });
 });
 
@@ -351,6 +343,7 @@ describe('buildCommands', () => {
       expect(mockDeps.exit).toHaveBeenCalledWith(1);
       expect(logs.some(l => l.includes('No API key provided'))).toBe(true);
     });
+
   });
 
   describe('smart-money command', () => {
@@ -771,17 +764,17 @@ describe('--table output formatting', () => {
 // =================== P1: --no-retry and --retries Flags ===================
 
 describe('--no-retry and --retries flags', () => {
-  let outputs, exitCode;
+  let outputs, _exitCode;
 
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
     errorOutput: (msg) => outputs.push(msg),
-    exit: (code) => { exitCode = code; }
+    exit: (code) => { _exitCode = code; }
   });
 
   beforeEach(() => {
     outputs = [];
-    exitCode = null;
+    _exitCode = null;
   });
 
   it('should set maxRetries to 0 when --no-retry is used', async () => {
@@ -1158,7 +1151,7 @@ describe('SCHEMA', () => {
   it('should include return field definitions', () => {
     const netflow = SCHEMA.commands.research.subcommands['smart-money'].subcommands['netflow'];
     expect(netflow.returns).toContain('token_symbol');
-    expect(netflow.returns).toContain('net_flow_usd');
+    expect(netflow.returns).toContain('net_flow_1h_usd');
   });
 
   it('should define global options', () => {
@@ -1237,9 +1230,6 @@ describe('schema command', () => {
     expect(output).toContain('\n'); // Pretty JSON has newlines
   });
 
-  it('should be in NO_AUTH_COMMANDS', () => {
-    expect(NO_AUTH_COMMANDS).toContain('schema');
-  });
 });
 
 // =================== Field Filtering ===================
@@ -1347,18 +1337,18 @@ describe('filterFields', () => {
 describe('--fields flag integration', () => {
   let outputs;
   let errors;
-  let exitCode;
+  let _exitCode;
 
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
     errorOutput: (msg) => errors.push(msg),
-    exit: (code) => { exitCode = code; }
+    exit: (code) => { _exitCode = code; }
   });
 
   beforeEach(() => {
     outputs = [];
     errors = [];
-    exitCode = null;
+    _exitCode = null;
   });
 
   it('should filter response fields', async () => {
@@ -1510,10 +1500,6 @@ describe('Response Caching', () => {
 });
 
 describe('cache command', () => {
-  it('should be in NO_AUTH_COMMANDS', () => {
-    expect(NO_AUTH_COMMANDS).toContain('cache');
-  });
-
   it('should clear cache with clear subcommand', async () => {
     const logs = [];
     const mockDeps = {
@@ -1547,17 +1533,17 @@ describe('cache command', () => {
 
 describe('--cache flag integration', () => {
   let outputs;
-  let exitCode;
+  let _exitCode;
 
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
     errorOutput: (msg) => outputs.push(msg),
-    exit: (code) => { exitCode = code; }
+    exit: (code) => { _exitCode = code; }
   });
 
   beforeEach(() => {
     outputs = [];
-    exitCode = null;
+    _exitCode = null;
     clearCache();
   });
 
@@ -1683,18 +1669,18 @@ describe('formatStream', () => {
 describe('--stream flag integration', () => {
   let outputs;
   let errors;
-  let exitCode;
+  let _exitCode;
 
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
     errorOutput: (msg) => errors.push(msg),
-    exit: (code) => { exitCode = code; }
+    exit: (code) => { _exitCode = code; }
   });
 
   beforeEach(() => {
     errors = [];
     outputs = [];
-    exitCode = null;
+    _exitCode = null;
   });
 
   it('should output NDJSON when --stream flag used', async () => {
@@ -2055,18 +2041,18 @@ describe('formatCsv', () => {
 describe('--format csv integration', () => {
   let outputs;
   let errors;
-  let exitCode;
+  let _exitCode;
 
   const mockDeps = () => ({
     output: (msg) => outputs.push(msg),
     errorOutput: (msg) => errors.push(msg),
-    exit: (code) => { exitCode = code; }
+    exit: (code) => { _exitCode = code; }
   });
 
   beforeEach(() => {
     outputs = [];
     errors = [];
-    exitCode = null;
+    _exitCode = null;
   });
 
   it('should output CSV when --format csv is used', async () => {
@@ -2282,7 +2268,7 @@ describe('compareWallets', () => {
 
 describe('ENS integration in batchProfile', () => {
   it('should resolve .eth names and include ensName in results', async () => {
-    const { resolveAddress } = await import('../ens.js');
+    const { resolveAddress: _resolveAddress } = await import('../ens.js');
     vi.spyOn(await import('../ens.js'), 'resolveAddress').mockResolvedValue({
       address: '0x0000000000000000000000000000000000000001',
       ensName: 'test.eth',
@@ -2375,8 +2361,8 @@ describe('research command routing', () => {
 
   it('should error on unknown category', async () => {
     const commands = buildCommands({});
-    const result = await commands.research(['unknown'], null, {}, {});
-    expect(result.error).toContain('Unknown research category');
+    await expect(commands.research(['unknown'], null, {}, {}))
+      .rejects.toThrow('Unknown research category');
   });
 });
 
@@ -2391,11 +2377,9 @@ describe('trade command routing', () => {
   });
 
   it('should error on unknown subcommand', async () => {
-    const logs = [];
-    const commands = buildCommands({ log: (msg) => logs.push(msg) });
-    await commands.trade(['unknown'], null, {}, {});
-    const output = logs.join('\n');
-    expect(output).toContain('Unknown trade subcommand');
+    const commands = buildCommands({});
+    await expect(commands.trade(['unknown'], null, {}, {}))
+      .rejects.toThrow('Unknown trade subcommand');
   });
 });
 
@@ -2467,7 +2451,7 @@ describe('deprecation warnings', () => {
     // quote with no args shows its help; confirms handler was reached
     const result = await runCLI(['quote'], deps);
     expect(errors.some(e => e.includes('nansen trade quote'))).toBe(true);
-    expect(result.type).toBe('no-auth');
+    expect(result.type).toBe('no-output');
   });
 });
 

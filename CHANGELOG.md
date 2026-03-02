@@ -1,5 +1,85 @@
 # Changelog
 
+## 1.10.1
+
+### Patch Changes
+
+- [#133](https://github.com/nansen-ai/nansen-cli/pull/133) [`4cbeb65`](https://github.com/nansen-ai/nansen-cli/commit/4cbeb6510c286660f611117d2d8b0508f2340e31) Thanks [@0xlaveen](https://github.com/0xlaveen)! - fix: correct profiler pagination parameter from `recordsPerPage` to `per_page`; remove unsupported pagination from pnl-summary; add --limit to labels, historical-balances, counterparties schema
+
+- [#164](https://github.com/nansen-ai/nansen-cli/pull/164) [`ec6ab78`](https://github.com/nansen-ai/nansen-cli/commit/ec6ab78d604a177c3459833091531de3fc07add1) Thanks [@DMagowan](https://github.com/DMagowan)! - fix: correct `--date` option marked as `required: true` when it is optional
+
+  The schema incorrectly marked `--date` as `required: true` for three commands:
+
+  - `research token flows`
+  - `research token who-bought-sold`
+  - `research profiler transactions`
+
+  All three use `parseDateOption` with a `days` fallback, so `--date` is optional — omitting it defaults to a rolling window based on `--days`. An agent following the schema strictly would unnecessarily refuse to run these commands without a date.
+
+- [#162](https://github.com/nansen-ai/nansen-cli/pull/162) [`4dbe181`](https://github.com/nansen-ai/nansen-cli/commit/4dbe181d3b4973881bcb7fb445cf6559819006b6) Thanks [@DMagowan](https://github.com/DMagowan)! - fix: surface wallet prerequisite in `trade quote` help text and schema
+
+  `nansen trade quote` requires a configured wallet (the trading API builds a transaction specific to the sender address), but this was not communicated until the command failed. Adds a PREREQUISITE section to the usage text and a `prerequisites` field to the schema so agents can discover this requirement before running the command.
+
+- [#165](https://github.com/nansen-ai/nansen-cli/pull/165) [`92f37ea`](https://github.com/nansen-ai/nansen-cli/commit/92f37eaa8655ae1a39b9200aafaf4771a0859229) Thanks [@0xlaveen](https://github.com/0xlaveen)! - Fix trading docs and config to reflect actual supported chains (Base and Solana only)
+
+## 1.10.0
+
+### Minor Changes
+
+- [#125](https://github.com/nansen-ai/nansen-cli/pull/125) [`5a5a80a`](https://github.com/nansen-ai/nansen-cli/commit/5a5a80af9c2c5b93efcc707925b004f077e13c36) Thanks [@0xlaveen](https://github.com/0xlaveen)! - Add modular skills/ directory with 7 agent-optimised SKILL.md files (nansen-token, nansen-smart-money, nansen-profiler, nansen-trade, nansen-wallet, nansen-perp, nansen-search) following the linear-cli pattern. Each skill has scoped frontmatter, agent routing descriptions, bash examples, and exit codes. Add skills nudge to `nansen --help` output.
+
+### Patch Changes
+
+- [#122](https://github.com/nansen-ai/nansen-cli/pull/122) [`9a1ada8`](https://github.com/nansen-ai/nansen-cli/commit/9a1ada8543cd6fdbcc10d2d5004fe2e2e1a88928) Thanks [@TimNooren](https://github.com/TimNooren)! - `nansen research <unknown>` and `nansen trade <unknown>` now exit with code 1 and return `{"success":false,...}` instead of silently exiting 0.
+
+- [#138](https://github.com/nansen-ai/nansen-cli/pull/138) [`c61881f`](https://github.com/nansen-ai/nansen-cli/commit/c61881f5455b9fff7fb97841652a72af58ab8e0b) Thanks [@TimNooren](https://github.com/TimNooren)! - Fix `nansen login --help` to show usage instead of erroring. Previously, `--help` was silently ignored on TTY (showing the interactive prompt) and caused an error on non-TTY. Also fixes the post-login suggested command to use the non-deprecated `nansen research token screener` path.
+
+- [#129](https://github.com/nansen-ai/nansen-cli/pull/129) [`eeabf89`](https://github.com/nansen-ai/nansen-cli/commit/eeabf8988dafc7fb1964fd2eef629f03c6a4420a) Thanks [@araa47](https://github.com/araa47)! - Fix `token ohlcv` sending unsupported pagination/limit params that caused 422 errors
+
+- [#139](https://github.com/nansen-ai/nansen-cli/pull/139) [`e86dc68`](https://github.com/nansen-ai/nansen-cli/commit/e86dc6869f524d3dc59da4c7c04cb1ace1b7246b) Thanks [@TimNooren](https://github.com/TimNooren)! - Fix API key prompt masking: each keystroke was showing the real character followed by `*` (e.g. `f*o*o*`) because the readline interface was active alongside raw mode, causing double output. Moving readline creation into the non-hidden branch eliminates the double-echo and also fixes backspace incorrectly clearing the prompt label.
+
+- [#129](https://github.com/nansen-ai/nansen-cli/pull/129) [`eeabf89`](https://github.com/nansen-ai/nansen-cli/commit/eeabf8988dafc7fb1964fd2eef629f03c6a4420a) Thanks [@araa47](https://github.com/araa47)! - Fix `trade quote` crash when no wallet exists — now shows actionable error instead of uncaught exception
+
+- [#126](https://github.com/nansen-ai/nansen-cli/pull/126) [`f3b87e7`](https://github.com/nansen-ai/nansen-cli/commit/f3b87e7491d03d052d5d72fcc991de0c33caf51f) Thanks [@araa47](https://github.com/araa47)! - Remove root SKILL.md so `npx skills add nansen-ai/nansen-cli` correctly discovers all 7 skills in `skills/` instead of treating the repo as a single skill.
+
+## 1.9.3
+
+### Patch Changes
+
+- [#118](https://github.com/nansen-ai/nansen-cli/pull/118) [`0bd4c3c`](https://github.com/nansen-ai/nansen-cli/commit/0bd4c3c1946e575e2c2db5e02d17f266e79752a4) Thanks [@TimNooren](https://github.com/TimNooren)! - Show warning when trade quote price impact exceeds 5%, and show pin command to avoid fallback to worse quotes
+
+## 1.9.2
+
+### Patch Changes
+
+- [#116](https://github.com/nansen-ai/nansen-cli/pull/116) [`7a2b729`](https://github.com/nansen-ai/nansen-cli/commit/7a2b7293c2e731ae1d5375b15df9c05c5611a9cb) Thanks [@TimNooren](https://github.com/TimNooren)! - Fix usage examples for `nansen trade quote` to show correct command name instead of deprecated `nansen quote`
+
+- [#114](https://github.com/nansen-ai/nansen-cli/pull/114) [`37d8c0b`](https://github.com/nansen-ai/nansen-cli/commit/37d8c0b87797145a15b087caa5eb474673217580) Thanks [@TimNooren](https://github.com/TimNooren)! - Show API key URL in non-interactive login error message
+
+- [#117](https://github.com/nansen-ai/nansen-cli/pull/117) [`55ad922`](https://github.com/nansen-ai/nansen-cli/commit/55ad922826a7a2411889edeede42fbfc7b70d7a5) Thanks [@TimNooren](https://github.com/TimNooren)! - Add --wallet and WalletConnect documentation to `nansen trade help` output
+
+## 1.9.1
+
+### Patch Changes
+
+- [#110](https://github.com/nansen-ai/nansen-cli/pull/110) [`82aa780`](https://github.com/nansen-ai/nansen-cli/commit/82aa78022bdcd62987b0949e090f19f563699d9a) Thanks [@TimNooren](https://github.com/TimNooren)! - Fix `nansen changelog` always showing "CHANGELOG.md not found". Added a `files` field to `package.json` to explicitly bundle `CHANGELOG.md` with the published package. Also excludes `src/__tests__/` from the package, reducing package size from ~537 kB to ~269 kB.
+
+## 1.9.0
+
+### Minor Changes
+
+- [#98](https://github.com/nansen-ai/nansen-cli/pull/98) [`2f3f556`](https://github.com/nansen-ai/nansen-cli/commit/2f3f556d008a1f8ec40d57a8a2822bedbc6b60cb) Thanks [@Codier](https://github.com/Codier)! - Add symbol shortcuts for common tokens (SOL, ETH, USDC, USDT, etc.) that resolve to canonical addresses per chain. Users can now use `--from SOL --to USDC` instead of raw contract addresses.
+
+- [#32](https://github.com/nansen-ai/nansen-cli/pull/32) [`08a8d21`](https://github.com/nansen-ai/nansen-cli/commit/08a8d21be6e9196661be737545e790af180aebc3) Thanks [@arein](https://github.com/arein)! - Add WalletConnect support for trading, transfers, and x402 auto-payment (EVM only)
+
+### Patch Changes
+
+- [#99](https://github.com/nansen-ai/nansen-cli/pull/99) [`9144cba`](https://github.com/nansen-ai/nansen-cli/commit/9144cba38b06c90d462df97ea6cbcdeaed26fa36) Thanks [@Codier](https://github.com/Codier)! - Show clear error when `--amount` contains a decimal (e.g. `0.005`) instead of base units (lamports, wei). Detected client-side before hitting the API.
+
+- [#100](https://github.com/nansen-ai/nansen-cli/pull/100) [`19559bf`](https://github.com/nansen-ai/nansen-cli/commit/19559bfea6c22f6bd6b8c278ed5e6ae6d64866d5) Thanks [@Codier](https://github.com/Codier)! - Fix `nansen trade help` returning blank output. Now prints subcommands, usage, and examples. Also fixes `errorOutput` ReferenceError in `buildCommands` scope (affected `trade` and `changelog` commands).
+
+- [#93](https://github.com/nansen-ai/nansen-cli/pull/93) [`342c91f`](https://github.com/nansen-ai/nansen-cli/commit/342c91fdeb6d98d6b5c10a58cb9702eb5afe096f) Thanks [@Codier](https://github.com/Codier)! - Warn when `--from` is a wrapped native token (WETH/WBNB) or native sentinel, so AI agents can correct the token before execution fails
+
 ## 1.8.0
 
 ### Minor Changes

@@ -2,16 +2,16 @@
  * End-to-end swap tests — runs the actual CLI against mainnet.
  *
  * Prerequisites:
- *   - A wallet in ~/.nansen/wallets/ with ETH on Base (for gas + swap)
+ *   - A wallet in ~/.nansen/wallets/ with ETH on Base and SOL on Solana
  *   - NANSEN_WALLET_PASSWORD env var set
  *
- * Run: npm run test:swap
+ * Run: npm run test:trade
  *
  * These tests execute REAL swaps with REAL funds. They are excluded
  * from the default test suite and must be run explicitly.
  *
- * The round-trip swaps ETH → USDC → ETH so the only prerequisite is
- * having ETH (the gas token). Net cost is just gas + slippage.
+ * Each round-trip swaps native → USDC → native so the only prerequisite
+ * is having the gas token. Net cost is just gas + slippage.
  */
 
 import { spawnSync } from 'child_process';
@@ -128,5 +128,104 @@ describe.sequential('e2e: ETH ↔ USDC swap round-trip on Base', () => {
     expect(txMatch, `Expected Tx Hash in output:\n${output}`).toBeTruthy();
     state.reverseTxHash = txMatch[1];
     console.log(`Reverse swap: https://basescan.org/tx/${state.reverseTxHash}`);
+  });
+});
+
+const SOL_NATIVE = 'So11111111111111111111111111111111111111112';
+const SOL_USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const SWAP_AMOUNT_SOL = '2000000'; // 0.002 SOL (~$0.17, 9 decimals)
+
+describe.sequential('e2e: SOL ↔ USDC swap round-trip on Solana', () => {
+  const state = {
+    forwardQuoteId: null,
+    forwardSignature: null,
+    reverseQuoteId: null,
+    reverseSignature: null,
+    receivedUsdcAmount: null,
+  };
+
+  it('should have NANSEN_WALLET_PASSWORD set', () => {
+    expect(
+      process.env.NANSEN_WALLET_PASSWORD,
+      'Set NANSEN_WALLET_PASSWORD to run e2e tests'
+    ).toBeDefined();
+  });
+
+  it('should have a wallet with Solana address', () => {
+    const result = runCli('wallet', 'list');
+    const output = result.stdout + result.stderr;
+    expect(output).toContain('Solana:');
+  });
+
+  it('quote SOL → USDC on Solana', () => {
+    const result = runCli(
+      'trade', 'quote',
+      '--chain', 'solana',
+      '--from', SOL_NATIVE,
+      '--to', SOL_USDC,
+      '--amount', SWAP_AMOUNT_SOL,
+    );
+    const output = result.stdout + result.stderr;
+
+    const quoteMatch = output.match(/Quote ID:\s+(\S+)/);
+    expect(quoteMatch, `Expected Quote ID in output:\n${output}`).toBeTruthy();
+    state.forwardQuoteId = quoteMatch[1];
+  });
+
+  it('execute SOL → USDC swap', () => {
+    expect(state.forwardQuoteId).toBeTruthy();
+
+    const result = runCli(
+      'trade', 'execute',
+      '--quote', state.forwardQuoteId,
+    );
+    const output = result.stdout + result.stderr;
+
+    expect(output).toContain('Transaction successful');
+
+    // Solana tx signatures are base58 strings (typically 87-88 chars)
+    const sigMatch = output.match(/Signature:\s+([1-9A-HJ-NP-Za-km-z]{43,})/);
+    expect(sigMatch, `Expected Signature in output:\n${output}`).toBeTruthy();
+    state.forwardSignature = sigMatch[1];
+    console.log(`Forward swap: https://solscan.io/tx/${state.forwardSignature}`);
+
+    // Extract received USDC amount for the reverse swap
+    const swapMatch = output.match(/Output:\s+(\d+)\s+→/);
+    expect(swapMatch, `Expected Output amount in output:\n${output}`).toBeTruthy();
+    state.receivedUsdcAmount = swapMatch[1];
+  });
+
+  it('quote USDC → SOL on Solana (reverse)', () => {
+    expect(state.receivedUsdcAmount, 'Forward swap must capture USDC amount').toBeTruthy();
+
+    const result = runCli(
+      'trade', 'quote',
+      '--chain', 'solana',
+      '--from', SOL_USDC,
+      '--to', SOL_NATIVE,
+      '--amount', state.receivedUsdcAmount,
+    );
+    const output = result.stdout + result.stderr;
+
+    const quoteMatch = output.match(/Quote ID:\s+(\S+)/);
+    expect(quoteMatch, `Expected Quote ID in output:\n${output}`).toBeTruthy();
+    state.reverseQuoteId = quoteMatch[1];
+  });
+
+  it('execute USDC → SOL swap (reverse)', () => {
+    expect(state.reverseQuoteId).toBeTruthy();
+
+    const result = runCli(
+      'trade', 'execute',
+      '--quote', state.reverseQuoteId,
+    );
+    const output = result.stdout + result.stderr;
+
+    expect(output).toContain('Transaction successful');
+
+    const sigMatch = output.match(/Signature:\s+([1-9A-HJ-NP-Za-km-z]{43,})/);
+    expect(sigMatch, `Expected Signature in output:\n${output}`).toBeTruthy();
+    state.reverseSignature = sigMatch[1];
+    console.log(`Reverse swap: https://solscan.io/tx/${state.reverseSignature}`);
   });
 });

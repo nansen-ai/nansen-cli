@@ -30,11 +30,11 @@ export function base58Encode(buf) {
 // ============= Constants =============
 
 const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
-const TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+const _TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 const COMPUTE_BUDGET_PROGRAM = 'ComputeBudget111111111111111111111111111111';
 const MEMO_PROGRAM = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
 const ATA_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
-const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+const _SYSTEM_PROGRAM = '11111111111111111111111111111111';
 
 const DEFAULT_COMPUTE_UNIT_LIMIT = 20000;
 const DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 1;
@@ -186,7 +186,7 @@ function modInverse(a, mod) {
  * Build a Solana MessageV0 from accounts and instructions.
  * Simplified builder for x402 payment transactions.
  */
-function buildMessageV0({ feePayer, instructions, recentBlockhash, accounts }) {
+function buildMessageV0({ feePayer, instructions, recentBlockhash, accounts: _accounts }) {
   // All unique accounts in order: feePayer first, then signers, then rest
   const accountMap = new Map();
   const feePayerKey = feePayer;

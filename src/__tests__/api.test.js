@@ -430,15 +430,53 @@ describe('NansenAPI', () => {
     describe('smartMoneyPerpTrades', () => {
       it('should fetch perp trades with correct endpoint', async () => {
         setupMock(MOCK_RESPONSES.smartMoneyPerpTrades);
-        
+
         const result = await api.smartMoneyPerpTrades({});
-        
+
         expectFetchCalledWith('/api/v1/smart-money/perp-trades');
-        
+
         expect(result.trades).toBeInstanceOf(Array);
         expect(result.trades[0]).toHaveProperty('token', 'BTC');
         expect(result.trades[0]).toHaveProperty('side', 'long');
         expect(result.trades[0]).toHaveProperty('size_usd', 10000);
+      });
+
+      it('should pass only_new_positions parameter when true', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyPerpTrades);
+
+        await api.smartMoneyPerpTrades({ onlyNewPositions: true });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/perp-trades');
+        expect(body.only_new_positions).toBe(true);
+      });
+
+      it('should pass only_new_positions parameter when false', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyPerpTrades);
+
+        await api.smartMoneyPerpTrades({ onlyNewPositions: false });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/perp-trades');
+        expect(body.only_new_positions).toBe(false);
+      });
+
+      it('should omit only_new_positions when undefined', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyPerpTrades);
+
+        await api.smartMoneyPerpTrades({ onlyNewPositions: undefined });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/perp-trades');
+        expect(body.only_new_positions).toBeUndefined();
+      });
+
+      it('should support filters with include_smart_money_labels', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyPerpTrades);
+
+        await api.smartMoneyPerpTrades({
+          filters: { include_smart_money_labels: ['Fund', 'Whale'] }
+        });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/perp-trades');
+        expect(body.filters.include_smart_money_labels).toEqual(['Fund', 'Whale']);
       });
     });
 
@@ -769,6 +807,24 @@ describe('NansenAPI', () => {
         const diffDays = Math.round((to - from) / (1000 * 60 * 60 * 24));
         expect(diffDays).toBe(14);
       });
+
+      it('should send per_page (not recordsPerPage) when limit is specified', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterparties);
+
+        await api.addressCounterparties({
+          address: TEST_DATA.ethereum.address,
+          chain: 'ethereum',
+          pagination: { page: 1, per_page: 5 }
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties');
+        // Assert correct pagination field name used by the API
+        expect(body.pagination).toBeDefined();
+        expect(body.pagination.per_page).toBe(5);
+        expect(body.pagination.page).toBe(1);
+        // Assert the legacy field name is NOT used
+        expect(body.pagination.recordsPerPage).toBeUndefined();
+      });
     });
 
     describe('addressPnlSummary', () => {
@@ -936,15 +992,41 @@ describe('NansenAPI', () => {
 
       it('should pass label type filter', async () => {
         setupMock(MOCK_RESPONSES.tokenHolders);
-        
+
         await api.tokenHolders({
           tokenAddress: TEST_DATA.solana.token,
           chain: 'solana',
           labelType: 'smart_money'
         });
-        
+
         const body = expectFetchCalledWith('/api/v1/tgm/holders');
         expect(body.label_type).toBe('smart_money');
+      });
+
+      it('should pass filters parameter', async () => {
+        setupMock(MOCK_RESPONSES.tokenHolders);
+
+        await api.tokenHolders({
+          tokenAddress: TEST_DATA.solana.token,
+          chain: 'solana',
+          filters: { min_balance_usd: 10000 }
+        });
+
+        const body = expectFetchCalledWith('/api/v1/tgm/holders');
+        expect(body.filters.min_balance_usd).toBe(10000);
+      });
+
+      it('should pass orderBy parameter', async () => {
+        setupMock(MOCK_RESPONSES.tokenHolders);
+
+        await api.tokenHolders({
+          tokenAddress: TEST_DATA.solana.token,
+          chain: 'solana',
+          orderBy: [{ field: 'value_usd', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/tgm/holders');
+        expect(body.order_by).toEqual([{ field: 'value_usd', direction: 'DESC' }]);
       });
     });
 
@@ -980,6 +1062,21 @@ describe('NansenAPI', () => {
         const to = new Date(body.date.to);
         const diffDays = Math.round((to - from) / (1000 * 60 * 60 * 24));
         expect(diffDays).toBe(14);
+      });
+
+      it('should pass filters and orderBy parameters', async () => {
+        setupMock(MOCK_RESPONSES.tokenFlows);
+
+        await api.tokenFlows({
+          tokenAddress: TEST_DATA.solana.token,
+          chain: 'solana',
+          filters: { min_value_usd: 1000 },
+          orderBy: [{ field: 'value_usd', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/tgm/flows');
+        expect(body.filters.min_value_usd).toBe(1000);
+        expect(body.order_by).toEqual([{ field: 'value_usd', direction: 'DESC' }]);
       });
     });
 
@@ -1018,36 +1115,66 @@ describe('NansenAPI', () => {
 
       it('should calculate correct date range for custom days', async () => {
         setupMock(MOCK_RESPONSES.tokenDexTrades);
-        
+
         await api.tokenDexTrades({
           tokenAddress: TEST_DATA.solana.token,
           chain: 'solana',
           days: 14
         });
-        
+
         const body = expectFetchCalledWith('/api/v1/tgm/dex-trades');
         const from = new Date(body.date.from);
         const to = new Date(body.date.to);
         const diffDays = Math.round((to - from) / (1000 * 60 * 60 * 24));
         expect(diffDays).toBe(14);
       });
+
+      it('should pass filters and orderBy parameters', async () => {
+        setupMock(MOCK_RESPONSES.tokenDexTrades);
+
+        await api.tokenDexTrades({
+          tokenAddress: TEST_DATA.solana.token,
+          chain: 'solana',
+          filters: { min_value_usd: 5000 },
+          orderBy: [{ field: 'value_usd', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/tgm/dex-trades');
+        expect(body.filters.min_value_usd).toBe(5000);
+        expect(body.order_by).toEqual([{ field: 'value_usd', direction: 'DESC' }]);
+      });
     });
 
     describe('tokenPnlLeaderboard', () => {
       it('should fetch PnL leaderboard with correct endpoint', async () => {
         setupMock(MOCK_RESPONSES.tokenPnlLeaderboard);
-        
+
         const result = await api.tokenPnlLeaderboard({
           tokenAddress: TEST_DATA.solana.token,
           chain: 'solana'
         });
-        
+
         const body = expectFetchCalledWith('/api/v1/tgm/pnl-leaderboard');
         expect(body.token_address).toBe(TEST_DATA.solana.token);
         expect(body.date).toBeDefined();
-        
+
         expect(result.leaders).toBeInstanceOf(Array);
         expect(result.leaders[0]).toHaveProperty('pnl_usd', 100000);
+      });
+
+      it('should pass filters and orderBy parameters', async () => {
+        setupMock(MOCK_RESPONSES.tokenPnlLeaderboard);
+
+        await api.tokenPnlLeaderboard({
+          tokenAddress: TEST_DATA.solana.token,
+          chain: 'solana',
+          filters: { min_total_pnl_usd: 10000 },
+          orderBy: [{ field: 'total_pnl_usd', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/tgm/pnl-leaderboard');
+        expect(body.filters.min_total_pnl_usd).toBe(10000);
+        expect(body.order_by).toEqual([{ field: 'total_pnl_usd', direction: 'DESC' }]);
       });
     });
 

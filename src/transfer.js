@@ -6,7 +6,7 @@
 
 import crypto from 'crypto';
 import { base58Encode, exportWallet, getWalletConfig, verifyPassword } from './wallet.js';
-import { keccak256, signSecp256k1, rlpEncode, bigIntToMinBuf } from './crypto.js';
+import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect } from './walletconnect-trading.js';
 import { EVM_CHAIN_IDS } from './chain-ids.js';
 
@@ -217,7 +217,6 @@ async function buildEvmTransaction({ to, amount, token, privateKey, chain, max =
       const safeReserve = l2GasCost * 3n;
       if (ethBalance <= safeReserve) throw new Error(`Insufficient balance: ${ethBalance} wei (need > ${safeReserve} for gas + L1 fees)`);
       txValue = ethBalance - safeReserve;
-      amount = txValue;
       stderr(`  Max send: ${formatAmount(txValue, 18)} ETH (reserved ${formatAmount(safeReserve, 18)} for gas)`);
     } else {
       txValue = amount;
@@ -375,7 +374,7 @@ async function buildSolanaTransaction({ to, amount, amountStr, token, privateKey
       }
     } catch (e) {
       if (e.message.includes('Insufficient')) throw e;
-      throw new Error(`Source token account not found. Do you hold this token?`);
+      throw new Error(`Source token account not found. Do you hold this token?`, { cause: e });
     }
 
     // TransferChecked instruction data: [12, amount u64 LE, decimals u8]
@@ -568,7 +567,7 @@ async function validateErc20Token(rpcUrl, tokenAddress) {
     return decimals;
   } catch (e) {
     if (e.message.includes('not a valid')) throw e;
-    throw new Error(`Contract ${tokenAddress} does not implement ERC-20 decimals() — may not be a valid token`);
+    throw new Error(`Contract ${tokenAddress} does not implement ERC-20 decimals() — may not be a valid token`, { cause: e });
   }
 }
 
@@ -626,7 +625,7 @@ export async function sendTokens({ to, amount, chain, token = null, wallet = nul
     } else if (max && token) {
       // Max SPL: full token balance
       const rpcUrl = CHAIN_RPCS.solana;
-      const { tokenProgram, decimals } = await getTokenInfo(rpcUrl, token);
+      const { tokenProgram, decimals: _decimals } = await getTokenInfo(rpcUrl, token);
       const sourceATA = deriveATA(walletData.solana.address, token, tokenProgram);
       const sourceAtaAddr = base58Encode(sourceATA);
       const ataInfo = await rpcCall(rpcUrl, 'getTokenAccountBalance', [sourceAtaAddr]);
@@ -721,7 +720,7 @@ async function sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRu
   const wcAddress = await getWalletConnectAddress();
   if (!wcAddress) throw new Error('No WalletConnect session active. Run: walletconnect connect');
 
-  let txTo, txValue, txData, decimals = 18;
+  let txTo, txValue, txData;
 
   if (token) {
     // Validate ERC-20 contract
@@ -730,7 +729,7 @@ async function sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRu
       throw new Error(`Address ${token} is not a contract — not a valid ERC-20 token`);
     }
     const decResult = await rpcCall(rpcUrl, 'eth_call', [{ to: token, data: '0x313ce567' }, 'latest']);
-    decimals = parseInt(decResult, 16);
+    const decimals = parseInt(decResult, 16);
 
     if (max) {
       // Max ERC-20: full token balance
@@ -809,14 +808,11 @@ async function sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRu
     chainId,
   });
 
-  let txHash;
-  if (wcResult.txHash) {
-    txHash = wcResult.txHash;
-  } else if (wcResult.signedTransaction) {
-    txHash = await broadcastTransaction(wcResult.signedTransaction, chain);
-  } else {
+  const txHash = await (async () => {
+    if (wcResult.txHash) return wcResult.txHash;
+    if (wcResult.signedTransaction) return broadcastTransaction(wcResult.signedTransaction, chain);
     throw new Error('No transaction hash or signed transaction returned from WalletConnect');
-  }
+  })();
 
   // Wait for confirmation
   const confirmation = await waitForEvmConfirmation(rpcUrl, txHash);
