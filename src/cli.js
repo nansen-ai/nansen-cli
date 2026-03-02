@@ -55,15 +55,26 @@ export function filterFields(data, fields) {
     const filtered = {};
     for (const key of Object.keys(obj)) {
       if (fieldSet.has(key)) {
+        // Explicitly requested — include as-is
         filtered[key] = obj[key];
       } else if (typeof obj[key] === 'object' && obj[key] !== null) {
-        // Recurse into nested objects/arrays
-        const nested = filterObject(obj[key]);
-        // Only include if it has content
-        if (nested !== null && nested !== undefined) {
-          if (Array.isArray(nested) && nested.length > 0) {
-            filtered[key] = nested;
-          } else if (!Array.isArray(nested) && Object.keys(nested).length > 0) {
+        if (Array.isArray(obj[key])) {
+          // Only recurse into arrays whose elements are plain objects.
+          // Primitive arrays (e.g. tags: ["a","b"]) are dropped unless the
+          // key was explicitly requested (handled above).
+          const hasObjectElements = obj[key].length > 0 &&
+            typeof obj[key][0] === 'object' && obj[key][0] !== null;
+          if (hasObjectElements) {
+            const nested = obj[key].map(item => filterObject(item))
+              .filter(item => Object.keys(item).length > 0);
+            if (nested.length > 0) {
+              filtered[key] = nested;
+            }
+          }
+        } else {
+          // Plain object — always recurse in case it wraps requested fields
+          const nested = filterObject(obj[key]);
+          if (nested !== null && nested !== undefined && Object.keys(nested).length > 0) {
             filtered[key] = nested;
           }
         }
