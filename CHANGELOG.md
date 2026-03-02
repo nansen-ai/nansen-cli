@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.10.1
+
+### Patch Changes
+
+- [#133](https://github.com/nansen-ai/nansen-cli/pull/133) [`4cbeb65`](https://github.com/nansen-ai/nansen-cli/commit/4cbeb6510c286660f611117d2d8b0508f2340e31) Thanks [@0xlaveen](https://github.com/0xlaveen)! - fix: correct profiler pagination parameter from `recordsPerPage` to `per_page`; remove unsupported pagination from pnl-summary; add --limit to labels, historical-balances, counterparties schema
+
+- [#164](https://github.com/nansen-ai/nansen-cli/pull/164) [`ec6ab78`](https://github.com/nansen-ai/nansen-cli/commit/ec6ab78d604a177c3459833091531de3fc07add1) Thanks [@DMagowan](https://github.com/DMagowan)! - fix: correct `--date` option marked as `required: true` when it is optional
+
+  The schema incorrectly marked `--date` as `required: true` for three commands:
+
+  - `research token flows`
+  - `research token who-bought-sold`
+  - `research profiler transactions`
+
+  All three use `parseDateOption` with a `days` fallback, so `--date` is optional — omitting it defaults to a rolling window based on `--days`. An agent following the schema strictly would unnecessarily refuse to run these commands without a date.
+
+- [#162](https://github.com/nansen-ai/nansen-cli/pull/162) [`4dbe181`](https://github.com/nansen-ai/nansen-cli/commit/4dbe181d3b4973881bcb7fb445cf6559819006b6) Thanks [@DMagowan](https://github.com/DMagowan)! - fix: surface wallet prerequisite in `trade quote` help text and schema
+
+  `nansen trade quote` requires a configured wallet (the trading API builds a transaction specific to the sender address), but this was not communicated until the command failed. Adds a PREREQUISITE section to the usage text and a `prerequisites` field to the schema so agents can discover this requirement before running the command.
+
+- [#165](https://github.com/nansen-ai/nansen-cli/pull/165) [`92f37ea`](https://github.com/nansen-ai/nansen-cli/commit/92f37eaa8655ae1a39b9200aafaf4771a0859229) Thanks [@0xlaveen](https://github.com/0xlaveen)! - Fix trading docs and config to reflect actual supported chains (Base and Solana only)
+
 ## 1.10.0
 
 ### Minor Changes
