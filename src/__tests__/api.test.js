@@ -363,15 +363,53 @@ describe('NansenAPI', () => {
     describe('smartMoneyPerpTrades', () => {
       it('should fetch perp trades with correct endpoint', async () => {
         setupMock(MOCK_RESPONSES.smartMoneyPerpTrades);
-        
+
         const result = await api.smartMoneyPerpTrades({});
-        
+
         expectFetchCalledWith('/api/v1/smart-money/perp-trades');
-        
+
         expect(result.trades).toBeInstanceOf(Array);
         expect(result.trades[0]).toHaveProperty('token', 'BTC');
         expect(result.trades[0]).toHaveProperty('side', 'long');
         expect(result.trades[0]).toHaveProperty('size_usd', 10000);
+      });
+
+      it('should pass only_new_positions parameter when true', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyPerpTrades);
+
+        await api.smartMoneyPerpTrades({ onlyNewPositions: true });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/perp-trades');
+        expect(body.only_new_positions).toBe(true);
+      });
+
+      it('should pass only_new_positions parameter when false', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyPerpTrades);
+
+        await api.smartMoneyPerpTrades({ onlyNewPositions: false });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/perp-trades');
+        expect(body.only_new_positions).toBe(false);
+      });
+
+      it('should omit only_new_positions when undefined', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyPerpTrades);
+
+        await api.smartMoneyPerpTrades({ onlyNewPositions: undefined });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/perp-trades');
+        expect(body.only_new_positions).toBeUndefined();
+      });
+
+      it('should support filters with include_smart_money_labels', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyPerpTrades);
+
+        await api.smartMoneyPerpTrades({
+          filters: { include_smart_money_labels: ['Fund', 'Whale'] }
+        });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/perp-trades');
+        expect(body.filters.include_smart_money_labels).toEqual(['Fund', 'Whale']);
       });
     });
 
