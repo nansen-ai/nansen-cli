@@ -1091,6 +1091,41 @@ describe('API error handling', () => {
     global.fetch = origFetch;
   });
 
+  it('should throw NansenError instances from quote API', async () => {
+    const { NansenError } = await import('../api.js');
+    const origFetch = global.fetch;
+    const errorBody = JSON.stringify({
+      code: 'INVALID_AMOUNT',
+      message: 'Amount must be a valid numeric string',
+      details: { provided: 'abc' },
+    });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => errorBody,
+    });
+
+    const { getQuote } = await import('../trading.js');
+    let caught;
+    try {
+      await getQuote({
+        chainIndex: '501',
+        fromTokenAddress: 'So111',
+        toTokenAddress: 'EPjFW',
+        amount: 'abc',
+        userWalletAddress: 'test',
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(NansenError);
+    expect(caught.code).toBe('INVALID_AMOUNT');
+    expect(caught.status).toBe(400);
+    expect(caught.details).toEqual({ provided: 'abc' });
+
+    global.fetch = origFetch;
+  });
+
   it('should surface UPSTREAM_BROADCAST_ERROR from execute API', async () => {
     const origFetch = global.fetch;
     const errorBody = JSON.stringify({
