@@ -150,11 +150,14 @@ describe('CLI Smoke Tests', () => {
   });
 
   it('should list available subcommands for unknown pm subcommand', () => {
-    const { stdout } = runCLI('research pm nonexistent');
-    const json = JSON.parse(stdout.split('\n').find(l => l.startsWith('{')));
-    expect(json.data.error).toContain('Unknown subcommand');
-    expect(json.data.available).toContain('ohlcv');
-    expect(json.data.available).toContain('categories');
+    const { stdout, stderr, exitCode } = runCLI('research pm nonexistent');
+    expect(exitCode).not.toBe(0);
+    const output = stdout || stderr;
+    const json = JSON.parse(output.split('\n').find(l => l.startsWith('{')));
+    expect(json.success).toBe(false);
+    expect(json.error).toContain('Unknown subcommand');
+    expect(json.error).toContain('ohlcv');
+    expect(json.code).toBe('UNKNOWN');
   });
 
   it('should still route deprecated smart-money path', () => {

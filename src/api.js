@@ -1180,10 +1180,11 @@ export class NansenAPI {
   }
 
   async pmPositionDetail(params = {}) {
-    const { marketId, pagination } = params;
+    const { marketId, address, pagination } = params;
     if (!marketId) throw new NansenError('market_id is required', ErrorCode.MISSING_PARAM);
     return this.request('/api/v1/prediction-market/position-detail', {
       market_id: marketId,
+      ...(address ? { address } : {}),
       pagination
     });
   }
