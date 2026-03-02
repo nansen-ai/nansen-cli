@@ -177,9 +177,17 @@ ENS names are automatically resolved to `0x` addresses via public APIs (with onc
 | `position-detail` | Detailed position data |
 | `categories` | List market categories |
 
+Screener options: `--sort-by` (volume_24hr, volume, volume_1wk, volume_1mo, liquidity, open_interest, unique_traders_24h, age_hours), `--query` (search text), `--status` (active, closed). Screeners return active/open markets by default. Other endpoints (ohlcv, trades, pnl, etc.) work with any market ID regardless of status.
+
 ```bash
 # Screen prediction markets by volume
 nansen pm market-screener --sort-by volume_24hr --limit 20 --pretty
+
+# Search for specific markets
+nansen pm market-screener --query "bitcoin" --limit 10
+
+# Find resolved/closed markets
+nansen pm market-screener --status closed --limit 10
 
 # Get OHLCV data for a market
 nansen pm ohlcv --market-id 654412 --sort period_start:desc --pretty

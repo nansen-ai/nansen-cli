@@ -1350,7 +1350,19 @@ describe('NansenAPI', () => {
       });
 
       it('should validate address format', async () => {
-        await expect(api.pmTradesByAddress({ address: 'invalid' })).rejects.toThrow();
+        try {
+          await api.pmTradesByAddress({ address: 'invalid' });
+        } catch (e) {
+          expect(e.code).toBe(ErrorCode.INVALID_ADDRESS);
+        }
+      });
+
+      it('should require address', async () => {
+        try {
+          await api.pmTradesByAddress({});
+        } catch (e) {
+          expect(e.code).toBe(ErrorCode.MISSING_PARAM);
+        }
       });
     });
 
@@ -1447,7 +1459,19 @@ describe('NansenAPI', () => {
       });
 
       it('should validate address format', async () => {
-        await expect(api.pmPnlByAddress({ address: 'invalid' })).rejects.toThrow();
+        try {
+          await api.pmPnlByAddress({ address: 'invalid' });
+        } catch (e) {
+          expect(e.code).toBe(ErrorCode.INVALID_ADDRESS);
+        }
+      });
+
+      it('should require address', async () => {
+        try {
+          await api.pmPnlByAddress({});
+        } catch (e) {
+          expect(e.code).toBe(ErrorCode.MISSING_PARAM);
+        }
       });
     });
 
