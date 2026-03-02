@@ -1448,6 +1448,23 @@
           }
         }
       }
+    },
+    "status": {
+      "description": "Environment health check — verify auth, API connectivity, wallets, and CLI version before running workflows",
+      "returns": [
+        "auth.configured",
+        "auth.valid",
+        "auth.error",
+        "api.reachable",
+        "api.latency_ms",
+        "api.error",
+        "wallet.count",
+        "wallet.default",
+        "wallet.names",
+        "cli.version",
+        "cli.update_available",
+        "cli.latest_version"
+      ]
     }
   },
   "globalOptions": {
