@@ -416,30 +416,76 @@ describe('NansenAPI', () => {
     describe('smartMoneyHoldings', () => {
       it('should fetch holdings with correct endpoint', async () => {
         setupMock(MOCK_RESPONSES.smartMoneyHoldings);
-        
+
         const result = await api.smartMoneyHoldings({ chains: ['solana'] });
-        
+
         expectFetchCalledWith('/api/v1/smart-money/holdings', {
           chains: ['solana']
         });
-        
+
         expect(result.holdings).toBeInstanceOf(Array);
         expect(result.holdings[0]).toHaveProperty('token_symbol', 'TEST');
         expect(result.holdings[0]).toHaveProperty('balance_usd', 50000);
+      });
+
+      it('should pass filters parameter', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyHoldings);
+
+        await api.smartMoneyHoldings({
+          chains: ['solana'],
+          filters: { min_balance_usd: 10000 }
+        });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/holdings');
+        expect(body.filters.min_balance_usd).toBe(10000);
+      });
+
+      it('should pass orderBy parameter', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyHoldings);
+
+        await api.smartMoneyHoldings({
+          chains: ['solana'],
+          orderBy: [{ field: 'balance_usd', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/holdings');
+        expect(body.order_by).toEqual([{ field: 'balance_usd', direction: 'DESC' }]);
       });
     });
 
     describe('smartMoneyDcas', () => {
       it('should fetch DCA orders with correct endpoint', async () => {
         setupMock(MOCK_RESPONSES.smartMoneyDcas);
-        
+
         const result = await api.smartMoneyDcas({});
-        
+
         expectFetchCalledWith('/api/v1/smart-money/dcas');
-        
+
         expect(result.dcas).toBeInstanceOf(Array);
         expect(result.dcas[0]).toHaveProperty('token_symbol', 'SOL');
         expect(result.dcas[0]).toHaveProperty('total_amount', 1000);
+      });
+
+      it('should pass filters parameter', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyDcas);
+
+        await api.smartMoneyDcas({
+          filters: { min_total_amount: 500 }
+        });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/dcas');
+        expect(body.filters.min_total_amount).toBe(500);
+      });
+
+      it('should pass orderBy parameter', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyDcas);
+
+        await api.smartMoneyDcas({
+          orderBy: [{ field: 'total_amount', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/dcas');
+        expect(body.order_by).toEqual([{ field: 'total_amount', direction: 'DESC' }]);
       });
     });
 
@@ -464,16 +510,40 @@ describe('NansenAPI', () => {
 
       it('should calculate correct date range for custom days', async () => {
         setupMock(MOCK_RESPONSES.smartMoneyHistoricalHoldings);
-        
+
         await api.smartMoneyHistoricalHoldings({ chains: ['solana'], days: 7 });
-        
+
         const body = expectFetchCalledWith('/api/v1/smart-money/historical-holdings');
-        
+
         // Verify 7-day range
         const from = new Date(body.date_range.from);
         const to = new Date(body.date_range.to);
         const diffDays = Math.round((to - from) / (1000 * 60 * 60 * 24));
         expect(diffDays).toBe(7);
+      });
+
+      it('should pass filters parameter', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyHistoricalHoldings);
+
+        await api.smartMoneyHistoricalHoldings({
+          chains: ['solana'],
+          filters: { min_balance_usd: 50000 }
+        });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/historical-holdings');
+        expect(body.filters.min_balance_usd).toBe(50000);
+      });
+
+      it('should pass orderBy parameter', async () => {
+        setupMock(MOCK_RESPONSES.smartMoneyHistoricalHoldings);
+
+        await api.smartMoneyHistoricalHoldings({
+          chains: ['solana'],
+          orderBy: [{ field: 'balance_usd', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/smart-money/historical-holdings');
+        expect(body.order_by).toEqual([{ field: 'balance_usd', direction: 'DESC' }]);
       });
     });
   });

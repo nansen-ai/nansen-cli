@@ -213,6 +213,8 @@ describe('update notification in CLI', () => {
     outputs = [];
     errors = [];
     _exitCode = null;
+    // Force fresh dynamic import so each test picks up its own cache state (Node 22 caches aggressively)
+    vi.resetModules();
   });
 
   afterEach(() => {
@@ -227,8 +229,6 @@ describe('update notification in CLI', () => {
 
   it('should show update notification on stderr for help command', async () => {
     writeCache({ latest: '99.0.0', checkedAt: Date.now() });
-    // Reset module cache to ensure fresh import on Node 22
-    vi.resetModules();
     const { runCLI } = await import('../cli.js');
     await runCLI(['help'], mockDeps());
 
