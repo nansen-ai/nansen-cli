@@ -318,6 +318,14 @@
                 "page": {
                   "type": "number",
                   "description": "Page number for paginated results (default: 1)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort field:direction (e.g., value_usd:desc)"
+                },
+                "filters": {
+                  "type": "object",
+                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -421,6 +429,14 @@
                 "page": {
                   "type": "number",
                   "description": "Page number for paginated results (default: 1)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort field:direction (e.g., value_usd:desc)"
+                },
+                "filters": {
+                  "type": "object",
+                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -449,6 +465,10 @@
                 "page": {
                   "type": "number",
                   "description": "Page number for paginated results (default: 1)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort field:direction (e.g., value_usd:desc)"
                 }
               },
               "returns": [
@@ -482,6 +502,14 @@
                 "page": {
                   "type": "number",
                   "description": "Page number for paginated results (default: 1)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort field:direction (e.g., value_usd:desc)"
+                },
+                "filters": {
+                  "type": "object",
+                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -533,6 +561,14 @@
                 "page": {
                   "type": "number",
                   "description": "Page number for paginated results (default: 1)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort field:direction (e.g., value_usd:desc)"
+                },
+                "filters": {
+                  "type": "object",
+                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -567,6 +603,14 @@
                 "page": {
                   "type": "number",
                   "description": "Page number for paginated results (default: 1)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort field:direction (e.g., value_usd:desc)"
+                },
+                "filters": {
+                  "type": "object",
+                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
