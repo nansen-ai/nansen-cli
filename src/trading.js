@@ -654,6 +654,9 @@ export function getWalletChainType(chainName) {
 
 async function promptPassword(prompt, deps = {}) {
   if (deps.promptFn) return deps.promptFn(prompt);
+  if (!process.stdin.isTTY) {
+    throw new Error('Wallet is encrypted. Set NANSEN_WALLET_PASSWORD.');
+  }
   const readline = await import('readline');
   const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
   return new Promise((resolve) => {

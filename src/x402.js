@@ -97,16 +97,13 @@ export async function* createPaymentSignatures(response, url, options = {}) {
   if (ranked.length === 0) return;
 
   const password = options.password || process.env.NANSEN_WALLET_PASSWORD || null;
-  let exportWallet, listWallets;
+  let exportWallet, listWallets, getWalletConfig;
   try {
-    const { exportWallet: ew, listWallets: lw, getWalletConfig } = await import('./wallet.js');
-    const config = getWalletConfig();
-    if (config.passwordHash && !password) {
+    ({ exportWallet, listWallets, getWalletConfig } = await import('./wallet.js'));
+    if (getWalletConfig().passwordHash && !password) {
       console.error('⚠️ x402 payment skipped: wallet requires password but NANSEN_WALLET_PASSWORD not set');
       return;
     }
-    exportWallet = ew;
-    listWallets = lw;
   } catch {
     return;
   }

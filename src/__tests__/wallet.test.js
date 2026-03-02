@@ -107,7 +107,7 @@ describe('encryption', () => {
     const password = 'testpassword123';
     const encrypted = encryptKey(key, password);
     
-    expect(() => decryptKey(encrypted, null)).toThrow('Incorrect password');
+    expect(() => decryptKey(encrypted, null)).toThrow('Wallet is encrypted. Set NANSEN_WALLET_PASSWORD.');
   });
 
   it('decryptKey should reject plaintext with encryption metadata', () => {
@@ -307,6 +307,20 @@ describe('wallet CRUD', () => {
     const solPub = Buffer.from(exported.solana.privateKey.slice(64), 'hex');
     
     expect(base58Encode(solPub)).toBe(result.solana);
+  });
+
+  it('should round-trip passwordless wallet: create, export, delete', () => {
+    const result = createWallet('nopass', null);
+    expect(result.evm).toBeDefined();
+    expect(result.solana).toBeDefined();
+
+    const exported = exportWallet('nopass', null);
+    expect(exported.evm.privateKey).toBeDefined();
+    expect(exported.solana.privateKey).toBeDefined();
+
+    deleteWallet('nopass', null);
+    const list = listWallets();
+    expect(list.wallets.find(w => w.name === 'nopass')).toBeUndefined();
   });
 
   it('should update default after deleting default wallet', () => {
