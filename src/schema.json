@@ -1374,7 +1374,9 @@
         },
         "prediction-market": {
           "description": "Polymarket prediction market analytics",
-          "aliases": ["pm"],
+          "aliases": [
+            "pm"
+          ],
           "subcommands": {
             "ohlcv": {
               "description": "OHLCV candle data for a market",
@@ -1395,13 +1397,17 @@
               },
               "returns": [
                 "market_id",
+                "token_id",
+                "side",
+                "outcome_index",
                 "period_start",
                 "open",
                 "high",
                 "low",
                 "close",
-                "volume",
-                "trades"
+                "volume_usd",
+                "trade_count",
+                "unique_traders"
               ]
             },
             "orderbook": {
@@ -1419,8 +1425,15 @@
               },
               "returns": [
                 "market_id",
-                "bids",
-                "asks"
+                "event_id",
+                "outcome",
+                "outcome_index",
+                "asset_id",
+                "side",
+                "price",
+                "size",
+                "cumulative_size",
+                "snapshot_timestamp"
               ]
             },
             "top-holders": {
@@ -1442,14 +1455,14 @@
               },
               "returns": [
                 "market_id",
+                "outcome_index",
                 "address",
-                "address_label",
-                "tokens",
-                "value_usd",
-                "avg_price",
+                "owner_address",
+                "side",
+                "position_size",
+                "avg_entry_price",
                 "current_price",
-                "unrealized_pnl_usd",
-                "pnl_pct"
+                "unrealized_pnl_usd"
               ]
             },
             "trades-by-market": {
@@ -1466,15 +1479,17 @@
                 }
               },
               "returns": [
-                "market_id",
-                "address",
-                "address_label",
-                "side",
-                "tokens",
-                "price",
-                "value_usd",
                 "timestamp",
-                "tx_hash"
+                "seller",
+                "buyer",
+                "taker_action",
+                "side",
+                "outcome_index",
+                "size",
+                "price",
+                "usdc_value",
+                "tx_hash",
+                "market_id"
               ]
             },
             "trades-by-address": {
@@ -1491,14 +1506,20 @@
                 }
               },
               "returns": [
-                "market_id",
-                "market_title",
-                "side",
-                "tokens",
-                "price",
-                "value_usd",
                 "timestamp",
-                "tx_hash"
+                "seller",
+                "buyer",
+                "taker_action",
+                "side",
+                "outcome_index",
+                "size",
+                "price",
+                "usdc_value",
+                "tx_hash",
+                "market_id",
+                "market_question",
+                "event_id",
+                "event_title"
               ]
             },
             "market-screener": {
@@ -1507,7 +1528,16 @@
                 "sort-by": {
                   "type": "string",
                   "default": "volume_24hr",
-                  "enum": ["volume_24hr", "volume", "volume_1wk", "volume_1mo", "liquidity", "open_interest", "unique_traders_24h", "age_hours"],
+                  "enum": [
+                    "volume_24hr",
+                    "volume",
+                    "volume_1wk",
+                    "volume_1mo",
+                    "liquidity",
+                    "open_interest",
+                    "unique_traders_24h",
+                    "age_hours"
+                  ],
                   "description": "Sort field"
                 },
                 "query": {
@@ -1516,7 +1546,10 @@
                 },
                 "status": {
                   "type": "string",
-                  "enum": ["active", "closed"],
+                  "enum": [
+                    "active",
+                    "closed"
+                  ],
                   "description": "Market status filter (default: active)"
                 },
                 "limit": {
@@ -1527,20 +1560,25 @@
               "returns": [
                 "market_id",
                 "question",
+                "slug",
+                "event_id",
                 "event_title",
-                "outcome",
+                "active",
+                "closed",
                 "end_date",
                 "neg_risk",
                 "tags",
-                "last_price",
-                "volume_24hr",
                 "volume",
+                "volume_24hr",
                 "volume_1wk",
                 "volume_1mo",
                 "volume_change_pct",
-                "one_day_price_change",
                 "liquidity",
                 "open_interest",
+                "best_bid",
+                "best_ask",
+                "last_trade_price",
+                "one_day_price_change",
                 "unique_traders_24h",
                 "created_at",
                 "age_hours"
@@ -1552,7 +1590,16 @@
                 "sort-by": {
                   "type": "string",
                   "default": "volume_24hr",
-                  "enum": ["volume_24hr", "volume", "volume_1wk", "volume_1mo", "liquidity", "open_interest", "unique_traders_24h", "age_hours"],
+                  "enum": [
+                    "volume_24hr",
+                    "volume",
+                    "volume_1wk",
+                    "volume_1mo",
+                    "liquidity",
+                    "open_interest",
+                    "unique_traders_24h",
+                    "age_hours"
+                  ],
                   "description": "Sort field"
                 },
                 "query": {
@@ -1561,7 +1608,10 @@
                 },
                 "status": {
                   "type": "string",
-                  "enum": ["active", "closed"],
+                  "enum": [
+                    "active",
+                    "closed"
+                  ],
                   "description": "Event status filter (default: active)"
                 },
                 "limit": {
@@ -1572,9 +1622,10 @@
               "returns": [
                 "event_id",
                 "event_title",
-                "category",
+                "tags",
                 "neg_risk",
                 "market_count",
+                "markets",
                 "total_volume",
                 "total_volume_24hr",
                 "total_volume_1wk",
@@ -1582,10 +1633,11 @@
                 "total_volume_change_pct",
                 "total_liquidity",
                 "total_open_interest",
-                "total_unique_traders_24h",
+                "total_traders_24h",
                 "max_age_hours",
-                "top_market_volume_24hr",
-                "markets"
+                "top_market_id",
+                "top_market_question",
+                "top_market_volume_24hr"
               ]
             },
             "pnl-by-market": {
@@ -1602,16 +1654,20 @@
                 }
               },
               "returns": [
-                "market_id",
+                "address",
+                "owner_address",
+                "side_held",
+                "net_buy_cost_usd",
+                "net_sell_proceeds_usd",
+                "redemption_value_usd",
+                "unrealized_value_usd",
+                "total_pnl_usd",
+                "question",
                 "event_id",
                 "event_title",
-                "address",
-                "address_label",
-                "realized_pnl_usd",
-                "unrealized_pnl_usd",
-                "total_pnl_usd",
-                "tokens_held",
-                "avg_entry_price"
+                "market_resolved",
+                "size_bucket",
+                "market_id"
               ]
             },
             "pnl-by-address": {
@@ -1628,13 +1684,18 @@
                 }
               },
               "returns": [
+                "address",
                 "market_id",
-                "market_title",
-                "realized_pnl_usd",
-                "unrealized_pnl_usd",
+                "question",
+                "event_id",
+                "event_title",
+                "side",
+                "net_buy_cost_usd",
+                "net_sell_proceeds_usd",
+                "redemption_value_usd",
+                "unrealized_value_usd",
                 "total_pnl_usd",
-                "tokens_held",
-                "avg_entry_price"
+                "market_resolved"
               ]
             },
             "position-detail": {
@@ -1651,22 +1712,25 @@
                 }
               },
               "returns": [
-                "market_id",
                 "address",
-                "address_label",
-                "tokens",
+                "owner_address",
+                "outcome",
+                "outcome_index",
+                "token_id",
+                "balance",
+                "buy_cost_usd",
                 "buy_tokens",
+                "sell_proceeds_usd",
                 "sell_tokens",
-                "value_usd",
-                "redemption_value_usd",
-                "avg_price",
+                "avg_entry_price",
                 "current_price",
-                "unrealized_pnl_usd",
-                "realized_pnl_usd",
-                "pnl_pct",
+                "unrealized_value_usd",
+                "redemption_value_usd",
+                "token_pnl_usd",
                 "event_id",
                 "event_title",
-                "market_resolved"
+                "market_resolved",
+                "market_id"
               ]
             },
             "categories": {
@@ -1679,12 +1743,14 @@
               },
               "returns": [
                 "category",
-                "market_count",
+                "active_markets",
+                "total_open_interest",
                 "total_volume",
                 "total_volume_24hr",
                 "total_volume_1wk",
-                "total_liquidity",
-                "total_open_interest",
+                "total_traders_24h",
+                "top_market_id",
+                "top_market_question",
                 "top_market_volume_24hr"
               ]
             }
@@ -1744,7 +1810,7 @@
             },
             "wallet": {
               "type": "string",
-              "description": "Wallet name (or \"walletconnect\"/\"wc\" for WalletConnect, EVM only). A configured wallet is required \u2014 run `nansen wallet create` if you haven't set one up yet."
+              "description": "Wallet name (or \"walletconnect\"/\"wc\" for WalletConnect, EVM only). A configured wallet is required — run `nansen wallet create` if you haven't set one up yet."
             }
           },
           "prerequisites": [
