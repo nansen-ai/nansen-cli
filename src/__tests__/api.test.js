@@ -869,15 +869,41 @@ describe('NansenAPI', () => {
 
       it('should pass label type filter', async () => {
         setupMock(MOCK_RESPONSES.tokenHolders);
-        
+
         await api.tokenHolders({
           tokenAddress: TEST_DATA.solana.token,
           chain: 'solana',
           labelType: 'smart_money'
         });
-        
+
         const body = expectFetchCalledWith('/api/v1/tgm/holders');
         expect(body.label_type).toBe('smart_money');
+      });
+
+      it('should pass filters parameter', async () => {
+        setupMock(MOCK_RESPONSES.tokenHolders);
+
+        await api.tokenHolders({
+          tokenAddress: TEST_DATA.solana.token,
+          chain: 'solana',
+          filters: { min_balance_usd: 10000 }
+        });
+
+        const body = expectFetchCalledWith('/api/v1/tgm/holders');
+        expect(body.filters.min_balance_usd).toBe(10000);
+      });
+
+      it('should pass orderBy parameter', async () => {
+        setupMock(MOCK_RESPONSES.tokenHolders);
+
+        await api.tokenHolders({
+          tokenAddress: TEST_DATA.solana.token,
+          chain: 'solana',
+          orderBy: [{ field: 'value_usd', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/tgm/holders');
+        expect(body.order_by).toEqual([{ field: 'value_usd', direction: 'DESC' }]);
       });
     });
 
@@ -913,6 +939,21 @@ describe('NansenAPI', () => {
         const to = new Date(body.date.to);
         const diffDays = Math.round((to - from) / (1000 * 60 * 60 * 24));
         expect(diffDays).toBe(14);
+      });
+
+      it('should pass filters and orderBy parameters', async () => {
+        setupMock(MOCK_RESPONSES.tokenFlows);
+
+        await api.tokenFlows({
+          tokenAddress: TEST_DATA.solana.token,
+          chain: 'solana',
+          filters: { min_value_usd: 1000 },
+          orderBy: [{ field: 'value_usd', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/tgm/flows');
+        expect(body.filters.min_value_usd).toBe(1000);
+        expect(body.order_by).toEqual([{ field: 'value_usd', direction: 'DESC' }]);
       });
     });
 
@@ -951,36 +992,66 @@ describe('NansenAPI', () => {
 
       it('should calculate correct date range for custom days', async () => {
         setupMock(MOCK_RESPONSES.tokenDexTrades);
-        
+
         await api.tokenDexTrades({
           tokenAddress: TEST_DATA.solana.token,
           chain: 'solana',
           days: 14
         });
-        
+
         const body = expectFetchCalledWith('/api/v1/tgm/dex-trades');
         const from = new Date(body.date.from);
         const to = new Date(body.date.to);
         const diffDays = Math.round((to - from) / (1000 * 60 * 60 * 24));
         expect(diffDays).toBe(14);
       });
+
+      it('should pass filters and orderBy parameters', async () => {
+        setupMock(MOCK_RESPONSES.tokenDexTrades);
+
+        await api.tokenDexTrades({
+          tokenAddress: TEST_DATA.solana.token,
+          chain: 'solana',
+          filters: { min_value_usd: 5000 },
+          orderBy: [{ field: 'value_usd', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/tgm/dex-trades');
+        expect(body.filters.min_value_usd).toBe(5000);
+        expect(body.order_by).toEqual([{ field: 'value_usd', direction: 'DESC' }]);
+      });
     });
 
     describe('tokenPnlLeaderboard', () => {
       it('should fetch PnL leaderboard with correct endpoint', async () => {
         setupMock(MOCK_RESPONSES.tokenPnlLeaderboard);
-        
+
         const result = await api.tokenPnlLeaderboard({
           tokenAddress: TEST_DATA.solana.token,
           chain: 'solana'
         });
-        
+
         const body = expectFetchCalledWith('/api/v1/tgm/pnl-leaderboard');
         expect(body.token_address).toBe(TEST_DATA.solana.token);
         expect(body.date).toBeDefined();
-        
+
         expect(result.leaders).toBeInstanceOf(Array);
         expect(result.leaders[0]).toHaveProperty('pnl_usd', 100000);
+      });
+
+      it('should pass filters and orderBy parameters', async () => {
+        setupMock(MOCK_RESPONSES.tokenPnlLeaderboard);
+
+        await api.tokenPnlLeaderboard({
+          tokenAddress: TEST_DATA.solana.token,
+          chain: 'solana',
+          filters: { min_total_pnl_usd: 10000 },
+          orderBy: [{ field: 'total_pnl_usd', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/tgm/pnl-leaderboard');
+        expect(body.filters.min_total_pnl_usd).toBe(10000);
+        expect(body.order_by).toEqual([{ field: 'total_pnl_usd', direction: 'DESC' }]);
       });
     });
 
