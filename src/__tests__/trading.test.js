@@ -698,7 +698,7 @@ describe('buildTradingCommands', () => {
     });
 
     // May throw downstream (no network) — absorb; we only care it passed the safety check
-    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch (_) { /* absorb downstream errors */ }
+    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch (e) { expect(e?.code).not.toMatch(/^(MISSING_PARAM|WALLET_REQUIRED|INVALID_AMOUNT|UNSUPPORTED_CHAIN|INVALID_QUOTE)$/); }
     // Should NOT hit the value validation rejection
     expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(false);
     expect(logs.some(l => l.includes('value mismatch'))).toBe(false);
@@ -729,7 +729,7 @@ describe('buildTradingCommands', () => {
     });
 
     // May throw downstream (no network) — absorb; we only care it passed the safety check
-    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch (_) { /* absorb downstream errors */ }
+    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch (e) { expect(e?.code).not.toMatch(/^(MISSING_PARAM|WALLET_REQUIRED|INVALID_AMOUNT|UNSUPPORTED_CHAIN|INVALID_QUOTE)$/); }
     // Should NOT hit the value validation rejection
     expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(false);
     expect(logs.some(l => l.includes('value mismatch'))).toBe(false);

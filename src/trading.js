@@ -842,7 +842,7 @@ export function buildTradingCommands(deps = {}) {
           const warnings = response.warnings?.length ? response.warnings : [];
           throw Object.assign(
             new Error('No quotes available for this swap'),
-            { code: 'NO_QUOTES', details: warnings.length ? { warnings } : null }
+            { code: 'NO_QUOTES', ...(warnings.length ? { details: { warnings } } : {}) }
           );
         }
 
@@ -887,10 +887,9 @@ export function buildTradingCommands(deps = {}) {
       } catch (err) {
         // Augment uncoded amount-related errors with base-unit guidance
         if (!err.code && /amount/i.test(err.message)) {
-          throw Object.assign(
-            new Error(err.message + '. Amounts must be in base units (e.g. 1000000000 lamports = 1 SOL, 1000000000000000000 wei = 1 ETH)'),
-            { code: 'INVALID_AMOUNT', status: err.status || null }
-          );
+          err.message += '. Amounts must be in base units (e.g. 1000000000 lamports = 1 SOL, 1000000000000000000 wei = 1 ETH)';
+          err.code = 'INVALID_AMOUNT';
+          err.status = err.status || null;
         }
         throw err;
       }
@@ -1371,7 +1370,8 @@ export function buildTradingCommands(deps = {}) {
       } catch (err) {
         // Normalize errors without a code so the main runner can format them consistently
         if (!err.code) {
-          throw Object.assign(new Error(err.message), { code: 'TRADE_ERROR', status: err.status || null });
+          err.code = 'TRADE_ERROR';
+          err.status = err.status || null;
         }
         throw err;
       }
