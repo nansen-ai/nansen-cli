@@ -758,6 +758,21 @@ export function formatQuote(quote, index) {
 export function buildTradingCommands(deps = {}) {
   const { errorOutput = console.error, exit = process.exit } = deps;
 
+  async function validateWalletConnectSession(chainType) {
+    if (chainType !== 'evm') {
+      errorOutput('WalletConnect is only supported for EVM chains');
+      exit(1);
+      return null;
+    }
+    const address = await getWalletConnectAddress();
+    if (!address) {
+      errorOutput('No WalletConnect session active. Run: walletconnect connect');
+      exit(1);
+      return null;
+    }
+    return address;
+  }
+
   return {
     'quote': async (args, apiInstance, flags, options) => {
       const chain = options.chain || args[0];
@@ -816,17 +831,8 @@ EXAMPLES:
 
         let walletAddress;
         if (isWalletConnect) {
-          if (chainType !== 'evm') {
-            errorOutput('WalletConnect is only supported for EVM chains');
-            exit(1);
-            return;
-          }
-          walletAddress = await getWalletConnectAddress();
-          if (!walletAddress) {
-            errorOutput('No WalletConnect session active. Run: walletconnect connect');
-            exit(1);
-            return;
-          }
+          walletAddress = await validateWalletConnectSession(chainType);
+          if (!walletAddress) return;
         } else if (walletName) {
           const wallet = showWallet(walletName);
           walletAddress = chainType === 'solana' ? wallet.solana : wallet.evm;
@@ -973,17 +979,8 @@ EXAMPLES:
           exported = exportWallet(effectiveWalletName, password);
         } else {
           // Verify WalletConnect session is still active and address matches quote
-          if (chainType !== 'evm') {
-            errorOutput('WalletConnect is only supported for EVM chains');
-            exit(1);
-            return;
-          }
-          const wcAddress = await getWalletConnectAddress();
-          if (!wcAddress) {
-            errorOutput('No WalletConnect session active. Run: walletconnect connect');
-            exit(1);
-            return;
-          }
+          const wcAddress = await validateWalletConnectSession(chainType);
+          if (!wcAddress) return;
           // Check address matches the one used during quoting
           const quoteWallet = quoteData.response?.quotes?.[0]?.transaction?.from
             || quoteData.response?.metadata?.userWalletAddress;
