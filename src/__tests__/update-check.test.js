@@ -213,8 +213,6 @@ describe('update notification in CLI', () => {
     outputs = [];
     errors = [];
     _exitCode = null;
-    // Force fresh dynamic import so each test picks up its own cache state (Node 22 caches aggressively)
-    vi.resetModules();
   });
 
   afterEach(() => {
