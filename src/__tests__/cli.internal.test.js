@@ -1117,7 +1117,7 @@ describe('SCHEMA', () => {
   it('should include return field definitions', () => {
     const netflow = SCHEMA.commands.research.subcommands['smart-money'].subcommands['netflow'];
     expect(netflow.returns).toContain('token_symbol');
-    expect(netflow.returns).toContain('net_flow_usd');
+    expect(netflow.returns).toContain('net_flow_1h_usd');
   });
 
   it('should define global options', () => {
