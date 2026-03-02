@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.11.0
+
+### Minor Changes
+
+- [#186](https://github.com/nansen-ai/nansen-cli/pull/186) [`feecc50`](https://github.com/nansen-ai/nansen-cli/commit/feecc5080254b55aaef0addb646279d52a468063) Thanks [@TimNooren](https://github.com/TimNooren)! - Trade commands output to stdout instead of stderr; wallet send prints human-readable text instead of JSON
+
+### Patch Changes
+
+- [#166](https://github.com/nansen-ai/nansen-cli/pull/166) [`c1034db`](https://github.com/nansen-ai/nansen-cli/commit/c1034dbb4bf2fc173f377cbc0adbbbe3e67873aa) Thanks [@0xlaveen](https://github.com/0xlaveen)! - fix: pass --page parameter correctly in smart-money, profiler, token, perp, and points commands
+
+- [#137](https://github.com/nansen-ai/nansen-cli/pull/137) [`1214767`](https://github.com/nansen-ai/nansen-cli/commit/12147675aadfd0bd97627cb2f41f1dcc5205b0d7) Thanks [@0xlaveen](https://github.com/0xlaveen)! - Add missing sort/filters options to profiler schema and fix pnl sort/filters forwarding
+
 ## 1.10.1
 
 ### Patch Changes
