@@ -753,6 +753,11 @@ EXAMPLES:
         return;
       }
 
+      // --help on any wallet subcommand shows wallet help instead of executing
+      if (flags.help || flags.h) {
+        return handlers['help']();
+      }
+
       return handlers[subcommand]();
     },
   };
