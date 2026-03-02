@@ -388,7 +388,7 @@ describe('Error Codes', () => {
       expect(error.message).toBe('Test error');
       expect(error.code).toBe('INVALID_ADDRESS');
       expect(error.status).toBe(400);
-      expect(error.data).toEqual({ field: 'address' });
+      expect(error.details).toEqual({ field: 'address' });
       expect(error.name).toBe('NansenError');
     });
 
@@ -396,7 +396,7 @@ describe('Error Codes', () => {
       const error = new NansenError('Unknown error');
       expect(error.code).toBe('UNKNOWN');
       expect(error.status).toBeNull();
-      expect(error.data).toBeNull();
+      expect(error.details).toBeNull();
     });
 
     it('should serialize to JSON correctly', () => {

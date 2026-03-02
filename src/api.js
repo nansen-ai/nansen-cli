@@ -62,7 +62,7 @@ export class NansenError extends Error {
     this.name = 'NansenError';
     this.code = code;
     this.status = status;
-    this.data = data;
+    this.details = data;
   }
 
   toJSON() {
@@ -70,7 +70,7 @@ export class NansenError extends Error {
       error: this.message,
       code: this.code,
       status: this.status,
-      details: this.data,
+      details: this.details,
     };
   }
 }

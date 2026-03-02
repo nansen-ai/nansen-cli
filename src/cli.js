@@ -313,13 +313,17 @@ export function formatOutput(data, { pretty = false, table = false, csv = false 
 
 // Format error data (returns object, does not exit)
 export function formatError(error) {
-  return {
+  const details = error.details ?? error.data ?? null;
+  const result = {
     success: false,
     error: error.message,
     code: error.code || 'UNKNOWN',
     status: error.status || null,
-    details: error.data || null
   };
+  if (details != null && !(typeof details === 'object' && !Array.isArray(details) && Object.keys(details).length === 0)) {
+    result.details = details;
+  }
+  return result;
 }
 
 /**

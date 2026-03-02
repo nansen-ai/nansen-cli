@@ -26,7 +26,7 @@ import {
   traceCounterparties,
   compareWallets
 } from '../cli.js';
-import { getCachedResponse, setCachedResponse, clearCache, getCacheDir } from '../api.js';
+import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode } from '../api.js';
 import * as fs from 'fs';
 import * as _path from 'path';
 
@@ -206,7 +206,7 @@ describe('formatError', () => {
     const error = new Error('Test error');
     error.code = 'TEST_CODE';
     error.status = 500;
-    error.data = { detail: 'extra info' };
+    error.details = { detail: 'extra info' };
     
     const result = formatError(error);
     expect(result).toEqual({
@@ -223,7 +223,54 @@ describe('formatError', () => {
     const result = formatError(error);
     expect(result.code).toBe('UNKNOWN');
     expect(result.status).toBeNull();
-    expect(result.details).toBeNull();
+    expect(result).not.toHaveProperty('details');
+  });
+
+  it('should surface .details from trading-style errors (NO_QUOTES with warnings)', () => {
+    const error = Object.assign(new Error('No quotes available'), {
+      code: 'NO_QUOTES',
+      status: 404,
+      details: { warnings: ['Low liquidity', 'Slippage too high'] }
+    });
+    const result = formatError(error);
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('No quotes available');
+    expect(result.code).toBe('NO_QUOTES');
+    expect(result.details).toEqual({ warnings: ['Low liquidity', 'Slippage too high'] });
+  });
+
+  it('should surface .details from NansenError (which stores as .details)', () => {
+    const error = new NansenError('Rate limited', ErrorCode.RATE_LIMITED, 429, { retry_after: 60 });
+    const result = formatError(error);
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('RATE_LIMITED');
+    expect(result.details).toEqual({ retry_after: 60 });
+  });
+
+  it('should omit details when null', () => {
+    const error = Object.assign(new Error('fail'), { code: 'ERR', details: null });
+    const result = formatError(error);
+    expect(result).not.toHaveProperty('details');
+  });
+
+  it('should omit details when undefined', () => {
+    const error = Object.assign(new Error('fail'), { code: 'ERR' });
+    const result = formatError(error);
+    expect(result).not.toHaveProperty('details');
+  });
+
+  it('should omit details when empty object', () => {
+    const error = Object.assign(new Error('fail'), { code: 'ERR', details: {} });
+    const result = formatError(error);
+    expect(result).not.toHaveProperty('details');
+  });
+
+  it('should fall back to .data if .details is not set (backward compat)', () => {
+    const error = new Error('legacy error');
+    error.code = 'LEGACY';
+    error.data = { info: 'from data property' };
+    const result = formatError(error);
+    expect(result.details).toEqual({ info: 'from data property' });
   });
 });
 

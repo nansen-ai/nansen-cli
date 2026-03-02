@@ -1484,8 +1484,8 @@ describe('NansenAPI', () => {
       }
       
       // Check that original error data is included (with retry metadata added)
-      expect(thrownError.data.error).toEqual(errorData.error);
-      expect(thrownError.data.details).toEqual(errorData.details);
+      expect(thrownError.details.error).toEqual(errorData.error);
+      expect(thrownError.details.details).toEqual(errorData.details);
     });
 
     it('should map "Field not recognized" to UNSUPPORTED_FILTER error code', async () => {
