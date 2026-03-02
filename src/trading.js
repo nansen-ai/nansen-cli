@@ -326,16 +326,29 @@ export function signSolanaTransaction(transactionBase64, privateKeyHex) {
  * @returns {string} 0x-prefixed signed transaction hex
  */
 // ⚠️ SECURITY: EVM transaction signing - requires thorough review before production use
-// TODO: Always signs as legacy (type 0) transactions. Do we need EIP-1559 (type 2) support?
 export function signEvmTransaction(txData, privateKeyHex, chain, nonce) {
   const chainConfig = CHAIN_MAP[chain];
   if (!chainConfig || chainConfig.type !== 'evm') {
     throw new Error(`Unsupported EVM chain: ${chain}`);
   }
 
+  // Use EIP-1559 (type 2) when the quote provides maxFeePerGas
+  if (txData.maxFeePerGas) {
+    return signEip1559EvmTransaction({
+      nonce,
+      maxFeePerGas: txData.maxFeePerGas,
+      maxPriorityFeePerGas: txData.maxPriorityFeePerGas || '0',
+      gas: txData.gas || txData.gasLimit || '210000',
+      to: txData.to,
+      value: txData.value || '0',
+      data: txData.data || '0x',
+      chainId: chainConfig.chainId,
+    }, privateKeyHex);
+  }
+
   const tx = {
     nonce,
-    gasPrice: toHex(txData.gasPrice || txData.maxFeePerGas || '1'),
+    gasPrice: toHex(txData.gasPrice || '1'),
     gasLimit: toHex(txData.gas || txData.gasLimit || '210000'),
     to: txData.to,
     value: toHex(txData.value || '0'),
@@ -535,6 +548,52 @@ export function buildApprovalTransaction(tokenAddress, spenderAddress, privateKe
   };
 
   return signLegacyTransaction(tx, privateKeyHex);
+}
+
+// ============= EIP-1559 (Type 2) EVM Transaction Signing =============
+
+/**
+ * Sign an EIP-1559 (type 2) EVM transaction.
+ *
+ * @param {object} txData - { nonce, maxFeePerGas, maxPriorityFeePerGas, gas, to, value, data, chainId }
+ * @param {string} privateKeyHex - 32-byte private key as hex
+ * @returns {string} 0x-prefixed signed transaction hex
+ */
+export function signEip1559EvmTransaction(txData, privateKeyHex) {
+  const chainId = BigInt(txData.chainId);
+  const nonce = BigInt(txData.nonce || 0);
+  const maxPriorityFeePerGas = BigInt(txData.maxPriorityFeePerGas || 0);
+  const maxFeePerGas = BigInt(txData.maxFeePerGas || 0);
+  const gasLimit = BigInt(txData.gas || txData.gasLimit || 210000);
+  const value = BigInt(txData.value || 0);
+
+  const bigIntToHex = (n) => n === 0n ? '0x' : '0x' + n.toString(16);
+
+  const txFields = [
+    bigIntToHex(chainId),
+    bigIntToHex(nonce),
+    bigIntToHex(maxPriorityFeePerGas),
+    bigIntToHex(maxFeePerGas),
+    bigIntToHex(gasLimit),
+    txData.to,
+    bigIntToHex(value),
+    txData.data || '0x',
+    [], // accessList
+  ];
+
+  const unsigned = rlpEncode(txFields);
+  const txHash = keccak256(Buffer.concat([Buffer.from([0x02]), unsigned]));
+  const sig = signSecp256k1(txHash, Buffer.from(privateKeyHex, 'hex'));
+
+  const signed = rlpEncode([
+    ...txFields,
+    bigIntToHex(BigInt(sig.v)),
+    '0x' + sig.r.toString('hex'),
+    '0x' + sig.s.toString('hex'),
+  ]);
+
+  const rawTx = Buffer.concat([Buffer.from([0x02]), signed]);
+  return '0x' + rawTx.toString('hex');
 }
 
 // ============= Legacy (Type 0) EVM Transaction Signing =============
@@ -1309,8 +1368,14 @@ EXAMPLES:
               errorOutput(`  Nonce: ${nonce}`);
 
               errorOutput('  Signing EVM transaction...');
+              // EIP-1559 fields are top-level on the quote, not inside .transaction
+              const signTxData = { ...currentQuote.transaction };
+              if (currentQuote.maxFeePerGas) {
+                signTxData.maxFeePerGas = currentQuote.maxFeePerGas;
+                signTxData.maxPriorityFeePerGas = currentQuote.maxPriorityFeePerGas;
+              }
               signedTransaction = signEvmTransaction(
-                currentQuote.transaction,
+                signTxData,
                 exported.evm.privateKey,
                 chain,
                 nonce
