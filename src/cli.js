@@ -4,10 +4,11 @@
  */
 
 import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
-import { buildWalletCommands } from './wallet.js';
+import { buildWalletCommands, listWallets } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
+import path from 'path';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
@@ -861,6 +862,78 @@ export function buildCommands(deps = {}) {
       }
       
       return handlers[subcommand]();
+    },
+
+    'status': async (_args, apiInstance, _flags, _options) => {
+      const statusData = { auth: null, api: null, wallet: null, cli: null };
+
+      // --- Auth + API check (single call) ---
+      const authConfigured = Boolean(apiInstance.apiKey);
+      const authResult = { configured: authConfigured, valid: false, error: null };
+      const apiResult = { reachable: false, latency_ms: null, error: null };
+
+      if (authConfigured) {
+        const start = Date.now();
+        try {
+          await apiInstance.request('/api/v1/smart-money/netflow', {
+            chains: ['ethereum'], pagination: { page: 1, per_page: 1 }
+          }, { retry: false });
+          apiResult.reachable = true;
+          apiResult.latency_ms = Date.now() - start;
+          authResult.valid = true;
+        } catch (err) {
+          apiResult.latency_ms = Date.now() - start;
+          // Distinguish connectivity from auth errors
+          if (err.code === 'NETWORK_ERROR') {
+            apiResult.error = err.message;
+            authResult.error = 'Could not reach API to validate key';
+          } else {
+            // API responded (reachable) but auth or other error
+            apiResult.reachable = true;
+            authResult.valid = false;
+            authResult.error = err.message;
+          }
+        }
+      } else {
+        authResult.error = 'No API key configured. Run: nansen login';
+      }
+
+      statusData.auth = authResult;
+      statusData.api = apiResult;
+
+      // --- Wallet check ---
+      const walletResult = { count: 0, default: null, names: [] };
+      try {
+        const { wallets, defaultWallet } = listWallets();
+        walletResult.count = wallets.length;
+        walletResult.default = defaultWallet || null;
+        walletResult.names = wallets.map(w => w.name);
+      } catch {
+        // No wallets dir or read error — keep defaults
+      }
+      statusData.wallet = walletResult;
+
+      // --- CLI version check ---
+      const cliResult = { version: VERSION, update_available: false, latest_version: null };
+      try {
+        const cacheFile = path.join(
+          process.env.HOME || process.env.USERPROFILE || '', '.nansen', 'update-check.json'
+        );
+        const raw = fs.readFileSync(cacheFile, 'utf8');
+        const { latest } = JSON.parse(raw);
+        if (latest) {
+          cliResult.latest_version = latest;
+          const parse = v => v.replace(/^v/, '').split('.').map(Number);
+          const [lM, lm, lp] = parse(latest);
+          const [cM, cm, cp] = parse(VERSION);
+          cliResult.update_available = lM > cM || (lM === cM && (lm > cm || (lm === cm && lp > cp)));
+        }
+      } catch {
+        // Cache file missing or unreadable — skip gracefully
+      }
+      statusData.cli = cliResult;
+
+      return statusData;
     },
 
     'smart-money': async (args, apiInstance, flags, options) => {
