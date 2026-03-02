@@ -70,10 +70,10 @@ nansen trade execute --quote "$QUOTE_ID"
 
 | Var | Purpose |
 |-----|---------|
-| `NANSEN_WALLET_PASSWORD` | **Required for `trade execute`.** Wallet encryption password — must be pre-configured in the environment, never generated at runtime. If not set, ask the user to configure it. |
+| `NANSEN_WALLET_PASSWORD` | **Required for `trade execute`.** Wallet encryption password — persisted in `~/.nansen/.env`. Source before executing: `source ~/.nansen/.env && nansen trade execute ...` |
 | `NANSEN_API_KEY` | API key (also set via `nansen login`) |
 
-> **Agents:** Never generate or hardcode a wallet password. If `NANSEN_WALLET_PASSWORD` is not set, ask the user to configure it before proceeding. Lost passwords lock wallets permanently.
+> **Agents:** Never hold a wallet password only in session memory. If `NANSEN_WALLET_PASSWORD` is not in `~/.nansen/.env`, follow the setup flow in the nansen-wallet skill Password Policy to generate and persist one before proceeding.
 
 ## Notes
 
