@@ -71,7 +71,7 @@ export function getUpgradeNotice(currentVersion) {
  */
 export function getCachedLatest(currentVersion, cacheFile) {
   try {
-    const file = cacheFile || path.join(process.env.HOME || process.env.USERPROFILE || '', '.nansen', 'update-check.json');
+    const file = cacheFile || CACHE_FILE;
     const raw = fs.readFileSync(file, 'utf8');
     const { latest } = JSON.parse(raw);
     if (!latest || !/^\d+\.\d+\.\d+/.test(latest)) return null;
@@ -87,7 +87,6 @@ export function getCachedLatest(currentVersion, cacheFile) {
 export function getUpdateNotification(currentVersion) {
   try {
     if (process.env.NO_UPDATE_NOTIFIER || process.env.CI) return null;
-    if (!fs.existsSync(CACHE_FILE)) return null;
     const cached = getCachedLatest(currentVersion);
     if (cached?.updateAvailable) {
       return `Update available: ${currentVersion} → ${cached.latest}  (npm i -g ${PACKAGE_NAME})`;

@@ -3,13 +3,12 @@
  * Extracted from index.js for coverage
  */
 
-import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
+import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, getConfigDir, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
 import { buildWalletCommands, listWallets } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck, getCachedLatest } from './update-check.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
@@ -868,7 +867,7 @@ export function buildCommands(deps = {}) {
 
     'status': async (_args, apiInstance, flags, _options) => {
       const statusData = { ready: false, auth: null, api: null, client: { rate_limited: false }, wallet: null, cli: null };
-      const home = os.homedir();
+      const configDir = getConfigDir();
       let apiCallMade = false;
 
       // --- Auth + API check (single call) ---
@@ -886,7 +885,7 @@ export function buildCommands(deps = {}) {
       } else if (authConfigured) {
         // --- Client-side cooldown ---
         let rateLimited = false;
-        const cooldownFile = path.join(home, '.nansen', 'status-last-called.json');
+        const cooldownFile = path.join(configDir, 'status-last-called.json');
         try {
           const raw = fs.readFileSync(cooldownFile, 'utf8');
           const { calledAt } = JSON.parse(raw);
@@ -901,6 +900,7 @@ export function buildCommands(deps = {}) {
           authResult.valid = null;
           statusData.client.rate_limited = true;
           apiResult.error = 'Rate limited: status called too recently (< 10s)';
+          apiResult.code = ErrorCode.RATE_LIMITED;
         } else {
           apiCallMade = true;
           const start = Date.now();
@@ -923,7 +923,6 @@ export function buildCommands(deps = {}) {
               timeoutPromise
             ]);
             clearTimeout(timeoutId);
-            controller.abort();
             apiResult.reachable = true;
             apiResult.latency_ms = Math.min(Date.now() - start, 5000);
             authResult.valid = true;
@@ -974,7 +973,7 @@ export function buildCommands(deps = {}) {
 
       // --- Wallet check ---
       const walletResult = { count: 0, default: null, names: [], error: null, code: null };
-      const walletsDir = path.join(home, '.nansen', 'wallets');
+      const walletsDir = path.join(configDir, 'wallets');
       // Guard: avoid calling listWallets() when dir is missing, since it auto-creates as a side effect
       if (fs.existsSync(walletsDir)) {
         try {
@@ -988,7 +987,7 @@ export function buildCommands(deps = {}) {
         } catch (err) {
           let msg = err.message;
           if (walletsDir) msg = msg.replaceAll(walletsDir, '<wallets-dir>');
-          if (home) msg = msg.replaceAll(home, '<home>');
+          if (configDir) msg = msg.replaceAll(configDir, '<config-dir>');
           walletResult.error = msg;
           walletResult.code = ErrorCode.UNKNOWN;
         }
@@ -1008,10 +1007,9 @@ export function buildCommands(deps = {}) {
       // --- Write cooldown file (only when an API call was actually made) ---
       if (apiCallMade) {
         try {
-          const nansenDir = path.join(home, '.nansen');
-          fs.mkdirSync(nansenDir, { recursive: true });
+          fs.mkdirSync(configDir, { mode: 0o700, recursive: true });
           fs.writeFileSync(
-            path.join(nansenDir, 'status-last-called.json'),
+            path.join(configDir, 'status-last-called.json'),
             JSON.stringify({ calledAt: Date.now() })
           );
         } catch {
