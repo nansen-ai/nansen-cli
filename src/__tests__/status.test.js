@@ -132,6 +132,38 @@ describe('status command', () => {
     expect(typeof result.api.latency_ms).toBe('number');
   });
 
+  it('should report update_available false when cached version equals current', async () => {
+    const mockApi = { apiKey: null, request: vi.fn() };
+    // First call to get the current version
+    const probe = await commands.status([], mockApi, {}, {});
+    const currentVersion = probe.cli.version;
+
+    // Write cache file with latest === current version
+    const nansenDir = path.join(tempDir, '.nansen');
+    fs.mkdirSync(nansenDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(nansenDir, 'update-check.json'),
+      JSON.stringify({ latest: currentVersion, checkedAt: Date.now() })
+    );
+
+    const result = await commands.status([], mockApi, {}, {});
+
+    expect(result.cli.update_available).toBe(false);
+    expect(result.cli.latest_version).toBe(currentVersion);
+  });
+
+  it('should handle malformed update-check.json gracefully', async () => {
+    const nansenDir = path.join(tempDir, '.nansen');
+    fs.mkdirSync(nansenDir, { recursive: true });
+    fs.writeFileSync(path.join(nansenDir, 'update-check.json'), '{not valid json!!!');
+
+    const mockApi = { apiKey: null, request: vi.fn() };
+    const result = await commands.status([], mockApi, {}, {});
+
+    expect(result.cli.update_available).toBe(false);
+    expect(result.cli.latest_version).toBeNull();
+  });
+
   it('should report API not reachable on network error', async () => {
     const mockApi = {
       apiKey: 'some-key',
@@ -145,6 +177,7 @@ describe('status command', () => {
     expect(result.ready).toBe(false);
     expect(result.auth.configured).toBe(true);
     expect(result.auth.valid).toBe(false);
+    expect(result.auth.error).toBeDefined();
     expect(result.api.reachable).toBe(false);
     expect(result.api.error).toContain('Network error');
     expect(result.api.code).toBe(ErrorCode.NETWORK_ERROR);
@@ -223,7 +256,7 @@ describe('status command', () => {
     expect(mockApi.request).toHaveBeenCalledWith(
       '/api/v1/smart-money/netflow',
       { chains: ['ethereum'], pagination: { page: 1, per_page: 1 } },
-      { retry: false, skipX402: true }
+      expect.objectContaining({ retry: false, skipX402: true, signal: expect.any(AbortSignal) })
     );
   });
 
@@ -237,6 +270,7 @@ describe('status command', () => {
 
     expect(result.auth.configured).toBe(false);
     expect(result.auth.valid).toBe(false);
+    expect(result.auth.code).toBe(ErrorCode.UNAUTHORIZED);
     expect(result.api.reachable).toBeNull();
     expect(mockApi.request).not.toHaveBeenCalled();
   });
@@ -338,5 +372,8 @@ describe('status command via runCLI', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.data).toHaveProperty('auth');
     expect(parsed.data).toHaveProperty('cli');
+    expect(parsed.data.ready).toBeUndefined();
+    expect(parsed.data.api).toBeUndefined();
+    expect(parsed.data.wallet).toBeUndefined();
   });
 });

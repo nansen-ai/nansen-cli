@@ -875,9 +875,11 @@ export function buildCommands(deps = {}) {
 
       if (authConfigured) {
         const start = Date.now();
+        const controller = new AbortController();
         let timeoutId;
         const timeoutPromise = new Promise((_, reject) => {
           timeoutId = setTimeout(() => {
+            controller.abort();
             reject(new NansenError('Health check timed out', ErrorCode.TIMEOUT));
           }, 5000);
         });
@@ -888,10 +890,11 @@ export function buildCommands(deps = {}) {
           await Promise.race([
             apiInstance.request('/api/v1/smart-money/netflow', {
               chains: ['ethereum'], pagination: { page: 1, per_page: 1 }
-            }, { retry: false, skipX402: true }),
+            }, { retry: false, skipX402: true, signal: controller.signal }),
             timeoutPromise
           ]);
           clearTimeout(timeoutId);
+          controller.abort();
           apiResult.reachable = true;
           apiResult.latency_ms = Date.now() - start;
           authResult.valid = true;
@@ -926,7 +929,7 @@ export function buildCommands(deps = {}) {
       statusData.ready = authResult.valid === true && apiResult.reachable === true;
 
       // --- Wallet check ---
-      const walletResult = { count: 0, default: null, names: [] };
+      const walletResult = { count: 0, default: null, names: [], error: null };
       const walletsDir = path.join(process.env.HOME || process.env.USERPROFILE || '', '.nansen', 'wallets');
       if (fs.existsSync(walletsDir)) {
         try {
