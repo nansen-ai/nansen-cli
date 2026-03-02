@@ -867,7 +867,7 @@ export function buildCommands(deps = {}) {
     },
 
     'status': async (_args, apiInstance, flags, _options) => {
-      const statusData = { ready: false, auth: null, api: null, client: null, wallet: null, cli: null };
+      const statusData = { ready: false, auth: null, api: null, client: { rate_limited: false }, wallet: null, cli: null };
       const home = os.homedir();
       let apiCallMade = false;
 
@@ -899,7 +899,7 @@ export function buildCommands(deps = {}) {
 
         if (rateLimited) {
           authResult.valid = null;
-          statusData.client = { rate_limited: true };
+          statusData.client.rate_limited = true;
           apiResult.error = 'Rate limited: status called too recently (< 10s)';
         } else {
           apiCallMade = true;
