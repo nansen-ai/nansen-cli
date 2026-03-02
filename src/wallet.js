@@ -519,7 +519,7 @@ export function buildWalletCommands(deps = {}) {
             log(`    Base (recommended, lower fees): send USDC to ${result.evm}`);
             log(`    Solana: send USDC to ${result.solana}`);
             log('');
-            return;
+            return result;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -529,17 +529,18 @@ export function buildWalletCommands(deps = {}) {
         'list': async () => {
           const result = listWallets();
           if (result.wallets.length === 0) {
-            log("No wallets found. Create one with: nansen wallet create");
-            return;
+            log('No wallets found. Create one with: nansen wallet create');
+            return result;
           }
-          log("");
+          log('');
           for (const w of result.wallets) {
-            const star = w.isDefault ? " ★" : "";
+            const star = w.isDefault ? ' ★' : '';
             log(`  ${w.name}${star}`);
             log(`    EVM:    ${w.evm}`);
             log(`    Solana: ${w.solana}`);
-            log("");
+            log('');
           }
+          return result;
         },
 
         'show': async () => {
@@ -556,7 +557,7 @@ export function buildWalletCommands(deps = {}) {
             log(`    EVM:    ${result.evm}`);
             log(`    Solana: ${result.solana}`);
             log(`    Created: ${result.createdAt}\n`);
-            return;
+            return result;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -581,7 +582,7 @@ export function buildWalletCommands(deps = {}) {
             log(`    Address:     ${result.solana.address}`);
             log(`    Private Key: ${result.solana.privateKey}`);
             log('');
-            return;
+            return result;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -598,7 +599,7 @@ export function buildWalletCommands(deps = {}) {
           try {
             const result = setDefaultWallet(name);
             log(`✓ Default wallet set to "${result.defaultWallet}"`);
-            return;
+            return result;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -619,7 +620,7 @@ export function buildWalletCommands(deps = {}) {
             if (result.newDefault) {
               log(`  New default: ${result.newDefault}`);
             }
-            return;
+            return result;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
