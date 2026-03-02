@@ -303,7 +303,7 @@ export function signSolanaTransaction(transactionBase64, privateKeyHex) {
  *
  * @param {object} txData - Transaction fields from quote.transaction { to, data, value, gas, gasPrice }
  * @param {string} privateKeyHex - 64-char hex (32-byte secp256k1 private key)
- * @param {string} chain - Chain name (base)
+ * @param {string} chain - Chain name
  * @param {number} nonce - Account nonce
  * @returns {string} 0x-prefixed signed transaction hex
  */
