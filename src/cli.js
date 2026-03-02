@@ -1220,17 +1220,17 @@ export function buildCommands(deps = {}) {
         'event-screener': () => apiInstance.pmEventScreener({ sortBy, query, status, pagination }),
         'pnl-by-market': () => apiInstance.pmPnlByMarket({ marketId, pagination }),
         'pnl-by-address': () => apiInstance.pmPnlByAddress({ address, pagination }),
-        'position-detail': () => apiInstance.pmPositionDetail({ marketId, pagination }),
+        'position-detail': () => apiInstance.pmPositionDetail({ marketId, address, pagination }),
         'categories': () => apiInstance.pmCategories({ pagination }),
         'help': () => ({
           commands: ['ohlcv', 'orderbook', 'top-holders', 'trades-by-market', 'trades-by-address', 'market-screener', 'event-screener', 'pnl-by-market', 'pnl-by-address', 'position-detail', 'categories'],
           description: 'Polymarket prediction market analytics',
-          example: 'nansen pm market-screener --sort-by volume_24hr --limit 20'
+          example: 'nansen research pm market-screener --sort-by volume_24hr --limit 20'
         })
       };
 
       if (!handlers[subcommand]) {
-        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+        throw new NansenError(`Unknown subcommand: ${subcommand}. Available: ${Object.keys(handlers).filter(k => k !== 'help').join(', ')}`, ErrorCode.UNKNOWN);
       }
 
       return handlers[subcommand]();
