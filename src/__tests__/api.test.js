@@ -2163,6 +2163,58 @@ describe('NansenAPI', () => {
       expect(thrownError).toBeDefined();
       expect(thrownError.code).toBe(ErrorCode.PAYMENT_REQUIRED);
       expect(thrownError.message).toContain('auto-payment failed');
+      // With an API key, payment requirements details are included for debugging
+      expect(thrownError.details).toHaveProperty('paymentRequirements');
+
+      vi.doUnmock('../walletconnect-x402.js');
+    });
+
+    it('should show login guidance (not x402 dump) when no API key and no wallet', async () => {
+      if (LIVE_TEST) return;
+
+      const paymentReqs = {
+        accepts: [{
+          scheme: 'exact',
+          asset: '0xUSDC',
+          payTo: '0xR',
+          amount: '1',
+          network: 'base',
+          extra: { name: 'X', version: '1', chainId: 1 },
+        }],
+      };
+      const paymentHeader = btoa(JSON.stringify(paymentReqs));
+
+      const errorResponse = {
+        ok: false,
+        status: 402,
+        json: async () => ({ message: 'Payment required' }),
+        headers: { get: (h) => h === 'payment-required' ? paymentHeader : null },
+      };
+
+      mockFetch.mockResolvedValueOnce(errorResponse);
+
+      vi.resetModules();
+      vi.doMock('../walletconnect-x402.js', () => ({
+        handleX402Payment: vi.fn().mockRejectedValue(new Error('x402 payment required but no wallet connected')),
+      }));
+
+      // No API key — simulates a fresh install with no login
+      const unauthApi = new NansenAPI(null, 'https://api.nansen.ai');
+
+      let thrownError;
+      try {
+        await unauthApi.smartMoneyNetflow({});
+      } catch (err) {
+        thrownError = err;
+      }
+
+      expect(thrownError).toBeDefined();
+      expect(thrownError.code).toBe(ErrorCode.PAYMENT_REQUIRED);
+      // Should guide toward login, not mention x402 internals
+      expect(thrownError.message).toContain('nansen login');
+      expect(thrownError.message).not.toContain('walletconnect connect');
+      // Should NOT include the payment requirements blob (unhelpful noise for unauthenticated users)
+      expect(thrownError.details?.paymentRequirements).toBeUndefined();
 
       vi.doUnmock('../walletconnect-x402.js');
     });
