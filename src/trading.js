@@ -1,7 +1,7 @@
 /**
  * Nansen CLI - Trading Commands
  * Quote and execute DEX swaps via the Nansen Trading API.
- * Supports Solana and EVM chains (Ethereum, Base, BSC).
+ * Supports Solana and Base only.
  * Zero external dependencies — uses Node.js built-in crypto only.
  */
 
@@ -19,16 +19,12 @@ const TRADING_API_URL = process.env.NANSEN_TRADING_API_URL || 'https://trading-a
 
 const CHAIN_MAP = {
   solana:   { index: '501', type: 'solana', chainId: 501,  name: 'Solana',   explorer: 'https://solscan.io/tx/' },
-  ethereum: { index: '1',   type: 'evm',    chainId: 1,    name: 'Ethereum', explorer: 'https://etherscan.io/tx/' },
   base:     { index: '8453', type: 'evm',   chainId: 8453, name: 'Base',     explorer: 'https://basescan.org/tx/' },
-  bsc:      { index: '56',  type: 'evm',    chainId: 56,   name: 'BSC',      explorer: 'https://bscscan.com/tx/' },
 };
 
 // Extend when adding new EVM chains (e.g. arbitrum WETH, polygon WMATIC)
 const WRAPPED_NATIVE_TOKENS = {
-  ethereum: { address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', symbol: 'WETH', nativeSymbol: 'ETH' },
   base:     { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', nativeSymbol: 'ETH' },
-  bsc:      { address: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', symbol: 'WBNB', nativeSymbol: 'BNB' },
 };
 
 // Common token symbol → address lookup per chain.
@@ -43,12 +39,6 @@ const TOKEN_SYMBOLS = {
     USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
   },
-  ethereum: {
-    ETH:  EVM_NATIVE,
-    WETH: WRAPPED_NATIVE_TOKENS.ethereum.address,
-    USDC: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
-    USDT: '0xdac17f958d2ee523a2206206994597c13d831ec7',
-  },
   base: {
     ETH:  EVM_NATIVE,
     WETH: WRAPPED_NATIVE_TOKENS.base.address,
@@ -56,12 +46,6 @@ const TOKEN_SYMBOLS = {
     // NOTE: Legacy L2-bridged USDT on Base. If Tether deploys natively on Base
     // (like Circle did with USDC), this address will need updating.
     USDT: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
-  },
-  bsc: {
-    BNB:  EVM_NATIVE,
-    WBNB: WRAPPED_NATIVE_TOKENS.bsc.address,
-    USDC: '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',
-    USDT: '0x55d398326f99059ff775485246999027b3197955',
   },
 };
 
@@ -80,9 +64,7 @@ export function resolveTokenAddress(symbolOrAddress, chainName) {
 
 // Default public RPC endpoints (used for nonce fetching)
 const EVM_RPC_URLS = {
-  ethereum: process.env.NANSEN_RPC_ETHEREUM || 'https://eth.llamarpc.com',
   base:     process.env.NANSEN_RPC_BASE     || 'https://mainnet.base.org',
-  bsc:      process.env.NANSEN_RPC_BSC      || 'https://bsc-dataseed.binance.org',
 };
 
 function getQuotesDir() {
@@ -321,7 +303,7 @@ export function signSolanaTransaction(transactionBase64, privateKeyHex) {
  *
  * @param {object} txData - Transaction fields from quote.transaction { to, data, value, gas, gasPrice }
  * @param {string} privateKeyHex - 64-char hex (32-byte secp256k1 private key)
- * @param {string} chain - Chain name (ethereum, base, bsc)
+ * @param {string} chain - Chain name (base)
  * @param {number} nonce - Account nonce
  * @returns {string} 0x-prefixed signed transaction hex
  */
@@ -795,7 +777,7 @@ export function buildTradingCommands(deps = {}) {
 Usage: nansen trade quote --chain <chain> --from <token> --to <token> --amount <baseUnits>
 
 OPTIONS:
-  --chain <chain>           Chain: solana, ethereum, base, bsc
+  --chain <chain>           Chain: solana, base
   --from <symbol|address>   Input token (symbol like SOL, USDC or address)
   --to <symbol|address>     Output token (symbol like USDC, ETH or address)
   --amount <units>          Amount in BASE UNITS (e.g. lamports, wei)

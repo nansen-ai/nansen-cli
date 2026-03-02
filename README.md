@@ -32,7 +32,7 @@ nansen schema [command] [--pretty]    # full command reference (no API key neede
 
 **Research categories:** `smart-money` (`sm`), `token` (`tgm`), `profiler` (`prof`), `portfolio` (`port`), `search`, `perp`, `points`
 
-**Trade:** `quote`, `execute` — DEX swaps via LiFi/Jupiter.
+**Trade:** `quote`, `execute` — DEX swaps on Base and Solana only (via LiFi/Jupiter).
 
 **Wallet:** `create`, `list`, `show`, `export`, `default`, `delete`, `send` — local keypairs (EVM + Solana).
 
