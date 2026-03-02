@@ -855,7 +855,7 @@ export function buildCommands(deps = {}) {
       const chains = options.chains || [chain];
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
-      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+      const pagination = (options.limit || options.page) ? { page: options.page || 1, per_page: options.limit } : undefined;
 
       // Add smart money label filter if specified
       if (options.labels) {
@@ -906,7 +906,7 @@ export function buildCommands(deps = {}) {
       }
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
-      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+      const pagination = (options.limit || options.page) ? { page: options.page || 1, per_page: options.limit } : undefined;
       const days = options.days ? parseInt(options.days) : 30;
 
       const handlers = {
@@ -992,7 +992,7 @@ export function buildCommands(deps = {}) {
       const timeframe = options.timeframe || '24h';
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
-      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+      const pagination = (options.limit || options.page) ? { page: options.page || 1, per_page: options.limit } : undefined;
       const days = options.days ? parseInt(options.days) : 30;
 
       // Convenience filter for smart money only
@@ -1098,7 +1098,7 @@ export function buildCommands(deps = {}) {
       const subcommand = args[0] || 'help';
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
-      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+      const pagination = (options.limit || options.page) ? { page: options.page || 1, per_page: options.limit } : undefined;
       const days = options.days ? parseInt(options.days) : 30;
 
       const handlers = {
@@ -1130,7 +1130,7 @@ export function buildCommands(deps = {}) {
     'points': async (args, apiInstance, flags, options) => {
       const subcommand = args[0] || 'help';
       const tier = options.tier;
-      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+      const pagination = (options.limit || options.page) ? { page: options.page || 1, per_page: options.limit } : undefined;
 
       const handlers = {
         'leaderboard': () => apiInstance.pointsLeaderboard({ tier, pagination }),

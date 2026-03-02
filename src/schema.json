@@ -33,6 +33,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -66,6 +70,10 @@
                 },
                 "filters": {
                   "type": "object"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -102,6 +110,10 @@
                 },
                 "filters": {
                   "type": "object"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -133,6 +145,10 @@
                 },
                 "labels": {
                   "type": "string|array"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -156,6 +172,10 @@
                 },
                 "filters": {
                   "type": "object"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -191,6 +211,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -274,6 +298,10 @@
                 "days": {
                   "type": "number",
                   "default": 30
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -307,6 +335,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -327,6 +359,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -350,6 +386,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -373,6 +413,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -402,6 +446,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -448,6 +496,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -473,6 +525,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -726,6 +782,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -764,6 +824,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -809,6 +873,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -849,6 +917,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -886,6 +958,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -926,6 +1002,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -1007,6 +1087,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -1035,6 +1119,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -1068,6 +1156,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -1097,6 +1189,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -1130,6 +1226,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -1168,6 +1268,10 @@
               "type": "number",
               "default": 25,
               "description": "Max results (1-50)"
+            },
+            "page": {
+              "type": "number",
+              "description": "Page number (default: 1)"
             }
           },
           "returns": [
@@ -1194,6 +1298,10 @@
                 },
                 "filters": {
                   "type": "object"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -1219,6 +1327,10 @@
                 },
                 "filters": {
                   "type": "object"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
@@ -1268,6 +1380,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number (default: 1)"
                 }
               },
               "returns": [
