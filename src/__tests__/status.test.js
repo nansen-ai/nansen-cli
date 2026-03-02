@@ -46,6 +46,7 @@ describe('status command', () => {
 
     const result = await commands.status([], mockApi, {}, {});
 
+    expect(result).toHaveProperty('ready');
     expect(result).toHaveProperty('auth');
     expect(result).toHaveProperty('api');
     expect(result).toHaveProperty('wallet');
@@ -55,11 +56,13 @@ describe('status command', () => {
     expect(result.auth).toHaveProperty('configured');
     expect(result.auth).toHaveProperty('valid');
     expect(result.auth).toHaveProperty('error');
+    expect(result.auth).toHaveProperty('code');
 
     // API fields
     expect(result.api).toHaveProperty('reachable');
     expect(result.api).toHaveProperty('latency_ms');
     expect(result.api).toHaveProperty('error');
+    expect(result.api).toHaveProperty('code');
 
     // Wallet fields
     expect(result.wallet).toHaveProperty('count');
@@ -80,12 +83,15 @@ describe('status command', () => {
 
     const result = await commands.status([], mockApi, {}, {});
 
+    expect(result.ready).toBe(true);
     expect(result.auth.configured).toBe(true);
     expect(result.auth.valid).toBe(true);
     expect(result.auth.error).toBeNull();
+    expect(result.auth.code).toBeNull();
     expect(result.api.reachable).toBe(true);
     expect(typeof result.api.latency_ms).toBe('number');
     expect(result.api.error).toBeNull();
+    expect(result.api.code).toBeNull();
   });
 
   it('should report auth not configured when no API key', async () => {
@@ -96,9 +102,13 @@ describe('status command', () => {
 
     const result = await commands.status([], mockApi, {}, {});
 
+    expect(result.ready).toBe(false);
     expect(result.auth.configured).toBe(false);
     expect(result.auth.valid).toBe(false);
     expect(result.auth.error).toContain('No API key configured');
+    expect(result.auth.code).toBe(ErrorCode.UNAUTHORIZED);
+    expect(result.api.reachable).toBeNull();
+    expect(result.api.code).toBeNull();
     expect(mockApi.request).not.toHaveBeenCalled();
   });
 
@@ -112,10 +122,13 @@ describe('status command', () => {
 
     const result = await commands.status([], mockApi, {}, {});
 
+    expect(result.ready).toBe(false);
     expect(result.auth.configured).toBe(true);
     expect(result.auth.valid).toBe(false);
     expect(result.auth.error).toContain('Invalid API key');
+    expect(result.auth.code).toBe(ErrorCode.UNAUTHORIZED);
     expect(result.api.reachable).toBe(true);
+    expect(result.api.code).toBeNull();
     expect(typeof result.api.latency_ms).toBe('number');
   });
 
@@ -129,10 +142,12 @@ describe('status command', () => {
 
     const result = await commands.status([], mockApi, {}, {});
 
+    expect(result.ready).toBe(false);
     expect(result.auth.configured).toBe(true);
     expect(result.auth.valid).toBe(false);
     expect(result.api.reachable).toBe(false);
     expect(result.api.error).toContain('Network error');
+    expect(result.api.code).toBe(ErrorCode.NETWORK_ERROR);
   });
 
   it('should report zero wallets when no wallet dir exists', async () => {
@@ -229,6 +244,7 @@ describe('status command via runCLI', () => {
     expect(result.type).toBe('success');
     const parsed = JSON.parse(outputs[0]);
     expect(parsed.success).toBe(true);
+    expect(parsed.data).toHaveProperty('ready');
     expect(parsed.data).toHaveProperty('auth');
     expect(parsed.data).toHaveProperty('api');
     expect(parsed.data).toHaveProperty('wallet');

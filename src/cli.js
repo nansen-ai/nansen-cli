@@ -865,12 +865,12 @@ export function buildCommands(deps = {}) {
     },
 
     'status': async (_args, apiInstance, _flags, _options) => {
-      const statusData = { auth: null, api: null, wallet: null, cli: null };
+      const statusData = { ready: false, auth: null, api: null, wallet: null, cli: null };
 
       // --- Auth + API check (single call) ---
       const authConfigured = Boolean(apiInstance.apiKey);
-      const authResult = { configured: authConfigured, valid: false, error: null };
-      const apiResult = { reachable: false, latency_ms: null, error: null };
+      const authResult = { configured: authConfigured, valid: false, error: null, code: null };
+      const apiResult = { reachable: null, latency_ms: null, error: null, code: null };
 
       if (authConfigured) {
         const start = Date.now();
@@ -885,21 +885,26 @@ export function buildCommands(deps = {}) {
           apiResult.latency_ms = Date.now() - start;
           // Distinguish connectivity from auth errors
           if (err.code === 'NETWORK_ERROR') {
+            apiResult.reachable = false;
             apiResult.error = err.message;
+            apiResult.code = ErrorCode.NETWORK_ERROR;
             authResult.error = 'Could not reach API to validate key';
           } else {
             // API responded (reachable) but auth or other error
             apiResult.reachable = true;
             authResult.valid = false;
             authResult.error = err.message;
+            authResult.code = err.code || ErrorCode.UNKNOWN;
           }
         }
       } else {
         authResult.error = 'No API key configured. Run: nansen login';
+        authResult.code = ErrorCode.UNAUTHORIZED;
       }
 
       statusData.auth = authResult;
       statusData.api = apiResult;
+      statusData.ready = authResult.valid === true && apiResult.reachable === true;
 
       // --- Wallet check ---
       const walletResult = { count: 0, default: null, names: [] };
