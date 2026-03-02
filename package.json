@@ -60,5 +60,8 @@
     "eslint": "^10.0.2",
     "globals": "^17.4.0",
     "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
   }
 }

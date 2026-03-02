@@ -1153,6 +1153,11 @@ export function buildCommands(deps = {}) {
     }
   };
 
+  cmds['mcp'] = async () => {
+    const { startMcpServer } = await import('./mcp.js');
+    await startMcpServer();
+  };
+
   // 'research' delegates to the category handlers defined above
   const RESEARCH_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points']);
 

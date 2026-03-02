@@ -96,6 +96,32 @@ nansen research smart-money netflow --chain solana --fields token_symbol,net_flo
 | `UNSUPPORTED_FILTER` on token holders | Remove `--smart-money` — not all tokens have that data. |
 | Huge JSON response | Use `--fields` to select columns. |
 
+## MCP Server
+
+Expose every research command as an MCP tool so Claude Desktop, Cursor, or any MCP client can use Nansen data natively.
+
+```bash
+nansen mcp   # starts stdio MCP server
+```
+
+**Claude Desktop config** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "nansen": {
+      "command": "npx",
+      "args": ["-y", "nansen-cli", "mcp"],
+      "env": {
+        "NANSEN_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+Tools are named with underscores: `smart_money_netflow`, `token_screener`, `profiler_balance`, etc. Wallet and trade commands are excluded for safety.
+
 ## Development
 
 ```bash

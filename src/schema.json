@@ -1448,6 +1448,9 @@
           }
         }
       }
+    },
+    "mcp": {
+      "description": "Start an MCP server (stdio) — exposes all research commands as MCP tools"
     }
   },
   "globalOptions": {
