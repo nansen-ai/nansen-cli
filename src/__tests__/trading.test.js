@@ -558,6 +558,48 @@ describe('buildTradingCommands', () => {
     });
   });
 
+  it('should return structured data on successful quote', async () => {
+    // Create a wallet so the quote handler can resolve it
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({
+        success: true,
+        quotes: [{
+          aggregator: 'jupiter',
+          inputMint: 'So11111111111111111111111111111111111111112',
+          outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+          inAmount: '1000000000',
+          outAmount: '150000000',
+          inUsdValue: '150.00',
+          outUsdValue: '150.00',
+          transaction: 'AQAAAA==',
+        }],
+      }),
+    });
+
+    const cmds = buildTradingCommands({ errorOutput: () => {} });
+    const result = await cmds.quote([], null, {}, {
+      chain: 'solana',
+      from: 'So11111111111111111111111111111111111111112',
+      to: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+      amount: '1000000000',
+    });
+
+    expect(result.quoteId).toMatch(/^\d+-[a-f0-9]+$/);
+    expect(result.chain).toBe('solana');
+    expect(result.walletAddress).toBeDefined();
+    expect(result.executeCommand).toContain('nansen trade execute');
+    expect(result.quotes.length).toBeGreaterThanOrEqual(1);
+    expect(result.quotes[0].aggregator).toBe('jupiter');
+
+    global.fetch = origFetch;
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
   it('should throw structured error when no wallet exists for quote', async () => {
     const origFetch = global.fetch;
     global.fetch = vi.fn().mockResolvedValue({
@@ -599,7 +641,7 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toBeDefined();
+    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'TRADE_FAILED' });
     expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(true);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
@@ -627,7 +669,7 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toBeDefined();
+    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'TRADE_FAILED' });
     expect(logs.some(l => l.includes('value mismatch'))).toBe(true);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
@@ -717,7 +759,7 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toBeDefined();
+    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'TRADE_FAILED' });
     expect(logs.some(l => l.includes('value mismatch'))).toBe(true);
 
     delete process.env.NANSEN_WALLET_PASSWORD;

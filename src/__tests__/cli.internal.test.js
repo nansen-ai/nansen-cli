@@ -1171,6 +1171,17 @@ describe('schema command', () => {
     expect(result.globalOptions).toBeDefined();
   });
 
+  it('should return wallet subcommands for schema("wallet")', async () => {
+    const commands = buildCommands({});
+    const result = await commands.schema(['wallet'], null, {}, {});
+
+    expect(result.command).toBe('wallet');
+    expect(result.subcommands).toBeDefined();
+    expect(Object.keys(result.subcommands)).toEqual(
+      expect.arrayContaining(['create', 'list', 'show', 'default', 'delete', 'send', 'export'])
+    );
+  });
+
   it('should throw structured error for unknown schema command', async () => {
     const commands = buildCommands({});
     // Unknown schema subcommand now throws instead of silently dumping full schema
