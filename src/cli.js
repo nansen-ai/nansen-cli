@@ -881,6 +881,9 @@ export function buildCommands(deps = {}) {
           }, 5000);
         });
         try {
+          // No dedicated /ping or /health endpoint exists on the Nansen API.
+          // Use smart-money/netflow with minimal params (1 row) as the cheapest
+          // authenticated check that validates both connectivity and API key.
           await Promise.race([
             apiInstance.request('/api/v1/smart-money/netflow', {
               chains: ['ethereum'], pagination: { page: 1, per_page: 1 }

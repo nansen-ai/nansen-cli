@@ -1620,15 +1620,19 @@
     "status": {
       "description": "Environment health check — verify auth, API connectivity, wallets, and CLI version before running workflows",
       "returns": [
+        "ready",
         "auth.configured",
         "auth.valid",
         "auth.error",
+        "auth.code",
         "api.reachable",
         "api.latency_ms",
         "api.error",
+        "api.code",
         "wallet.count",
         "wallet.default",
         "wallet.names",
+        "wallet.error",
         "cli.version",
         "cli.update_available",
         "cli.latest_version"
