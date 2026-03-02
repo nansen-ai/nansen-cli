@@ -874,11 +874,14 @@ export function buildCommands(deps = {}) {
         'dcas': () => apiInstance.smartMoneyDcas({ filters, orderBy, pagination }),
         'historical-holdings': () => apiInstance.smartMoneyHistoricalHoldings({ chains, filters, orderBy, pagination, days }),
         'help': () => ({
-          commands: ['netflow', 'dex-trades', 'perp-trades', 'holdings', 'dcas', 'historical-holdings'],
+          commands: ['netflow', 'dex-trades', 'trades', 'perp-trades', 'holdings', 'dcas', 'historical-holdings'],
+          aliases: { 'trades': 'dex-trades' },
           description: 'Smart Money analytics endpoints',
           example: 'nansen smart-money netflow --chain solana --labels Fund'
         })
       };
+      // 'trades' is an alias for 'dex-trades' — agents naturally try this name first
+      handlers['trades'] = handlers['dex-trades'];
 
       if (!handlers[subcommand]) {
         return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };

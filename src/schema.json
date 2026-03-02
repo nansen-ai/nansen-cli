@@ -83,6 +83,45 @@
                 "trade_value_usd"
               ]
             },
+            "trades": {
+              "description": "Alias for dex-trades. Real-time DEX trading activity",
+              "options": {
+                "chain": {
+                  "type": "string",
+                  "default": "solana"
+                },
+                "chains": {
+                  "type": "array"
+                },
+                "limit": {
+                  "type": "number"
+                },
+                "labels": {
+                  "type": "string|array"
+                },
+                "sort": {
+                  "type": "string"
+                },
+                "filters": {
+                  "type": "object"
+                }
+              },
+              "returns": [
+                "chain",
+                "block_timestamp",
+                "transaction_hash",
+                "trader_address",
+                "trader_address_label",
+                "token_bought_address",
+                "token_sold_address",
+                "token_bought_amount",
+                "token_sold_amount",
+                "token_bought_symbol",
+                "token_sold_symbol",
+                "trade_value_usd"
+              ],
+              "alias": "dex-trades"
+            },
             "perp-trades": {
               "description": "Perpetual trading on Hyperliquid",
               "options": {
