@@ -519,7 +519,7 @@ export function buildWalletCommands(deps = {}) {
             log(`    Base (recommended, lower fees): send USDC to ${result.evm}`);
             log(`    Solana: send USDC to ${result.solana}`);
             log('');
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -527,22 +527,19 @@ export function buildWalletCommands(deps = {}) {
         },
 
         'list': async () => {
-          // Return result only — do NOT call log() here.
-          //
-          // The runCLI framework serialises the returned value to JSON on stdout.
-          // Mixing log() (stdout) with the framework's JSON output (also stdout)
-          // produces a non-JSON prefix that breaks every downstream parser
-          // (jq, JSON.parse, agent tool-call handlers).
-          //
-          // The JSON payload already carries the full picture:
-          //   empty  → { success: true, data: { wallets: [], defaultWallet: null } }
-          //   filled → { success: true, data: { wallets: [...], defaultWallet: "..." } }
-          //
-          // TODO: full fix — route all wallet human-readable text through
-          //   errorOutput (stderr) so interactive users still see formatted output
-          //   while stdout stays clean JSON across ALL wallet subcommands
-          //   (create, show, export, default, delete, send).
-          return listWallets();
+          const result = listWallets();
+          if (result.wallets.length === 0) {
+            log("No wallets found. Create one with: nansen wallet create");
+            return;
+          }
+          log("");
+          for (const w of result.wallets) {
+            const star = w.isDefault ? " ★" : "";
+            log(`  ${w.name}${star}`);
+            log(`    EVM:    ${w.evm}`);
+            log(`    Solana: ${w.solana}`);
+            log("");
+          }
         },
 
         'show': async () => {
@@ -559,7 +556,7 @@ export function buildWalletCommands(deps = {}) {
             log(`    EVM:    ${result.evm}`);
             log(`    Solana: ${result.solana}`);
             log(`    Created: ${result.createdAt}\n`);
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -584,7 +581,7 @@ export function buildWalletCommands(deps = {}) {
             log(`    Address:     ${result.solana.address}`);
             log(`    Private Key: ${result.solana.privateKey}`);
             log('');
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -601,7 +598,7 @@ export function buildWalletCommands(deps = {}) {
           try {
             const result = setDefaultWallet(name);
             log(`✓ Default wallet set to "${result.defaultWallet}"`);
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
@@ -622,7 +619,7 @@ export function buildWalletCommands(deps = {}) {
             if (result.newDefault) {
               log(`  New default: ${result.newDefault}`);
             }
-            return result;
+            return;
           } catch (err) {
             log(`❌ ${err.message}`);
             exit(1);
