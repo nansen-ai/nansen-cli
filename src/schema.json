@@ -1657,10 +1657,28 @@
           "description": "Flat array of non-OK conditions found during the status check. Empty array if no problems. Each entry: { check, severity, code, message }.",
           "type": "array",
           "items": {
-            "check": "auth|api|wallet|cli|client — which section the problem belongs to",
-            "severity": "error|warning|info — error: blocks readiness, warning: may affect workflows, info: advisory",
-            "code": "Machine-readable error code string (e.g. UNAUTHORIZED, NETWORK_ERROR, NO_WALLETS, UPDATE_AVAILABLE, RATE_LIMITED, NOT_TESTED, UPDATE_CHECK_SKIPPED)",
-            "message": "Short single-line agent-safe message (no secrets, no file paths)"
+            "type": "object",
+            "properties": {
+              "check": {
+                "type": "string",
+                "enum": ["auth", "api", "wallet", "cli", "client"],
+                "description": "Which section the problem belongs to"
+              },
+              "severity": {
+                "type": "string",
+                "enum": ["error", "warning", "info"],
+                "description": "error: blocks readiness, warning: may affect workflows, info: advisory"
+              },
+              "code": {
+                "type": "string",
+                "description": "Machine-readable error code (e.g. UNAUTHORIZED, NETWORK_ERROR, NO_WALLETS, UPDATE_AVAILABLE, RATE_LIMITED, NOT_TESTED, UPDATE_CHECK_SKIPPED)"
+              },
+              "message": {
+                "type": "string",
+                "description": "Short single-line agent-safe message, no secrets, no file paths"
+              }
+            },
+            "required": ["check", "severity", "code", "message"]
           }
         }
       ]

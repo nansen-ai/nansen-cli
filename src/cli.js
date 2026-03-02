@@ -1019,7 +1019,7 @@ export function buildCommands(deps = {}) {
 
       // --- Derive problems[] ---
       const problems = [];
-      if (authResult.valid === false) {
+      if (authResult.valid === false && !(apiResult.reachable === false && authResult.error?.includes('endpoint unavailable'))) {
         problems.push({ check: 'auth', severity: 'error', code: authResult.code, message: authResult.error });
       }
       if (apiResult.reachable === false) {
