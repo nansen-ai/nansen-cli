@@ -240,7 +240,7 @@ const MOCK_RESPONSES = {
   },
   pmPnlByAddress: {
     data: [
-      { address: '0x123', market_id: '654412', question: 'Will X happen?', side: 'Yes', side_held: 'Yes', total_pnl_usd: 5000 }
+      { address: '0x123', market_id: '654412', question: 'Will X happen?', total_pnl_usd: 5000 }
     ],
     pagination: { page: 1, per_page: 100 }
   },
