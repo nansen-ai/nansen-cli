@@ -626,6 +626,21 @@ describe('NansenAPI', () => {
         expect(result.realized_pnl).toBe(30000);
         expect(result.unrealized_pnl).toBe(20000);
       });
+
+      it('should pass filters and orderBy parameters', async () => {
+        setupMock(MOCK_RESPONSES.addressPnl);
+
+        await api.addressPnl({
+          address: TEST_DATA.ethereum.address,
+          chain: 'ethereum',
+          filters: { min_pnl_usd: 1000 },
+          orderBy: [{ field: 'pnl_usd_realised', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/pnl');
+        expect(body.filters.min_pnl_usd).toBe(1000);
+        expect(body.order_by).toEqual([{ field: 'pnl_usd_realised', direction: 'DESC' }]);
+      });
     });
 
     describe('entitySearch', () => {

@@ -321,7 +321,7 @@
                 },
                 "sort": {
                   "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
+                  "description": "Sort field:direction (e.g., block_timestamp:desc)"
                 },
                 "filters": {
                   "type": "object",
@@ -364,6 +364,14 @@
                 "page": {
                   "type": "number",
                   "description": "Page number for paginated results (default: 1)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort field:direction (e.g., pnl_usd_realised:desc)"
+                },
+                "filters": {
+                  "type": "object",
+                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -468,7 +476,7 @@
                 },
                 "sort": {
                   "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
+                  "description": "Sort field:direction (e.g., order:desc)"
                 }
               },
               "returns": [
@@ -505,7 +513,7 @@
                 },
                 "sort": {
                   "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
+                  "description": "Sort field:direction (e.g., total_volume_usd:desc)"
                 },
                 "filters": {
                   "type": "object",
@@ -564,7 +572,7 @@
                 },
                 "sort": {
                   "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
+                  "description": "Sort field:direction (e.g., position_value_usd:desc)"
                 },
                 "filters": {
                   "type": "object",

@@ -932,7 +932,7 @@ export function buildCommands(deps = {}) {
         },
         'pnl': () => {
           const date = parseDateOption(options.date, days);
-          return apiInstance.addressPnl({ address, chain, date, days, pagination });
+          return apiInstance.addressPnl({ address, chain, date, days, filters, orderBy, pagination });
         },
         'search': () => apiInstance.entitySearch({ query: options.query }),
         'historical-balances': () => apiInstance.addressHistoricalBalances({ address, chain, filters, orderBy, pagination, days }),
