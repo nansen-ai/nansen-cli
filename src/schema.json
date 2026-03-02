@@ -33,6 +33,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -70,6 +74,10 @@
                 },
                 "filters": {
                   "type": "object"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -110,6 +118,10 @@
                 },
                 "filters": {
                   "type": "object"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -141,6 +153,10 @@
                 },
                 "labels": {
                   "type": "string|array"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -164,6 +180,10 @@
                 },
                 "filters": {
                   "type": "object"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -200,6 +220,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -290,6 +314,10 @@
                 "days": {
                   "type": "number",
                   "default": 30
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -324,6 +352,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -358,6 +390,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -381,6 +417,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -405,6 +445,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -434,6 +478,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -481,6 +529,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -511,6 +563,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -774,6 +830,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -819,6 +879,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -864,6 +928,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -904,6 +972,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -947,6 +1019,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -999,6 +1075,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1086,6 +1166,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1117,6 +1201,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1159,6 +1247,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1192,6 +1284,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1230,6 +1326,10 @@
                 "filters": {
                   "type": "object",
                   "description": "Additional filters as JSON"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1280,6 +1380,10 @@
               "type": "number",
               "default": 25,
               "description": "Max results (1-50)"
+            },
+            "page": {
+              "type": "number",
+              "description": "Page number for paginated results (default: 1)"
             }
           },
           "returns": [
@@ -1306,6 +1410,10 @@
                 },
                 "filters": {
                   "type": "object"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1336,6 +1444,10 @@
                 },
                 "filters": {
                   "type": "object"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1384,6 +1496,10 @@
                 },
                 "limit": {
                   "type": "number"
+                },
+                "page": {
+                  "type": "number",
+                  "description": "Page number for paginated results (default: 1)"
                 }
               },
               "returns": [
@@ -1426,7 +1542,7 @@
             },
             "wallet": {
               "type": "string",
-              "description": "Wallet name (or \"walletconnect\"/\"wc\" for WalletConnect, EVM only). A configured wallet is required \u2014 run `nansen wallet create` if you haven't set one up yet."
+              "description": "Wallet name (or \"walletconnect\"/\"wc\" for WalletConnect, EVM only). A configured wallet is required — run `nansen wallet create` if you haven't set one up yet."
             }
           },
           "prerequisites": [

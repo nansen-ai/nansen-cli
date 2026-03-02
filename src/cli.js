@@ -24,6 +24,16 @@ const schemaDefinition = require('./schema.json');
 // and should be updated whenever the API changes — do not edit returns arrays here.
 export const SCHEMA = { version: VERSION, ...schemaDefinition };
 
+// ============= Pagination =============
+
+export function buildPagination(options) {
+  if (!options.limit && !options.page) return undefined;
+  return {
+    page: Math.max(1, parseInt(options.page, 10) || 1),
+    per_page: options.limit,
+  };
+}
+
 // ============= Field Filtering =============
 
 /**
@@ -859,7 +869,7 @@ export function buildCommands(deps = {}) {
       const chains = options.chains || [chain];
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
-      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+      const pagination = buildPagination(options);
 
       // Add smart money label filter if specified
       if (options.labels) {
@@ -910,7 +920,7 @@ export function buildCommands(deps = {}) {
       }
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
-      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+      const pagination = buildPagination(options);
       const days = options.days ? parseInt(options.days) : 30;
 
       const handlers = {
@@ -996,7 +1006,7 @@ export function buildCommands(deps = {}) {
       const timeframe = options.timeframe || '24h';
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
-      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+      const pagination = buildPagination(options);
       const days = options.days ? parseInt(options.days) : 30;
 
       // Convenience filter for smart money only
@@ -1102,7 +1112,7 @@ export function buildCommands(deps = {}) {
       const subcommand = args[0] || 'help';
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
-      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+      const pagination = buildPagination(options);
       const days = options.days ? parseInt(options.days) : 30;
 
       const handlers = {
@@ -1134,7 +1144,7 @@ export function buildCommands(deps = {}) {
     'points': async (args, apiInstance, flags, options) => {
       const subcommand = args[0] || 'help';
       const tier = options.tier;
-      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+      const pagination = buildPagination(options);
 
       const handlers = {
         'leaderboard': () => apiInstance.pointsLeaderboard({ tier, pagination }),

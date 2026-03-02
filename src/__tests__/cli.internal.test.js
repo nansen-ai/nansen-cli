@@ -24,7 +24,8 @@ import {
   parseFields,
   batchProfile,
   traceCounterparties,
-  compareWallets
+  compareWallets,
+  buildPagination
 } from '../cli.js';
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode } from '../api.js';
 import * as fs from 'fs';
@@ -2505,5 +2506,31 @@ describe('SCHEMA structure', () => {
     expect(SCHEMA.commands.perp).toBeUndefined();
     expect(SCHEMA.commands.portfolio).toBeUndefined();
     expect(SCHEMA.commands.points).toBeUndefined();
+  });
+});
+
+describe('buildPagination', () => {
+  it('returns undefined when neither --page nor --limit is set', () => {
+    expect(buildPagination({})).toBeUndefined();
+  });
+
+  it('handles --page alone', () => {
+    expect(buildPagination({ page: '2' })).toEqual({ page: 2, per_page: undefined });
+  });
+
+  it('handles --page + --limit together', () => {
+    expect(buildPagination({ page: '3', limit: 10 })).toEqual({ page: 3, per_page: 10 });
+  });
+
+  it('guards against NaN --page value', () => {
+    expect(buildPagination({ page: 'abc' })).toEqual({ page: 1, per_page: undefined });
+  });
+
+  it('clamps negative --page to 1', () => {
+    expect(buildPagination({ page: '-5' })).toEqual({ page: 1, per_page: undefined });
+  });
+
+  it('handles --limit alone', () => {
+    expect(buildPagination({ limit: 25 })).toEqual({ page: 1, per_page: 25 });
   });
 });
