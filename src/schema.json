@@ -1622,7 +1622,7 @@
             },
             "wallet": {
               "type": "string",
-              "description": "Wallet name (or \"walletconnect\"/\"wc\" for WalletConnect, EVM only). A configured wallet is required — run `nansen wallet create` if you haven't set one up yet."
+              "description": "Wallet name (or \"walletconnect\"/\"wc\" for WalletConnect, EVM only). A configured wallet is required \u2014 run `nansen wallet create` if you haven't set one up yet."
             }
           },
           "prerequisites": [
@@ -1692,11 +1692,13 @@
     "avalanche",
     "linea",
     "scroll",
+    "zksync",
     "mantle",
     "ronin",
     "sei",
     "plasma",
     "sonic",
+    "unichain",
     "monad",
     "hyperevm",
     "iotaevm"
