@@ -590,7 +590,7 @@ export async function sendTokens({ to, amount, chain, token = null, wallet = nul
   }
 
   const config = getWalletConfig();
-  if (!verifyPassword(password, config)) throw new Error('Incorrect password');
+  if (config.passwordHash && !verifyPassword(password, config)) throw new Error('Incorrect password');
 
   const walletName = wallet || config.defaultWallet;
   if (!walletName) throw new Error('No wallet specified and no default wallet set');

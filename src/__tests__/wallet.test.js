@@ -19,6 +19,7 @@ import {
   exportWallet,
   setDefaultWallet,
   deleteWallet,
+  getWalletConfig,
 } from '../wallet.js';
 import { keccak256 } from '../crypto.js';
 
@@ -272,5 +273,73 @@ describe('wallet CRUD', () => {
     deleteWallet('a', PASSWORD);
     const list = listWallets();
     expect(list.defaultWallet).toBe('b');
+  });
+});
+
+describe('passwordless encryption', () => {
+  it('encryptKey with null password returns plaintext wrapper', () => {
+    const key = 'a'.repeat(64);
+    const result = encryptKey(key, null);
+    expect(result).toEqual({ data: key, encrypted: false });
+  });
+
+  it('decryptKey with unencrypted blob returns data', () => {
+    const key = 'b'.repeat(64);
+    const blob = { data: key, encrypted: false };
+    expect(decryptKey(blob, null)).toBe(key);
+    // Password is ignored for unencrypted blobs
+    expect(decryptKey(blob, 'any-password')).toBe(key);
+  });
+
+  it('decryptKey throws on encrypted blob with null password', () => {
+    const key = 'c'.repeat(64);
+    const encrypted = encryptKey(key, 'test-password-123');
+    expect(() => decryptKey(encrypted, null)).toThrow('Wallet is encrypted');
+  });
+
+  it('decryptKey throws on tampered unencrypted blob (has encryption fields)', () => {
+    const blob = { data: 'x'.repeat(64), encrypted: false, salt: 'deadbeef' };
+    expect(() => decryptKey(blob, null)).toThrow('corrupted or tampered');
+  });
+
+  it('decryptKey throws on encrypted blob missing required fields', () => {
+    const blob = { salt: 'deadbeef' };
+    expect(() => decryptKey(blob, 'some-password')).toThrow('corrupted or tampered');
+  });
+});
+
+describe('passwordless wallet CRUD', () => {
+  it('should create, export, and delete a passwordless wallet', () => {
+    const result = createWallet('nopass', null);
+    expect(result.name).toBe('nopass');
+    expect(result.evm).toMatch(/^0x/);
+    expect(result.solana).toBeTruthy();
+
+    // Config should have no passwordHash
+    const config = getWalletConfig();
+    expect(config.passwordHash).toBeNull();
+
+    // Export without password
+    const exported = exportWallet('nopass', null);
+    expect(exported.evm.privateKey).toHaveLength(64);
+    expect(exported.solana.privateKey).toHaveLength(128);
+
+    // Delete without password
+    const deleted = deleteWallet('nopass', null);
+    expect(deleted.deleted).toBe('nopass');
+  });
+
+  it('should reject --unsafe-no-password when passwordHash exists', () => {
+    createWallet('encrypted-first', 'test-password-123!!');
+    expect(() => createWallet('nopass-second', null)).toThrow(
+      'Existing wallets are password-protected'
+    );
+  });
+
+  it('should allow multiple passwordless wallets', () => {
+    createWallet('a', null);
+    createWallet('b', null);
+    const list = listWallets();
+    expect(list.wallets).toHaveLength(2);
   });
 });
