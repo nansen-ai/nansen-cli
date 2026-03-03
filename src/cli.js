@@ -1408,6 +1408,20 @@ export async function runCLI(rawArgs, deps = {}) {
         return { type: 'command-help', command };
       }
     }
+    // Simple commands (logout, schema, cache) — show help instead of executing
+    // Prevents destructive commands like logout from running when user just wants help
+    if (commands[command]) {
+      const simpleHelp = {
+        'logout': 'nansen logout — Remove saved API key from ~/.nansen/config.json',
+        'schema': 'nansen schema [command] [--pretty] — Show JSON schema for all commands (or a specific command)',
+        'cache':  'nansen cache clear — Clear the API response cache',
+      };
+      if (simpleHelp[command]) {
+        output(simpleHelp[command]);
+        notify();
+        return { type: 'command-help', command };
+      }
+    }
     // Commands with handlers (e.g. quote, execute) show their own usage
     if (command === 'help' || !commands[command]) {
       output(BANNER + HELP);
