@@ -5,7 +5,7 @@
  *   - Two wallets in ~/.nansen/wallets/ with ETH on Base and SOL on Solana
  *   - NANSEN_WALLET_PASSWORD env var set
  *
- * Run: npm run test:e2e (or: npx vitest run --config vitest.e2e.config.js src/__tests__/send.e2e.test.js)
+ * Run: npm run test:send (or: npx vitest run --config vitest.e2e.config.js src/__tests__/send.e2e.test.js)
  *
  * These tests execute REAL transfers with REAL funds. They are excluded
  * from the default test suite and must be run explicitly.
