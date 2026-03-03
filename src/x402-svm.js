@@ -1,30 +1,15 @@
 /**
  * Nansen CLI - x402 Solana Auto-Payment
  * Implements SPL TransferChecked transaction building for x402 payments.
- * Zero external dependencies — uses Node.js built-in crypto + wallet.js base58.
  */
 
 import crypto from 'crypto';
+import { base58 } from '@scure/base';
 
-// ============= Base58 Encode (inline from wallet.js PR #26) =============
-const BASE58_ALPHABET_STR = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+// ============= Base58 Encode =============
 
 export function base58Encode(buf) {
-  let num = 0n;
-  for (const byte of buf) {
-    num = num * 256n + BigInt(byte);
-  }
-  let str = '';
-  while (num > 0n) {
-    const rem = Number(num % 58n);
-    num = num / 58n;
-    str = BASE58_ALPHABET_STR[rem] + str;
-  }
-  for (const byte of buf) {
-    if (byte === 0) str = '1' + str;
-    else break;
-  }
-  return str || '1';
+  return base58.encode(buf instanceof Uint8Array ? buf : Uint8Array.from(buf));
 }
 
 // ============= Constants =============
@@ -41,33 +26,8 @@ const DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 1;
 
 // ============= Base58 Decode =============
 
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-const BASE58_MAP = new Uint8Array(128);
-for (let i = 0; i < BASE58_ALPHABET.length; i++) {
-  BASE58_MAP[BASE58_ALPHABET.charCodeAt(i)] = i;
-}
-
 export function base58Decode(str) {
-  let num = 0n;
-  for (const ch of str) {
-    num = num * 58n + BigInt(BASE58_MAP[ch.charCodeAt(0)]);
-  }
-
-  // Count leading '1's → leading zero bytes
-  let leadingZeros = 0;
-  for (const ch of str) {
-    if (ch === '1') leadingZeros++;
-    else break;
-  }
-
-  if (num === 0n) return Buffer.alloc(leadingZeros || 1);
-
-  // Convert to bytes
-  const hex = num.toString(16);
-  const paddedHex = hex.length % 2 ? '0' + hex : hex;
-  const bytes = Buffer.from(paddedHex, 'hex');
-
-  return Buffer.concat([Buffer.alloc(leadingZeros), bytes]);
+  return Buffer.from(base58.decode(str));
 }
 
 /**
