@@ -1,13 +1,13 @@
 /**
  * Nansen CLI - Wallet Management
  * Local key generation and storage for EVM and Solana chains.
- * Zero external dependencies — uses Node.js built-in crypto only.
  */
 
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import * as readline from 'readline';
+import { base58 } from '@scure/base';
 
 // ============= Constants =============
 
@@ -32,31 +32,11 @@ import { keccak256 } from './crypto.js';
 
 // ============= Base58 Encoding (for Solana) =============
 
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-
 /**
  * Encode a Buffer to base58 string.
  */
 export function base58Encode(buf) {
-  let num = 0n;
-  for (const byte of buf) {
-    num = num * 256n + BigInt(byte);
-  }
-
-  let str = '';
-  while (num > 0n) {
-    const rem = Number(num % 58n);
-    num = num / 58n;
-    str = BASE58_ALPHABET[rem] + str;
-  }
-
-  // Leading zeros → leading '1's
-  for (const byte of buf) {
-    if (byte === 0) str = '1' + str;
-    else break;
-  }
-
-  return str || '1';
+  return base58.encode(buf instanceof Uint8Array ? buf : Uint8Array.from(buf));
 }
 
 // ============= Encryption =============

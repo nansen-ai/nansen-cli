@@ -1,10 +1,10 @@
 /**
  * Nansen CLI - Token Transfer
  * Send native and ERC-20/SPL tokens on EVM and Solana chains.
- * Zero external dependencies — uses Node.js built-in crypto only.
  */
 
 import crypto from 'crypto';
+import { base58 } from '@scure/base';
 import { base58Encode, exportWallet, getWalletConfig, verifyPassword } from './wallet.js';
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect } from './walletconnect-trading.js';
@@ -34,21 +34,8 @@ const CHAIN_IDS = { ...EVM_CHAIN_IDS, evm: 1 };
 
 // ============= Base58 =============
 
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-
 function base58Decode(str) {
-  let num = 0n;
-  for (const ch of str) {
-    const idx = BASE58_ALPHABET.indexOf(ch);
-    if (idx === -1) throw new Error(`Invalid base58 character: ${ch}`);
-    num = num * 58n + BigInt(idx);
-  }
-  const hex = num.toString(16);
-  const paddedHex = hex.length % 2 ? '0' + hex : hex;
-  const bytes = num === 0n ? [] : [...Buffer.from(paddedHex, 'hex')];
-  let leadingZeros = 0;
-  for (const ch of str) { if (ch === '1') leadingZeros++; else break; }
-  return Buffer.from([...Array(leadingZeros).fill(0), ...bytes]);
+  return Buffer.from(base58.decode(str));
 }
 
 function base58DecodePubkey(str) {

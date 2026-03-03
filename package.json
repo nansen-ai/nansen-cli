@@ -60,5 +60,11 @@
     "eslint": "^10.0.2",
     "globals": "^17.4.0",
     "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@ethereumjs/rlp": "^10.1.1",
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
+    "@scure/base": "^2.0.0"
   }
 }
