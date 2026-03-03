@@ -1319,7 +1319,7 @@ export const RESEARCH_CATEGORY_ALIASES = {
 };
 
 // Generate help text for a specific subcommand using SCHEMA
-export function generateSubcommandHelp(command, subcommand) {
+export function generateSubcommandHelp(command, subcommand, prefix = null) {
   const cmdSchema = SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command];
   if (!cmdSchema) return null;
 
@@ -1415,7 +1415,7 @@ export async function runCLI(rawArgs, deps = {}) {
         const category = RESEARCH_CATEGORY_ALIASES[subcommand] || subcommand;
         const deepSub = subArgs[1];
         if (deepSub) {
-          const subHelp = generateSubcommandHelp(category, deepSub);
+          const subHelp = generateSubcommandHelp(category, deepSub, `research ${subcommand}`);
           if (subHelp) {
             output(subHelp);
             notify();
