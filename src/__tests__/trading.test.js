@@ -811,10 +811,9 @@ describe('WalletConnect quote support', () => {
     }));
 
     const logs = [];
-    let exitCalled = false;
     const cmds = buildTradingCommands({
       log: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
+      exit: () => {},
     });
 
     await cmds.quote([], null, {}, {
