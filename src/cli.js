@@ -1278,7 +1278,7 @@ export const RESEARCH_CATEGORY_ALIASES = {
 };
 
 // Generate help text for a specific subcommand using SCHEMA
-export function generateSubcommandHelp(command, subcommand) {
+export function generateSubcommandHelp(command, subcommand, prefix = null) {
   const cmdSchema = SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command];
   if (!cmdSchema) return null;
 
@@ -1305,7 +1305,7 @@ export function generateSubcommandHelp(command, subcommand) {
 
   const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
   const chain = subSchema.options?.chain?.default || 'solana';
-  let example = `nansen ${command} ${subcommand}`;
+  let example = `nansen ${prefix || command} ${subcommand}`;
   if (subSchema.options) {
     for (const [name, opt] of Object.entries(subSchema.options)) {
       if (opt.required) example += ` --${name} ${exampleValues[name] || '<val>'}`;
@@ -1373,7 +1373,7 @@ export async function runCLI(rawArgs, deps = {}) {
         const category = RESEARCH_CATEGORY_ALIASES[subcommand] || subcommand;
         const deepSub = subArgs[1];
         if (deepSub) {
-          const subHelp = generateSubcommandHelp(category, deepSub);
+          const subHelp = generateSubcommandHelp(category, deepSub, `research ${subcommand}`);
           if (subHelp) {
             output(subHelp);
             notify();
