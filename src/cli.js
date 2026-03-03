@@ -1294,7 +1294,8 @@ export function generateSubcommandHelp(command, subcommand) {
 
   const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
   const chain = subSchema.options?.chain?.default || 'solana';
-  let example = `nansen ${command} ${subcommand}`;
+  const prefix = DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command;
+  let example = `nansen ${prefix} ${subcommand}`;
   if (subSchema.options) {
     for (const [name, opt] of Object.entries(subSchema.options)) {
       if (opt.required) example += ` --${name} ${exampleValues[name] || '<val>'}`;
