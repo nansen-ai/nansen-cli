@@ -499,6 +499,9 @@ export function buildWalletCommands(deps = {}) {
             log(`    Base (recommended, lower fees): send USDC to ${result.evm}`);
             log(`    Solana: send USDC to ${result.solana}`);
             log('');
+            log('  ⚠️  This is a hot wallet and is fundamentally insecure — do not deposit more than you can afford to lose.');
+            log('     Store and handle your password securely, e.g. using a secrets manager or system keychain.');
+            log('');
             return;
           } catch (err) {
             log(`❌ ${err.message}`);
