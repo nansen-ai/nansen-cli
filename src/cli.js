@@ -1220,7 +1220,7 @@ export function buildCommands(deps = {}) {
         'event-screener': () => apiInstance.pmEventScreener({ sortBy, query, status, pagination }),
         'pnl-by-market': () => apiInstance.pmPnlByMarket({ marketId, pagination }),
         'pnl-by-address': () => apiInstance.pmPnlByAddress({ address, pagination }),
-        'position-detail': () => apiInstance.pmPositionDetail({ marketId, address, pagination }),
+        'position-detail': () => apiInstance.pmPositionDetail({ marketId, pagination }),
         'categories': () => apiInstance.pmCategories({ pagination }),
         'help': () => ({
           commands: ['ohlcv', 'orderbook', 'top-holders', 'trades-by-market', 'trades-by-address', 'market-screener', 'event-screener', 'pnl-by-market', 'pnl-by-address', 'position-detail', 'categories'],
