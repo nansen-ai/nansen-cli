@@ -83,8 +83,8 @@ export function encryptKey(privateKeyHex, password) {
 
 /**
  * Decrypt a private key with a password.
- * @returns {string} Private key hex string
- * @throws {Error} If password is wrong
+ * For unencrypted wallets (encrypted: false), password is ignored and
+ * plaintext data is returned directly.
  */
 export function decryptKey(encryptedData, password) {
   const ENCRYPTED_FIELDS = ['salt', 'iv', 'authTag', 'ciphertext'];
@@ -239,6 +239,7 @@ function getWalletFile(name) {
  */
 export function verifyPassword(password, config) {
   if (!config.passwordHash) return true; // No password set yet
+  if (password === null || password === undefined) return false;
   const { salt, hash } = config.passwordHash;
   const derived = crypto.scryptSync(password, Buffer.from(salt, 'hex'), 32, {
     N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P, maxmem: 256 * 1024 * 1024,
@@ -338,11 +339,17 @@ export function createWallet(name, password) {
     if (config.passwordHash) {
       throw new Error('Existing wallets are password-protected. Set NANSEN_WALLET_PASSWORD.');
     }
-  } else if (!config.passwordHash) {
-    // First wallet with password: set the password hash
-    config.passwordHash = hashPassword(password);
   } else {
-    if (!verifyPassword(password, config)) {
+    // Encrypted mode
+    if (!config.passwordHash) {
+      // First encrypted wallet: reject if passwordless wallets exist
+      const existingWallets = fs.readdirSync(getWalletsDir())
+        .filter(f => f.endsWith('.json') && f !== 'config.json');
+      if (existingWallets.length > 0) {
+        throw new Error('Existing wallets are passwordless. Cannot mix encrypted and unencrypted wallets.');
+      }
+      config.passwordHash = hashPassword(password);
+    } else if (!verifyPassword(password, config)) {
       throw new Error('Incorrect password');
     }
   }

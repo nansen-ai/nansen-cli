@@ -342,4 +342,11 @@ describe('passwordless wallet CRUD', () => {
     const list = listWallets();
     expect(list.wallets).toHaveLength(2);
   });
+
+  it('should reject encrypted wallet when passwordless wallets exist', () => {
+    createWallet('nopass-first', null);
+    expect(() => createWallet('encrypted-second', 'test-password-123!!')).toThrow(
+      'Existing wallets are passwordless'
+    );
+  });
 });

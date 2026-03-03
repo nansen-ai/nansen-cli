@@ -45,7 +45,7 @@ x402:   any API call → 402 → x402.js ranks requirements → sign USDC (EVM f
 - **Operational commands** (trade, wallet, login) — print human-readable text via `log()` to stdout, return `undefined`
 - **No interactive prompts in core** — use env vars (`NANSEN_WALLET_PASSWORD`, `NANSEN_API_KEY`)
 - **Actionable errors** — `"Not logged in. Run: nansen login"` not `"Authentication failed"`
-- **No in-memory-only passwords** — agents must persist `NANSEN_WALLET_PASSWORD` to `~/.nansen/.env` before use; passwords held only in session memory are lost on restart, permanently locking wallets
+
 
 ## Testing
 
@@ -80,7 +80,6 @@ If you are contributing changes, read [CONTRIBUTING.md](CONTRIBUTING.md) for the
 5. **Token-2022:** use `TOKEN_2022_PROGRAM_ID` + `TransferCheckedInstruction`
 6. **CreateATA path** (transfer.js) has limited test coverage — add tests if modifying
 7. **`CHAIN_IDS`** only maps ethereum + base — new EVM chains need this updated
-8. **Agent wallet passwords** — agents may generate `NANSEN_WALLET_PASSWORD` but must persist it to `~/.nansen/.env` before using it. Never hold a password only in session memory — it's lost on restart, permanently locking the wallet (AES-256-GCM)
 
 ## Networks
 
