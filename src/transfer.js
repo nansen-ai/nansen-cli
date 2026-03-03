@@ -5,7 +5,7 @@
 
 import crypto from 'crypto';
 import { base58 } from '@scure/base';
-import { base58Encode, exportWallet, getWalletConfig, verifyPassword } from './wallet.js';
+import { base58Encode, exportWallet, getWalletConfig, verifyPassword, showWallet } from './wallet.js';
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect } from './walletconnect-trading.js';
 import { EVM_CHAIN_IDS } from './chain-ids.js';
@@ -328,13 +328,13 @@ async function getTokenInfo(rpcUrl, mint) {
   return { tokenProgram: owner, decimals: decimals ?? 9 };
 }
 
-async function buildSolanaTransaction({ to, amount, amountStr, token, privateKey }) {
+/**
+ * Build an unsigned Solana transaction for external signing (e.g. Privy).
+ * Returns base64-encoded serialized transaction with an empty signature slot.
+ */
+export async function buildUnsignedSolanaTransaction({ to, amount, amountStr, token, fromAddress }) {
   const rpcUrl = CHAIN_RPCS.solana;
-
-  const keypairBuf = Buffer.from(privateKey, 'hex');
-  const seed = keypairBuf.subarray(0, 32);
-  const pubkey = keypairBuf.subarray(32, 64);
-  const fromAddr = base58Encode(pubkey);
+  const pubkey = base58DecodePubkey(fromAddress);
 
   // Get recent blockhash
   const bhResult = await rpcCall(rpcUrl, 'getLatestBlockhash', [{ commitment: 'finalized' }]);
@@ -347,7 +347,7 @@ async function buildSolanaTransaction({ to, amount, amountStr, token, privateKey
     const { tokenProgram, decimals } = await getTokenInfo(rpcUrl, token);
     const tokenAmount = parseAmount(amountStr, decimals);
     const mintBuf = base58DecodePubkey(token);
-    const sourceATA = deriveATA(fromAddr, token, tokenProgram);
+    const sourceATA = deriveATA(fromAddress, token, tokenProgram);
     const destATA = deriveATA(to, token, tokenProgram);
     const tokenProgBuf = base58DecodePubkey(tokenProgram);
 
@@ -381,9 +381,6 @@ async function buildSolanaTransaction({ to, amount, amountStr, token, privateKey
     } catch { /* assume doesn't exist */ }
 
     if (destAtaExists) {
-      // Simple: just TransferChecked, no CreateATA needed
-      // Account ordering: writable first, then readonly (Solana message format requirement)
-      // Accounts: [owner(s,w), sourceATA(w), destATA(w), mint(r), tokenProgram(r)]
       accountKeys = [
         pubkey,        // 0: owner/feePayer (signer, writable)
         sourceATA,     // 1: source ATA (writable)
@@ -398,7 +395,6 @@ async function buildSolanaTransaction({ to, amount, amountStr, token, privateKey
       }];
       numReadonlyUnsigned = 2; // mint + tokenProgram
     } else {
-      // Need CreateAssociatedTokenAccountIdempotent + TransferChecked
       const ataProgBuf = base58DecodePubkey(ATA_PROGRAM);
       const sysProgramBuf = base58DecodePubkey(SYSTEM_PROGRAM);
 
@@ -430,7 +426,7 @@ async function buildSolanaTransaction({ to, amount, amountStr, token, privateKey
     // Native SOL transfer
 
     // Pre-check: SOL balance
-    const balResult = await rpcCall(rpcUrl, 'getBalance', [fromAddr, { commitment: 'confirmed' }]);
+    const balResult = await rpcCall(rpcUrl, 'getBalance', [fromAddress, { commitment: 'confirmed' }]);
     const solBalance = BigInt(balResult.value);
     const needed = amount + 5000n; // amount + ~fee
     if (solBalance < needed) {
@@ -472,18 +468,32 @@ async function buildSolanaTransaction({ to, amount, amountStr, token, privateKey
 
   const messageBytes = Buffer.concat(parts);
 
-  // Sign
+  // Return unsigned: compact(1) + 64 zero bytes (empty sig slot) + message
+  const sigCount = encodeCompactU16(1);
+  const emptySignature = Buffer.alloc(64);
+  const txBytes = Buffer.concat([sigCount, emptySignature, messageBytes]);
+  return { unsignedTransaction: txBytes.toString('base64') };
+}
+
+async function buildSolanaTransaction({ to, amount, amountStr, token, privateKey }) {
+  const keypairBuf = Buffer.from(privateKey, 'hex');
+  const seed = keypairBuf.subarray(0, 32);
+  const fromPubkey = keypairBuf.subarray(32, 64);
+  const fromAddress = base58Encode(fromPubkey);
+
+  const { unsignedTransaction } = await buildUnsignedSolanaTransaction({
+    to, amount, amountStr, token, fromAddress,
+  });
+
+  // Sign: extract message bytes, sign, insert signature
+  const txBytes = Buffer.from(unsignedTransaction, 'base64');
+  const sigCountSize = 1; // compact-u16 for count=1 is always 1 byte
+  const messageBytes = txBytes.subarray(sigCountSize + 64);
   const signature = signEd25519(messageBytes, seed);
+  const signedTx = Buffer.from(txBytes);
+  signature.copy(signedTx, sigCountSize);
 
-  // Serialize transaction: compact(numSigs) + signatures + message
-  const txBytes = Buffer.concat([
-    encodeCompactU16(1),
-    signature, // 64 bytes
-    messageBytes,
-  ]);
-
-  // Solana sendTransaction expects base64
-  return { signedTransaction: txBytes.toString('base64') };
+  return { signedTransaction: signedTx.toString('base64') };
 }
 
 // ============= Broadcasting =============
@@ -576,6 +586,115 @@ async function broadcastTransaction(signedTx, chain) {
 // Exported for testing
 export { parseAmount, formatAmount, signEd25519, encodeCompactU16, base58Decode, base58DecodePubkey, deriveATA, validateEvmAddress, validateSolanaAddress, bigIntToHex };
 
+/**
+ * Send tokens via Privy server wallet. EVM uses Privy's sendTransaction (handles gas/nonce).
+ * Solana builds unsigned tx, signs via Privy, then broadcasts.
+ */
+async function sendTokensViaPrivy({ to, amount, chain, token, max, dryRun, walletInfo }) {
+  const { PrivyClient } = await import('./privy.js');
+  const client = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);
+
+  if (chain === 'solana') {
+    const walletId = walletInfo.privyWalletIds?.solana;
+    const fromAddress = walletInfo.solana;
+    if (!fromAddress) throw new Error('No Solana wallet in this Privy wallet');
+    if (!walletId) throw new Error('No Privy Solana wallet ID found. Re-create the wallet with: nansen wallet create --provider privy');
+
+    if (max && !token) {
+      const balResult = await rpcCall(CHAIN_RPCS.solana, 'getBalance', [fromAddress, { commitment: 'confirmed' }]);
+      const fee = 5000n;
+      const maxAmount = BigInt(balResult.value) - fee;
+      if (maxAmount <= 0n) throw new Error('Insufficient SOL balance for fees');
+      amount = formatAmount(maxAmount, 9);
+    } else if (max && token) {
+      const rpcUrl = CHAIN_RPCS.solana;
+      const { tokenProgram, decimals: _decimals } = await getTokenInfo(rpcUrl, token);
+      const sourceATA = deriveATA(fromAddress, token, tokenProgram);
+      const sourceAtaAddr = base58Encode(sourceATA);
+      const ataInfo = await rpcCall(rpcUrl, 'getTokenAccountBalance', [sourceAtaAddr]);
+      amount = ataInfo.value.uiAmountString;
+    }
+
+    if (dryRun) return { dryRun: true, from: fromAddress, to, amount, token, chain };
+
+    const amountRaw = token ? null : parseAmount(amount, 9);
+    const { unsignedTransaction } = await buildUnsignedSolanaTransaction({
+      to, amount: amountRaw, amountStr: amount, token, fromAddress,
+    });
+
+    const signResult = await client.signSolanaTransaction(walletId, unsignedTransaction);
+    const signedTx = signResult.data?.signed_transaction || signResult.signed_transaction;
+    const txHash = await broadcastTransaction(signedTx, chain);
+    const confirmation = await waitForSolanaConfirmation(CHAIN_RPCS.solana, txHash);
+
+    return {
+      success: true, transactionHash: txHash, confirmed: confirmation.confirmed,
+      from: fromAddress, to, amount, token, chain,
+      explorer: getExplorerUrl(chain, txHash),
+    };
+  }
+
+  // EVM: use Privy sendTransaction (Privy handles gas/nonce/broadcast)
+  const walletId = walletInfo.privyWalletIds?.evm;
+  const fromAddress = walletInfo.evm;
+  if (!fromAddress) throw new Error('No EVM wallet in this Privy wallet');
+  if (!walletId) throw new Error('No Privy EVM wallet ID found. Re-create the wallet with: nansen wallet create --provider privy');
+
+  const chainId = CHAIN_IDS[chain];
+  if (!chainId) throw new Error(`Unsupported chain: ${chain}`);
+
+  let decimals = 18;
+  const rpcUrl = CHAIN_RPCS[chain] || CHAIN_RPCS.evm;
+  if (token) decimals = await validateErc20Token(rpcUrl, token);
+
+  if (max && token) {
+    const balResult = await rpcCall(rpcUrl, 'eth_call', [{
+      to: token, data: '0x70a08231' + fromAddress.slice(2).padStart(64, '0'),
+    }, 'latest']);
+    const tokenBalance = BigInt(balResult || '0x0');
+    if (tokenBalance === 0n) throw new Error('Token balance is zero');
+    amount = formatAmount(tokenBalance, decimals);
+  }
+
+  const parsedAmount = (max && !token) ? null : parseAmount(amount, decimals);
+
+  let txParams;
+  let maxValue;
+  if (token) {
+    const amtHex = parsedAmount.toString(16).padStart(64, '0');
+    const data = '0xa9059cbb' + to.slice(2).padStart(64, '0') + amtHex;
+    txParams = { to: token, data, value: '0x0', chainId };
+  } else if (max) {
+    // Compute max native send: balance minus gas reserve
+    const balance = BigInt(await rpcCall(rpcUrl, 'eth_getBalance', [fromAddress, 'latest']));
+    const gasPrice = BigInt(await rpcCall(rpcUrl, 'eth_gasPrice', []));
+    // 21000 is for reserve estimation only. Privy's sendTransaction handles actual
+    // gas estimation, including EIP-7702 delegated accounts. 3x covers L2 data fees.
+    const gasReserve = gasPrice * 21000n * 3n;
+    maxValue = balance - gasReserve;
+    if (maxValue <= 0n) throw new Error('Insufficient balance to cover gas fees');
+    txParams = { to, value: '0x' + maxValue.toString(16), chainId };
+  } else {
+    txParams = { to, value: '0x' + parsedAmount.toString(16), chainId };
+  }
+
+  const finalAmount = maxValue != null ? formatAmount(maxValue, 18) : amount;
+
+  if (dryRun) return { dryRun: true, from: fromAddress, to, amount: finalAmount, token, chain };
+
+  const result = await client.sendTransaction(walletId, txParams);
+  const txHash = result.data?.hash || result.hash;
+
+  const confirmation = await waitForEvmConfirmation(rpcUrl, txHash);
+
+  return {
+    success: true, transactionHash: txHash, confirmed: confirmation.confirmed,
+    ...(confirmation.blockNumber ? { blockNumber: confirmation.blockNumber } : {}),
+    from: fromAddress, to, amount: finalAmount, token, chain,
+    explorer: getExplorerUrl(chain, txHash),
+  };
+}
+
 export async function sendTokens({ to, amount, chain, token = null, wallet = null, password, max = false, dryRun = false, walletconnect = false }) {
   // Validate address
   const validate = chain === 'solana' ? validateSolanaAddress : validateEvmAddress;
@@ -589,11 +708,17 @@ export async function sendTokens({ to, amount, chain, token = null, wallet = nul
     return sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRun });
   }
 
+  // Resolve wallet and check provider
   const config = getWalletConfig();
-  if (config.passwordHash && !verifyPassword(password, config)) throw new Error('Incorrect password');
-
   const walletName = wallet || config.defaultWallet;
   if (!walletName) throw new Error('No wallet specified and no default wallet set');
+
+  const walletInfo = showWallet(walletName);
+  if (walletInfo.provider === 'privy') {
+    return sendTokensViaPrivy({ to, amount, chain, token, max, dryRun, walletInfo });
+  }
+
+  if (config.passwordHash && !verifyPassword(password, config)) throw new Error('Incorrect password');
   const walletData = exportWallet(walletName, password);
 
   let result;
