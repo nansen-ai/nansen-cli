@@ -157,6 +157,14 @@
                 "page": {
                   "type": "number",
                   "description": "Page number for paginated results (default: 1)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort field:direction (e.g., value_usd:desc)"
+                },
+                "filters": {
+                  "type": "object",
+                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
@@ -177,6 +185,14 @@
               "options": {
                 "limit": {
                   "type": "number"
+                },
+                "labels": {
+                  "type": "string|array",
+                  "description": "Smart Money label filter"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort field:direction (e.g., deposit_value_usd:desc)"
                 },
                 "filters": {
                   "type": "object"
@@ -224,6 +240,18 @@
                 "page": {
                   "type": "number",
                   "description": "Page number for paginated results (default: 1)"
+                },
+                "labels": {
+                  "type": "string|array",
+                  "description": "Smart Money label filter"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort field:direction (e.g., value_usd:desc)"
+                },
+                "filters": {
+                  "type": "object",
+                  "description": "Additional filters as JSON"
                 }
               },
               "returns": [
