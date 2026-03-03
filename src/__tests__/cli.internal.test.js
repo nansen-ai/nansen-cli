@@ -545,6 +545,54 @@ describe('buildCommands', () => {
       );
     });
 
+    it('should warn to stderr when ohlcv price fields are null but volume is present', async () => {
+      const nullPriceCandles = [
+        { interval_start: '2026-02-01T00:00:00', open: null, high: null, low: null, close: null, volume: 167913267, volume_usd: null, market_cap: { open: null, high: null, low: null, close: null } },
+        { interval_start: '2026-02-02T00:00:00', open: null, high: null, low: null, close: null, volume: 125748386, volume_usd: null, market_cap: { open: null, high: null, low: null, close: null } },
+      ];
+      const mockApi = {
+        tokenOhlcv: vi.fn().mockResolvedValue({ data: nullPriceCandles })
+      };
+      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+      await commands['token'](['ohlcv'], mockApi, {}, { token: '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed', chain: 'base', timeframe: '1d' });
+
+      expect(stderrSpy).toHaveBeenCalledTimes(1);
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('Price data unavailable'));
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed'));
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('open/high/low/close'));
+      stderrSpy.mockRestore();
+    });
+
+    it('should not warn to stderr when ohlcv price fields are populated', async () => {
+      const fullCandles = [
+        { interval_start: '2026-02-01T00:00:00', open: 0.0000071, high: 0.0000073, low: 0.0000069, close: 0.0000070, volume: 112998122501, volume_usd: 806705, market_cap: { open: 631010924, high: 620085355, low: 620085355, close: 620085355 } },
+      ];
+      const mockApi = {
+        tokenOhlcv: vi.fn().mockResolvedValue({ data: fullCandles })
+      };
+      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+      await commands['token'](['ohlcv'], mockApi, {}, { token: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', chain: 'solana', timeframe: '1d' });
+
+      expect(stderrSpy).not.toHaveBeenCalledWith(expect.stringContaining('Price data unavailable'));
+      stderrSpy.mockRestore();
+    });
+
+    it('should warn to stderr when ohlcv returns empty candles array', async () => {
+      const mockApi = {
+        tokenOhlcv: vi.fn().mockResolvedValue({ data: [] })
+      };
+      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+      await commands['token'](['ohlcv'], mockApi, {}, { token: '0xdeadbeef', chain: 'base', timeframe: '1d' });
+
+      expect(stderrSpy).toHaveBeenCalledTimes(1);
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('No OHLCV data returned'));
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('0xdeadbeef'));
+      stderrSpy.mockRestore();
+    });
+
     it('should pass days to flows handler', async () => {
       const mockApi = {
         tokenFlows: vi.fn().mockResolvedValue({ data: [] })

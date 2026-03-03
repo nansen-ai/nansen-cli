@@ -1080,6 +1080,28 @@ export function buildCommands(deps = {}) {
 
       let result = await handlers[subcommand]();
 
+      // Warn when OHLCV price data is null (backend coverage gap)
+      // Volume comes from on-chain DEX data and is always available, but price/market_cap
+      // requires a price oracle — some tokens are not tracked and return all-null price fields.
+      if (subcommand === 'ohlcv') {
+        const candles = Array.isArray(result?.data) ? result.data : [];
+        if (candles.length === 0) {
+          process.stderr.write(`⚠️  No OHLCV data returned for token ${tokenAddress} on ${chain}.\n`);
+        } else {
+          const hasPrice = candles.some(c => c.open !== null || c.close !== null);
+          const hasVolume = candles.some(c => c.volume !== null);
+          if (!hasPrice && hasVolume) {
+            process.stderr.write(
+              `⚠️  Price data unavailable for token ${tokenAddress} on ${chain}.\n` +
+              `   open/high/low/close, volume_usd, and market_cap are null.\n` +
+              `   Volume (raw token units) is available. This token may not be tracked by Nansen's price oracle.\n`
+            );
+          } else if (!hasPrice && !hasVolume) {
+            process.stderr.write(`⚠️  No OHLCV data available for token ${tokenAddress} on ${chain}.\n`);
+          }
+        }
+      }
+
       // Enrich transfers with Nansen labels for from/to addresses
       if (subcommand === 'transfers' && (options.enrich || flags.enrich)) {
         result = await enrichTransfers(result, apiInstance, chain);
