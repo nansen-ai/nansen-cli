@@ -142,7 +142,9 @@ export async function handleX402Payment(paymentRequirements) {
   const wallet = await checkWalletConnection();
   if (!wallet) {
     throw new NansenError(
-      'x402 payment required but no wallet connected. Run `walletconnect connect` first.',
+      'x402 payment required but no wallet connected. ' +
+        'To pay automatically: create a local wallet with `nansen wallet create` (then set NANSEN_WALLET_PASSWORD), ' +
+        'or connect an external wallet via the `walletconnect` CLI (`walletconnect connect`).',
       ErrorCode.PAYMENT_REQUIRED,
       402
     );
