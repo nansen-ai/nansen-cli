@@ -780,6 +780,10 @@ export function buildCommands(deps = {}) {
     },
 
     'changelog': async (_args, _apiInstance, _flags, _options) => {
+      if (_flags.help || _flags.h) {
+        log('changelog — Show release history\n\nUsage:\n  nansen changelog [--since <version>]\n\nOptions:\n  --since <version>   Show only entries for versions >= this version\n\nExamples:\n  nansen changelog\n  nansen changelog --since 1.10.0');
+        return;
+      }
       const changelogPath = new URL('../CHANGELOG.md', import.meta.url).pathname;
       let content;
       try {
