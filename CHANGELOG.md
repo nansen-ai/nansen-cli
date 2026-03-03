@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.11.1
+
+### Patch Changes
+
+- [#194](https://github.com/nansen-ai/nansen-cli/pull/194) [`89225f5`](https://github.com/nansen-ai/nansen-cli/commit/89225f5d5b566f7eda77b1876c77545c2feb6a1c) Thanks [@TimNooren](https://github.com/TimNooren)! - fix: --help on trade subcommands and wallet subcommands now shows full help identical to the no-args case
+
+- [#199](https://github.com/nansen-ai/nansen-cli/pull/199) [`9ae981e`](https://github.com/nansen-ai/nansen-cli/commit/9ae981e6dcf7fa663e47a3608afab7f12e0a9463) Thanks [@TimNooren](https://github.com/TimNooren)! - fix: replace misleading `walletconnect connect` command reference in x402 payment error with actionable guidance mentioning both local wallet (`nansen wallet create`) and external WalletConnect CLI options
+
 ## 1.11.0
 
 ### Minor Changes
