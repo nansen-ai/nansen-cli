@@ -1,6 +1,18 @@
 ---
 name: nansen-search
 description: Search for tokens, wallets, or entities by name or address. Use when you have a token name and need the full address, or want to find an entity.
+metadata:
+  openclaw:
+    requires:
+      env:
+        - NANSEN_API_KEY
+      bins:
+        - nansen
+    primaryEnv: NANSEN_API_KEY
+    install:
+      - kind: node
+        package: nansen-cli
+        bins: [nansen]
 allowed-tools: Bash
 ---
 

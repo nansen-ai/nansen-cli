@@ -1,6 +1,19 @@
 ---
 name: nansen-trade
 description: Execute DEX swaps on Solana or Base. Use when buying or selling a token, getting a swap quote, or executing a trade.
+metadata:
+  openclaw:
+    requires:
+      env:
+        - NANSEN_API_KEY
+        - NANSEN_WALLET_PASSWORD
+      bins:
+        - nansen
+    primaryEnv: NANSEN_API_KEY
+    install:
+      - kind: node
+        package: nansen-cli
+        bins: [nansen]
 allowed-tools: Bash
 ---
 

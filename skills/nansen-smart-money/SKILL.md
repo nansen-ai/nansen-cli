@@ -1,6 +1,18 @@
 ---
 name: nansen-smart-money
 description: Smart money tracking — netflow, trades, holdings, DCAs, perp trades. Use when finding what smart money wallets are buying/selling or tracking whale activity.
+metadata:
+  openclaw:
+    requires:
+      env:
+        - NANSEN_API_KEY
+      bins:
+        - nansen
+    primaryEnv: NANSEN_API_KEY
+    install:
+      - kind: node
+        package: nansen-cli
+        bins: [nansen]
 allowed-tools: Bash
 ---
 

@@ -1,6 +1,19 @@
 ---
 name: nansen-wallet
 description: Wallet management — create, list, show, export, send, delete. Use when creating wallets, checking balances, or sending tokens.
+metadata:
+  openclaw:
+    requires:
+      env:
+        - NANSEN_API_KEY
+        - NANSEN_WALLET_PASSWORD
+      bins:
+        - nansen
+    primaryEnv: NANSEN_API_KEY
+    install:
+      - kind: node
+        package: nansen-cli
+        bins: [nansen]
 allowed-tools: Bash
 ---
 

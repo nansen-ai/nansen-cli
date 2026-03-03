@@ -1,6 +1,18 @@
 ---
 name: nansen-token
 description: Token analytics — screener, indicators, OHLCV, holders, flows, PnL, DEX trades, flow intelligence. Use when researching a specific token, checking smart money holders, or screening trending tokens.
+metadata:
+  openclaw:
+    requires:
+      env:
+        - NANSEN_API_KEY
+      bins:
+        - nansen
+    primaryEnv: NANSEN_API_KEY
+    install:
+      - kind: node
+        package: nansen-cli
+        bins: [nansen]
 allowed-tools: Bash
 ---
 
