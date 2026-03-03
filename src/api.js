@@ -582,7 +582,9 @@ export class NansenAPI {
                     // No API key and no payment wallet — guide the user to login rather than
                     // showing a confusing x402 payment dump they can't act on.
                     // TODO: full fix would skip x402 entirely when no apiKey is set — see PR #<this PR number>
-                    message = 'No API key configured. Run: nansen login --api-key <key>. Get your key at https://app.nansen.ai/api';
+                    message = 'No API key configured. Two ways to authenticate:\n' +
+                      '  1. API key: nansen login --api-key <key> (get key at https://app.nansen.ai/api)\n' +
+                      '  2. x402 micropayment: nansen wallet create + fund with USDC (no API key needed)';
                   } else {
                     message = `x402 auto-payment failed: ${x402Err.message}`;
                   }
