@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.11.2
+
+### Patch Changes
+
+- [#205](https://github.com/nansen-ai/nansen-cli/pull/205) [`dba24aa`](https://github.com/nansen-ai/nansen-cli/commit/dba24aaa64b2083fdbaa85a002758bfe21d9f4a0) Thanks [@TimNooren](https://github.com/TimNooren)! - Add hot wallet and password handling warnings to wallet create output
+
 ## 1.11.1
 
 ### Patch Changes
