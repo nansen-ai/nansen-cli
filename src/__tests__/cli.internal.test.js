@@ -557,7 +557,9 @@ describe('buildCommands', () => {
 
       await commands['token'](['ohlcv'], mockApi, {}, { token: '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed', chain: 'base', timeframe: '1d' });
 
+      expect(stderrSpy).toHaveBeenCalledTimes(1);
       expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('Price data unavailable'));
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed'));
       expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('open/high/low/close'));
       stderrSpy.mockRestore();
     });
@@ -574,6 +576,20 @@ describe('buildCommands', () => {
       await commands['token'](['ohlcv'], mockApi, {}, { token: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', chain: 'solana', timeframe: '1d' });
 
       expect(stderrSpy).not.toHaveBeenCalledWith(expect.stringContaining('Price data unavailable'));
+      stderrSpy.mockRestore();
+    });
+
+    it('should warn to stderr when ohlcv returns empty candles array', async () => {
+      const mockApi = {
+        tokenOhlcv: vi.fn().mockResolvedValue({ data: [] })
+      };
+      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+      await commands['token'](['ohlcv'], mockApi, {}, { token: '0xdeadbeef', chain: 'base', timeframe: '1d' });
+
+      expect(stderrSpy).toHaveBeenCalledTimes(1);
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('No OHLCV data returned'));
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('0xdeadbeef'));
       stderrSpy.mockRestore();
     });
 
