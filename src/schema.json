@@ -1622,7 +1622,7 @@
             },
             "wallet": {
               "type": "string",
-              "description": "Wallet name (or \"walletconnect\"/\"wc\" for WalletConnect, EVM only). A configured wallet is required — run `nansen wallet create` if you haven't set one up yet."
+              "description": "Wallet name (or \"walletconnect\"/\"wc\" for WalletConnect, EVM only). A configured wallet is required \u2014 run `nansen wallet create` if you haven't set one up yet."
             }
           },
           "prerequisites": [
@@ -1642,6 +1642,137 @@
               "description": "Wallet name, or \"walletconnect\"/\"wc\" for WalletConnect (EVM only)"
             }
           }
+        }
+      }
+    },
+    "alert": {
+      "description": "Manage smart money alerts (create, list, delete, toggle)",
+      "subcommands": {
+        "create": {
+          "description": "Create a new smart money alert",
+          "options": {
+            "type": {
+              "type": "string",
+              "default": "sm-flows",
+              "description": "Alert type: sm-flows"
+            },
+            "chain": {
+              "type": "string",
+              "default": "ethereum",
+              "description": "Chain to monitor"
+            },
+            "name": {
+              "type": "string",
+              "description": "Alert name (auto-generated if omitted)"
+            },
+            "netflow-24h-min": {
+              "type": "number",
+              "description": "Fire when 24h netflow exceeds this USD value"
+            },
+            "netflow-24h-max": {
+              "type": "number",
+              "description": "Fire when 24h netflow is below this USD value"
+            },
+            "netflow-1h-min": {
+              "type": "number",
+              "description": "1h netflow minimum threshold (USD)"
+            },
+            "netflow-7d-min": {
+              "type": "number",
+              "description": "7d netflow minimum threshold (USD)"
+            },
+            "inflow-24h-min": {
+              "type": "number",
+              "description": "24h inflow minimum threshold (USD)"
+            },
+            "outflow-24h-min": {
+              "type": "number",
+              "description": "24h outflow minimum threshold (USD)"
+            },
+            "market-cap-min": {
+              "type": "number",
+              "description": "Minimum token market cap (USD)"
+            },
+            "market-cap-max": {
+              "type": "number",
+              "description": "Maximum token market cap (USD)"
+            },
+            "timewindow": {
+              "type": "string",
+              "default": "1d",
+              "description": "Evaluation window: 1h|4h|12h|24h|1d|7d|1w"
+            },
+            "telegram": {
+              "type": "string",
+              "description": "Telegram chat ID for delivery (e.g. -5201043873)"
+            },
+            "slack": {
+              "type": "string",
+              "description": "Slack incoming webhook URL"
+            },
+            "discord": {
+              "type": "string",
+              "description": "Discord webhook URL"
+            }
+          },
+          "returns": [
+            "id",
+            "name",
+            "type",
+            "timeWindow",
+            "isEnabled",
+            "channels",
+            "createdAt"
+          ]
+        },
+        "list": {
+          "description": "List all smart money alerts",
+          "options": {},
+          "returns": [
+            "id",
+            "name",
+            "type",
+            "timeWindow",
+            "isEnabled",
+            "channels",
+            "createdAt",
+            "errorMessage"
+          ]
+        },
+        "delete": {
+          "description": "Delete an alert by ID",
+          "options": {
+            "id": {
+              "type": "string",
+              "required": true,
+              "description": "Alert ID (positional arg)"
+            }
+          },
+          "returns": [
+            "id"
+          ]
+        },
+        "toggle": {
+          "description": "Enable or disable an alert",
+          "options": {
+            "id": {
+              "type": "string",
+              "required": true,
+              "description": "Alert ID (positional arg)"
+            },
+            "enable": {
+              "type": "boolean",
+              "description": "Enable the alert"
+            },
+            "disable": {
+              "type": "boolean",
+              "description": "Disable the alert"
+            }
+          },
+          "returns": [
+            "id",
+            "isEnabled"
+          ]
         }
       }
     }
