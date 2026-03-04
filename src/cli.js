@@ -1208,7 +1208,7 @@ export function buildCommands(deps = {}) {
       const query = options.query;
       const status = options.status;
       const sort = parseSort(options.sort);
-      const pagination = options.limit ? { page: 1, per_page: options.limit } : undefined;
+      const pagination = buildPagination(options);
 
       const handlers = {
         'ohlcv': () => apiInstance.pmOhlcv({ marketId, sort, pagination }),
