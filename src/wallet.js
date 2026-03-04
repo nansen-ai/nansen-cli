@@ -546,7 +546,7 @@ export function buildWalletCommands(deps = {}) {
             if (result.isDefault) log(`  ★ Set as default wallet`);
             log('');
             log('  Fund this wallet to start making API calls or trading:');
-            log(`    Base (recommended, lower fees): send USDC to ${result.evm}`);
+            log(`    Base: send USDC to ${result.evm}`);
             log(`    Solana: send USDC to ${result.solana}`);
             log('');
             if (password === null) {
