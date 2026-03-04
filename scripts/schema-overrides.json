@@ -101,7 +101,7 @@
     }
   },
   "drop": {
-    "_comment": "Fields to exclude from CLI schema (API-only params not used by CLI)",
+    "_comment": "API params to exclude from CLI schema",
     "global": ["entity_name", "hide_spam_token", "aggregate_by_entity", "label_type", "group_by", "source_input", "buy_or_sell", "only_smart_money", "label", "date_range"],
     "profiler/balance": ["entity_name", "hide_spam_token"],
     "profiler/transactions": ["hide_spam_token"],
@@ -141,297 +141,114 @@
     }
   },
   "extraParams": {
+    "_comment": "CLI-only params not in API spec. Descriptions stripped by sync script.",
     "smart-money": {
-      "labels": {
-        "type": "string|array",
-        "description": "Smart Money label filter"
-      }
+      "labels": { "type": "string|array" }
     },
     "smart-money/historical-holdings": {
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "days": { "type": "number", "default": 30 }
     },
     "smart-money/perp-trades": {
-      "only-new-positions": {
-        "type": "boolean",
-        "description": "Show only position-opening trades (Open Long, Open Short)"
-      }
+      "only-new-positions": { "type": "boolean" }
     },
     "token/transfers": {
-      "token": {
-        "type": "string",
-        "required": true,
-        "description": "Token address"
-      },
-      "from": {
-        "type": "string",
-        "description": "Filter by sender address"
-      },
-      "to": {
-        "type": "string",
-        "description": "Filter by recipient address"
-      },
-      "enrich": {
-        "type": "boolean",
-        "description": "Enrich addresses with Nansen labels"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "token": { "type": "string", "required": true },
+      "from": { "type": "string" },
+      "to": { "type": "string" },
+      "enrich": { "type": "boolean" },
+      "days": { "type": "number", "default": 30 }
     },
     "token/holders": {
-      "token": {
-        "type": "string",
-        "required": true,
-        "description": "Token address"
-      },
-      "smart-money": {
-        "type": "boolean",
-        "description": "Filter for Smart Money only"
-      }
+      "token": { "type": "string", "required": true },
+      "smart-money": { "type": "boolean" }
     },
     "token/dex-trades": {
-      "token": {
-        "type": "string",
-        "required": true,
-        "description": "Token address"
-      },
-      "smart-money": {
-        "type": "boolean",
-        "description": "Filter for Smart Money only"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "token": { "type": "string", "required": true },
+      "smart-money": { "type": "boolean" },
+      "days": { "type": "number", "default": 30 }
     },
     "token/screener": {
-      "smart-money": {
-        "type": "boolean",
-        "description": "Filter for Smart Money only"
-      },
-      "search": {
-        "type": "string",
-        "description": "Filter results by token symbol or name (client-side)"
-      }
+      "smart-money": { "type": "boolean" },
+      "search": { "type": "string" }
     },
     "token/flows": {
-      "token": {
-        "type": "string",
-        "required": true,
-        "description": "Token address"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "token": { "type": "string", "required": true },
+      "days": { "type": "number", "default": 30 }
     },
     "token/pnl": {
-      "token": {
-        "type": "string",
-        "required": true,
-        "description": "Token address"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "token": { "type": "string", "required": true },
+      "days": { "type": "number", "default": 30 }
     },
     "token/who-bought-sold": {
-      "token": {
-        "type": "string",
-        "required": true,
-        "description": "Token address"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "token": { "type": "string", "required": true },
+      "days": { "type": "number", "default": 30 }
     },
     "token/flow-intelligence": {
-      "token": {
-        "type": "string",
-        "required": true,
-        "description": "Token address"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "token": { "type": "string", "required": true },
+      "days": { "type": "number", "default": 30 }
     },
     "token/info": {
-      "token": {
-        "type": "string",
-        "required": true,
-        "description": "Token address"
-      }
+      "token": { "type": "string", "required": true }
     },
     "token/ohlcv": {
-      "token": {
-        "type": "string",
-        "required": true,
-        "description": "Token address"
-      }
+      "token": { "type": "string", "required": true }
     },
     "token/indicators": {
-      "token": {
-        "type": "string",
-        "required": true,
-        "description": "Token address"
-      }
+      "token": { "type": "string", "required": true }
     },
     "token/perp-trades": {
-      "symbol": {
-        "type": "string",
-        "required": true,
-        "description": "Token symbol (e.g., BTC, ETH)"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "symbol": { "type": "string", "required": true },
+      "days": { "type": "number", "default": 30 }
     },
     "token/perp-positions": {
-      "symbol": {
-        "type": "string",
-        "required": true,
-        "description": "Token symbol"
-      },
-      "limit": {
-        "type": "number"
-      },
-      "page": {
-        "type": "number",
-        "description": "Page number for paginated results (default: 1)"
-      }
+      "symbol": { "type": "string", "required": true },
+      "limit": { "type": "number" },
+      "page": { "type": "number" }
     },
     "token/perp-pnl-leaderboard": {
-      "symbol": {
-        "type": "string",
-        "required": true,
-        "description": "Token symbol"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "symbol": { "type": "string", "required": true },
+      "days": { "type": "number", "default": 30 }
     },
     "profiler/balance": {
-      "address": {
-        "type": "string",
-        "required": true,
-        "description": "Wallet address to query"
-      },
-      "entity": {
-        "type": "string",
-        "description": "Entity name instead of address"
-      }
+      "address": { "type": "string", "required": true },
+      "entity": { "type": "string" }
     },
     "profiler/labels": {
-      "address": {
-        "type": "string",
-        "required": true,
-        "description": "Wallet address to query"
-      }
+      "address": { "type": "string", "required": true }
     },
     "profiler/transactions": {
-      "address": {
-        "type": "string",
-        "required": true,
-        "description": "Wallet address to query"
-      },
-      "date": {
-        "type": "string",
-        "required": false,
-        "description": "Date or date range"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "address": { "type": "string", "required": true },
+      "date": { "type": "string", "required": false },
+      "days": { "type": "number", "default": 30 }
     },
     "profiler/pnl": {
-      "address": {
-        "type": "string",
-        "required": true,
-        "description": "Wallet address to query"
-      },
-      "date": {
-        "type": "string",
-        "description": "Date or date range"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "address": { "type": "string", "required": true },
+      "date": { "type": "string" },
+      "days": { "type": "number", "default": 30 }
     },
     "profiler/pnl-summary": {
-      "address": {
-        "type": "string",
-        "required": true,
-        "description": "Wallet address to query"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "address": { "type": "string", "required": true },
+      "days": { "type": "number", "default": 30 }
     },
     "profiler/historical-balances": {
-      "address": {
-        "type": "string",
-        "required": true,
-        "description": "Wallet address to query"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "address": { "type": "string", "required": true },
+      "days": { "type": "number", "default": 30 }
     },
     "profiler/related-wallets": {
-      "address": {
-        "type": "string",
-        "required": true,
-        "description": "Wallet address to query"
-      }
+      "address": { "type": "string", "required": true }
     },
     "profiler/counterparties": {
-      "address": {
-        "type": "string",
-        "required": true,
-        "description": "Wallet address to query"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "address": { "type": "string", "required": true },
+      "days": { "type": "number", "default": 30 }
     },
     "profiler/perp-positions": {
-      "address": {
-        "type": "string",
-        "required": true,
-        "description": "Wallet address to query"
-      },
-      "limit": {
-        "type": "number"
-      },
-      "page": {
-        "type": "number",
-        "description": "Page number for paginated results (default: 1)"
-      }
+      "address": { "type": "string", "required": true },
+      "limit": { "type": "number" },
+      "page": { "type": "number" }
     },
     "profiler/perp-trades": {
-      "address": {
-        "type": "string",
-        "required": true,
-        "description": "Wallet address to query"
-      },
-      "days": {
-        "type": "number",
-        "default": 30
-      }
+      "address": { "type": "string", "required": true },
+      "days": { "type": "number", "default": 30 }
     }
   },
   "enums": {

@@ -118,7 +118,6 @@ function extractParams(requestBody) {
           const cliName = pName === "per_page" ? "limit" : pName;
           params[cliName] = {
             type: mapType(resolvedPProp.type, resolvedPProp),
-            ...(resolvedPProp.description && { description: resolvedPProp.description }),
           };
         }
       }
@@ -127,46 +126,25 @@ function extractParams(requestBody) {
 
     if (name === "order_by") {
       // Simplify order_by to a sort string
-      params.sort = {
-        type: "string",
-        description: "Sort field:direction (e.g., value_usd:desc)",
-      };
+      params.sort = { type: "string" };
       continue;
     }
 
     if (name === "filters") {
       // Simplify filters to a JSON object
-      params.filters = {
-        type: "object",
-        description: "Additional filters as JSON",
-      };
+      params.filters = { type: "object" };
       continue;
     }
 
     const param = { type: mapType(prop.type, prop) };
 
-    if (prop.description) {
-      param.description = prop.description;
-    }
-
+    // Lean schema: skip descriptions and enums, keep type/required/default
     if (required.includes(name)) {
       param.required = true;
     }
 
-    if (prop.enum && prop.enum.length > 0) {
-      param.enum = prop.enum;
-    }
-
     if (prop.default !== undefined) {
       param.default = prop.default;
-    }
-
-    // Handle array items (e.g., chains)
-    if (prop.type === "array" && prop.items) {
-      const itemSchema = resolveSchema(prop.items);
-      if (itemSchema?.enum) {
-        param.enum = itemSchema.enum;
-      }
     }
 
     params[name] = param;
@@ -352,7 +330,6 @@ function applyOverrides(commandPath, params, overrides) {
     // Special handling for chains array - make it optional, add singular chain
     if (name === "chains" && hasChains) {
       delete newParam.required;
-      newParam.description = "Multiple chains as JSON array";
     }
 
     // Apply defaults (removes required if default is set)
@@ -361,15 +338,13 @@ function applyOverrides(commandPath, params, overrides) {
       delete newParam.required;
     }
 
-    // Apply enums
+    // Apply enums (only from overrides, not from API spec)
     if (enums[newName]) {
       newParam.enum = enums[newName];
     }
 
-    // Clean up verbose descriptions
-    if (newParam.description) {
-      newParam.description = simplifyDescription(newParam.description);
-    }
+    // Lean schema: remove any descriptions that may have been copied
+    delete newParam.description;
 
     result[newName] = newParam;
   }
@@ -379,16 +354,12 @@ function applyOverrides(commandPath, params, overrides) {
     result.chain = {
       type: "string",
       default: defaults.chain,
-      description: "Blockchain to query",
     };
   }
 
   // Add standard pagination param if not present
   if (!result.page && result.limit) {
-    result.page = {
-      type: "number",
-      description: "Page number for paginated results (default: 1)",
-    };
+    result.page = { type: "number" };
   }
 
   // Add extra params from overrides (command-specific or category-level)
@@ -398,33 +369,19 @@ function applyOverrides(commandPath, params, overrides) {
   const categoryExtra = overrides.extraParams?.[category] || {};
 
   for (const [name, param] of Object.entries({ ...categoryExtra, ...commandExtra })) {
+    // Lean schema: strip descriptions from extraParams too
+    const leanParam = { ...param };
+    delete leanParam.description;
+
     // Merge with existing param or add new one
     if (result[name]) {
-      result[name] = { ...result[name], ...param };
+      result[name] = { ...result[name], ...leanParam };
     } else {
-      result[name] = { ...param };
+      result[name] = leanParam;
     }
   }
 
   return result;
-}
-
-/**
- * Simplify verbose API descriptions
- */
-function simplifyDescription(desc) {
-  if (!desc) return desc;
-
-  // Truncate very long descriptions
-  if (desc.length > 100) {
-    const firstSentence = desc.split(/[.!?]/)[0];
-    if (firstSentence.length < 80) {
-      return firstSentence;
-    }
-    return desc.slice(0, 80) + "...";
-  }
-
-  return desc;
 }
 
 /**
