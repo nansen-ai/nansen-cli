@@ -5,7 +5,7 @@
 
 import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
 import { buildWalletCommands } from './wallet.js';
-import { buildTradingCommands } from './trading.js';
+import { buildTradingCommands, resolveTokenAddress } from './trading.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
@@ -1031,9 +1031,11 @@ export function buildCommands(deps = {}) {
 
     'token': async (args, apiInstance, flags, options) => {
       const subcommand = args[0] || 'help';
-      const tokenAddress = options.token || options['token-address'];
-      const tokenSymbol = options.symbol || options['token-symbol'];
       const chain = options.chain || 'solana';
+      const rawToken = options.token || options['token-address'];
+      // Resolve symbol shortcuts (e.g. SOL, ETH, USDC, USDT, WETH) to chain-specific addresses
+      const tokenAddress = resolveTokenAddress(rawToken, chain);
+      const tokenSymbol = options.symbol || options['token-symbol'];
       const chains = options.chains || [chain];
       const timeframe = options.timeframe || '24h';
       const filters = options.filters || {};
