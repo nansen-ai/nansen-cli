@@ -2,7 +2,7 @@
  * Tests for wallet module
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -20,6 +20,8 @@ import {
   setDefaultWallet,
   deleteWallet,
   getWalletConfig,
+  checkWallets,
+  buildWalletCommands,
 } from '../wallet.js';
 import { keccak256 } from '../crypto.js';
 
@@ -189,7 +191,7 @@ describe('wallet CRUD', () => {
 
   it('should list wallets', () => {
     createWallet('w1', PASSWORD);
-    createWallet('w2', PASSWORD);
+    createWallet('w2', PASSWORD, { force: true });
     const result = listWallets();
     expect(result.wallets).toHaveLength(2);
     expect(result.defaultWallet).toBe('w1');
@@ -216,7 +218,7 @@ describe('wallet CRUD', () => {
 
   it('should set default wallet', () => {
     createWallet('first', PASSWORD);
-    createWallet('second', PASSWORD);
+    createWallet('second', PASSWORD, { force: true });
     const result = setDefaultWallet('second');
     expect(result.defaultWallet).toBe('second');
   });
@@ -237,12 +239,12 @@ describe('wallet CRUD', () => {
 
   it('should reject duplicate wallet names', () => {
     createWallet('dupe', PASSWORD);
-    expect(() => createWallet('dupe', PASSWORD)).toThrow('already exists');
+    expect(() => createWallet('dupe', PASSWORD, { force: true })).toThrow('already exists');
   });
 
   it('should reject wrong password on create (second wallet)', () => {
     createWallet('first-wallet', PASSWORD);
-    expect(() => createWallet('second-wallet', 'wrong-password')).toThrow('Incorrect password');
+    expect(() => createWallet('second-wallet', 'wrong-password', { force: true })).toThrow('Incorrect password');
   });
 
   it('should round-trip: create wallet, export keys, derive same addresses', async () => {
@@ -268,7 +270,7 @@ describe('wallet CRUD', () => {
 
   it('should update default after deleting default wallet', () => {
     createWallet('a', PASSWORD);
-    createWallet('b', PASSWORD);
+    createWallet('b', PASSWORD, { force: true });
     setDefaultWallet('a');
     deleteWallet('a', PASSWORD);
     const list = listWallets();
@@ -329,24 +331,321 @@ describe('passwordless wallet CRUD', () => {
     expect(deleted.deleted).toBe('nopass');
   });
 
-  it('should reject --unsafe-no-password when passwordHash exists', () => {
+  it('should reject mixing encrypted/passwordless when passwordHash exists', () => {
     createWallet('encrypted-first', 'test-password-123!!');
-    expect(() => createWallet('nopass-second', null)).toThrow(
+    expect(() => createWallet('nopass-second', null, { force: true })).toThrow(
       'Existing wallets are password-protected'
     );
   });
 
   it('should allow multiple passwordless wallets', () => {
     createWallet('a', null);
-    createWallet('b', null);
+    createWallet('b', null, { force: true });
     const list = listWallets();
     expect(list.wallets).toHaveLength(2);
   });
 
   it('should reject encrypted wallet when passwordless wallets exist', () => {
     createWallet('nopass-first', null);
-    expect(() => createWallet('encrypted-second', 'test-password-123!!')).toThrow(
+    expect(() => createWallet('encrypted-second', 'test-password-123!!', { force: true })).toThrow(
       'Existing wallets are passwordless'
     );
+  });
+});
+
+describe('prerequisites check (--force)', () => {
+  const PASSWORD = 'test-password-123!!';
+
+  it('first create succeeds without --force', () => {
+    const result = createWallet('first', PASSWORD);
+    expect(result.name).toBe('first');
+  });
+
+  it('second create without --force throws WALLETS_EXIST', () => {
+    createWallet('first', PASSWORD);
+    const err = (() => {
+      try { createWallet('second', PASSWORD); }
+      catch (e) { return e; }
+    })();
+    expect(err).toBeTruthy();
+    expect(err.code).toBe('WALLETS_EXIST');
+    expect(err.structured.walletCount).toBe(1);
+  });
+
+  it('second create with --force succeeds', () => {
+    createWallet('first', PASSWORD);
+    const result = createWallet('second', PASSWORD, { force: true });
+    expect(result.name).toBe('second');
+  });
+});
+
+describe('--unsafe-no-password gate', () => {
+  it('--unsafe-no-password alone throws UNSAFE_CONFIRMATION_REQUIRED', () => {
+    const err = (() => {
+      try { createWallet('wallet', null, { unsafeNoPassword: true }); }
+      catch (e) { return e; }
+    })();
+    expect(err).toBeTruthy();
+    expect(err.code).toBe('UNSAFE_CONFIRMATION_REQUIRED');
+  });
+
+  it('--unsafe-no-password with --i-understand-this-is-unsafe proceeds', () => {
+    const result = createWallet('wallet', null, { unsafeNoPassword: true, iUnderstandThisIsUnsafe: true });
+    expect(result.name).toBe('wallet');
+  });
+});
+
+describe('post-creation permission check', () => {
+  it('throws INSECURE_PERMISSIONS and cleans up wallet file when perms are bad', () => {
+    const originalStatSync = fs.statSync;
+    let walletStatCalled = false;
+    const spy = vi.spyOn(fs, 'statSync').mockImplementation((p, ...args) => {
+      const result = originalStatSync(p, ...args);
+      // Simulate insecure permissions on the wallet file (not config.json)
+      if (!walletStatCalled && typeof p === 'string' && p.endsWith('perm-test.json')) {
+        walletStatCalled = true;
+        return { ...result, mode: (result.mode & ~0o777) | 0o644 };
+      }
+      return result;
+    });
+
+    try {
+      createWallet('perm-test', 'testpassword123!!');
+      expect.fail('Should have thrown INSECURE_PERMISSIONS');
+    } catch (err) {
+      expect(err.code).toBe('INSECURE_PERMISSIONS');
+      const walletFile = path.join(tempDir, '.nansen', 'wallets', 'perm-test.json');
+      expect(fs.existsSync(walletFile)).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe('checkWallets()', () => {
+  let savedPassword;
+
+  beforeEach(() => {
+    savedPassword = process.env.NANSEN_WALLET_PASSWORD;
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  afterEach(() => {
+    if (savedPassword !== undefined) process.env.NANSEN_WALLET_PASSWORD = savedPassword;
+    else delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('returns clean status when no wallets exist', async () => {
+    const result = await checkWallets();
+    expect(result).toEqual({
+      encrypted: false,
+      permissionsOk: true,
+      passwordSource: 'none',
+      walletCount: 0,
+      issues: [],
+    });
+  });
+
+  it('reports passwordSource: env when NANSEN_WALLET_PASSWORD is set', async () => {
+    process.env.NANSEN_WALLET_PASSWORD = 'testpassword123!!';
+    const result = await checkWallets();
+    expect(result.passwordSource).toBe('env');
+  });
+
+  it('reports passwordSource: generated when .credentials file exists', async () => {
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.mkdirSync(walletsDir, { recursive: true });
+    fs.writeFileSync(path.join(walletsDir, '.credentials'), 'NANSEN_WALLET_PASSWORD=abc\n', { mode: 0o600 });
+    const result = await checkWallets();
+    expect(result.passwordSource).toBe('generated');
+  });
+
+  it('reports permissionsOk: false and issues when config.json has bad perms', async () => {
+    const PASSWORD = 'testpassword123!!';
+    createWallet('check-test', PASSWORD);
+    const configPath = path.join(tempDir, '.nansen', 'wallets', 'config.json');
+    fs.chmodSync(configPath, 0o644);
+
+    const result = await checkWallets();
+    expect(result.permissionsOk).toBe(false);
+    expect(result.issues.length).toBeGreaterThan(0);
+    expect(result.issues[0]).toContain('config.json');
+  });
+
+  it('reports walletCount correctly', async () => {
+    const PASSWORD = 'testpassword123!!';
+    createWallet('w1', PASSWORD);
+    createWallet('w2', PASSWORD, { force: true });
+    const result = await checkWallets();
+    expect(result.walletCount).toBe(2);
+  });
+
+  it('reports encrypted: true when wallets have a password hash', async () => {
+    createWallet('enc-wallet', 'testpassword123!!');
+    const result = await checkWallets();
+    expect(result.encrypted).toBe(true);
+  });
+});
+
+describe('CLI create handler: password auto-generation', () => {
+  let savedPassword;
+
+  beforeEach(() => {
+    savedPassword = process.env.NANSEN_WALLET_PASSWORD;
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  afterEach(() => {
+    if (savedPassword !== undefined) process.env.NANSEN_WALLET_PASSWORD = savedPassword;
+    else delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('auto-generates .credentials when no TTY and no env var', async () => {
+    const logs = [];
+    const cmds = buildWalletCommands({ log: (m) => logs.push(m), isTTY: false });
+    await cmds.wallet(['create'], null, {}, { name: 'auto-gen' });
+
+    const credPath = path.join(tempDir, '.nansen', 'wallets', '.credentials');
+    expect(fs.existsSync(credPath)).toBe(true);
+    const content = fs.readFileSync(credPath, 'utf8');
+    const match = content.match(/^NANSEN_WALLET_PASSWORD=([A-Za-z0-9_-]+)\n$/);
+    expect(match).toBeTruthy();
+    expect(match[1].length).toBeGreaterThanOrEqual(30);
+    const stat = fs.statSync(credPath);
+    expect(stat.mode & 0o777).toBe(0o600);
+  });
+
+  it('outputs JSON when no TTY (auto json mode)', async () => {
+    const logs = [];
+    const cmds = buildWalletCommands({ log: (m) => logs.push(m), isTTY: false });
+    await cmds.wallet(['create'], null, {}, { name: 'json-auto' });
+
+    expect(logs.length).toBeGreaterThanOrEqual(1);
+    const output = JSON.parse(logs[0]);
+    expect(output.success).toBe(true);
+    expect(output.name).toBe('json-auto');
+    expect(output.addresses.evm).toMatch(/^0x/);
+    expect(output.addresses.solana).toBeTruthy();
+    expect(output.passwordSource).toBe('generated');
+    expect(output.credentialsFile).toBeTruthy();
+  });
+
+  it('outputs JSON when --json flag is set with promptFn', async () => {
+    const logs = [];
+    const cmds = buildWalletCommands({
+      log: (m) => logs.push(m),
+      promptFn: () => Promise.resolve('testpassword123!!'),
+      isTTY: true,
+    });
+    await cmds.wallet(['create'], null, { json: true }, { name: 'json-flag' });
+
+    expect(logs.length).toBeGreaterThanOrEqual(1);
+    const output = JSON.parse(logs[0]);
+    expect(output.success).toBe(true);
+    expect(output.name).toBe('json-flag');
+    expect(output.passwordSource).toBe('prompt');
+    expect(output.credentialsFile).toBeNull();
+  });
+});
+
+describe('CLI handler: no-TTY hard fail for export/delete', () => {
+  const PASSWORD = 'testpassword123!!';
+  let savedPassword;
+
+  beforeEach(() => {
+    savedPassword = process.env.NANSEN_WALLET_PASSWORD;
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    createWallet('secure-wallet', PASSWORD);
+  });
+
+  afterEach(() => {
+    if (savedPassword !== undefined) process.env.NANSEN_WALLET_PASSWORD = savedPassword;
+    else delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('export fails with password error when no TTY and no env var', async () => {
+    const logs = [];
+    let exitCode;
+    const cmds = buildWalletCommands({
+      log: (m) => logs.push(m),
+      isTTY: false,
+      exit: (code) => { exitCode = code; },
+    });
+    await cmds.wallet(['export'], null, {}, { name: 'secure-wallet' });
+    expect(exitCode).toBe(1);
+    expect(logs.join('')).toContain('Password required for export');
+  });
+
+  it('delete fails with password error when no TTY and no env var', async () => {
+    const logs = [];
+    let exitCode;
+    const cmds = buildWalletCommands({
+      log: (m) => logs.push(m),
+      isTTY: false,
+      exit: (code) => { exitCode = code; },
+    });
+    await cmds.wallet(['delete'], null, {}, { name: 'secure-wallet' });
+    expect(exitCode).toBe(1);
+    expect(logs.join('')).toContain('Password required for delete');
+  });
+
+  it('export succeeds when NANSEN_WALLET_PASSWORD is set', async () => {
+    process.env.NANSEN_WALLET_PASSWORD = PASSWORD;
+    const logs = [];
+    const cmds = buildWalletCommands({
+      log: (m) => logs.push(m),
+      isTTY: false,
+    });
+    await cmds.wallet(['export'], null, {}, { name: 'secure-wallet' });
+    expect(logs.join('')).toContain('Private keys');
+  });
+});
+
+describe('CLI check subcommand', () => {
+  let savedPassword;
+
+  beforeEach(() => {
+    savedPassword = process.env.NANSEN_WALLET_PASSWORD;
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  afterEach(() => {
+    if (savedPassword !== undefined) process.env.NANSEN_WALLET_PASSWORD = savedPassword;
+    else delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('outputs JSON status and exits 0 when no issues', async () => {
+    const logs = [];
+    let exitCode = 0;
+    const cmds = buildWalletCommands({
+      log: (m) => logs.push(m),
+      isTTY: false,
+      exit: (code) => { exitCode = code; },
+    });
+    await cmds.wallet(['check'], null, {}, {});
+
+    expect(exitCode).toBe(0);
+    const result = JSON.parse(logs[0]);
+    expect(result.walletCount).toBe(0);
+    expect(result.issues).toHaveLength(0);
+  });
+
+  it('exits 1 and reports issues when permissions are bad', async () => {
+    createWallet('check-cmd', 'testpassword123!!');
+    const configPath = path.join(tempDir, '.nansen', 'wallets', 'config.json');
+    fs.chmodSync(configPath, 0o644);
+
+    const logs = [];
+    let exitCode = 0;
+    const cmds = buildWalletCommands({
+      log: (m) => logs.push(m),
+      isTTY: false,
+      exit: (code) => { exitCode = code; },
+    });
+    await cmds.wallet(['check'], null, {}, {});
+
+    expect(exitCode).toBe(1);
+    const result = JSON.parse(logs[0]);
+    expect(result.issues.length).toBeGreaterThan(0);
   });
 });

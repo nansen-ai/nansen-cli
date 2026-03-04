@@ -1544,6 +1544,18 @@ export async function runCLI(rawArgs, deps = {}) {
       defaultHeaders['Payment-Signature'] = options['x402-payment-signature'];
     }
     const api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders });
+
+    // Startup security check for wallet commands (best-effort, never blocks)
+    if (command === 'wallet') {
+      try {
+        const { checkWallets } = await import('./wallet.js');
+        const check = await checkWallets();
+        if (check.issues.length > 0) {
+          errorOutput(JSON.stringify({ warning: 'Wallet security issues detected', issues: check.issues }));
+        }
+      } catch {} // eslint-disable-line no-empty
+    }
+
     let result = await commands[command](subArgs, api, flags, options);
 
     // Commands that handle their own output return undefined
