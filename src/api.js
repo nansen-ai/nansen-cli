@@ -515,7 +515,9 @@ export class NansenAPI {
                 const wallet = showWallet(walletConfig.defaultWallet);
                 defaultWalletProvider = wallet.provider || 'local';
               }
-            } catch { /* no wallet configured */ }
+            } catch (err) {
+              if (process.env.DEBUG) console.error(`[x402] Failed to detect wallet provider: ${err.message}`);
+            }
 
             if (defaultWalletProvider === 'privy') {
               // Default wallet is Privy: sign via Privy
