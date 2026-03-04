@@ -199,6 +199,19 @@ function ensureWalletsDir() {
   }
 }
 
+/**
+ * Generate a cryptographically strong password and persist it to .credentials.
+ *
+ * Security design (stateless, no daemon, no OS keychain):
+ *   - 24 bytes = 192 bits of entropy (base64url). Brute force is not a viable attack.
+ *   - File written at mode 0o600 (user read/write only). Group and world bits are off.
+ *   - Risk profile: equivalent to any other plaintext secret in a 0600 dotfile
+ *     (e.g. ~/.netrc, ~/.ssh/id_ed25519 without passphrase). Acceptable for local agent use.
+ *   - Intentionally NOT stored in an OS keychain or daemon: avoids supply-chain and
+ *     inter-process trust surface that outweighs the marginal benefit for this use case.
+ *   - Do NOT log the return value of this function or the content of .credentials.
+ *     checkWallets() verifies file permissions at startup so misconfiguration is surfaced early.
+ */
 function generateAndSavePassword() {
   ensureWalletsDir();
   const password = crypto.randomBytes(24).toString('base64url');
@@ -272,7 +285,7 @@ function hashPassword(password) {
 
 // ============= Prompt Helper =============
 
-function getPassword(deps = {}, context = 'operation') {
+async function getPassword(deps = {}, context = 'operation') {
   if (process.env.NANSEN_WALLET_PASSWORD) return process.env.NANSEN_WALLET_PASSWORD;
   if (!resolveTTY(deps)) {
     const err = {
@@ -399,6 +412,16 @@ export async function checkWallets(_deps = {}) {
     issues.push('Wallets are encrypted but no password source found (NANSEN_WALLET_PASSWORD not set, no .credentials file)');
   }
 
+  // Check .credentials permissions — it holds the plaintext password and must be user-only (0o600)
+  const credPath = path.join(getWalletsDir(), '.credentials');
+  try {
+    const credStat = fs.statSync(credPath);
+    if ((credStat.mode & 0o077) !== 0) {
+      permissionsOk = false;
+      issues.push(`.credentials permissions insecure: ${(credStat.mode & 0o777).toString(8)} — file holds plaintext password and must be 0600`);
+    }
+  } catch (_e) { /* intentional: .credentials may not exist (env var path) */ }
+
   return { encrypted, permissionsOk, passwordSource, walletCount, issues };
 }
 
@@ -426,6 +449,13 @@ export function createWallet(name, password, options = {}) {
     });
   }
 
+  // Null/undefined password without --unsafe-no-password is a contract violation
+  if ((password === null || password === undefined) && !unsafeNoPassword) {
+    throw Object.assign(new Error('Password is required. Use --unsafe-no-password to create an unencrypted wallet.'), {
+      code: 'PASSWORD_REQUIRED',
+    });
+  }
+
   // --unsafe-no-password requires explicit second confirmation
   if (unsafeNoPassword && !iUnderstandThisIsUnsafe) {
     throw Object.assign(new Error('--unsafe-no-password requires --i-understand-this-is-unsafe'), {
@@ -434,6 +464,9 @@ export function createWallet(name, password, options = {}) {
   }
 
   const config = getWalletConfig();
+  // Snapshot for rollback if post-creation permission check fails
+  const configExisted = fs.existsSync(getWalletConfigPath());
+  const originalConfig = JSON.parse(JSON.stringify(config));
   const walletFile = getWalletFile(name);
 
   if (fs.existsSync(walletFile)) {
@@ -489,7 +522,14 @@ export function createWallet(name, password, options = {}) {
   const configStat = fs.statSync(getWalletConfigPath());
   if ((walletStat.mode & 0o077) !== 0 || (configStat.mode & 0o077) !== 0) {
     try { fs.unlinkSync(walletFile); } catch (_e) { /* intentional: best-effort cleanup */ }
-    throw Object.assign(new Error('SECURITY: Wallet file created with insecure permissions. Files removed.'), {
+    try {
+      if (configExisted) {
+        saveWalletConfig(originalConfig);     // restore pre-call state
+      } else {
+        fs.unlinkSync(getWalletConfigPath()); // config was newly created — delete it
+      }
+    } catch (_e) { /* intentional: best-effort config rollback */ }
+    throw Object.assign(new Error('SECURITY: Wallet file created with insecure permissions. Best-effort cleanup attempted — verify wallet store integrity.'), {
       code: 'INSECURE_PERMISSIONS',
     });
   }
@@ -674,7 +714,7 @@ export function buildWalletCommands(deps = {}) {
               try { credContent = fs.readFileSync(credFilePath, 'utf8'); } catch (_e) { /* intentional: missing .credentials treated as no password */ }
               const credMatch = credContent?.match(/^NANSEN_WALLET_PASSWORD=(.+)$/m);
               if (credMatch) {
-                password = credMatch[1].trim();
+                password = credMatch[1];
                 passwordSource = 'generated';
               } else {
                 log(JSON.stringify({ success: false, error: 'Password required for create', code: 'PASSWORD_REQUIRED', hint: 'Set NANSEN_WALLET_PASSWORD env var' }, null, 2));
@@ -691,7 +731,7 @@ export function buildWalletCommands(deps = {}) {
           }
 
           try {
-            const result = createWallet(name, password, { force });
+            const result = createWallet(name, password, { force, unsafeNoPassword, iUnderstandThisIsUnsafe: iUnderstand });
             if (jsonMode) {
               log(JSON.stringify({
                 success: true,
