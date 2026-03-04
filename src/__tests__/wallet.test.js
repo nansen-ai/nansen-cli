@@ -398,7 +398,7 @@ describe('buildWalletCommands - wallet create UX', () => {
     expect(joined).toContain('will NOT be remembered');
   });
 
-  it('non-TTY without password shows agent-oriented error', async () => {
+  it('non-TTY without password shows agent-oriented error with --generate-password', async () => {
     const output = [];
     let exitCalled = false;
     const originalEnv = process.env.NANSEN_WALLET_PASSWORD;
@@ -415,8 +415,91 @@ describe('buildWalletCommands - wallet create UX', () => {
       expect(exitCalled).toBe(true);
       expect(joined).toContain('For AI agents');
       expect(joined).toContain('--no-password');
+      expect(joined).toContain('--generate-password');
     } finally {
       process.stdin.isTTY = originalIsTTY;
+      if (originalEnv === undefined) {
+        delete process.env.NANSEN_WALLET_PASSWORD;
+      } else {
+        process.env.NANSEN_WALLET_PASSWORD = originalEnv;
+      }
+    }
+  });
+
+  it('--generate-password creates wallet with generated password', async () => {
+    const output = [];
+    const originalEnv = process.env.NANSEN_WALLET_PASSWORD;
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    try {
+      const cmds = buildWalletCommands({ log: (msg) => output.push(msg), exit: () => {} });
+      await cmds['wallet'](['create'], null, { 'generate-password': true }, { name: 'genpass-test' });
+      const joined = output.join('\n');
+      expect(joined).toContain('Wallet "genpass-test" created');
+      expect(joined).toContain('Generated cryptographic password');
+      expect(joined).toContain('NANSEN_WALLET_PASSWORD=');
+      expect(joined).toContain('will NOT be shown again');
+    } finally {
+      if (originalEnv === undefined) {
+        delete process.env.NANSEN_WALLET_PASSWORD;
+      } else {
+        process.env.NANSEN_WALLET_PASSWORD = originalEnv;
+      }
+    }
+  });
+
+  it('--generate-password and --no-password are mutually exclusive', async () => {
+    const output = [];
+    let exitCalled = false;
+    const cmds = buildWalletCommands({
+      log: (msg) => output.push(msg),
+      exit: () => { exitCalled = true; },
+    });
+    await cmds['wallet'](['create'], null, { 'generate-password': true, 'no-password': true }, { name: 'conflict-test' });
+    expect(exitCalled).toBe(true);
+    expect(output.join('\n')).toContain('mutually exclusive');
+  });
+
+  it('--generate-password errors when NANSEN_WALLET_PASSWORD is set', async () => {
+    const output = [];
+    let exitCalled = false;
+    const originalEnv = process.env.NANSEN_WALLET_PASSWORD;
+    process.env.NANSEN_WALLET_PASSWORD = 'already-set-pass!';
+    try {
+      const cmds = buildWalletCommands({
+        log: (msg) => output.push(msg),
+        exit: () => { exitCalled = true; },
+      });
+      await cmds['wallet'](['create'], null, { 'generate-password': true }, { name: 'env-conflict-test' });
+      expect(exitCalled).toBe(true);
+      expect(output.join('\n')).toContain('NANSEN_WALLET_PASSWORD is already set');
+    } finally {
+      if (originalEnv === undefined) {
+        delete process.env.NANSEN_WALLET_PASSWORD;
+      } else {
+        process.env.NANSEN_WALLET_PASSWORD = originalEnv;
+      }
+    }
+  });
+
+  it('--generate-password wallet can be exported with the generated password', async () => {
+    const output = [];
+    const originalEnv = process.env.NANSEN_WALLET_PASSWORD;
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    try {
+      const cmds = buildWalletCommands({ log: (msg) => output.push(msg), exit: () => {} });
+      await cmds['wallet'](['create'], null, { 'generate-password': true }, { name: 'export-genpass' });
+      const joined = output.join('\n');
+      // Extract the generated password from output
+      const match = joined.match(/NANSEN_WALLET_PASSWORD="([^"]+)"/);
+      expect(match).toBeTruthy();
+      const generatedPassword = match[1];
+      // Verify it's 24 chars (base64 of 18 bytes)
+      expect(generatedPassword).toHaveLength(24);
+      // Export should work with the generated password
+      const exported = exportWallet('export-genpass', generatedPassword);
+      expect(exported.evm.privateKey).toHaveLength(64);
+      expect(exported.solana.privateKey).toHaveLength(128);
+    } finally {
       if (originalEnv === undefined) {
         delete process.env.NANSEN_WALLET_PASSWORD;
       } else {

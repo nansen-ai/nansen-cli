@@ -510,13 +510,28 @@ export function buildWalletCommands(deps = {}) {
 
           let password;
           let fromEnv = false;
+          let generated = false;
+          if (flags['generate-password'] && (flags['unsafe-no-password'] || flags['no-password'])) {
+            log('❌ --generate-password and --no-password are mutually exclusive');
+            exit(1);
+            return;
+          }
+          if (flags['generate-password'] && process.env.NANSEN_WALLET_PASSWORD) {
+            log('❌ NANSEN_WALLET_PASSWORD is already set. Remove it or use it directly.');
+            exit(1);
+            return;
+          }
           if (flags['unsafe-no-password'] || flags['no-password']) {
             process.stderr.write('WARNING: --no-password is set. Private keys will be stored UNENCRYPTED on disk.\nAnyone with access to this machine can steal your funds.\n');
             password = null;
+          } else if (flags['generate-password']) {
+            password = crypto.randomBytes(18).toString('base64');
+            generated = true;
           } else if (!process.env.NANSEN_WALLET_PASSWORD && !process.stdin.isTTY && !deps.promptFn) {
             log('❌ No password provided. For AI agents, either:');
             log('   1. Set NANSEN_WALLET_PASSWORD env var: NANSEN_WALLET_PASSWORD="mypassword" nansen wallet create');
-            log('   2. Use --no-password to store keys unencrypted (simpler for agents, less secure)');
+            log('   2. Use --generate-password to auto-generate a secure password (recommended for new wallets)');
+            log('   3. Use --no-password to store keys unencrypted (simpler, less secure)');
             exit(1);
             return;
           } else {
@@ -553,6 +568,13 @@ export function buildWalletCommands(deps = {}) {
             log('');
             if (password === null) {
               log('  ⚠️  This is an UNENCRYPTED hot wallet — private keys are stored in plaintext on disk.');
+            } else if (generated) {
+              log('  ✓ Generated cryptographic password (shown once — save it now):');
+              log('');
+              log(`     NANSEN_WALLET_PASSWORD="${password}"`);
+              log('');
+              log('  ⚠️  This password will NOT be shown again. Add it to your shell config or .env file.');
+              log('     Without it, you will permanently lose access to this wallet.');
             } else if (fromEnv) {
               log('  ✓ Password read from NANSEN_WALLET_PASSWORD env var.');
             } else {
@@ -774,7 +796,7 @@ USAGE:
   nansen wallet <command> [options]
 
 COMMANDS:
-  create [--name <label>] [--no-password]
+  create [--name <label>] [--no-password] [--generate-password]
                              Create a new wallet pair (EVM + Solana)
   list                       List all wallets
   show <name>                Show wallet addresses
@@ -794,6 +816,7 @@ OPTIONS:
   --max                      Send entire balance (deducts gas for native transfers)
   --no-password              Skip encryption — private keys stored UNENCRYPTED on disk (create only)
                              (alias: --unsafe-no-password)
+  --generate-password        Auto-generate a secure cryptographic password (create only)
 
 ENVIRONMENT:
   NANSEN_WALLET_PASSWORD     Password for non-interactive use (e.g. CI/scripts)
