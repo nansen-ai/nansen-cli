@@ -506,6 +506,10 @@ export function buildWalletCommands(deps = {}) {
 
       const handlers = {
         'create': async () => {
+          if (flags.help || flags.h) {
+            log('Usage: nansen wallet create [--name <label>] [--unsafe-no-password]');
+            return;
+          }
           const name = options.name || args[1] || 'default';
 
           let password;
@@ -564,6 +568,10 @@ export function buildWalletCommands(deps = {}) {
         },
 
         'list': async () => {
+          if (flags.help || flags.h) {
+            log('Usage: nansen wallet list');
+            return;
+          }
           const result = listWallets();
           if (result.wallets.length === 0) {
             log('No wallets found. Create one with: nansen wallet create');
@@ -580,6 +588,10 @@ export function buildWalletCommands(deps = {}) {
         },
 
         'show': async () => {
+          if (flags.help || flags.h) {
+            log('Usage: nansen wallet show <name>');
+            return;
+          }
           const name = options.name || args[1];
           if (!name) {
             log('Usage: nansen wallet show <name>');
@@ -601,6 +613,10 @@ export function buildWalletCommands(deps = {}) {
         },
 
         'export': async () => {
+          if (flags.help || flags.h) {
+            log('Usage: nansen wallet export <name>');
+            return;
+          }
           const name = options.name || args[1];
           if (!name) {
             log('Usage: nansen wallet export <name>');
@@ -629,6 +645,10 @@ export function buildWalletCommands(deps = {}) {
         },
 
         'default': async () => {
+          if (flags.help || flags.h) {
+            log('Usage: nansen wallet default <name>');
+            return;
+          }
           const name = options.name || args[1];
           if (!name) {
             log('Usage: nansen wallet default <name>');
@@ -646,6 +666,10 @@ export function buildWalletCommands(deps = {}) {
         },
 
         'delete': async () => {
+          if (flags.help || flags.h) {
+            log('Usage: nansen wallet delete <name>');
+            return;
+          }
           const name = options.name || args[1];
           if (!name) {
             log('Usage: nansen wallet delete <name>');
@@ -670,6 +694,10 @@ export function buildWalletCommands(deps = {}) {
         },
 
         'send': async () => {
+          if (flags.help || flags.h) {
+            log('Usage: nansen wallet send --to <address> --amount <number> --chain <evm|solana> [--token <address>] [--wallet <name>] [--max] [--dry-run]');
+            return;
+          }
           const { sendTokens } = await import('./transfer.js');
 
           if (!options.to) {
@@ -804,11 +832,6 @@ EXAMPLES:
         log(`Unknown subcommand: ${subcommand}. Available: ${Object.keys(handlers).join(', ')}`);
         exit(1);
         return;
-      }
-
-      // --help on any wallet subcommand shows wallet help instead of executing
-      if (flags.help || flags.h) {
-        return handlers['help']();
       }
 
       return handlers[subcommand]();
