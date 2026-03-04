@@ -509,16 +509,18 @@ export function buildWalletCommands(deps = {}) {
           const name = options.name || args[1] || 'default';
 
           let password;
-          if (flags['unsafe-no-password']) {
-            process.stderr.write('WARNING: --unsafe-no-password is set. Private keys will be stored UNENCRYPTED on disk.\nAnyone with access to this machine can steal your funds.\n');
+          let fromEnv = false;
+          if (flags['unsafe-no-password'] || flags['no-password']) {
+            process.stderr.write('WARNING: --no-password is set. Private keys will be stored UNENCRYPTED on disk.\nAnyone with access to this machine can steal your funds.\n');
             password = null;
           } else if (!process.env.NANSEN_WALLET_PASSWORD && !process.stdin.isTTY && !deps.promptFn) {
-            log('❌ No password provided. Either:');
-            log('   set NANSEN_WALLET_PASSWORD, or');
-            log('   use --unsafe-no-password (WARNING: Private keys will be stored UNENCRYPTED on disk. Anyone with access to this machine can steal your funds.)');
+            log('❌ No password provided. For AI agents, either:');
+            log('   1. Set NANSEN_WALLET_PASSWORD env var: NANSEN_WALLET_PASSWORD="mypassword" nansen wallet create');
+            log('   2. Use --no-password to store keys unencrypted (simpler for agents, less secure)');
             exit(1);
             return;
           } else {
+            fromEnv = !!process.env.NANSEN_WALLET_PASSWORD;
             password = process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps);
             if (!password || password.length < 12) {
               log('❌ Password must be at least 12 characters');
@@ -551,9 +553,18 @@ export function buildWalletCommands(deps = {}) {
             log('');
             if (password === null) {
               log('  ⚠️  This is an UNENCRYPTED hot wallet — private keys are stored in plaintext on disk.');
+            } else if (fromEnv) {
+              log('  ✓ Password read from NANSEN_WALLET_PASSWORD env var.');
             } else {
-              log('  ⚠️  This is a hot wallet and is fundamentally insecure — do not deposit more than you can afford to lose.');
-              log('     Store and handle your password securely, e.g. using a secrets manager or system keychain.');
+              log('  ⚠️  IMPORTANT FOR AI AGENTS: This password will NOT be remembered when your session ends.');
+              log('     To access this wallet in future sessions, you MUST persist the password now:');
+              log('');
+              log('     Option 1 (recommended): Set this env var before your session ends:');
+              log('       export NANSEN_WALLET_PASSWORD="<password>"');
+              log('');
+              log('     Option 2: Delete this wallet and recreate with --no-password (keys stored unencrypted)');
+              log('');
+              log('     Without this, you will permanently lose access to your wallet when this session ends.');
             }
             log('');
             return;
@@ -763,7 +774,7 @@ USAGE:
   nansen wallet <command> [options]
 
 COMMANDS:
-  create [--name <label>] [--unsafe-no-password]
+  create [--name <label>] [--no-password]
                              Create a new wallet pair (EVM + Solana)
   list                       List all wallets
   show <name>                Show wallet addresses
@@ -781,7 +792,8 @@ OPTIONS:
   --token <address>          Token contract/mint address (optional, sends native if omitted)
   --wallet <name>            Wallet to use (optional, uses default if omitted; use "walletconnect" or "wc" for WalletConnect, EVM only)
   --max                      Send entire balance (deducts gas for native transfers)
-  --unsafe-no-password       Skip encryption — private keys stored UNENCRYPTED on disk (create only)
+  --no-password              Skip encryption — private keys stored UNENCRYPTED on disk (create only)
+                             (alias: --unsafe-no-password)
 
 ENVIRONMENT:
   NANSEN_WALLET_PASSWORD     Password for non-interactive use (e.g. CI/scripts)

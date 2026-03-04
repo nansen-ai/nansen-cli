@@ -20,6 +20,7 @@ import {
   setDefaultWallet,
   deleteWallet,
   getWalletConfig,
+  buildWalletCommands,
 } from '../wallet.js';
 import { keccak256 } from '../crypto.js';
 
@@ -348,5 +349,79 @@ describe('passwordless wallet CRUD', () => {
     expect(() => createWallet('encrypted-second', 'test-password-123!!')).toThrow(
       'Existing wallets are passwordless'
     );
+  });
+});
+
+describe('buildWalletCommands - wallet create UX', () => {
+  const PASSWORD = 'test-password-123!!';
+
+  it('--no-password works same as --unsafe-no-password', async () => {
+    const output = [];
+    const cmds = buildWalletCommands({ log: (msg) => output.push(msg), exit: () => {} });
+    await cmds['wallet'](['create'], null, { 'no-password': true }, { name: 'nopass-test' });
+    const joined = output.join('\n');
+    expect(joined).toContain('Wallet "nopass-test" created');
+    expect(joined).toContain('UNENCRYPTED');
+  });
+
+  it('password from env var shows confirmation message', async () => {
+    const output = [];
+    const originalEnv = process.env.NANSEN_WALLET_PASSWORD;
+    process.env.NANSEN_WALLET_PASSWORD = PASSWORD;
+    try {
+      const cmds = buildWalletCommands({ log: (msg) => output.push(msg), exit: () => {} });
+      await cmds['wallet'](['create'], null, {}, { name: 'env-test' });
+      const joined = output.join('\n');
+      expect(joined).toContain('Wallet "env-test" created');
+      expect(joined).toContain('Password read from NANSEN_WALLET_PASSWORD env var');
+    } finally {
+      if (originalEnv === undefined) {
+        delete process.env.NANSEN_WALLET_PASSWORD;
+      } else {
+        process.env.NANSEN_WALLET_PASSWORD = originalEnv;
+      }
+    }
+  });
+
+  it('interactive password shows agent session warning', async () => {
+    const output = [];
+    const cmds = buildWalletCommands({
+      log: (msg) => output.push(msg),
+      exit: () => {},
+      promptFn: () => PASSWORD,
+    });
+    await cmds['wallet'](['create'], null, {}, { name: 'interactive-test' });
+    const joined = output.join('\n');
+    expect(joined).toContain('Wallet "interactive-test" created');
+    expect(joined).toContain('IMPORTANT FOR AI AGENTS');
+    expect(joined).toContain('NANSEN_WALLET_PASSWORD');
+    expect(joined).toContain('will NOT be remembered');
+  });
+
+  it('non-TTY without password shows agent-oriented error', async () => {
+    const output = [];
+    let exitCalled = false;
+    const originalEnv = process.env.NANSEN_WALLET_PASSWORD;
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    const originalIsTTY = process.stdin.isTTY;
+    process.stdin.isTTY = false;
+    try {
+      const cmds = buildWalletCommands({
+        log: (msg) => output.push(msg),
+        exit: () => { exitCalled = true; },
+      });
+      await cmds['wallet'](['create'], null, {}, { name: 'no-tty-test' });
+      const joined = output.join('\n');
+      expect(exitCalled).toBe(true);
+      expect(joined).toContain('For AI agents');
+      expect(joined).toContain('--no-password');
+    } finally {
+      process.stdin.isTTY = originalIsTTY;
+      if (originalEnv === undefined) {
+        delete process.env.NANSEN_WALLET_PASSWORD;
+      } else {
+        process.env.NANSEN_WALLET_PASSWORD = originalEnv;
+      }
+    }
   });
 });
