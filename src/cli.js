@@ -452,7 +452,9 @@ export function parseAddressList(raw) {
   if (Array.isArray(raw)) {
     return raw.map(a => String(a).trim()).filter(Boolean);
   }
-  const s = raw || '';
+  if (!raw) return [];
+
+  const s = String(raw);
   try {
     const parsed = JSON.parse(s);
     if (Array.isArray(parsed)) {
