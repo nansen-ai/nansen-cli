@@ -12,7 +12,6 @@ import {
   isSvmNetwork,
   getSolanaRpcUrl,
   buildUnsignedSvmTransaction,
-  createSvmPaymentPayload,
 } from '../x402-svm.js';
 
 // Inline Solana wallet generation (from wallet.js PR #26, not yet merged)
