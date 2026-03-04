@@ -351,12 +351,19 @@ export function listWallets() {
 /**
  * Health-check: returns wallet security status without side effects.
  */
-export async function checkWallets(deps = {}) {
+export async function checkWallets(_deps = {}) {
   const issues = [];
   ensureWalletsDir();
 
+  const configPath = getWalletConfigPath();
   let config = { defaultWallet: null, passwordHash: null };
-  try { config = getWalletConfig(); } catch {}
+  if (fs.existsSync(configPath)) {
+    try {
+      config = getWalletConfig();
+    } catch (_e) {
+      issues.push('config.json is present but could not be parsed');
+    }
+  }
 
   const encrypted = !!(config.passwordHash);
   const walletFiles = fs.readdirSync(getWalletsDir())
@@ -372,14 +379,13 @@ export async function checkWallets(deps = {}) {
   }
 
   let permissionsOk = true;
-  const configPath = getWalletConfigPath();
   try {
     const st = fs.statSync(configPath);
     if ((st.mode & 0o077) !== 0) {
       permissionsOk = false;
       issues.push(`config.json permissions insecure: ${(st.mode & 0o777).toString(8)}`);
     }
-  } catch {}
+  } catch (_e) { /* intentional: config.json may not exist */ }
   for (const f of walletFiles) {
     try {
       const st = fs.statSync(path.join(getWalletsDir(), f));
@@ -387,7 +393,7 @@ export async function checkWallets(deps = {}) {
         permissionsOk = false;
         issues.push(`${f} permissions insecure: ${(st.mode & 0o777).toString(8)}`);
       }
-    } catch {}
+    } catch (_e) { /* intentional: file may be removed between listing and stat */ }
   }
   if (encrypted && passwordSource === 'none') {
     issues.push('Wallets are encrypted but no password source found (NANSEN_WALLET_PASSWORD not set, no .credentials file)');
@@ -482,7 +488,7 @@ export function createWallet(name, password, options = {}) {
   const walletStat = fs.statSync(walletFile);
   const configStat = fs.statSync(getWalletConfigPath());
   if ((walletStat.mode & 0o077) !== 0 || (configStat.mode & 0o077) !== 0) {
-    try { fs.unlinkSync(walletFile); } catch {}
+    try { fs.unlinkSync(walletFile); } catch (_e) { /* intentional: best-effort cleanup */ }
     throw Object.assign(new Error('SECURITY: Wallet file created with insecure permissions. Files removed.'), {
       code: 'INSECURE_PERMISSIONS',
     });
@@ -665,7 +671,7 @@ export function buildWalletCommands(deps = {}) {
               // Existing encrypted wallets: resolve the existing password, never generate a new one
               const credFilePath = path.join(getWalletsDir(), '.credentials');
               let credContent;
-              try { credContent = fs.readFileSync(credFilePath, 'utf8'); } catch {}
+              try { credContent = fs.readFileSync(credFilePath, 'utf8'); } catch (_e) { /* intentional: missing .credentials treated as no password */ }
               const credMatch = credContent?.match(/^NANSEN_WALLET_PASSWORD=(.+)$/m);
               if (credMatch) {
                 password = credMatch[1].trim();
