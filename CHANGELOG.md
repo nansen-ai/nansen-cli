@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.12.0
+
+### Minor Changes
+
+- [#207](https://github.com/nansen-ai/nansen-cli/pull/207) [`73ca500`](https://github.com/nansen-ai/nansen-cli/commit/73ca5009c03ad541673165ca6b50f33ff4cc1673) Thanks [@TimNooren](https://github.com/TimNooren)! - Add --unsafe-no-password flag to wallet create for agent-friendly passwordless wallets.
+
+### Patch Changes
+
+- [#212](https://github.com/nansen-ai/nansen-cli/pull/212) [`726c29d`](https://github.com/nansen-ai/nansen-cli/commit/726c29d2676c8a37772299c6237b44890493dfa5) Thanks [@0xlaveen](https://github.com/0xlaveen)! - Clarify empty input handling in parseAddressList with explicit early return
+
+- [#218](https://github.com/nansen-ai/nansen-cli/pull/218) [`8c4dd71`](https://github.com/nansen-ai/nansen-cli/commit/8c4dd71ce215026e149a6b097540c46622f13d3a) Thanks [@TimNooren](https://github.com/TimNooren)! - fix: `nansen changelog --since <version>` now correctly filters changeset-format entries (## x.y.z) in addition to Keep a Changelog entries (## [x.y.z])
+
+- [#209](https://github.com/nansen-ai/nansen-cli/pull/209) [`a6dc1ed`](https://github.com/nansen-ai/nansen-cli/commit/a6dc1ed9dc40ad3506e7debe09746d463a70c14d) Thanks [@0xlaveen](https://github.com/0xlaveen)! - fix: prevent --help from executing destructive commands (logout, schema, cache)
+
 ## 1.11.2
 
 ### Patch Changes
