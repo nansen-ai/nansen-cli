@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.13.0
+
+### Minor Changes
+
+- [#107](https://github.com/nansen-ai/nansen-cli/pull/107) [`5877c06`](https://github.com/nansen-ai/nansen-cli/commit/5877c06061c1d32998fa3ce011c16f4352fc22dc) Thanks [@marius-reed](https://github.com/marius-reed)! - Add 11 prediction market (Polymarket) endpoints under `nansen research pm`. Includes OHLCV, orderbook, top holders, trades, screeners, PnL, position detail, and categories. Supports `--market-id`, `--address`, `--sort-by`, `--query`, `--status` flags with pagination, sorting, and table output.
+
 ## 1.12.0
 
 ### Minor Changes
