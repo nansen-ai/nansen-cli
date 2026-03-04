@@ -561,8 +561,9 @@ Set NANSEN_WALLET_PASSWORD to skip interactive prompt.`);
             if (password === null) {
               log('  ⚠️  This is an UNENCRYPTED hot wallet — private keys are stored in plaintext on disk.');
             } else {
-              log('  ⚠️  This is a hot wallet and is fundamentally insecure — do not deposit more than you can afford to lose.');
-              log('     Store and handle your password securely, e.g. using a secrets manager or system keychain.');
+              log('  ⚠️  This is a hot wallet — do not deposit more than you can afford to lose.');
+              log('     Save your password securely (e.g. secrets manager) — losing it locks the wallet forever.');
+              log('     Set NANSEN_WALLET_PASSWORD for send, export, and delete operations.');
             }
             log('');
             return;
