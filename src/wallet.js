@@ -507,7 +507,12 @@ export function buildWalletCommands(deps = {}) {
       const handlers = {
         'create': async () => {
           if (flags.help || flags.h) {
-            log('Usage: nansen wallet create [--name <label>] [--unsafe-no-password]');
+            log(`Usage: nansen wallet create [--name <label>] [--unsafe-no-password]
+
+  --name <label>            Wallet name (default: "default")
+  --unsafe-no-password      Store keys unencrypted (dangerous)
+
+Set NANSEN_WALLET_PASSWORD to skip interactive prompt.`);
             return;
           }
           const name = options.name || args[1] || 'default';
@@ -614,7 +619,9 @@ export function buildWalletCommands(deps = {}) {
 
         'export': async () => {
           if (flags.help || flags.h) {
-            log('Usage: nansen wallet export <name>');
+            log(`Usage: nansen wallet export <name>
+
+Requires password (set NANSEN_WALLET_PASSWORD for non-interactive use).`);
             return;
           }
           const name = options.name || args[1];
@@ -667,7 +674,9 @@ export function buildWalletCommands(deps = {}) {
 
         'delete': async () => {
           if (flags.help || flags.h) {
-            log('Usage: nansen wallet delete <name>');
+            log(`Usage: nansen wallet delete <name>
+
+Requires password (set NANSEN_WALLET_PASSWORD for non-interactive use).`);
             return;
           }
           const name = options.name || args[1];
@@ -695,7 +704,17 @@ export function buildWalletCommands(deps = {}) {
 
         'send': async () => {
           if (flags.help || flags.h) {
-            log('Usage: nansen wallet send --to <address> --amount <number> --chain <evm|solana> [--token <address>] [--wallet <name>] [--max] [--dry-run]');
+            log(`Usage: nansen wallet send --to <address> --amount <number> --chain <evm|solana> [--token <address>] [--wallet <name>] [--max] [--dry-run]
+
+  --to <address>            Recipient address (required)
+  --amount <number>         Amount in human-readable format (required unless --max)
+  --chain <evm|solana>      Blockchain to use (required)
+  --token <address>         Token contract/mint address (native if omitted)
+  --wallet <name>           Wallet to use (default wallet if omitted; "walletconnect"/"wc" for WalletConnect)
+  --max                     Send entire balance (deducts gas for native transfers)
+  --dry-run                 Preview transaction without sending
+
+Set NANSEN_WALLET_PASSWORD to skip interactive prompt.`);
             return;
           }
           const { sendTokens } = await import('./transfer.js');
