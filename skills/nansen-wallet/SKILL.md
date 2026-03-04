@@ -7,6 +7,8 @@ metadata:
       env:
         - NANSEN_API_KEY
         - NANSEN_WALLET_PASSWORD
+        - NANSEN_EVM_RPC
+        - NANSEN_SOLANA_RPC
       bins:
         - nansen
     primaryEnv: NANSEN_API_KEY
