@@ -5,7 +5,7 @@
 
 import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
 import { buildWalletCommands } from './wallet.js';
-import { buildTradingCommands } from './trading.js';
+import { buildTradingCommands, resolveTokenAddress } from './trading.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
@@ -1031,9 +1031,11 @@ export function buildCommands(deps = {}) {
 
     'token': async (args, apiInstance, flags, options) => {
       const subcommand = args[0] || 'help';
-      const tokenAddress = options.token || options['token-address'];
-      const tokenSymbol = options.symbol || options['token-symbol'];
       const chain = options.chain || 'solana';
+      const rawToken = options.token || options['token-address'];
+      // Resolve symbol shortcuts (e.g. SOL, ETH, USDC, USDT, WETH) to chain-specific addresses
+      const tokenAddress = resolveTokenAddress(rawToken, chain);
+      const tokenSymbol = options.symbol || options['token-symbol'];
       const chains = options.chains || [chain];
       const timeframe = options.timeframe || '24h';
       const filters = options.filters || {};
@@ -1346,7 +1348,8 @@ export async function runCLI(rawArgs, deps = {}) {
     errorOutput = console.error,
     exit = process.exit,
     NansenAPIClass = NansenAPI,
-    commandOverrides = {}
+    commandOverrides = {},
+    isTTY = Boolean(process.stderr.isTTY)
   } = deps;
 
   const { _: positional, flags, options } = parseArgs(rawArgs);
@@ -1358,10 +1361,13 @@ export async function runCLI(rawArgs, deps = {}) {
   const subcommand = subArgs[0];
 
   // Deprecation warnings for commands that moved under 'research' or 'trade'
-  if (DEPRECATED_TO_RESEARCH.has(command)) {
-    errorOutput(`Warning: "nansen ${command}" is deprecated. Use "nansen research ${command}" instead.`);
-  } else if (DEPRECATED_TO_TRADE.has(command)) {
-    errorOutput(`Warning: "nansen ${command}" is deprecated. Use "nansen trade ${command}" instead.`);
+  // Only emit in interactive (TTY) mode — suppress when piped through scripts/agents
+  if (isTTY) {
+    if (DEPRECATED_TO_RESEARCH.has(command)) {
+      errorOutput(`Warning: "nansen ${command}" is deprecated. Use "nansen research ${command}" instead.`);
+    } else if (DEPRECATED_TO_TRADE.has(command)) {
+      errorOutput(`Warning: "nansen ${command}" is deprecated. Use "nansen trade ${command}" instead.`);
+    }
   }
 
   const pretty = flags.pretty || flags.p;

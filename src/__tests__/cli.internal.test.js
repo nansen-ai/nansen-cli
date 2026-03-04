@@ -2599,6 +2599,7 @@ describe('deprecation warnings', () => {
       output: () => {},
       errorOutput: (msg) => errors.push(msg),
       exit: () => {},
+      isTTY: true,
       NansenAPIClass: function MockAPI() {
         this.smartMoneyNetflow = vi.fn().mockResolvedValue({ data: [] });
       }
@@ -2613,11 +2614,27 @@ describe('deprecation warnings', () => {
     const deps = {
       output: () => {},
       errorOutput: (msg) => errors.push(msg),
-      exit: () => {}
+      exit: () => {},
+      isTTY: true
     };
     await runCLI(['quote'], deps);
     expect(errors.some(e => e.includes('deprecated'))).toBe(true);
     expect(errors.some(e => e.includes('nansen trade quote'))).toBe(true);
+  });
+
+  it('should NOT warn for deprecated commands in non-TTY mode', async () => {
+    const errors = [];
+    const deps = {
+      output: () => {},
+      errorOutput: (msg) => errors.push(msg),
+      exit: () => {},
+      isTTY: false,
+      NansenAPIClass: function MockAPI() {
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue({ data: [] });
+      }
+    };
+    await runCLI(['smart-money', 'netflow'], deps);
+    expect(errors.some(e => e.includes('deprecated'))).toBe(false);
   });
 
   it('should not warn for new research path', async () => {
@@ -2655,7 +2672,8 @@ describe('deprecation warnings', () => {
     const deps = {
       output: (msg) => outputs.push(msg),
       errorOutput: (msg) => errors.push(msg),
-      exit: () => {}
+      exit: () => {},
+      isTTY: true
     };
     // quote with no args shows its help; confirms handler was reached
     const result = await runCLI(['quote'], deps);
