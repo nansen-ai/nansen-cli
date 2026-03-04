@@ -45,8 +45,8 @@ nansen trade execute --quote <quote-id>
 
 ```bash
 # Pipe quote ID directly into execute
-QUOTE_ID=$(nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000 2>&1 | grep "Quote ID:" | awk '{print $NF}')
-nansen trade execute --quote "$QUOTE_ID"
+quote_id=$(nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000 2>&1 | grep "Quote ID:" | awk '{print $NF}')
+nansen trade execute --quote "$quote_id"
 ```
 
 ## Common Token Addresses
