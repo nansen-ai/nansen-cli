@@ -4,7 +4,7 @@
  */
 
 import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
-import { buildWalletCommands } from './wallet.js';
+import { buildWalletCommands, checkWallets } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
@@ -163,7 +163,7 @@ export function parseArgs(args) {
       const key = arg.slice(2);
       const next = args[i + 1];
       
-      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full') {
+      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full' || key === 'force' || key === 'json' || key === 'unsafe-no-password' || key === 'i-understand-this-is-unsafe') {
         result.flags[key] = true;
       } else if (next && !next.startsWith('-')) {
         // Try to parse as JSON first (for objects/arrays/booleans),
@@ -1546,14 +1546,13 @@ export async function runCLI(rawArgs, deps = {}) {
     const api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders });
 
     // Startup security check for wallet commands (best-effort, never blocks)
-    if (command === 'wallet') {
+    if (command === 'wallet' && subcommand !== 'check') {
       try {
-        const { checkWallets } = await import('./wallet.js');
         const check = await checkWallets();
         if (check.issues.length > 0) {
           errorOutput(JSON.stringify({ warning: 'Wallet security issues detected', issues: check.issues }));
         }
-      } catch {} // eslint-disable-line no-empty
+      } catch (_e) { /* intentional: startup check must never block wallet ops */ }
     }
 
     let result = await commands[command](subArgs, api, flags, options);

@@ -310,9 +310,11 @@ describe('passwordless encryption', () => {
   });
 });
 
+const UNSAFE_OPTS = { unsafeNoPassword: true, iUnderstandThisIsUnsafe: true };
+
 describe('passwordless wallet CRUD', () => {
   it('should create, export, and delete a passwordless wallet', () => {
-    const result = createWallet('nopass', null);
+    const result = createWallet('nopass', null, UNSAFE_OPTS);
     expect(result.name).toBe('nopass');
     expect(result.evm).toMatch(/^0x/);
     expect(result.solana).toBeTruthy();
@@ -333,20 +335,20 @@ describe('passwordless wallet CRUD', () => {
 
   it('should reject mixing encrypted/passwordless when passwordHash exists', () => {
     createWallet('encrypted-first', 'test-password-123!!');
-    expect(() => createWallet('nopass-second', null, { force: true })).toThrow(
+    expect(() => createWallet('nopass-second', null, { force: true, ...UNSAFE_OPTS })).toThrow(
       'Existing wallets are password-protected'
     );
   });
 
   it('should allow multiple passwordless wallets', () => {
-    createWallet('a', null);
-    createWallet('b', null, { force: true });
+    createWallet('a', null, UNSAFE_OPTS);
+    createWallet('b', null, { force: true, ...UNSAFE_OPTS });
     const list = listWallets();
     expect(list.wallets).toHaveLength(2);
   });
 
   it('should reject encrypted wallet when passwordless wallets exist', () => {
-    createWallet('nopass-first', null);
+    createWallet('nopass-first', null, UNSAFE_OPTS);
     expect(() => createWallet('encrypted-second', 'test-password-123!!', { force: true })).toThrow(
       'Existing wallets are passwordless'
     );
@@ -392,6 +394,26 @@ describe('--unsafe-no-password gate', () => {
   it('--unsafe-no-password with --i-understand-this-is-unsafe proceeds', () => {
     const result = createWallet('wallet', null, { unsafeNoPassword: true, iUnderstandThisIsUnsafe: true });
     expect(result.name).toBe('wallet');
+  });
+});
+
+describe('null password without --unsafe-no-password (Fix A)', () => {
+  it('throws PASSWORD_REQUIRED when password is null and unsafeNoPassword is not set', () => {
+    const err = (() => {
+      try { createWallet('null-pw', null, {}); }
+      catch (e) { return e; }
+    })();
+    expect(err).toBeTruthy();
+    expect(err.code).toBe('PASSWORD_REQUIRED');
+  });
+
+  it('throws PASSWORD_REQUIRED when password is undefined', () => {
+    const err = (() => {
+      try { createWallet('undef-pw', undefined, {}); }
+      catch (e) { return e; }
+    })();
+    expect(err).toBeTruthy();
+    expect(err.code).toBe('PASSWORD_REQUIRED');
   });
 });
 
@@ -470,6 +492,17 @@ describe('checkWallets()', () => {
     expect(result.permissionsOk).toBe(false);
     expect(result.issues.length).toBeGreaterThan(0);
     expect(result.issues[0]).toContain('config.json');
+  });
+
+  it('reports permissionsOk: false and issue when .credentials has bad perms', async () => {
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.mkdirSync(walletsDir, { recursive: true });
+    const credPath = path.join(walletsDir, '.credentials');
+    fs.writeFileSync(credPath, 'NANSEN_WALLET_PASSWORD=abc\n', { mode: 0o644 }); // world-readable
+    const result = await checkWallets();
+    expect(result.permissionsOk).toBe(false);
+    expect(result.issues.some(i => i.includes('.credentials'))).toBe(true);
+    expect(result.issues.some(i => i.includes('0600'))).toBe(true);
   });
 
   it('reports walletCount correctly', async () => {
@@ -709,5 +742,99 @@ describe('CLI check subcommand', () => {
     expect(exitCode).toBe(1);
     const result = JSON.parse(logs[0]);
     expect(result.issues.length).toBeGreaterThan(0);
+  });
+});
+
+describe('CLI create --unsafe-no-password flag forwarding (Bug 1)', () => {
+  it('emits UNSAFE_CONFIRMATION_REQUIRED via CLI when --unsafe-no-password given without --i-understand-this-is-unsafe', async () => {
+    const logs = [];
+    let exitCode = 0;
+    const cmds = buildWalletCommands({
+      log: (m) => logs.push(m),
+      isTTY: false,
+      exit: (code) => { exitCode = code; },
+    });
+    await cmds.wallet(['create'], null, { 'unsafe-no-password': true }, { name: 'unsafe-test' });
+    expect(exitCode).toBe(1);
+    const output = JSON.parse(logs[0]);
+    expect(output.code).toBe('UNSAFE_CONFIRMATION_REQUIRED');
+  });
+
+  it('creates passwordless wallet when both --unsafe-no-password and --i-understand-this-is-unsafe are given', async () => {
+    const logs = [];
+    let exitCode = 0;
+    const cmds = buildWalletCommands({
+      log: (m) => logs.push(m),
+      isTTY: false,
+      exit: (code) => { exitCode = code; },
+    });
+    await cmds.wallet(
+      ['create'],
+      null,
+      { 'unsafe-no-password': true, 'i-understand-this-is-unsafe': true },
+      { name: 'unsafe-ok' },
+    );
+    expect(exitCode).toBe(0);
+    const output = JSON.parse(logs[0]);
+    expect(output.success).toBe(true);
+    expect(output.name).toBe('unsafe-ok');
+    expect(output.passwordSource).toBe('none');
+  });
+});
+
+describe('INSECURE_PERMISSIONS config.json rollback (Bug 2)', () => {
+  it('deletes config.json on first-wallet creation when perms are bad', () => {
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    const configPath = path.join(walletsDir, 'config.json');
+
+    const originalStatSync = fs.statSync;
+    const spy = vi.spyOn(fs, 'statSync').mockImplementation((p, ...args) => {
+      const result = originalStatSync(p, ...args);
+      if (typeof p === 'string' && p.endsWith('rollback-first.json')) {
+        return { ...result, mode: (result.mode & ~0o777) | 0o644 };
+      }
+      return result;
+    });
+
+    try {
+      createWallet('rollback-first', 'testpassword123!!');
+      expect.fail('Should have thrown INSECURE_PERMISSIONS');
+    } catch (err) {
+      expect(err.code).toBe('INSECURE_PERMISSIONS');
+      expect(fs.existsSync(path.join(walletsDir, 'rollback-first.json'))).toBe(false);
+      expect(fs.existsSync(configPath)).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('restores config.json to pre-call state on --force creation when perms are bad', () => {
+    // Create the first wallet successfully
+    createWallet('original-wallet', 'testpassword123!!');
+    const configPath = path.join(tempDir, '.nansen', 'wallets', 'config.json');
+    const configBefore = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+    const originalStatSync = fs.statSync;
+    const spy = vi.spyOn(fs, 'statSync').mockImplementation((p, ...args) => {
+      const result = originalStatSync(p, ...args);
+      if (typeof p === 'string' && p.endsWith('rollback-force.json')) {
+        return { ...result, mode: (result.mode & ~0o777) | 0o644 };
+      }
+      return result;
+    });
+
+    try {
+      createWallet('rollback-force', 'testpassword123!!', { force: true });
+      expect.fail('Should have thrown INSECURE_PERMISSIONS');
+    } catch (err) {
+      expect(err.code).toBe('INSECURE_PERMISSIONS');
+      expect(fs.existsSync(path.join(tempDir, '.nansen', 'wallets', 'rollback-force.json'))).toBe(false);
+      // config.json must still exist and be restored to original state
+      expect(fs.existsSync(configPath)).toBe(true);
+      const configAfter = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(configAfter).toEqual(configBefore);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
