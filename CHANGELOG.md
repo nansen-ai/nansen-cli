@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.13.1
+
+### Patch Changes
+
+- [#225](https://github.com/nansen-ai/nansen-cli/pull/225) [`051e4a3`](https://github.com/nansen-ai/nansen-cli/commit/051e4a353641d000facd2133810c059981b9ac7f) Thanks [@TimNooren](https://github.com/TimNooren)! - Remove "recommended, lower fees" label from Base network in wallet create output
+
 ## 1.13.0
 
 ### Minor Changes
