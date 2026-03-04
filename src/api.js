@@ -506,10 +506,12 @@ export class NansenAPI {
           if (!hasManualSignature) {
             // Determine payment method from default wallet's provider
             let defaultWalletProvider = 'local';
+            let defaultWalletName = 'unknown';
             try {
               const { getWalletConfig, showWallet } = await import('./wallet.js');
               const config = getWalletConfig();
               if (config.defaultWallet) {
+                defaultWalletName = config.defaultWallet;
                 const wallet = showWallet(config.defaultWallet);
                 defaultWalletProvider = wallet.provider || 'local';
               }
@@ -519,7 +521,7 @@ export class NansenAPI {
               // Default wallet is Privy: sign via Privy
               try {
                 const { createPrivyPaymentSignatures } = await import('./privy.js');
-                for await (const { signature } of createPrivyPaymentSignatures(response, url)) {
+                for await (const { signature, network } of createPrivyPaymentSignatures(response, url)) {
                   const paidResponse = await fetch(url, {
                     method: 'POST',
                     headers: {
@@ -533,7 +535,7 @@ export class NansenAPI {
                     body: JSON.stringify(NansenAPI.cleanBody(body)),
                   });
                   if (paidResponse.ok) {
-                    console.error(`[x402] Paid via Privy (Base USDC)`);
+                    console.error(`[x402] Paid via Privy wallet ${defaultWalletName} (${network})`);
                     return await paidResponse.json();
                   }
                 }
@@ -559,8 +561,7 @@ export class NansenAPI {
                     body: JSON.stringify(NansenAPI.cleanBody(body)),
                   });
                   if (paidResponse.ok) {
-                    const chain = network.startsWith('solana:') ? 'Solana' : 'Base';
-                    console.error(`[x402] Paid via ${chain} USDC`);
+                    console.error(`[x402] Paid via local wallet ${defaultWalletName} (${network})`);
                     // Check remaining balance and warn if low
                     try {
                       const { checkX402Balance } = await import('./x402.js');

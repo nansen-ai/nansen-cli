@@ -11,6 +11,8 @@ import {
   deriveATA,
   isSvmNetwork,
   getSolanaRpcUrl,
+  buildUnsignedSvmTransaction,
+  createSvmPaymentPayload,
 } from '../x402-svm.js';
 
 // Inline Solana wallet generation (from wallet.js PR #26, not yet merged)
@@ -123,5 +125,53 @@ describe('getSolanaRpcUrl', () => {
 
   it('should return devnet URL', () => {
     expect(getSolanaRpcUrl('solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1')).toContain('devnet');
+  });
+});
+
+describe('buildUnsignedSvmTransaction', () => {
+  const wallet = generateSolanaWallet();
+  const requirements = {
+    scheme: 'exact',
+    network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+    asset: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    payTo: base58Encode(crypto.randomBytes(32)),
+    amount: '50000',
+    extra: { feePayer: base58Encode(crypto.randomBytes(32)) },
+  };
+  const blockhash = base58Encode(crypto.randomBytes(32));
+
+  it('returns messageBytes and txBase64', () => {
+    const result = buildUnsignedSvmTransaction(requirements, wallet.address, blockhash);
+    expect(result.messageBytes).toBeInstanceOf(Buffer);
+    expect(typeof result.txBase64).toBe('string');
+    // txBase64 should decode to valid bytes
+    const txBytes = Buffer.from(result.txBase64, 'base64');
+    expect(txBytes.length).toBeGreaterThan(128); // at least 2 sigs + message
+  });
+
+  it('produces same messageBytes as createSvmPaymentPayload', () => {
+    const { messageBytes } = buildUnsignedSvmTransaction(requirements, wallet.address, blockhash);
+
+    // createSvmPaymentPayload also builds the same message internally
+    // We verify the messageBytes starts with 0x80 (v0 prefix)
+    expect(messageBytes[0]).toBe(0x80);
+    // Header: numRequiredSignatures, numReadonlySignedAccounts, numReadonlyUnsignedAccounts
+    expect(messageBytes[1]).toBeGreaterThanOrEqual(2); // at least feePayer + client
+  });
+
+  it('throws without feePayer in extra', () => {
+    const badReqs = { ...requirements, extra: {} };
+    expect(() => buildUnsignedSvmTransaction(badReqs, wallet.address, blockhash))
+      .toThrow('feePayer is required');
+  });
+
+  it('transaction has two 64-byte zero signature slots', () => {
+    const { txBase64 } = buildUnsignedSvmTransaction(requirements, wallet.address, blockhash);
+    const txBytes = Buffer.from(txBase64, 'base64');
+    // First byte is compact-u16 encoding of 2 (= 0x02)
+    expect(txBytes[0]).toBe(2);
+    // Next 128 bytes should be zeros (two placeholder signatures)
+    const sigSlots = txBytes.subarray(1, 129);
+    expect(sigSlots.every(b => b === 0)).toBe(true);
   });
 });

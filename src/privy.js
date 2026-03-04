@@ -11,6 +11,12 @@ import path from "path";
 import { parsePaymentRequirements } from "./x402.js";
 import { isEvmNetwork } from "./x402-evm.js";
 import {
+  isSvmNetwork,
+  getSolanaRpcUrl,
+  fetchRecentBlockhash,
+  buildUnsignedSvmTransaction,
+} from "./x402-svm.js";
+import {
   buildEIP712TypedData,
   buildPaymentSignatureHeader,
 } from "./walletconnect-x402.js";
@@ -111,6 +117,7 @@ export class PrivyClient {
   async signSolanaTransaction(walletId, transactionBase64) {
     return this._request("POST", `/wallets/${walletId}/rpc`, {
       method: "signTransaction",
+      chain_type: "solana",
       params: { transaction: transactionBase64, encoding: "base64" },
     });
   }
@@ -218,6 +225,36 @@ async function getPrivyEvmWallet(client) {
 }
 
 /**
+ * Resolve the Solana wallet for x402 payments.
+ * Priority: default local wallet's solana.privyWalletId > first Privy Solana wallet.
+ */
+async function getPrivySolanaWallet(client) {
+  try {
+    const walletsDir = path.join(process.env.HOME || process.env.USERPROFILE || "", ".nansen", "wallets");
+    const configPath = path.join(walletsDir, "config.json");
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      if (config.defaultWallet) {
+        const walletFile = path.join(walletsDir, `${config.defaultWallet}.json`);
+        if (fs.existsSync(walletFile)) {
+          const data = JSON.parse(fs.readFileSync(walletFile, "utf8"));
+          if (data.provider === "privy" && data.solana?.privyWalletId) {
+            return client.getWallet(data.solana.privyWalletId);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    if (process.env.DEBUG) console.error(`[x402] Solana wallet lookup failed: ${err.message}`);
+  }
+
+  const result = await client.listWallets();
+  const wallets = result.data || result.wallets || result;
+  if (!Array.isArray(wallets)) return null;
+  return wallets.find((w) => w.chain_type === "solana") || null;
+}
+
+/**
  * Generate payment signatures for x402 using Privy server wallets.
  * Same yield contract as createPaymentSignatures() in x402.js: { signature, network }
  *
@@ -229,50 +266,90 @@ export async function* createPrivyPaymentSignatures(response, url) {
   const requirements = parsePaymentRequirements(response);
   if (!requirements || requirements.length === 0) return;
 
-  // Filter to EVM requirements only (Privy Solana x402 not yet supported)
-  const evmRequirements = requirements.filter((r) => isEvmNetwork(r.network));
-  if (evmRequirements.length === 0) return;
-
   const client = getClient();
-  const wallet = await getPrivyEvmWallet(client);
-  if (!wallet) {
-    console.error('[x402] No Privy EVM wallet found for payment signing');
-    return;
+
+  // EVM requirements
+  const evmRequirements = requirements.filter((r) => isEvmNetwork(r.network));
+  if (evmRequirements.length > 0) {
+    const evmWallet = await getPrivyEvmWallet(client);
+    if (evmWallet) {
+      for (const requirement of evmRequirements) {
+        try {
+          const typedData = buildEIP712TypedData({
+            fromAddress: evmWallet.address,
+            requirement,
+          });
+
+          const signResult = await client.ethSignTypedDataV4(
+            evmWallet.id,
+            typedData
+          );
+          const signature = signResult.data?.signature || signResult.signature;
+
+          const authorization = {
+            from: evmWallet.address,
+            to: requirement.payTo,
+            value: (requirement.amount || requirement.maxAmountRequired).toString(),
+            validAfter: typedData.message.validAfter.toString(),
+            validBefore: typedData.message.validBefore.toString(),
+            nonce: typedData.message.nonce,
+          };
+
+          const header = buildPaymentSignatureHeader({
+            signature,
+            authorization,
+            resource: { url, description: "", mimeType: "" },
+            accepted: requirement,
+          });
+
+          yield { signature: header, network: requirement.network };
+        } catch (err) {
+          console.error(`[x402] Privy EVM signing failed for ${requirement.network}: ${err.message}`);
+          continue;
+        }
+      }
+    } else {
+      console.error('[x402] No Privy EVM wallet found for payment signing');
+    }
   }
 
-  for (const requirement of evmRequirements) {
-    try {
-      const typedData = buildEIP712TypedData({
-        fromAddress: wallet.address,
-        requirement,
-      });
+  // Solana requirements
+  const svmRequirements = requirements.filter((r) => isSvmNetwork(r.network));
+  if (svmRequirements.length > 0) {
+    const solWallet = await getPrivySolanaWallet(client);
+    if (solWallet) {
+      for (const requirement of svmRequirements) {
+        try {
+          const rpcUrl = getSolanaRpcUrl(requirement.network);
+          const recentBlockhash = await fetchRecentBlockhash(rpcUrl);
 
-      const signResult = await client.ethSignTypedDataV4(
-        wallet.id,
-        typedData
-      );
-      const signature = signResult.data?.signature || signResult.signature;
+          const { txBase64 } = buildUnsignedSvmTransaction(
+            requirement,
+            solWallet.address,
+            recentBlockhash,
+          );
 
-      const authorization = {
-        from: wallet.address,
-        to: requirement.payTo,
-        value: (requirement.amount || requirement.maxAmountRequired).toString(),
-        validAfter: typedData.message.validAfter.toString(),
-        validBefore: typedData.message.validBefore.toString(),
-        nonce: typedData.message.nonce,
-      };
+          const signResult = await client.signSolanaTransaction(solWallet.id, txBase64);
+          const signedTx = signResult.data?.signed_transaction || signResult.signed_transaction;
 
-      const header = buildPaymentSignatureHeader({
-        signature,
-        authorization,
-        resource: { url, description: "", mimeType: "" },
-        accepted: requirement,
-      });
+          const payload = {
+            x402Version: 2,
+            payload: { transaction: signedTx },
+            accepted: requirement,
+          };
+          if (url) {
+            payload.resource = { url };
+          }
 
-      yield { signature: header, network: requirement.network };
-    } catch (err) {
-      console.error(`[x402] Privy signing failed for ${requirement.network}: ${err.message}`);
-      continue;
+          const header = Buffer.from(JSON.stringify(payload)).toString("base64");
+          yield { signature: header, network: requirement.network };
+        } catch (err) {
+          console.error(`[x402] Privy Solana signing failed for ${requirement.network}: ${err.message}`);
+          continue;
+        }
+      }
+    } else {
+      console.error('[x402] No Privy Solana wallet found for payment signing');
     }
   }
 }

@@ -144,7 +144,7 @@ describe("PrivyClient", () => {
     vi.unstubAllGlobals();
   });
 
-  it("signSolanaTransaction sends correct RPC request", async () => {
+  it("signSolanaTransaction sends correct RPC request with chain_type", async () => {
     const client = new PrivyClient("app-id", "app-secret");
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -158,6 +158,7 @@ describe("PrivyClient", () => {
     expect(url).toBe("https://api.privy.io/v1/wallets/wl_456/rpc");
     const body = JSON.parse(opts.body);
     expect(body.method).toBe("signTransaction");
+    expect(body.chain_type).toBe("solana");
     expect(body.params.transaction).toBe("dW5zaWduZWQ=");
     expect(body.params.encoding).toBe("base64");
     expect(result.data.signed_transaction).toBe("c2lnbmVk");
@@ -171,9 +172,12 @@ describe("PrivyClient", () => {
 
 describe("createPrivyPaymentSignatures", () => {
   let originalEnv;
+  let tempDir;
 
   beforeEach(() => {
     originalEnv = { ...process.env };
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nansen-privy-x402-"));
+    process.env.HOME = tempDir;
     process.env.PRIVY_APP_ID = "test-app-id";
     process.env.PRIVY_APP_SECRET = "test-app-secret";
   });
@@ -181,6 +185,7 @@ describe("createPrivyPaymentSignatures", () => {
   afterEach(() => {
     process.env = originalEnv;
     vi.unstubAllGlobals();
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   function make402Response(requirements) {
@@ -215,16 +220,57 @@ describe("createPrivyPaymentSignatures", () => {
     expect(results).toHaveLength(0);
   });
 
-  it("yields nothing for Solana-only requirements", async () => {
-    const response = make402Response([
-      { ...evmRequirement, network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp" },
-    ]);
+  it("yields a signature for Solana requirement", async () => {
+    const solRequirement = {
+      scheme: "exact",
+      network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+      asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      payTo: "7UX2i7SucgLMQcfZ75s3VXmZZY4YRUyJN9X1RgfMoDUi",
+      amount: "50000",
+      extra: { feePayer: "11111111111111111111111111111111" },
+    };
 
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
+      // Solana RPC (fetchRecentBlockhash) - mainnet-beta URL
+      if (typeof url === "string" && url.includes("mainnet-beta")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            jsonrpc: "2.0",
+            result: { value: { blockhash: "GHtXQBpokCUCJwhRAJbhGVPKp9VTVn65CWVRqFMJkFwh" } },
+          }),
+        });
+      }
+      // Privy: listWallets
+      if (typeof url === "string" && url.includes("/wallets") && !url.includes("/rpc")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            data: [{ id: "wl_sol_1", address: "7UX2i7SucgLMQcfZ75s3VXmZZY4YRUyJN9X1RgfMoDUi", chain_type: "solana" }],
+          }),
+        });
+      }
+      // Privy: signSolanaTransaction
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          data: { signed_transaction: "c2lnbmVkdHhiYXNlNjQ=" },
+        }),
+      });
+    }));
+
+    const response = make402Response([solRequirement]);
     const results = [];
     for await (const r of createPrivyPaymentSignatures(response, "https://api.nansen.ai/test")) {
       results.push(r);
     }
-    expect(results).toHaveLength(0);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].network).toBe("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp");
+    const decoded = JSON.parse(atob(results[0].signature));
+    expect(decoded.x402Version).toBe(2);
+    expect(decoded.payload.transaction).toBe("c2lnbmVkdHhiYXNlNjQ=");
+    expect(decoded.resource.url).toBe("https://api.nansen.ai/test");
   });
 
   it("yields a signature for EVM requirement", async () => {
