@@ -406,7 +406,7 @@ export function createWallet(name, password) {
         .filter(f => {
           try {
             const data = JSON.parse(fs.readFileSync(path.join(walletsDir, f), 'utf8'));
-            return !data.provider;
+            return !data.provider || data.provider === 'local';
           } catch { return true; }
         });
       if (existingLocalWallets.length > 0) {

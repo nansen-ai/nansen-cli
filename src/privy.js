@@ -170,9 +170,8 @@ export async function createPrivyWalletPair(name) {
   if (!fs.existsSync(walletsDir)) {
     fs.mkdirSync(walletsDir, { mode: 0o700, recursive: true });
   }
-  fs.writeFileSync(walletFile, JSON.stringify(walletData, null, 2), { mode: 0o600 });
 
-  // Set as default if first wallet
+  // Write config before wallet file so a crash doesn't leave an orphan without a default entry
   const configPath = path.join(walletsDir, "config.json");
   let config = { defaultWallet: null, passwordHash: null };
   if (fs.existsSync(configPath)) {
@@ -182,6 +181,8 @@ export async function createPrivyWalletPair(name) {
     config.defaultWallet = name;
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
   }
+
+  fs.writeFileSync(walletFile, JSON.stringify(walletData, null, 2), { mode: 0o600 });
 
   return walletData;
 }

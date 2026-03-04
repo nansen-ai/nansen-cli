@@ -509,10 +509,10 @@ export class NansenAPI {
             let defaultWalletName = 'unknown';
             try {
               const { getWalletConfig, showWallet } = await import('./wallet.js');
-              const config = getWalletConfig();
-              if (config.defaultWallet) {
-                defaultWalletName = config.defaultWallet;
-                const wallet = showWallet(config.defaultWallet);
+              const walletConfig = getWalletConfig();
+              if (walletConfig.defaultWallet) {
+                defaultWalletName = walletConfig.defaultWallet;
+                const wallet = showWallet(walletConfig.defaultWallet);
                 defaultWalletProvider = wallet.provider || 'local';
               }
             } catch { /* no wallet configured */ }
