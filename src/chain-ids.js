@@ -27,5 +27,4 @@ export const EVM_CHAINS = [
   'ethereum', 'arbitrum', 'base', 'bnb', 'polygon', 'optimism',
   'avalanche', 'linea', 'scroll', 'zksync', 'mantle', 'ronin',
   'sei', 'plasma', 'sonic', 'unichain', 'monad', 'hyperevm', 'iotaevm',
-  'fantom', 'gnosis', 'blast',
 ];
