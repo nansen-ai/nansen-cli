@@ -273,13 +273,35 @@ export function validateAddress(address, chain = 'ethereum') {
   }
 
   const trimmed = address.trim();
-  
+
+  // Detect if the input looks like a token symbol (e.g. SOL, USDC, BTC)
+  // rather than a contract address — helps surface a clear actionable error.
+  const looksLikeSymbol = /^[A-Za-z][A-Za-z0-9]{0,9}$/.test(trimmed) && trimmed.length <= 10;
+
   if (EVM_CHAINS.includes(chain)) {
     if (!ADDRESS_PATTERNS.evm.test(trimmed)) {
+      if (looksLikeSymbol) {
+        return {
+          valid: false,
+          error: `"${trimmed}" looks like a token symbol, not a contract address.\n` +
+            `EVM chains require a contract address starting with 0x (e.g. 0x1234...abcd, 42 chars).\n` +
+            `To find the address, run: nansen research search ${trimmed}`,
+          code: ErrorCode.INVALID_ADDRESS
+        };
+      }
       return { valid: false, error: `Invalid EVM address format. Expected 0x followed by 40 hex characters.`, code: ErrorCode.INVALID_ADDRESS };
     }
   } else if (chain === 'solana') {
     if (!ADDRESS_PATTERNS.solana.test(trimmed)) {
+      if (looksLikeSymbol) {
+        return {
+          valid: false,
+          error: `"${trimmed}" looks like a token symbol, not a contract address.\n` +
+            `Solana requires a Base58 contract address (32-44 chars, e.g. So11111111111111111111111111111111111111112).\n` +
+            `To find the address, run: nansen research search ${trimmed}`,
+          code: ErrorCode.INVALID_ADDRESS
+        };
+      }
       return { valid: false, error: `Invalid Solana address format. Expected Base58 string (32-44 chars).`, code: ErrorCode.INVALID_ADDRESS };
     }
   } else if (chain === 'bitcoin') {
@@ -293,10 +315,26 @@ export function validateAddress(address, chain = 'ethereum') {
 }
 
 /**
- * Validate token address (same rules as wallet address)
+ * Validate token address (same rules as wallet address).
+ * Returns enriched errors that distinguish between symbol vs. address mistakes.
  */
 export function validateTokenAddress(tokenAddress, chain = 'solana') {
-  return validateAddress(tokenAddress, chain);
+  const result = validateAddress(tokenAddress, chain);
+  // If the base validator flagged it as a symbol, the error is already helpful.
+  // For generic format errors, add token-specific context.
+  if (!result.valid && result.code === ErrorCode.INVALID_ADDRESS && !result.error.includes('looks like a token symbol')) {
+    const looksLikeSymbol = typeof tokenAddress === 'string' && /^[A-Za-z][A-Za-z0-9]{0,9}$/.test(tokenAddress.trim()) && tokenAddress.trim().length <= 10;
+    if (looksLikeSymbol) {
+      const trimmed = tokenAddress.trim();
+      const chainHint = chain === 'solana'
+        ? `a Base58 contract address (32-44 chars, e.g. So11111111111111111111111111111111111111112)`
+        : `a contract address starting with 0x (42 chars)`;
+      result.error = `"${trimmed}" is a token symbol, not a contract address.\n` +
+        `--token requires ${chainHint}.\n` +
+        `To look up the address: nansen research search ${trimmed}`;
+    }
+  }
+  return result;
 }
 
 function loadConfig() {
