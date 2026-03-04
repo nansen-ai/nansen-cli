@@ -6,14 +6,9 @@
 
 import https from 'https';
 import { keccak256 } from './crypto.js';
+import { EVM_CHAINS } from './chain-ids.js';
 
 const ENS_PATTERN = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.eth$/;
-
-const EVM_CHAINS = [
-  'ethereum', 'base', 'optimism', 'arbitrum', 'polygon', 'bnb',
-  'avalanche', 'fantom', 'gnosis', 'linea', 'scroll', 'zksync',
-  'blast', 'mantle', 'ronin', 'sei', 'plasma', 'sonic', 'unichain', 'monad', 'hyperevm', 'iotaevm'
-];
 
 /**
  * Check if a string looks like an ENS name

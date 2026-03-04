@@ -6,6 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { EVM_CHAINS } from './chain-ids.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -254,12 +255,6 @@ const ADDRESS_PATTERNS = {
   // Bitcoin: Various formats
   bitcoin: /^(1|3|bc1)[a-zA-HJ-NP-Z0-9]{25,62}$/,
 };
-
-const EVM_CHAINS = [
-  'ethereum', 'arbitrum', 'base', 'bnb', 'polygon', 'optimism',
-  'avalanche', 'linea', 'scroll', 'mantle', 'ronin',
-  'sei', 'plasma', 'sonic', 'monad', 'hyperevm', 'iotaevm'
-];
 
 /**
  * Validate address format for a given chain

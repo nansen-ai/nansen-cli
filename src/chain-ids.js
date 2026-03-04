@@ -17,3 +17,15 @@ export const EVM_CHAIN_IDS = {
   zksync: 324,
   mantle: 5000,
 };
+
+/**
+ * All EVM chain names recognised by this CLI.
+ * Used for address-format validation (0x...) and ENS resolution gating.
+ * Import from here instead of defining an inline list per file.
+ */
+export const EVM_CHAINS = [
+  'ethereum', 'arbitrum', 'base', 'bnb', 'polygon', 'optimism',
+  'avalanche', 'linea', 'scroll', 'zksync', 'mantle', 'ronin',
+  'sei', 'plasma', 'sonic', 'unichain', 'monad', 'hyperevm', 'iotaevm',
+  'fantom', 'gnosis', 'blast',
+];
