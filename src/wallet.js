@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import * as readline from 'readline';
 import { base58 } from '@scure/base';
+import { keychainAvailable, keychainStore, keychainGet } from './keychain.js';
 
 // ============= Constants =============
 
@@ -200,24 +201,39 @@ function ensureWalletsDir() {
 }
 
 /**
- * Generate a cryptographically strong password and persist it to .credentials.
+ * Generate a cryptographically strong password and persist it.
  *
- * Security design (stateless, no daemon, no OS keychain):
- *   - 24 bytes = 192 bits of entropy (base64url). Brute force is not a viable attack.
- *   - File written at mode 0o600 (user read/write only). Group and world bits are off.
- *   - Risk profile: equivalent to any other plaintext secret in a 0600 dotfile
- *     (e.g. ~/.netrc, ~/.ssh/id_ed25519 without passphrase). Acceptable for local agent use.
- *   - Intentionally NOT stored in an OS keychain or daemon: avoids supply-chain and
- *     inter-process trust surface that outweighs the marginal benefit for this use case.
+ * Priority: OS keychain (preferred) > .credentials file (fallback with warning).
+ *
+ * Security notes:
+ *   - 24 bytes = 192 bits of entropy (base64url). Brute force is not viable.
+ *   - OS keychain: password never written to the local filesystem.
+ *   - .credentials fallback: written at mode 0o600 (user read/write only).
+ *     Risk: a process with same-user filesystem access can read both the
+ *     encrypted wallet and the password file.
  *   - Do NOT log the return value of this function or the content of .credentials.
- *     checkWallets() verifies file permissions at startup so misconfiguration is surfaced early.
  */
-function generateAndSavePassword() {
+async function generateAndSavePassword() {
   ensureWalletsDir();
   const password = crypto.randomBytes(24).toString('base64url');
+
+  // Try OS keychain first (preferred: password not on local filesystem)
+  if (keychainAvailable()) {
+    try {
+      await keychainStore(password);
+      return { password, backend: 'keychain', credPath: null, securityWarning: null };
+    } catch (_e) { /* intentional: fall through to .credentials */ }
+  }
+
+  // Fallback: write to .credentials
   const credPath = path.join(getWalletsDir(), '.credentials');
   fs.writeFileSync(credPath, `NANSEN_WALLET_PASSWORD=${password}\n`, { mode: 0o600 });
-  return { password, credPath };
+  return {
+    password,
+    backend: 'credentials-file',
+    credPath,
+    securityWarning: '.credentials is stored on the local filesystem alongside your encrypted wallet. A process with same-user access can read both. Use NANSEN_WALLET_PASSWORD env var or enable OS keychain for better security.',
+  };
 }
 
 function resolveTTY(deps = {}) {
@@ -383,12 +399,19 @@ export async function checkWallets(_deps = {}) {
     .filter(f => f.endsWith('.json') && f !== 'config.json');
   const walletCount = walletFiles.length;
 
+  let keychainInUse = false;
+  let keychainPassword = null;
+  try { keychainPassword = await keychainGet(); } catch (_e) { /* intentional */ }
+  if (keychainPassword) keychainInUse = true;
+
   let passwordSource = 'none';
   if (process.env.NANSEN_WALLET_PASSWORD) {
     passwordSource = 'env';
+  } else if (keychainInUse) {
+    passwordSource = 'keychain';
   } else {
     const credPath = path.join(getWalletsDir(), '.credentials');
-    if (fs.existsSync(credPath)) passwordSource = 'generated';
+    if (fs.existsSync(credPath)) passwordSource = 'credentials-file';
   }
 
   let permissionsOk = true;
@@ -422,7 +445,7 @@ export async function checkWallets(_deps = {}) {
     }
   } catch (_e) { /* intentional: .credentials may not exist (env var path) */ }
 
-  return { encrypted, permissionsOk, passwordSource, walletCount, issues };
+  return { encrypted, permissionsOk, passwordSource, keychainInUse, walletCount, issues };
 }
 
 /**
@@ -672,6 +695,8 @@ export function buildWalletCommands(deps = {}) {
           let password;
           let passwordSource;
           let credPath = null;
+          let securityWarning = null;
+          let passwordBackend = null;
 
           if (unsafeNoPassword) {
             if (!iUnderstand) {
@@ -709,24 +734,41 @@ export function buildWalletCommands(deps = {}) {
             const existingConfig = getWalletConfig();
             if (existingConfig.passwordHash) {
               // Existing encrypted wallets: resolve the existing password, never generate a new one
-              const credFilePath = path.join(getWalletsDir(), '.credentials');
-              let credContent;
-              try { credContent = fs.readFileSync(credFilePath, 'utf8'); } catch (_e) { /* intentional: missing .credentials treated as no password */ }
-              const credMatch = credContent?.match(/^NANSEN_WALLET_PASSWORD=(.+)$/m);
-              if (credMatch) {
-                password = credMatch[1];
-                passwordSource = 'generated';
-              } else {
-                log(JSON.stringify({ success: false, error: 'Password required for create', code: 'PASSWORD_REQUIRED', hint: 'Set NANSEN_WALLET_PASSWORD env var' }, null, 2));
-                exit(1);
-                return;
+              // Priority: keychain > .credentials file
+              let resolved = false;
+              try {
+                const kcPassword = await keychainGet();
+                if (kcPassword) {
+                  password = kcPassword;
+                  passwordSource = 'keychain';
+                  passwordBackend = 'keychain';
+                  resolved = true;
+                }
+              } catch (_e) { /* intentional */ }
+              if (!resolved) {
+                const credFilePath = path.join(getWalletsDir(), '.credentials');
+                let credContent;
+                try { credContent = fs.readFileSync(credFilePath, 'utf8'); } catch (_e) { /* intentional: missing .credentials treated as no password */ }
+                const credMatch = credContent?.match(/^NANSEN_WALLET_PASSWORD=(.+)$/m);
+                if (credMatch) {
+                  password = credMatch[1];
+                  passwordSource = 'credentials-file';
+                  passwordBackend = 'credentials-file';
+                  securityWarning = '.credentials is stored on the local filesystem alongside your encrypted wallet. A process with same-user access can read both. Use NANSEN_WALLET_PASSWORD env var or enable OS keychain for better security.';
+                } else {
+                  log(JSON.stringify({ success: false, error: 'Password required for create', code: 'PASSWORD_REQUIRED', hint: 'Set NANSEN_WALLET_PASSWORD env var' }, null, 2));
+                  exit(1);
+                  return;
+                }
               }
             } else {
               // No existing encrypted wallets: auto-generate a fresh password
-              const gen = generateAndSavePassword();
+              const gen = await generateAndSavePassword();
               password = gen.password;
               credPath = gen.credPath;
-              passwordSource = 'generated';
+              passwordBackend = gen.backend;
+              securityWarning = gen.securityWarning;
+              passwordSource = gen.backend === 'keychain' ? 'keychain' : 'credentials-file';
             }
           }
 
@@ -738,7 +780,9 @@ export function buildWalletCommands(deps = {}) {
                 name: result.name,
                 addresses: { evm: result.evm, solana: result.solana },
                 passwordSource,
+                passwordBackend: passwordBackend || passwordSource,
                 credentialsFile: credPath,
+                securityWarning,
               }, null, 2));
             } else {
               log(`\n✓ Wallet "${result.name}" created\n`);
@@ -750,9 +794,14 @@ export function buildWalletCommands(deps = {}) {
               log(`    Base: send USDC to ${result.evm}`);
               log(`    Solana: send USDC to ${result.solana}`);
               log('');
-              if (credPath) {
-                log(`  ℹ️  Password auto-generated. Credentials saved to: ${credPath}`);
-                log(`     Source this file or set NANSEN_WALLET_PASSWORD for future use.`);
+              if (passwordBackend === 'keychain') {
+                log('  Password stored in OS keychain (not written to disk).');
+              } else if (credPath) {
+                log(`  Password stored at: ${credPath}`);
+                log('  ⚠ Security notice: .credentials is on the local filesystem alongside your');
+                log('    encrypted wallet. Any process running as you can read both.');
+                log('    For better security: use NANSEN_WALLET_PASSWORD env var or enable OS keychain.');
+                log('    Do not sync ~/.nansen/ to cloud storage.');
               }
               if (password === null) {
                 log('  ⚠️  This is an UNENCRYPTED hot wallet — private keys are stored in plaintext on disk.');

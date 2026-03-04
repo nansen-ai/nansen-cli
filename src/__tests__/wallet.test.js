@@ -463,6 +463,7 @@ describe('checkWallets()', () => {
       encrypted: false,
       permissionsOk: true,
       passwordSource: 'none',
+      keychainInUse: false,
       walletCount: 0,
       issues: [],
     });
@@ -474,12 +475,12 @@ describe('checkWallets()', () => {
     expect(result.passwordSource).toBe('env');
   });
 
-  it('reports passwordSource: generated when .credentials file exists', async () => {
+  it('reports passwordSource: credentials-file when .credentials file exists', async () => {
     const walletsDir = path.join(tempDir, '.nansen', 'wallets');
     fs.mkdirSync(walletsDir, { recursive: true });
     fs.writeFileSync(path.join(walletsDir, '.credentials'), 'NANSEN_WALLET_PASSWORD=abc\n', { mode: 0o600 });
     const result = await checkWallets();
-    expect(result.passwordSource).toBe('generated');
+    expect(result.passwordSource).toBe('credentials-file');
   });
 
   it('reports permissionsOk: false and issues when config.json has bad perms', async () => {
@@ -615,7 +616,7 @@ describe('CLI create handler: password auto-generation', () => {
     expect(output.name).toBe('json-auto');
     expect(output.addresses.evm).toMatch(/^0x/);
     expect(output.addresses.solana).toBeTruthy();
-    expect(output.passwordSource).toBe('generated');
+    expect(output.passwordSource).toBe('credentials-file');
     expect(output.credentialsFile).toBeTruthy();
   });
 
@@ -836,5 +837,93 @@ describe('INSECURE_PERMISSIONS config.json rollback (Bug 2)', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('OS keychain integration', () => {
+  let savedPassword;
+
+  beforeEach(() => {
+    savedPassword = process.env.NANSEN_WALLET_PASSWORD;
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  afterEach(() => {
+    if (savedPassword !== undefined) process.env.NANSEN_WALLET_PASSWORD = savedPassword;
+    else delete process.env.NANSEN_WALLET_PASSWORD;
+    vi.restoreAllMocks();
+  });
+
+  it('generateAndSavePassword uses keychain when available', async () => {
+    const keychainMod = await import('../keychain.js');
+    vi.spyOn(keychainMod, 'keychainAvailable').mockReturnValue(true);
+    vi.spyOn(keychainMod, 'keychainStore').mockResolvedValue({ backend: 'keychain-macos' });
+
+    const logs = [];
+    const cmds = buildWalletCommands({ log: (m) => logs.push(m), isTTY: false });
+    await cmds.wallet(['create'], null, {}, { name: 'kc-wallet' });
+
+    const output = JSON.parse(logs[0]);
+    expect(output.success).toBe(true);
+    expect(output.passwordBackend).toBe('keychain');
+    expect(output.credentialsFile).toBeNull();
+    expect(output.securityWarning).toBeNull();
+
+    // .credentials should NOT exist
+    const credPath = path.join(tempDir, '.nansen', 'wallets', '.credentials');
+    expect(fs.existsSync(credPath)).toBe(false);
+  });
+
+  it('generateAndSavePassword falls back to .credentials when keychain fails', async () => {
+    const keychainMod = await import('../keychain.js');
+    vi.spyOn(keychainMod, 'keychainAvailable').mockReturnValue(true);
+    vi.spyOn(keychainMod, 'keychainStore').mockRejectedValue(new Error('Keychain locked'));
+
+    const logs = [];
+    const cmds = buildWalletCommands({ log: (m) => logs.push(m), isTTY: false });
+    await cmds.wallet(['create'], null, {}, { name: 'fallback-wallet' });
+
+    const output = JSON.parse(logs[0]);
+    expect(output.success).toBe(true);
+    expect(output.passwordBackend).toBe('credentials-file');
+    expect(output.credentialsFile).toBeTruthy();
+    expect(output.securityWarning).toContain('.credentials');
+  });
+
+  it('JSON output includes passwordBackend and securityWarning fields', async () => {
+    const keychainMod = await import('../keychain.js');
+    vi.spyOn(keychainMod, 'keychainAvailable').mockReturnValue(false);
+
+    const logs = [];
+    const cmds = buildWalletCommands({ log: (m) => logs.push(m), isTTY: false });
+    await cmds.wallet(['create'], null, {}, { name: 'field-test' });
+
+    const output = JSON.parse(logs[0]);
+    expect(output).toHaveProperty('passwordBackend');
+    expect(output).toHaveProperty('securityWarning');
+    expect(output.passwordBackend).toBe('credentials-file');
+    expect(output.securityWarning).toContain('filesystem');
+  });
+
+  it('checkWallets returns keychainInUse: true when keychain has password', async () => {
+    const keychainMod = await import('../keychain.js');
+    vi.spyOn(keychainMod, 'keychainGet').mockResolvedValue('stored-password');
+
+    const result = await checkWallets();
+    expect(result.keychainInUse).toBe(true);
+    expect(result.passwordSource).toBe('keychain');
+  });
+
+  it('checkWallets returns keychainInUse: false when only .credentials', async () => {
+    const keychainMod = await import('../keychain.js');
+    vi.spyOn(keychainMod, 'keychainGet').mockResolvedValue(null);
+
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.mkdirSync(walletsDir, { recursive: true });
+    fs.writeFileSync(path.join(walletsDir, '.credentials'), 'NANSEN_WALLET_PASSWORD=abc\n', { mode: 0o600 });
+
+    const result = await checkWallets();
+    expect(result.keychainInUse).toBe(false);
+    expect(result.passwordSource).toBe('credentials-file');
   });
 });
