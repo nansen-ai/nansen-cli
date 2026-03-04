@@ -39,7 +39,7 @@ export class PrivyClient {
     this.baseUrl = PRIVY_BASE_URL;
   }
 
-  async _request(method, path, body = null) {
+  async _request(method, endpoint, body = null) {
     const auth = Buffer.from(`${this.appId}:${this.appSecret}`).toString(
       "base64"
     );
@@ -52,15 +52,18 @@ export class PrivyClient {
     const opts = { method, headers };
     if (body) opts.body = JSON.stringify(body);
 
-    const response = await fetch(`${this.baseUrl}${path}`, opts);
-    const data = await response.json();
+    const response = await fetch(`${this.baseUrl}${endpoint}`, opts);
 
     if (!response.ok) {
-      const msg = data.message || data.error || `Privy API error: ${response.status}`;
+      let msg = `Privy API error: ${response.status}`;
+      try {
+        const data = await response.json();
+        msg = data.message || data.error || msg;
+      } catch { /* non-JSON error response (e.g. 502 from CDN) */ }
       throw new Error(msg);
     }
 
-    return data;
+    return await response.json();
   }
 
   async createWallet(chainType = "ethereum") {

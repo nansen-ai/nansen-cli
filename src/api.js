@@ -538,6 +538,13 @@ export class NansenAPI {
                   });
                   if (paidResponse.ok) {
                     console.error(`[x402] Paid via Privy wallet ${defaultWalletName} (${network})`);
+                    try {
+                      const { checkX402Balance } = await import('./x402.js');
+                      const balance = await checkX402Balance(network);
+                      if (balance !== null && balance < 0.25) {
+                        console.error(`[x402] Warning: USDC balance low ($${balance.toFixed(2)}). Fund your wallet to avoid interruptions.`);
+                      }
+                    } catch { /* balance check is best-effort */ }
                     return await paidResponse.json();
                   }
                 }
