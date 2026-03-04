@@ -485,6 +485,14 @@ describe('checkWallets()', () => {
     const result = await checkWallets();
     expect(result.encrypted).toBe(true);
   });
+
+  it('reports issue when config.json exists but is malformed', async () => {
+    const configPath = path.join(tempDir, '.nansen', 'wallets', 'config.json');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, 'not valid json', { mode: 0o600 });
+    const result = await checkWallets();
+    expect(result.issues.some(i => i.includes('could not be parsed'))).toBe(true);
+  });
 });
 
 describe('CLI create handler: password auto-generation', () => {
