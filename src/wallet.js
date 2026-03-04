@@ -207,6 +207,10 @@ function generateAndSavePassword() {
   return { password, credPath };
 }
 
+function resolveTTY(deps = {}) {
+  return deps.isTTY !== undefined ? deps.isTTY : process.stdout.isTTY;
+}
+
 function warnIfInsecurePerms(filePath) {
   try {
     const mode = fs.statSync(filePath).mode & 0o777;
@@ -270,8 +274,7 @@ function hashPassword(password) {
 
 function getPassword(deps = {}, context = 'operation') {
   if (process.env.NANSEN_WALLET_PASSWORD) return process.env.NANSEN_WALLET_PASSWORD;
-  const isTTY = deps.isTTY !== undefined ? deps.isTTY : process.stdout.isTTY;
-  if (!isTTY) {
+  if (!resolveTTY(deps)) {
     const err = {
       success: false,
       error: `Password required for ${context}`,
@@ -350,14 +353,15 @@ export function listWallets() {
  */
 export async function checkWallets(deps = {}) {
   const issues = [];
-  const listResult = listWallets();
-  const walletCount = listResult.wallets.length;
+  ensureWalletsDir();
 
-  let encrypted = false;
-  try {
-    const config = getWalletConfig();
-    encrypted = !!(config.passwordHash);
-  } catch {}
+  let config = { defaultWallet: null, passwordHash: null };
+  try { config = getWalletConfig(); } catch {}
+
+  const encrypted = !!(config.passwordHash);
+  const walletFiles = fs.readdirSync(getWalletsDir())
+    .filter(f => f.endsWith('.json') && f !== 'config.json');
+  const walletCount = walletFiles.length;
 
   let passwordSource = 'none';
   if (process.env.NANSEN_WALLET_PASSWORD) {
@@ -369,22 +373,21 @@ export async function checkWallets(deps = {}) {
 
   let permissionsOk = true;
   const configPath = getWalletConfigPath();
-  if (fs.existsSync(configPath)) {
+  try {
     const st = fs.statSync(configPath);
     if ((st.mode & 0o077) !== 0) {
       permissionsOk = false;
       issues.push(`config.json permissions insecure: ${(st.mode & 0o777).toString(8)}`);
     }
-  }
-  for (const w of listResult.wallets) {
-    const wPath = path.join(getWalletsDir(), `${w.name}.json`);
-    if (fs.existsSync(wPath)) {
-      const st = fs.statSync(wPath);
+  } catch {}
+  for (const f of walletFiles) {
+    try {
+      const st = fs.statSync(path.join(getWalletsDir(), f));
       if ((st.mode & 0o077) !== 0) {
         permissionsOk = false;
-        issues.push(`${w.name}.json permissions insecure: ${(st.mode & 0o777).toString(8)}`);
+        issues.push(`${f} permissions insecure: ${(st.mode & 0o777).toString(8)}`);
       }
-    }
+    } catch {}
   }
   if (encrypted && passwordSource === 'none') {
     issues.push('Wallets are encrypted but no password source found (NANSEN_WALLET_PASSWORD not set, no .credentials file)');
@@ -401,9 +404,10 @@ export function createWallet(name, password, options = {}) {
 
   ensureWalletsDir();
 
-  // Prerequisites check: prevent accidental multi-wallet creation
-  const existing = listWallets();
-  if (existing.wallets.length > 0 && !force) {
+  // Prerequisites check: prevent accidental multi-wallet creation (lightweight count, no JSON reads)
+  const existingFiles = fs.readdirSync(getWalletsDir())
+    .filter(f => f.endsWith('.json') && f !== 'config.json');
+  if (existingFiles.length > 0 && !force) {
     throw Object.assign(new Error('Wallets already exist. Use --force to add another.'), {
       code: 'WALLETS_EXIST',
       structured: {
@@ -411,7 +415,7 @@ export function createWallet(name, password, options = {}) {
         error: 'Wallets already exist. Use --force to add another.',
         code: 'WALLETS_EXIST',
         hint: 'Pass --force to proceed',
-        walletCount: existing.wallets.length,
+        walletCount: existingFiles.length,
       },
     });
   }
@@ -604,7 +608,7 @@ export function getDefaultAddress(chainType = 'evm') {
  * Build wallet command handlers for integration into CLI.
  */
 export function buildWalletCommands(deps = {}) {
-  const { log = console.log, promptFn: _promptFn, exit = process.exit } = deps;
+  const { log = console.log, exit = process.exit } = deps;
 
   return {
     'wallet': async (args, apiInstance, flags, options) => {
@@ -616,8 +620,8 @@ export function buildWalletCommands(deps = {}) {
           const force = !!flags.force;
           const unsafeNoPassword = !!flags['unsafe-no-password'];
           const iUnderstand = !!flags['i-understand-this-is-unsafe'];
-          const isTTY = deps.isTTY !== undefined ? deps.isTTY : process.stdout.isTTY;
-          const jsonMode = !!(flags.json || !isTTY);
+          const isTTY = resolveTTY(deps);
+          const jsonMode = flags.json || !isTTY;
 
           let password;
           let passwordSource;
@@ -660,17 +664,12 @@ export function buildWalletCommands(deps = {}) {
             if (existingConfig.passwordHash) {
               // Existing encrypted wallets: resolve the existing password, never generate a new one
               const credFilePath = path.join(getWalletsDir(), '.credentials');
-              if (fs.existsSync(credFilePath)) {
-                const content = fs.readFileSync(credFilePath, 'utf8');
-                const match = content.match(/^NANSEN_WALLET_PASSWORD=(.+)$/m);
-                if (match) {
-                  password = match[1].trim();
-                  passwordSource = 'generated';
-                } else {
-                  log(JSON.stringify({ success: false, error: 'Password required for create', code: 'PASSWORD_REQUIRED', hint: 'Set NANSEN_WALLET_PASSWORD env var' }, null, 2));
-                  exit(1);
-                  return;
-                }
+              let credContent;
+              try { credContent = fs.readFileSync(credFilePath, 'utf8'); } catch {}
+              const credMatch = credContent?.match(/^NANSEN_WALLET_PASSWORD=(.+)$/m);
+              if (credMatch) {
+                password = credMatch[1].trim();
+                passwordSource = 'generated';
               } else {
                 log(JSON.stringify({ success: false, error: 'Password required for create', code: 'PASSWORD_REQUIRED', hint: 'Set NANSEN_WALLET_PASSWORD env var' }, null, 2));
                 exit(1);
