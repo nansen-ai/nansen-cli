@@ -655,11 +655,34 @@ export function buildWalletCommands(deps = {}) {
             }
             passwordSource = 'prompt';
           } else {
-            // Non-TTY, no env var: auto-generate and save to .credentials
-            const gen = generateAndSavePassword();
-            password = gen.password;
-            credPath = gen.credPath;
-            passwordSource = 'generated';
+            // Non-TTY, no env var
+            const existingConfig = getWalletConfig();
+            if (existingConfig.passwordHash) {
+              // Existing encrypted wallets: resolve the existing password, never generate a new one
+              const credFilePath = path.join(getWalletsDir(), '.credentials');
+              if (fs.existsSync(credFilePath)) {
+                const content = fs.readFileSync(credFilePath, 'utf8');
+                const match = content.match(/^NANSEN_WALLET_PASSWORD=(.+)$/m);
+                if (match) {
+                  password = match[1].trim();
+                  passwordSource = 'generated';
+                } else {
+                  log(JSON.stringify({ success: false, error: 'Password required for create', code: 'PASSWORD_REQUIRED', hint: 'Set NANSEN_WALLET_PASSWORD env var' }, null, 2));
+                  exit(1);
+                  return;
+                }
+              } else {
+                log(JSON.stringify({ success: false, error: 'Password required for create', code: 'PASSWORD_REQUIRED', hint: 'Set NANSEN_WALLET_PASSWORD env var' }, null, 2));
+                exit(1);
+                return;
+              }
+            } else {
+              // No existing encrypted wallets: auto-generate a fresh password
+              const gen = generateAndSavePassword();
+              password = gen.password;
+              credPath = gen.credPath;
+              passwordSource = 'generated';
+            }
           }
 
           try {
@@ -761,7 +784,11 @@ export function buildWalletCommands(deps = {}) {
             log(`    Private Key: ${result.solana.privateKey}`);
             log('');
           } catch (err) {
-            log(`❌ ${err.message}`);
+            if (err.structured) {
+              log(JSON.stringify(err.structured, null, 2));
+            } else {
+              log(`❌ ${err.message}`);
+            }
             exit(1);
           }
         },
@@ -799,7 +826,11 @@ export function buildWalletCommands(deps = {}) {
               log(`  New default: ${result.newDefault}`);
             }
           } catch (err) {
-            log(`❌ ${err.message}`);
+            if (err.structured) {
+              log(JSON.stringify(err.structured, null, 2));
+            } else {
+              log(`❌ ${err.message}`);
+            }
             exit(1);
           }
         },

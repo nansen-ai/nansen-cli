@@ -500,6 +500,54 @@ describe('CLI create handler: password auto-generation', () => {
     else delete process.env.NANSEN_WALLET_PASSWORD;
   });
 
+  it('--force with existing encrypted wallets reads .credentials, does not overwrite it', async () => {
+    // Create first wallet, which auto-generates .credentials
+    const logs1 = [];
+    const cmds = buildWalletCommands({ log: (m) => logs1.push(m), isTTY: false });
+    await cmds.wallet(['create'], null, {}, { name: 'first' });
+
+    const credPath = path.join(tempDir, '.nansen', 'wallets', '.credentials');
+    const credContentBefore = fs.readFileSync(credPath, 'utf8');
+
+    // Create second wallet with --force; should reuse existing password from .credentials
+    const logs2 = [];
+    let exitCode = 0;
+    const cmds2 = buildWalletCommands({
+      log: (m) => logs2.push(m),
+      isTTY: false,
+      exit: (code) => { exitCode = code; },
+    });
+    await cmds2.wallet(['create'], null, { force: true }, { name: 'second' });
+
+    expect(exitCode).toBe(0);
+    const output = JSON.parse(logs2[0]);
+    expect(output.success).toBe(true);
+    expect(output.name).toBe('second');
+    // .credentials must not be overwritten
+    expect(fs.readFileSync(credPath, 'utf8')).toBe(credContentBefore);
+  });
+
+  it('--force with existing encrypted wallets and no .credentials fails with PASSWORD_REQUIRED', async () => {
+    // Create first wallet with env var (no .credentials generated)
+    process.env.NANSEN_WALLET_PASSWORD = 'testpassword123!!';
+    createWallet('first', 'testpassword123!!');
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    const logs = [];
+    let exitCode = 0;
+    const cmds = buildWalletCommands({
+      log: (m) => logs.push(m),
+      isTTY: false,
+      exit: (code) => { exitCode = code; },
+    });
+    await cmds.wallet(['create'], null, { force: true }, { name: 'second' });
+
+    expect(exitCode).toBe(1);
+    const parsed = JSON.parse(logs[0]);
+    expect(parsed.success).toBe(false);
+    expect(parsed.code).toBe('PASSWORD_REQUIRED');
+  });
+
   it('auto-generates .credentials when no TTY and no env var', async () => {
     const logs = [];
     const cmds = buildWalletCommands({ log: (m) => logs.push(m), isTTY: false });
@@ -563,7 +611,7 @@ describe('CLI handler: no-TTY hard fail for export/delete', () => {
     else delete process.env.NANSEN_WALLET_PASSWORD;
   });
 
-  it('export fails with password error when no TTY and no env var', async () => {
+  it('export fails with structured JSON PASSWORD_REQUIRED when no TTY and no env var', async () => {
     const logs = [];
     let exitCode;
     const cmds = buildWalletCommands({
@@ -573,10 +621,13 @@ describe('CLI handler: no-TTY hard fail for export/delete', () => {
     });
     await cmds.wallet(['export'], null, {}, { name: 'secure-wallet' });
     expect(exitCode).toBe(1);
-    expect(logs.join('')).toContain('Password required for export');
+    const parsed = JSON.parse(logs[0]);
+    expect(parsed.success).toBe(false);
+    expect(parsed.code).toBe('PASSWORD_REQUIRED');
+    expect(parsed.error).toContain('export');
   });
 
-  it('delete fails with password error when no TTY and no env var', async () => {
+  it('delete fails with structured JSON PASSWORD_REQUIRED when no TTY and no env var', async () => {
     const logs = [];
     let exitCode;
     const cmds = buildWalletCommands({
@@ -586,7 +637,10 @@ describe('CLI handler: no-TTY hard fail for export/delete', () => {
     });
     await cmds.wallet(['delete'], null, {}, { name: 'secure-wallet' });
     expect(exitCode).toBe(1);
-    expect(logs.join('')).toContain('Password required for delete');
+    const parsed = JSON.parse(logs[0]);
+    expect(parsed.success).toBe(false);
+    expect(parsed.code).toBe('PASSWORD_REQUIRED');
+    expect(parsed.error).toContain('delete');
   });
 
   it('export succeeds when NANSEN_WALLET_PASSWORD is set', async () => {
