@@ -29,6 +29,7 @@ import {
   parseAddressList
 } from '../cli.js';
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode } from '../api.js';
+import { EVM_CHAINS } from '../chain-ids.js';
 import * as fs from 'fs';
 import * as _path from 'path';
 
@@ -1264,6 +1265,12 @@ describe('SCHEMA', () => {
     expect(SCHEMA.chains).toContain('solana');
     expect(SCHEMA.chains).toContain('base');
     expect(SCHEMA.chains.length).toBeGreaterThan(10);
+  });
+
+  it('schema.json chains should be a superset of EVM_CHAINS', () => {
+    for (const chain of EVM_CHAINS) {
+      expect(SCHEMA.chains, `EVM_CHAINS has "${chain}" but schema.json does not`).toContain(chain);
+    }
   });
 
   it('should list smart money labels', () => {
