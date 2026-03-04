@@ -9,14 +9,57 @@
  * Endpoint: https://api.nansen.ai/smart-alert/v3/
  */
 
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { NansenError, ErrorCode } from './api.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const { version: packageVersion } = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'),
+);
+
 // ============= Alert API client =============
 
+/**
+ * Map HTTP status codes to NansenError error codes.
+ * Mirrors the private statusToErrorCode in api.js.
+ */
+function statusToAlertErrorCode(status, data = {}) {
+  const msg = (data?.message || data?.error || '').toLowerCase();
+  switch (status) {
+    case 400:
+    case 422: return ErrorCode.INVALID_PARAMS;
+    case 401: return ErrorCode.UNAUTHORIZED;
+    case 403: return msg.includes('credit') ? ErrorCode.CREDITS_EXHAUSTED : ErrorCode.FORBIDDEN;
+    case 404: return ErrorCode.NOT_FOUND;
+    case 429: return ErrorCode.RATE_LIMITED;
+    case 500:
+    case 502: return ErrorCode.SERVER_ERROR;
+    case 503: return ErrorCode.SERVICE_UNAVAILABLE;
+    case 504: return ErrorCode.TIMEOUT;
+    default:
+      if (status >= 500) return ErrorCode.SERVER_ERROR;
+      if (status >= 400) return ErrorCode.INVALID_PARAMS;
+      return ErrorCode.UNKNOWN;
+  }
+}
+
+/**
+ * Make an authenticated request to the smart-alert API.
+ * Uses the same apiKey and baseUrl as all other nansen commands.
+ * Throws NansenError on failure (consistent with NansenAPI error contract).
+ *
+ * Override base URL for local testing: NANSEN_ALERT_BASE_URL=http://localhost:5001
+ */
 async function alertRequest(api, method, urlPath, body = null) {
   if (!api.apiKey) {
-    throw new Error('No API key configured. Run: nansen login --api-key <key>');
+    throw new NansenError(
+      'No API key configured. Run: nansen login --api-key <key>',
+      ErrorCode.UNAUTHORIZED,
+    );
   }
 
-  // Allow override for local testing: NANSEN_ALERT_BASE_URL=http://localhost:5001
   const base = process.env.NANSEN_ALERT_BASE_URL || api.baseUrl;
   const url = `${base}/smart-alert/v3${urlPath}`;
 
@@ -25,21 +68,26 @@ async function alertRequest(api, method, urlPath, body = null) {
     headers: {
       'Content-Type': 'application/json',
       'apikey': api.apiKey,
+      'X-Client-Type': 'nansen-cli',
+      'X-Client-Version': packageVersion,
     },
   };
   if (body !== null) {
     opts.body = JSON.stringify(body);
   }
 
-  const res = await fetch(url, opts);
   let data;
-  try { data = await res.json(); } catch { data = null; }
+  let res;
+  try {
+    res = await fetch(url, opts);
+    try { data = await res.json(); } catch { data = null; }
+  } catch (err) {
+    throw new NansenError(`Network error: ${err.message}`, ErrorCode.SERVICE_UNAVAILABLE);
+  }
 
   if (!res.ok) {
     const msg = data?.message || data?.error || `HTTP ${res.status}`;
-    const err = new Error(msg);
-    err.status = res.status;
-    throw err;
+    throw new NansenError(msg, statusToAlertErrorCode(res.status, data), res.status, data);
   }
   return data;
 }
@@ -67,27 +115,34 @@ function buildChannels(flags) {
   return channels;
 }
 
-function buildSmFlowsPayload(flags) {
+/**
+ * Build a threshold object. Rejects NaN values explicitly.
+ * @throws {NansenError} if a non-numeric string is passed
+ */
+function toThreshold(min, max) {
+  const t = {};
+  if (min !== undefined) {
+    const val = parseFloat(min);
+    if (isNaN(val)) throw new NansenError(`Invalid number: ${min}`, ErrorCode.INVALID_PARAMS);
+    t.min = val;
+  }
+  if (max !== undefined) {
+    const val = parseFloat(max);
+    if (isNaN(val)) throw new NansenError(`Invalid number: ${max}`, ErrorCode.INVALID_PARAMS);
+    t.max = val;
+  }
+  return t;
+}
+
+export function buildSmFlowsPayload(flags) {
   const chains = [].concat(flags.chain || 'ethereum');
   const timeWindow = TIME_WINDOW_MAP[flags.timewindow || '1d'] || '1d';
 
-  const min24h = flags['netflow-24h-min'];
-  const max24h = flags['netflow-24h-max'];
-  const min1h  = flags['netflow-1h-min'];
-  const min7d  = flags['netflow-7d-min'];
-
   const name = flags.name || [
     `SM flows · ${chains.join('+')}`,
-    min24h && `netflow 24h > ${usd(min24h)}`,
-    min1h  && `netflow 1h > ${usd(min1h)}`,
+    flags['netflow-24h-min'] && `netflow 24h > ${usd(flags['netflow-24h-min'])}`,
+    flags['netflow-1h-min']  && `netflow 1h > ${usd(flags['netflow-1h-min'])}`,
   ].filter(Boolean).join(' · ');
-
-  const toThreshold = (min, max) => {
-    const t = {};
-    if (min !== undefined) t.min = parseFloat(min);
-    if (max !== undefined) t.max = parseFloat(max);
-    return t;
-  };
 
   return {
     name,
@@ -98,9 +153,9 @@ function buildSmFlowsPayload(flags) {
     data: {
       chains,
       events: ['sm-token-flows'],
-      netflow_1h: toThreshold(min1h),
-      netflow_1d: toThreshold(min24h, max24h),
-      netflow_7d: toThreshold(min7d),
+      netflow_1h: toThreshold(flags['netflow-1h-min']),
+      netflow_1d: toThreshold(flags['netflow-24h-min'], flags['netflow-24h-max']),
+      netflow_7d: toThreshold(flags['netflow-7d-min']),
       inflow_1h: {}, inflow_1d: {}, inflow_7d: {},
       outflow_1h: {}, outflow_1d: {}, outflow_7d: {},
       inclusion: {}, exclusion: {},
@@ -110,13 +165,13 @@ function buildSmFlowsPayload(flags) {
 
 // ============= Table formatter =============
 
-function alertsTable(alerts) {
+export function alertsTable(alerts) {
   if (!alerts?.length) return '(no alerts found)';
 
   const rows = alerts.map(a => ({
-    id:       (a.id       || '—').slice(0, 8),
-    name:     (a.name     || '—').slice(0, 32),
-    type:     a.type      || '—',
+    id:       String(a.id      || '—').slice(0, 8),
+    name:     String(a.name    || '—').slice(0, 32),
+    type:     String(a.type    || '—'),
     enabled:  a.isEnabled ? '✓' : '✗',
     channels: (a.channels || []).map(c => c.type).join(', ') || '—',
     created:  a.createdAt ? new Date(a.createdAt).toISOString().slice(0, 10) : '—',
@@ -225,7 +280,6 @@ export function buildAlertCommands(deps = {}) {
           log(CREATE_HELP);
           return { type: 'help', command: 'alert create' };
         }
-        // Other subcommands fall through to their own error/help output
       }
 
       // ── top-level help ─────────────────────────────────────────────────
@@ -236,7 +290,6 @@ export function buildAlertCommands(deps = {}) {
 
       // ── create ─────────────────────────────────────────────────────────
       if (sub === 'create') {
-
         const type = (flags.type || flags.t || 'sm-flows').toLowerCase();
 
         if (type !== 'sm-flows' && type !== 'sm-token-flows') {
@@ -250,12 +303,18 @@ export function buildAlertCommands(deps = {}) {
           errorOutput('Error: at least one delivery channel is required.');
           errorOutput('  --telegram <chat-id>  |  --slack <webhook>  |  --discord <webhook>');
           errorOutput('');
-          errorOutput('Telegram setup: add @NansenBot to your chat, then use that chat\'s ID.');
+          errorOutput("Telegram setup: add @NansenBot to your chat, then use that chat's ID.");
           errorOutput('Run: nansen alert --help');
           return { type: 'error', error: 'no channel' };
         }
 
-        const payload = buildSmFlowsPayload(flags);
+        let payload;
+        try {
+          payload = buildSmFlowsPayload(flags);
+        } catch (err) {
+          errorOutput(`Error: ${err.message}`);
+          return { type: 'error', error: err.message };
+        }
 
         try {
           const result = await alertRequest(api, 'POST', '/', payload);
@@ -278,7 +337,7 @@ export function buildAlertCommands(deps = {}) {
           return { type: 'alert-created', data: result };
         } catch (err) {
           errorOutput(`Error creating alert: ${err.message}`);
-          if (err.status === 401 || err.status === 403) {
+          if (err.code === ErrorCode.UNAUTHORIZED || err.status === 401 || err.status === 403) {
             errorOutput('  Check your API key: nansen login --api-key <key>');
           }
           return { type: 'error', error: err.message };

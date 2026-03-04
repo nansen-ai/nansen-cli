@@ -1688,7 +1688,7 @@
             },
             "telegram": {
               "type": "string",
-              "description": "Telegram chat ID \u2014 @NansenBot must be added to the chat first"
+              "description": "Telegram chat ID - @NansenBot must be added to the chat first"
             },
             "slack": {
               "type": "string",
