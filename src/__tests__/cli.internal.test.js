@@ -77,6 +77,20 @@ describe('parseArgs', () => {
     expect(result.flags.verbose).toBe(true);
     expect(result.flags.debug).toBe(true);
   });
+
+  it('wallet boolean flags are not consumed as option values when followed by a positional', () => {
+    // Regression: --force, --json, --unsafe-no-password, --i-understand-this-is-unsafe must be
+    // treated as booleans even when the next token looks like a value (doesn't start with '-').
+    const result = parseArgs(['wallet', 'create', '--force', '--json', '--unsafe-no-password', '--i-understand-this-is-unsafe']);
+    expect(result.flags['force']).toBe(true);
+    expect(result.flags['json']).toBe(true);
+    expect(result.flags['unsafe-no-password']).toBe(true);
+    expect(result.flags['i-understand-this-is-unsafe']).toBe(true);
+    // The wallet name ('somename') following --force must not be consumed as force's value
+    const r2 = parseArgs(['wallet', 'create', '--force', 'somename']);
+    expect(r2.flags['force']).toBe(true);
+    expect(r2._).toContain('somename');
+  });
 });
 
 describe('formatValue', () => {
