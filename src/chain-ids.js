@@ -14,7 +14,6 @@ export const EVM_CHAIN_IDS = {
   bnb: 56,
   linea: 59144,
   scroll: 534352,
-  zksync: 324,
   mantle: 5000,
 };
 
@@ -25,6 +24,6 @@ export const EVM_CHAIN_IDS = {
  */
 export const EVM_CHAINS = [
   'ethereum', 'arbitrum', 'base', 'bnb', 'polygon', 'optimism',
-  'avalanche', 'linea', 'scroll', 'zksync', 'mantle', 'ronin',
-  'sei', 'plasma', 'sonic', 'unichain', 'monad', 'hyperevm', 'iotaevm',
+  'avalanche', 'linea', 'scroll', 'mantle', 'ronin',
+  'sei', 'plasma', 'sonic', 'monad', 'hyperevm', 'iotaevm',
 ];
