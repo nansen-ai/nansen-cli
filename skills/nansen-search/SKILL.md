@@ -36,7 +36,7 @@ nansen research search "bonk" --type token --fields address,name,symbol,chain
 
 - Search is case-insensitive.
 - Use `--type token` or `--type entity` to narrow results.
-- After getting an address, use `nansen-token` or `nansen-profiler` for full analysis.
+- After getting an address, use workflow skills like `nansen-token-analysis` or `nansen-wallet-analysis` for full analysis.
 - For agent self-discovery: `nansen schema` returns the full JSON schema of every command and return field.
 
 ## Flags
