@@ -170,8 +170,8 @@ describe('Supported Chains Coverage', () => {
   const DOCUMENTED_CHAINS = [
     'ethereum', 'solana', 'base', 'bnb', 'arbitrum',
     'polygon', 'optimism', 'avalanche', 'linea', 'scroll',
-    'zksync', 'mantle', 'ronin', 'sei', 'plasma',
-    'sonic', 'unichain', 'monad', 'hyperevm', 'iotaevm'
+    'mantle', 'ronin', 'sei', 'plasma',
+    'sonic', 'monad', 'hyperevm', 'iotaevm'
   ];
 
   it('should document all supported chains', () => {
@@ -179,7 +179,7 @@ describe('Supported Chains Coverage', () => {
     expect(DOCUMENTED_CHAINS).toContain('ethereum');
     expect(DOCUMENTED_CHAINS).toContain('solana');
     expect(DOCUMENTED_CHAINS).toContain('base');
-    expect(DOCUMENTED_CHAINS.length).toBeGreaterThanOrEqual(20);
+    expect(DOCUMENTED_CHAINS.length).toBeGreaterThanOrEqual(18);
     
     console.log(`\n🔗 Supported Chains: ${DOCUMENTED_CHAINS.length}`);
     console.log(`   ${DOCUMENTED_CHAINS.join(', ')}`);

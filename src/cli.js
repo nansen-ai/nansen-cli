@@ -686,7 +686,7 @@ EXAMPLES:
   nansen research profiler balance --address 0x... --chain ethereum
   nansen trade quote --chain base --from ETH --to USDC --amount 1
 
-Research chains: ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, linea, scroll, zksync, mantle, ronin, sei, plasma, sonic, unichain, monad, hyperevm, iotaevm
+Research chains: ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, linea, scroll, mantle, ronin, sei, plasma, sonic, monad, hyperevm, iotaevm
 Trade chains: solana, base
 Labels: Fund, Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader
 
