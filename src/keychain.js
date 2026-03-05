@@ -1,7 +1,7 @@
 /**
  * Nansen CLI - Password Persistence
  * Stores/retrieves the wallet password, preferring the native OS credential
- * store and falling back to an encrypted-at-rest credentials file.
+ * store and falling back to a base64-encoded credentials file (not encrypted).
  *
  * Resolution order (read):
  *   1. NANSEN_WALLET_PASSWORD env var
@@ -33,6 +33,9 @@ function getCredentialsPath() {
 function keychainStore(password) {
   try {
     if (process.platform === 'darwin') {
+      // macOS `security` CLI requires -w <password> as argv — no stdin mode.
+      // Unlike secret-tool, omitting the value prompts from the TTY, not stdin.
+      // Exposure in process listings is brief (sub-second, execFileSync is synchronous).
       execFileSync('/usr/bin/security', [
         'add-generic-password',
         '-s', SERVICE,
