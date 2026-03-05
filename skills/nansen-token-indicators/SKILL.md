@@ -11,4 +11,4 @@ nansen research token indicators --token $TOKEN --chain $CHAIN
 ```
 score: "bullish"/"bearish"/"neutral"/"medium"/"low". signal_percentile > 70 = historically significant.
 Count bullish reward vs bearish risk indicators. Any high-percentile risk = caution regardless.
-Native tokens (SOL, ETH) return empty indicators with no error — use ERC-20/SPL contract addresses. Works on ethereum, solana, base, bnb.
+Some tokens may return no indicators with no error — not just native tokens. Check for empty result before interpreting. Works on ethereum, solana, base, bnb.
