@@ -302,13 +302,16 @@ function hashPassword(password) {
 // ============= Prompt Helper =============
 
 async function getPassword(deps = {}, context = 'operation') {
-  // Try OS keychain
+  // Try OS keychain (managed storage, preferred)
   try {
     const kcPassword = await keychainGet();
     if (kcPassword) return kcPassword;
   } catch (_e) { /* intentional */ }
 
-  // Try .credentials file
+  // Try env var (user-provided override for CI/scripts)
+  if (process.env.NANSEN_WALLET_PASSWORD) return process.env.NANSEN_WALLET_PASSWORD;
+
+  // Try .credentials file (auto-generated fallback)
   try {
     const credFilePath = path.join(getWalletsDir(), '.credentials');
     const credContent = fs.readFileSync(credFilePath, 'utf8');
@@ -322,7 +325,7 @@ async function getPassword(deps = {}, context = 'operation') {
       success: false,
       error: `Password required for ${context}`,
       code: 'PASSWORD_REQUIRED',
-      hint: 'Store password in OS keychain or .credentials file',
+      hint: 'Set NANSEN_WALLET_PASSWORD env var or store password in OS keychain',
     };
     throw Object.assign(new Error(err.error), { structured: err });
   }
@@ -446,7 +449,7 @@ export async function checkWallets(_deps = {}) {
     } catch (_e) { /* intentional: file may be removed between listing and stat */ }
   }
   if (encrypted && passwordSource === 'none') {
-    issues.push('Wallets are encrypted but no password source found (NANSEN_WALLET_PASSWORD not set, no .credentials file)');
+    issues.push('Wallets are encrypted but no password source found (no keychain entry, NANSEN_WALLET_PASSWORD not set, no .credentials file)');
   }
 
   // Check .credentials permissions — it holds the plaintext password and must be user-only (0o600)

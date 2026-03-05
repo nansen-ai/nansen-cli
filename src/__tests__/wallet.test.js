@@ -685,6 +685,17 @@ describe('CLI handler: no-TTY hard fail for export/delete', () => {
     expect(parsed.error).toContain('delete');
   });
 
+  it('export succeeds when NANSEN_WALLET_PASSWORD env var is set (no TTY)', async () => {
+    process.env.NANSEN_WALLET_PASSWORD = PASSWORD;
+    const logs = [];
+    const cmds = buildWalletCommands({
+      log: (m) => logs.push(m),
+      isTTY: false,
+    });
+    await cmds.wallet(['export'], null, {}, { name: 'secure-wallet' });
+    expect(logs.join('')).toContain('Private keys');
+  });
+
   it('export succeeds when password is in .credentials file (no TTY, no env var)', async () => {
     const walletsDir = path.join(tempDir, '.nansen', 'wallets');
     fs.writeFileSync(path.join(walletsDir, '.credentials'), `NANSEN_WALLET_PASSWORD=${PASSWORD}\n`, { mode: 0o600 });
