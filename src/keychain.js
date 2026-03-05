@@ -154,9 +154,8 @@ function credentialsFileWrite(password) {
 function credentialsFileDelete() {
   try {
     const filePath = getCredentialsPath();
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
+    if (!fs.existsSync(filePath)) return false;
+    fs.unlinkSync(filePath);
     return true;
   } catch {
     return false;

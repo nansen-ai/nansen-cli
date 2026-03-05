@@ -172,6 +172,13 @@ describe('keychain', () => {
       const result = deletePassword();
       expect(result.keychain).toBe(false);
     });
+
+    it('should return file: false when no .credentials file exists', () => {
+      setPlatform('darwin');
+      execFileSync.mockImplementation(() => { throw new Error('not found'); });
+      const result = deletePassword();
+      expect(result.file).toBe(false);
+    });
   });
 
   describe('deleteCredentialsFile', () => {
