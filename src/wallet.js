@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import * as readline from 'readline';
 import { base58 } from '@scure/base';
-import { storePassword, retrievePassword, resolvePassword as keychainResolve, deletePassword } from './keychain.js';
+import { storePassword, retrievePassword, deletePassword, deleteCredentialsFile } from './keychain.js';
 
 // ============= Constants =============
 
@@ -571,7 +571,15 @@ export function buildWalletCommands(deps = {}) {
             // Step 1: Check env var and keychain
             password = resolveWalletPassword();
 
-            // Step 2: If --human flag, allow interactive prompt
+            // Step 2: If --human flag, allow interactive prompt (requires TTY)
+            if (!password && flags.human && !process.stdin.isTTY && !deps.promptFn) {
+              log(JSON.stringify({
+                error: 'NOT_A_TTY',
+                message: '--human requires an interactive terminal. Set NANSEN_WALLET_PASSWORD env var instead.',
+              }));
+              exit(1);
+              return;
+            }
             if (!password && flags.human && (process.stdin.isTTY || deps.promptFn)) {
               password = await promptPassword('Enter wallet password: ', deps);
               if (password) {
@@ -606,6 +614,12 @@ export function buildWalletCommands(deps = {}) {
             }
           }
 
+          // Persist password BEFORE creating wallet so we know the storage situation
+          let storageResult = { stored: false, method: 'none' };
+          if (password !== null) {
+            storageResult = storePassword(password);
+          }
+
           try {
             const result = createWallet(name, password);
             log(`\n✓ Wallet "${result.name}" created\n`);
@@ -619,20 +633,20 @@ export function buildWalletCommands(deps = {}) {
             log('');
             if (password === null) {
               log('  ⚠️  This is an UNENCRYPTED hot wallet — private keys are stored in plaintext on disk.');
+            } else if (storageResult.stored && storageResult.method === 'keychain') {
+              log('  ✓ Password saved to system keychain (secure).');
+              log('    Future wallet operations will retrieve the password automatically.');
+            } else if (storageResult.stored && storageResult.method === 'file') {
+              log('  ⚠️  No OS keychain available. Password saved to ~/.nansen/wallets/.credentials (insecure — plaintext on disk).');
+              log('     Future wallet operations will retrieve the password automatically.');
+              log('     To improve security: migrate to OS keychain with `nansen wallet secure`,');
+              log('     or set NANSEN_WALLET_PASSWORD via a secrets manager.');
             } else {
-              const { stored, method } = storePassword(password);
-              if (stored && method === 'keychain') {
-                log('  ✓ Password saved to system keychain (secure).');
-                log('    Future wallet operations will retrieve the password automatically.');
-              } else if (stored && method === 'file') {
-                log('  ⚠️  No OS keychain available. Password saved to ~/.nansen/wallets/.credentials (insecure — plaintext on disk).');
-                log('     Future wallet operations will retrieve the password automatically.');
-                log('     To improve security: migrate to OS keychain with `nansen wallet secure`,');
-                log('     or set NANSEN_WALLET_PASSWORD via a secrets manager.');
-              } else {
-                log('  ⚠️  Could not persist password (no keychain, no writable filesystem).');
-                log('     Set NANSEN_WALLET_PASSWORD in your environment to avoid re-entering.');
-              }
+              log('  ⚠️  CRITICAL: Password could not be saved anywhere (no keychain, no writable filesystem).');
+              log('     You MUST set NANSEN_WALLET_PASSWORD in your environment for ALL future wallet operations.');
+              log('     If you lose this password, your funds are UNRECOVERABLE.');
+            }
+            if (password !== null) {
               log('');
               log('  IMPORTANT: Back up your password separately (e.g. password manager).');
               log('  If you lose access to this machine AND forget the password, funds are unrecoverable.');
@@ -881,9 +895,8 @@ export function buildWalletCommands(deps = {}) {
           // Try to migrate to keychain
           const { stored, method } = storePassword(password);
           if (stored && method === 'keychain') {
-            // Remove the .credentials file now that keychain has it
-            deletePassword(); // removes both, so re-store in keychain
-            storePassword(password); // re-store in keychain only
+            // Only remove the .credentials file — keychain entry is already set
+            deleteCredentialsFile();
             log('✓ Password migrated to OS keychain (secure).');
             log('  Removed ~/.nansen/wallets/.credentials.');
             log(`  Previous source: ${source}`);

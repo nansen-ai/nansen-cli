@@ -778,7 +778,15 @@ export function buildCommands(deps = {}) {
         apiKey = process.env.NANSEN_API_KEY;
       }
 
-      if (!apiKey && flags.human && isTTY) {
+      if (!apiKey && flags.human) {
+        if (!isTTY) {
+          log(JSON.stringify({
+            error: 'NOT_A_TTY',
+            message: '--human requires an interactive terminal. Use --api-key or NANSEN_API_KEY env var instead.',
+          }));
+          exit(1);
+          return;
+        }
         log('Nansen CLI Login\n');
         log('Get your API key at: https://app.nansen.ai/api\n');
         apiKey = await promptFn('Enter your API key: ', true);

@@ -13,7 +13,7 @@ vi.mock('child_process', () => ({
 }));
 
 import { execFileSync } from 'child_process';
-import { storePassword, retrievePassword, deletePassword, resolvePassword } from '../keychain.js';
+import { storePassword, retrievePassword, deletePassword, deleteCredentialsFile, resolvePassword } from '../keychain.js';
 
 describe('keychain', () => {
   let originalPlatform;
@@ -68,7 +68,10 @@ describe('keychain', () => {
 
       const credPath = path.join(tempDir, '.nansen', 'wallets', '.credentials');
       expect(fs.existsSync(credPath)).toBe(true);
-      expect(fs.readFileSync(credPath, 'utf8')).toContain('mypassword');
+      const content = fs.readFileSync(credPath, 'utf8');
+      expect(content).toContain('NANSEN_WALLET_PASSWORD_B64=');
+      const b64 = content.match(/NANSEN_WALLET_PASSWORD_B64=(.+)/)[1].trim();
+      expect(Buffer.from(b64, 'base64').toString('utf8')).toBe('mypassword');
     });
 
     it('should fall back to .credentials on unsupported platform', () => {
@@ -76,6 +79,14 @@ describe('keychain', () => {
       fs.mkdirSync(path.join(tempDir, '.nansen', 'wallets'), { recursive: true });
       const result = storePassword('mypassword');
       expect(result).toEqual({ stored: true, method: 'file' });
+    });
+
+    it('should fall back to .credentials on Windows (no keychain support)', () => {
+      setPlatform('win32');
+      fs.mkdirSync(path.join(tempDir, '.nansen', 'wallets'), { recursive: true });
+      const result = storePassword('mypassword');
+      expect(result).toEqual({ stored: true, method: 'file' });
+      expect(execFileSync).not.toHaveBeenCalled();
     });
   });
 
@@ -96,17 +107,31 @@ describe('keychain', () => {
       expect(result).toEqual({ password: 'keychain-password', source: 'keychain' });
     });
 
-    it('should fall back to .credentials file', () => {
+    it('should fall back to .credentials file (base64 format)', () => {
       setPlatform('darwin');
       delete process.env.NANSEN_WALLET_PASSWORD;
       execFileSync.mockImplementation(() => { throw new Error('not found'); });
 
       const credDir = path.join(tempDir, '.nansen', 'wallets');
       fs.mkdirSync(credDir, { recursive: true });
-      fs.writeFileSync(path.join(credDir, '.credentials'), 'NANSEN_WALLET_PASSWORD=file-password\n');
+      const b64 = Buffer.from('file-password', 'utf8').toString('base64');
+      fs.writeFileSync(path.join(credDir, '.credentials'), `NANSEN_WALLET_PASSWORD_B64=${b64}\n`);
 
       const result = retrievePassword();
       expect(result).toEqual({ password: 'file-password', source: 'file' });
+    });
+
+    it('should read legacy plain-text .credentials file', () => {
+      setPlatform('darwin');
+      delete process.env.NANSEN_WALLET_PASSWORD;
+      execFileSync.mockImplementation(() => { throw new Error('not found'); });
+
+      const credDir = path.join(tempDir, '.nansen', 'wallets');
+      fs.mkdirSync(credDir, { recursive: true });
+      fs.writeFileSync(path.join(credDir, '.credentials'), 'NANSEN_WALLET_PASSWORD=legacy-password\n');
+
+      const result = retrievePassword();
+      expect(result).toEqual({ password: 'legacy-password', source: 'file' });
     });
 
     it('should return null when nothing available', () => {
@@ -146,6 +171,21 @@ describe('keychain', () => {
       execFileSync.mockImplementation(() => { throw new Error('not found'); });
       const result = deletePassword();
       expect(result.keychain).toBe(false);
+    });
+  });
+
+  describe('deleteCredentialsFile', () => {
+    it('should delete only the .credentials file, not keychain', () => {
+      setPlatform('darwin');
+      const credDir = path.join(tempDir, '.nansen', 'wallets');
+      fs.mkdirSync(credDir, { recursive: true });
+      fs.writeFileSync(path.join(credDir, '.credentials'), 'NANSEN_WALLET_PASSWORD=test\n');
+
+      const result = deleteCredentialsFile();
+      expect(result).toBe(true);
+      expect(fs.existsSync(path.join(credDir, '.credentials'))).toBe(false);
+      // Should NOT have called execFileSync (no keychain delete)
+      expect(execFileSync).not.toHaveBeenCalled();
     });
   });
 

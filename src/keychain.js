@@ -53,15 +53,8 @@ function keychainStore(password) {
       return true;
     }
 
-    if (process.platform === 'win32') {
-      execFileSync('cmdkey', [
-        `/generic:${SERVICE}`,
-        `/user:${ACCOUNT}`,
-        `/pass:${password}`,
-      ], { timeout: TIMEOUT_MS, stdio: 'pipe' });
-      return true;
-    }
-
+    // Windows: no reliable built-in CLI for credential read-back.
+    // cmdkey stores but can't retrieve passwords. Falls through to .credentials file.
     return false;
   } catch {
     return false;
@@ -91,15 +84,7 @@ function keychainRetrieve() {
       return pw || null;
     }
 
-    if (process.platform === 'win32') {
-      const result = execFileSync('powershell', [
-        '-Command',
-        `(New-Object System.Net.NetworkCredential((cmdkey /list:${SERVICE} | Out-Null; [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR((Get-StoredCredential -Target '${SERVICE}').Password))))).Password`,
-      ], { timeout: TIMEOUT_MS, stdio: ['pipe', 'pipe', 'pipe'] });
-      const pw = result.toString().trim();
-      return pw || null;
-    }
-
+    // Windows: no reliable built-in CLI for credential read-back.
     return null;
   } catch {
     return null;
@@ -126,13 +111,7 @@ function keychainDeleteEntry() {
       return true;
     }
 
-    if (process.platform === 'win32') {
-      execFileSync('cmdkey', [
-        `/delete:${SERVICE}`,
-      ], { timeout: TIMEOUT_MS, stdio: 'pipe' });
-      return true;
-    }
-
+    // Windows: no keychain entries to delete (uses .credentials file).
     return false;
   } catch {
     return false;
@@ -146,6 +125,10 @@ function credentialsFileRead() {
     const filePath = getCredentialsPath();
     if (!fs.existsSync(filePath)) return null;
     const content = fs.readFileSync(filePath, 'utf8').trim();
+    // New format: base64-encoded (handles passwords with newlines/special chars)
+    const b64Match = content.match(/^NANSEN_WALLET_PASSWORD_B64=(.+)$/m);
+    if (b64Match) return Buffer.from(b64Match[1].trim(), 'base64').toString('utf8');
+    // Legacy format: plain text (backward compat)
     const match = content.match(/^NANSEN_WALLET_PASSWORD=(.+)$/m);
     return match ? match[1].trim() : null;
   } catch {
@@ -160,7 +143,8 @@ function credentialsFileWrite(password) {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { mode: 0o700, recursive: true });
     }
-    fs.writeFileSync(filePath, `NANSEN_WALLET_PASSWORD=${password}\n`, { mode: 0o600 });
+    const encoded = Buffer.from(password, 'utf8').toString('base64');
+    fs.writeFileSync(filePath, `NANSEN_WALLET_PASSWORD_B64=${encoded}\n`, { mode: 0o600 });
     return true;
   } catch {
     return false;
@@ -222,6 +206,15 @@ export function deletePassword() {
     keychain: keychainDeleteEntry(),
     file: credentialsFileDelete(),
   };
+}
+
+/**
+ * Delete only the .credentials file (not the keychain entry).
+ * Used by `wallet secure` after migrating to keychain.
+ * @returns {boolean}
+ */
+export function deleteCredentialsFile() {
+  return credentialsFileDelete();
 }
 
 /**
