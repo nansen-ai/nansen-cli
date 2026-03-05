@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { vi } from 'vitest';
 import {
   base58Encode,
   encryptKey,
@@ -221,9 +222,9 @@ describe('wallet CRUD', () => {
     expect(result.defaultWallet).toBe('second');
   });
 
-  it('should delete a wallet', () => {
+  it('should delete a wallet', async () => {
     createWallet('to-delete', PASSWORD);
-    const result = deleteWallet('to-delete', PASSWORD);
+    const result = await deleteWallet('to-delete', PASSWORD);
     expect(result.deleted).toBe('to-delete');
     expect(listWallets().wallets).toHaveLength(0);
   });
@@ -266,11 +267,11 @@ describe('wallet CRUD', () => {
     expect(base58Encode(solPub)).toBe(result.solana);
   });
 
-  it('should update default after deleting default wallet', () => {
+  it('should update default after deleting default wallet', async () => {
     createWallet('a', PASSWORD);
     createWallet('b', PASSWORD);
     setDefaultWallet('a');
-    deleteWallet('a', PASSWORD);
+    await deleteWallet('a', PASSWORD);
     const list = listWallets();
     expect(list.defaultWallet).toBe('b');
   });
@@ -326,7 +327,7 @@ describe('passwordless encryption', () => {
 });
 
 describe('passwordless wallet CRUD', () => {
-  it('should create, export, and delete a passwordless wallet', () => {
+  it('should create, export, and delete a passwordless wallet', async () => {
     const result = createWallet('nopass', null);
     expect(result.name).toBe('nopass');
     expect(result.evm).toMatch(/^0x/);
@@ -342,7 +343,7 @@ describe('passwordless wallet CRUD', () => {
     expect(exported.solana.privateKey).toHaveLength(128);
 
     // Delete without password
-    const deleted = deleteWallet('nopass', null);
+    const deleted = await deleteWallet('nopass', null);
     expect(deleted.deleted).toBe('nopass');
   });
 
@@ -360,10 +361,272 @@ describe('passwordless wallet CRUD', () => {
     expect(list.wallets).toHaveLength(2);
   });
 
+  it('should not prompt for password on delete when passwordHash is null', async () => {
+    createWallet('nopass-del', null);
+    const promptFn = vi.fn();
+    const logs = [];
+    const { buildWalletCommands } = await import('../wallet.js');
+    const cmds = buildWalletCommands({ log: (m) => logs.push(m), promptFn, exit: () => {} });
+    await cmds.wallet(['delete'], null, {}, { name: 'nopass-del' });
+    expect(promptFn).not.toHaveBeenCalled();
+    expect(logs.some(l => l.includes('deleted'))).toBe(true);
+  });
+
+  it('should not prompt for password on send when passwordHash is null', async () => {
+    createWallet('nopass-send', null);
+    const promptFn = vi.fn();
+    const logs = [];
+    const { buildWalletCommands } = await import('../wallet.js');
+    const cmds = buildWalletCommands({ log: (m) => logs.push(m), promptFn, exit: () => {} });
+    // Dry run so we don't need RPC mocks
+    await cmds.wallet(['send'], null, { 'dry-run': true }, {
+      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      amount: '0.01',
+      chain: 'base',
+      wallet: 'nopass-send',
+    });
+    expect(promptFn).not.toHaveBeenCalled();
+  });
+
   it('should reject encrypted wallet when passwordless wallets exist', () => {
     createWallet('nopass-first', null);
     expect(() => createWallet('encrypted-second', 'test-password-123!!')).toThrow(
       'Existing wallets are passwordless'
     );
+  });
+
+  it('should allow encrypted wallet when only Privy wallets exist', () => {
+    // Write a Privy wallet reference (no private keys)
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.mkdirSync(walletsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(walletsDir, 'privy-only.json'),
+      JSON.stringify({ provider: 'privy', evm: { address: '0xabc' }, solana: { address: 'abc' } })
+    );
+    // Creating an encrypted local wallet should succeed
+    expect(() => createWallet('encrypted-after-privy', 'test-password-123!!')).not.toThrow();
+  });
+});
+
+describe('Privy wallet files', () => {
+  it('showWallet reads a Privy wallet reference file', () => {
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.mkdirSync(walletsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(walletsDir, 'my-privy.json'),
+      JSON.stringify({
+        name: 'my-privy',
+        provider: 'privy',
+        evm: { privyWalletId: 'wl_evm_1', address: '0xPrivyEvm' },
+        solana: { privyWalletId: 'wl_sol_1', address: 'PrivySolAddr' },
+        createdAt: '2026-01-01T00:00:00Z',
+      })
+    );
+    fs.writeFileSync(
+      path.join(walletsDir, 'config.json'),
+      JSON.stringify({ defaultWallet: 'my-privy', passwordHash: null })
+    );
+
+    const result = showWallet('my-privy');
+    expect(result.name).toBe('my-privy');
+    expect(result.provider).toBe('privy');
+    expect(result.evm).toBe('0xPrivyEvm');
+    expect(result.solana).toBe('PrivySolAddr');
+    expect(result.privyWalletIds.evm).toBe('wl_evm_1');
+    expect(result.privyWalletIds.solana).toBe('wl_sol_1');
+  });
+
+  it('showWallet returns provider local for local wallets', () => {
+    createWallet('local-test', 'testpassword12');
+    const result = showWallet('local-test');
+    expect(result.provider).toBe('local');
+    expect(result.privyWalletIds).toBeUndefined();
+  });
+
+  it('listWallets includes both local and Privy wallets', () => {
+    createWallet('local-one', 'testpassword12');
+
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.writeFileSync(
+      path.join(walletsDir, 'privy-one.json'),
+      JSON.stringify({
+        name: 'privy-one',
+        provider: 'privy',
+        evm: { privyWalletId: 'wl_1', address: '0xAddr' },
+        solana: { privyWalletId: 'wl_2', address: 'SolAddr' },
+        createdAt: '2026-01-01T00:00:00Z',
+      })
+    );
+
+    const result = listWallets();
+    expect(result.wallets).toHaveLength(2);
+    const names = result.wallets.map((w) => w.name);
+    expect(names).toContain('local-one');
+    expect(names).toContain('privy-one');
+
+    const privy = result.wallets.find((w) => w.name === 'privy-one');
+    expect(privy.provider).toBe('privy');
+    expect(privy.evm).toBe('0xAddr');
+  });
+
+});
+
+describe('Privy wallet create via unified flow', () => {
+  let originalEnv;
+
+  beforeEach(() => {
+    originalEnv = { ...process.env };
+    process.env.PRIVY_APP_ID = 'test-app-id';
+    process.env.PRIVY_APP_SECRET = 'test-secret';
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+  });
+
+  it('cleans up EVM wallet if Solana wallet creation fails', async () => {
+    const { createPrivyWalletPair } = await import('../privy.js');
+
+    const deleteCalls = [];
+    let callCount = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      // Track delete calls
+      if (opts?.method === 'DELETE') {
+        deleteCalls.push(url);
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      }
+      callCount++;
+      if (callCount === 1) {
+        // EVM wallet creation succeeds
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 'wl_evm_orphan', address: '0xOrphan', chain_type: 'ethereum' }),
+        });
+      }
+      // Solana wallet creation fails
+      return Promise.resolve({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({ error: 'internal_error', message: 'Solana create failed' }),
+      });
+    }));
+
+    await expect(createPrivyWalletPair('orphan-test')).rejects.toThrow();
+
+    // Should have attempted to delete the orphaned EVM wallet
+    expect(deleteCalls.length).toBe(1);
+    expect(deleteCalls[0]).toContain('wl_evm_orphan');
+
+    // No local file should exist
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    const walletFile = path.join(walletsDir, 'orphan-test.json');
+    expect(fs.existsSync(walletFile)).toBe(false);
+  });
+
+  it('creates both EVM + Solana Privy wallets and stores reference file', async () => {
+    const { createPrivyWalletPair } = await import('../privy.js');
+
+    let callCount = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            id: 'wl_evm_1', address: '0xEvmAddr', chain_type: 'ethereum',
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          id: 'wl_sol_1', address: 'SolAddr', chain_type: 'solana',
+        }),
+      });
+    }));
+
+    const result = await createPrivyWalletPair('my-privy-wallet');
+
+    expect(result.name).toBe('my-privy-wallet');
+    expect(result.evm.address).toBe('0xEvmAddr');
+    expect(result.evm.privyWalletId).toBe('wl_evm_1');
+    expect(result.solana.address).toBe('SolAddr');
+    expect(result.solana.privyWalletId).toBe('wl_sol_1');
+
+    const wallet = showWallet('my-privy-wallet');
+    expect(wallet.provider).toBe('privy');
+    expect(wallet.evm).toBe('0xEvmAddr');
+    expect(wallet.solana).toBe('SolAddr');
+  });
+});
+
+describe('Privy wallet delete and export', () => {
+  let originalEnv;
+
+  beforeEach(() => {
+    originalEnv = { ...process.env };
+    process.env.PRIVY_APP_ID = 'test-app-id';
+    process.env.PRIVY_APP_SECRET = 'test-secret';
+
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.mkdirSync(walletsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(walletsDir, 'privy-del.json'),
+      JSON.stringify({
+        name: 'privy-del',
+        provider: 'privy',
+        evm: { privyWalletId: 'wl_evm_1', address: '0xAddr' },
+        solana: { privyWalletId: 'wl_sol_1', address: 'SolAddr' },
+        createdAt: '2026-01-01T00:00:00Z',
+      })
+    );
+    fs.writeFileSync(
+      path.join(walletsDir, 'config.json'),
+      JSON.stringify({ defaultWallet: 'privy-del', passwordHash: null })
+    );
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+  });
+
+  it('deleteWallet removes local reference for Privy wallets', async () => {
+    const result = await deleteWallet('privy-del');
+    expect(result.deleted).toBe('privy-del');
+    expect(() => showWallet('privy-del')).toThrow(/not found/);
+  });
+
+  it('exportWallet throws for non-local wallets', () => {
+    expect(() => exportWallet('privy-del', 'any')).toThrow(/managed by the provider/);
+  });
+});
+
+describe('Wallet list/show CLI output for provider', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('list output shows provider for Privy wallets', async () => {
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.mkdirSync(walletsDir, { recursive: true });
+    fs.writeFileSync(path.join(walletsDir, 'config.json'),
+      JSON.stringify({ defaultWallet: 'pv', passwordHash: null }));
+    fs.writeFileSync(path.join(walletsDir, 'pv.json'),
+      JSON.stringify({
+        name: 'pv', provider: 'privy',
+        evm: { privyWalletId: 'wl_1', address: '0xAddr' },
+        solana: { privyWalletId: 'wl_2', address: 'SolAddr' },
+        createdAt: '2026-01-01T00:00:00Z',
+      }));
+
+    const { buildWalletCommands } = await import('../wallet.js');
+    const output = [];
+    const cmds = buildWalletCommands({ log: (m) => output.push(m), exit: () => {} });
+    await cmds.wallet(['list'], null, {}, {});
+
+    const joined = output.join('\n');
+    expect(joined).toContain('privy');
   });
 });

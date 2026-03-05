@@ -46,13 +46,6 @@ describe.sequential('e2e: ETH ↔ USDC swap round-trip on Base', () => {
     receivedUsdcAmount: null,
   };
 
-  it('should have NANSEN_WALLET_PASSWORD set', () => {
-    expect(
-      process.env.NANSEN_WALLET_PASSWORD,
-      'Set NANSEN_WALLET_PASSWORD to run e2e tests'
-    ).toBeDefined();
-  });
-
   it('should have a wallet configured', () => {
     const result = runCli('wallet', 'list');
     const output = result.stdout + result.stderr;
@@ -143,13 +136,6 @@ describe.sequential('e2e: SOL ↔ USDC swap round-trip on Solana', () => {
     reverseSignature: null,
     receivedUsdcAmount: null,
   };
-
-  it('should have NANSEN_WALLET_PASSWORD set', () => {
-    expect(
-      process.env.NANSEN_WALLET_PASSWORD,
-      'Set NANSEN_WALLET_PASSWORD to run e2e tests'
-    ).toBeDefined();
-  });
 
   it('should have a wallet with Solana address', () => {
     const result = runCli('wallet', 'list');

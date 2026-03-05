@@ -21,6 +21,7 @@
     "test:live": "NANSEN_LIVE_TEST=1 vitest run",
     "test:trade": "vitest run --config vitest.e2e.config.js src/__tests__/trade.e2e.test.js",
     "test:send": "vitest run --config vitest.e2e.config.js src/__tests__/send.e2e.test.js",
+    "test:privy": "vitest run --config vitest.e2e.config.js src/__tests__/privy.e2e.test.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "changeset": "changeset",

@@ -60,11 +60,6 @@ let walletA;
 let walletB;
 
 beforeAll(() => {
-  expect(
-    process.env.NANSEN_WALLET_PASSWORD,
-    "Set NANSEN_WALLET_PASSWORD to run e2e tests"
-  ).toBeDefined();
-
   const result = runCli("wallet", "list");
   const wallets = parseWalletList(result.stdout + result.stderr);
   if (wallets.length < 2) {

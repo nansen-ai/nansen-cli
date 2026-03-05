@@ -239,8 +239,8 @@ function getWalletFile(name) {
  * Verify the global password against stored hash.
  */
 export function verifyPassword(password, config) {
+  if (password == null) return false;
   if (!config.passwordHash) return true; // No password set yet
-  if (password === null || password === undefined) return false;
   const { salt, hash } = config.passwordHash;
   const derived = crypto.scryptSync(password, Buffer.from(salt, 'hex'), 32, {
     N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P, maxmem: 256 * 1024 * 1024,
@@ -367,6 +367,7 @@ export function listWallets() {
     const data = JSON.parse(fs.readFileSync(path.join(getWalletsDir(), f), 'utf8'));
     return {
       name: data.name,
+      provider: data.provider || 'local',
       evm: data.evm?.address || null,
       solana: data.solana?.address || null,
       createdAt: data.createdAt,
@@ -397,10 +398,18 @@ export function createWallet(name, password) {
   } else {
     // Encrypted mode
     if (!config.passwordHash) {
-      // First encrypted wallet: reject if passwordless wallets exist
-      const existingWallets = fs.readdirSync(getWalletsDir())
-        .filter(f => f.endsWith('.json') && f !== 'config.json');
-      if (existingWallets.length > 0) {
+      // First encrypted wallet: reject if passwordless local wallets exist
+      // (non-local wallets like Privy don't contain private keys, so skip them)
+      const walletsDir = getWalletsDir();
+      const existingLocalWallets = fs.readdirSync(walletsDir)
+        .filter(f => f.endsWith('.json') && f !== 'config.json')
+        .filter(f => {
+          try {
+            const data = JSON.parse(fs.readFileSync(path.join(walletsDir, f), 'utf8'));
+            return !data.provider || data.provider === 'local';
+          } catch { return true; }
+        });
+      if (existingLocalWallets.length > 0) {
         throw new Error('Existing wallets are passwordless. Cannot mix encrypted and unencrypted wallets.');
       }
       config.passwordHash = hashPassword(password);
@@ -452,13 +461,21 @@ export function showWallet(name) {
 
   const data = JSON.parse(fs.readFileSync(walletFile, 'utf8'));
   const config = getWalletConfig();
+  const isPrivy = data.provider === 'privy';
 
   return {
     name: data.name,
+    provider: data.provider || 'local',
     evm: data.evm?.address || null,
     solana: data.solana?.address || null,
     createdAt: data.createdAt,
     isDefault: data.name === config.defaultWallet,
+    ...(isPrivy ? {
+      privyWalletIds: {
+        evm: data.evm?.privyWalletId,
+        solana: data.solana?.privyWalletId,
+      }
+    } : {}),
   };
 }
 
@@ -471,12 +488,15 @@ export function exportWallet(name, password) {
     throw new Error(`Wallet "${name}" not found`);
   }
 
+  const data = JSON.parse(fs.readFileSync(walletFile, 'utf8'));
+  if (data.provider && data.provider !== 'local') {
+    throw new Error(`${data.provider} wallets don't support key export. Keys are managed by the provider.`);
+  }
+
   const config = getWalletConfig();
   if (config.passwordHash && !verifyPassword(password, config)) {
     throw new Error('Incorrect password');
   }
-
-  const data = JSON.parse(fs.readFileSync(walletFile, 'utf8'));
 
   return {
     name: data.name,
@@ -510,15 +530,21 @@ export function setDefaultWallet(name) {
 /**
  * Delete a wallet.
  */
-export function deleteWallet(name, password) {
+export async function deleteWallet(name, password) {
   const walletFile = getWalletFile(name);
   if (!fs.existsSync(walletFile)) {
     throw new Error(`Wallet "${name}" not found`);
   }
 
+  const data = JSON.parse(fs.readFileSync(walletFile, 'utf8'));
   const config = getWalletConfig();
-  if (config.passwordHash && !verifyPassword(password, config)) {
-    throw new Error('Incorrect password');
+
+  if (data.provider && data.provider !== 'local') {
+    // Non-local wallets: just remove local reference, no password needed
+  } else {
+    if (config.passwordHash && !verifyPassword(password, config)) {
+      throw new Error('Incorrect password');
+    }
   }
 
   fs.unlinkSync(walletFile);
@@ -537,20 +563,6 @@ export function deleteWallet(name, password) {
   return { deleted: name, newDefault: config.defaultWallet };
 }
 
-/**
- * Get the default wallet's address for a given chain type.
- */
-export function getDefaultAddress(chainType = 'evm') {
-  const config = getWalletConfig();
-  if (!config.defaultWallet) {
-    throw new Error('No default wallet set. Run: nansen wallet create');
-  }
-
-  const wallet = showWallet(config.defaultWallet);
-  const field = chainType === 'solana' ? 'solana' : 'evm';
-  return wallet[field];
-}
-
 // ============= CLI Command Builder =============
 
 /**
@@ -562,6 +574,27 @@ export function buildWalletCommands(deps = {}) {
   return {
     'wallet': async (args, apiInstance, flags, options) => {
       const subcommand = args[0] || 'help';
+
+      // Privy-specific: only 'create' and policy commands need --provider privy
+      if (options.provider === 'privy' || process.env.NANSEN_WALLET_PROVIDER === 'privy') {
+        if (subcommand === 'create') {
+          const { createPrivyWalletPair } = await import('./privy.js');
+          const name = options.name || args[1] || 'default';
+          try {
+            const result = await createPrivyWalletPair(name);
+            log(`\n✓ Privy wallet "${result.name}" created\n`);
+            log(`  EVM:    ${result.evm.address}`);
+            log(`  Solana: ${result.solana.address}`);
+            log('');
+            return;
+          } catch (err) {
+            log(`❌ ${err.message}`);
+            exit(1);
+            return;
+          }
+        }
+        // All other subcommands fall through to unified handlers below
+      }
 
       const handlers = {
         'create': async () => {
@@ -688,7 +721,8 @@ export function buildWalletCommands(deps = {}) {
           log('');
           for (const w of result.wallets) {
             const star = w.isDefault ? ' ★' : '';
-            log(`  ${w.name}${star}`);
+            const providerTag = w.provider === 'privy' ? ' (privy)' : '';
+            log(`  ${w.name}${star}${providerTag}`);
             log(`    EVM:    ${w.evm}`);
             log(`    Solana: ${w.solana}`);
             log('');
@@ -705,7 +739,8 @@ export function buildWalletCommands(deps = {}) {
           try {
             const result = showWallet(name);
             const star = result.isDefault ? ' ★' : '';
-            log(`\n  ${result.name}${star}`);
+            const providerTag = result.provider === 'privy' ? ' (privy)' : '';
+            log(`\n  ${result.name}${star}${providerTag}`);
             log(`    EVM:    ${result.evm}`);
             log(`    Solana: ${result.solana}`);
             log(`    Created: ${result.createdAt}\n`);
@@ -723,6 +758,7 @@ export function buildWalletCommands(deps = {}) {
             exit(1);
             return;
           }
+
           const config = getWalletConfig();
           const { password, error } = await resolvePasswordForCommand(config, flags, deps);
           if (error) {
@@ -771,16 +807,33 @@ export function buildWalletCommands(deps = {}) {
             exit(1);
             return;
           }
-          const config = getWalletConfig();
-          const { password, error } = await resolvePasswordForCommand(config, flags, deps);
-          if (error) {
-            log(error);
-            exit(1);
-            return;
-          }
+
+          // Check if this is a Privy wallet (no password needed)
+          let isPrivy = false;
           try {
-            const result = deleteWallet(name, password);
+            const walletFile = path.join(getWalletsDir(), `${name}.json`);
+            const data = JSON.parse(fs.readFileSync(walletFile, 'utf8'));
+            if (data.provider === 'privy') isPrivy = true;
+          } catch { /* file might not exist, deleteWallet will throw */ }
+
+          let password = null;
+          if (!isPrivy) {
+            const config = getWalletConfig();
+            const resolved = await resolvePasswordForCommand(config, flags, deps);
+            if (resolved.error) {
+              log(resolved.error);
+              exit(1);
+              return;
+            }
+            password = resolved.password;
+          }
+
+          try {
+            const result = await deleteWallet(name, password);
             log(`✓ Wallet "${result.deleted}" deleted`);
+            if (isPrivy) {
+              log(`  Note: server-side wallet still exists on Privy`);
+            }
             if (result.newDefault) {
               log(`  New default: ${result.newDefault}`);
             }
@@ -820,8 +873,22 @@ export function buildWalletCommands(deps = {}) {
           }
 
           const isWalletConnect = options.wallet === 'walletconnect' || options.wallet === 'wc';
+
+          // Check if the wallet is Privy (no password needed)
+          let isPrivyWallet = false;
+          if (!isWalletConnect) {
+            try {
+              const walletName = options.wallet || getWalletConfig().defaultWallet;
+              if (walletName) {
+                const walletFile = path.join(getWalletsDir(), `${walletName}.json`);
+                const data = JSON.parse(fs.readFileSync(walletFile, 'utf8'));
+                if (data.provider === 'privy') isPrivyWallet = true;
+              }
+            } catch { /* ignore */ }
+          }
+
           let password;
-          if (isWalletConnect) {
+          if (isWalletConnect || isPrivyWallet) {
             password = null;
           } else {
             const sendConfig = getWalletConfig();
@@ -959,19 +1026,19 @@ export function buildWalletCommands(deps = {}) {
 
         'help': async () => {
           log(`
-Wallet Management - Local key storage for EVM and Solana
+Wallet Management - EVM and Solana wallets (local or Privy server-side)
 
 USAGE:
   nansen wallet <command> [options]
 
 COMMANDS:
-  create [--name <label>] [--unsafe-no-password]
+  create [--name <label>] [--provider <local|privy>] [--unsafe-no-password]
                              Create a new wallet pair (EVM + Solana)
   list                       List all wallets
   show <name>                Show wallet addresses
-  export <name>              Export private keys (requires password)
+  export <name>              Export private keys (local wallets only, requires password)
   default <name>             Set the default wallet
-  delete <name>              Delete a wallet (requires password)
+  delete <name>              Delete a wallet
   send --to <address> --amount <number> --chain <evm|solana> [--token <address>] [--wallet <name>] [--max] [--dry-run]
                              Send tokens or native currency (--max sends entire balance, --dry-run previews without sending)
   forget-password            Remove saved password from all stores
@@ -979,13 +1046,15 @@ COMMANDS:
 
 OPTIONS:
   --name <label>             Wallet name (default: "default")
+  --provider <local|privy>   Wallet provider: "local" (default) stores encrypted keys on disk,
+                             "privy" creates server-side wallets via Privy API
   --to <address>             Recipient address (required for send)
   --amount <number>          Amount to send in human-readable format (required unless --max)
   --chain <evm|solana>       Blockchain to use (required for send)
   --token <address>          Token contract/mint address (optional, sends native if omitted)
   --wallet <name>            Wallet to use (optional, uses default if omitted; use "walletconnect" or "wc" for WalletConnect, EVM only)
   --max                      Send entire balance (deducts gas for native transfers)
-  --unsafe-no-password       Skip encryption — private keys stored UNENCRYPTED on disk (create only)
+  --unsafe-no-password       Skip encryption — private keys stored UNENCRYPTED on disk (local only)
   --human                    Enable interactive prompts (for human terminal use only)
 
 PASSWORD RESOLUTION (automatic, in order):
@@ -995,11 +1064,15 @@ PASSWORD RESOLUTION (automatic, in order):
 
 ENVIRONMENT:
   NANSEN_WALLET_PASSWORD     Wallet encryption password
+  PRIVY_APP_ID               Privy application ID (required for --provider privy)
+  PRIVY_APP_SECRET           Privy application secret (required for --provider privy)
+  NANSEN_WALLET_PROVIDER     Default provider for wallet create ("local" or "privy")
   NANSEN_EVM_RPC            Custom EVM RPC endpoint
   NANSEN_SOLANA_RPC         Custom Solana RPC endpoint
 
 EXAMPLES:
   NANSEN_WALLET_PASSWORD=mypass nansen wallet create --name trading
+  nansen wallet create --name agent-wallet --provider privy
   nansen wallet list
   nansen wallet export trading
   nansen wallet default trading

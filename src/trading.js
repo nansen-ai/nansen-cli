@@ -8,7 +8,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { exportWallet, getDefaultAddress, showWallet, listWallets, getWalletConfig } from './wallet.js';
+import { exportWallet, getWalletConfig, showWallet, listWallets } from './wallet.js';
 import { base58Decode } from './transfer.js';
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendApprovalViaWalletConnect } from './walletconnect-trading.js';
@@ -214,7 +214,7 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
  * Save a quote response to disk for later execution.
  * @returns {string} Quote ID
  */
-export function saveQuote(quoteResponse, chain, signerType = 'local') {
+export function saveQuote(quoteResponse, chain, signerType = 'local', privyWalletIds = null) {
   const dir = getQuotesDir();
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -225,6 +225,7 @@ export function saveQuote(quoteResponse, chain, signerType = 'local') {
   const quoteId = `${timestamp}-${hash}`;
 
   const data = { quoteId, chain, timestamp, signerType, response: quoteResponse };
+  if (privyWalletIds) data.privyWalletIds = privyWalletIds;
 
   fs.writeFileSync(path.join(dir, `${quoteId}.json`), JSON.stringify(data, null, 2), { mode: 0o600 });
   cleanupQuotes();
@@ -774,6 +775,8 @@ EXAMPLES:
         const isWalletConnect = walletName === 'walletconnect' || walletName === 'wc';
 
         let walletAddress;
+        let walletProvider = 'local';
+        let privyWalletIds = null;
         if (isWalletConnect) {
           if (chainType !== 'evm') {
             log('WalletConnect is only supported for EVM chains');
@@ -789,9 +792,21 @@ EXAMPLES:
         } else if (walletName) {
           const wallet = showWallet(walletName);
           walletAddress = chainType === 'solana' ? wallet.solana : wallet.evm;
+          if (wallet.provider === 'privy') {
+            walletProvider = 'privy';
+            privyWalletIds = wallet.privyWalletIds;
+          }
         } else {
           try {
-            walletAddress = getDefaultAddress(chainType);
+            const config = getWalletConfig();
+            if (config.defaultWallet) {
+              const wallet = showWallet(config.defaultWallet);
+              walletAddress = chainType === 'solana' ? wallet.solana : wallet.evm;
+              if (wallet.provider === 'privy') {
+                walletProvider = 'privy';
+                privyWalletIds = wallet.privyWalletIds;
+              }
+            }
           } catch {
             // No wallet configured — fall through to the check below
           }
@@ -835,7 +850,8 @@ EXAMPLES:
         log('');
         response.quotes.forEach((q, i) => log(formatQuote(q, i)));
 
-        const quoteId = saveQuote(response, chain, isWalletConnect ? 'walletconnect' : 'local');
+        const signerType = isWalletConnect ? 'walletconnect' : walletProvider;
+        const quoteId = saveQuote(response, chain, signerType, privyWalletIds);
         log(`\n  Quote ID: ${quoteId}`);
         log(`  Execute:  nansen trade execute --quote ${quoteId}`);
         if (response.quotes.length > 1) {
@@ -909,12 +925,18 @@ EXAMPLES:
           return;
         }
 
-        // Determine if this is a WalletConnect-signed quote
+        // Determine if this is a WalletConnect or Privy-signed quote
         const isWalletConnect = quoteData.signerType === 'walletconnect'
           || walletName === 'walletconnect' || walletName === 'wc';
+        const isPrivy = quoteData.signerType === 'privy';
 
         let exported = null;
-        if (!isWalletConnect) {
+        let privyClient = null;
+        if (isPrivy) {
+          // Privy signing -- import + instantiate once for all quotes
+          const { PrivyClient } = await import('./privy.js');
+          privyClient = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);
+        } else if (!isWalletConnect) {
           // Get wallet credentials once (before the loop)
           const walletConfig = getWalletConfig();
           let password = null;
@@ -995,7 +1017,159 @@ EXAMPLES:
             let signedTransaction;
             let requestId;
 
-            if (chainType === 'solana') {
+            if (chainType === 'solana' && isPrivy) {
+              // Solana via Privy: sign the serialized transaction
+              let txBase64 = currentQuote.transaction;
+              if (typeof txBase64 === 'object' && txBase64.data) {
+                txBase64 = base58Decode(txBase64.data).toString('base64');
+              }
+              log('  Signing Solana transaction via Privy...');
+              const solWalletId = quoteData.privyWalletIds?.solana;
+              if (!solWalletId) throw new Error('No Solana Privy wallet ID in quote');
+              const signResult = await privyClient.signSolanaTransaction(solWalletId, txBase64);
+              signedTransaction = signResult.data?.signed_transaction || signResult.signed_transaction;
+              requestId = currentQuote.metadata?.requestId;
+
+            } else if (chainType === 'evm' && isPrivy) {
+              // EVM via Privy: sign-only, then broadcast via Trading API
+              const evmWalletId = quoteData.privyWalletIds?.evm;
+              if (!evmWalletId) throw new Error('No EVM Privy wallet ID in quote');
+
+              const walletResult = await privyClient.getWallet(evmWalletId);
+              const walletAddress = walletResult.address;
+
+              // Validate transaction.value (same checks as local wallet)
+              const isNative = isNativeToken(currentQuote.inputMint);
+              const txValue = BigInt(currentQuote.transaction.value || '0');
+              if (isNative) {
+                const expectedValue = BigInt(currentQuote.inAmount || currentQuote.inputAmount || '0');
+                if (txValue !== expectedValue) {
+                  log(`  ❌ Transaction value mismatch for ${quoteName}: tx.value=${txValue}, expected=${expectedValue}`);
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                  lastQuoteError = `${quoteName} transaction value mismatch`;
+                  continue;
+                }
+              } else {
+                if (txValue > 0n) {
+                  log(`  ❌ ERC-20 swap has non-zero tx.value (${txValue}) for ${quoteName} — aborting`);
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                  lastQuoteError = `${quoteName} unexpected tx.value`;
+                  continue;
+                }
+              }
+
+              // Handle approval if needed
+              if (currentQuote.approvalAddress && !isNative) {
+                const inputAmount = BigInt(currentQuote.inputAmount || currentQuote.inAmount || '0');
+                const existingAllowance = await checkErc20Allowance(
+                  chain, currentQuote.inputMint, walletAddress, currentQuote.approvalAddress
+                );
+
+                if (existingAllowance >= inputAmount && existingAllowance > 0n) {
+                  log(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
+                } else {
+                  log(`  ⚠ Approval required → ${currentQuote.approvalAddress}`);
+                  const approvalNonce = await getEvmNonce(chain, walletAddress);
+                  const MAX_UINT256 = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+                  const approvalData = '0x095ea7b3'
+                    + currentQuote.approvalAddress.slice(2).toLowerCase().padStart(64, '0')
+                    + MAX_UINT256;
+                  const approvalMaxFee = currentQuote.transaction?.maxFeePerGas || currentQuote.transaction?.gasPrice || '1000000';
+                  const approvalPriorityFee = currentQuote.transaction?.maxPriorityFeePerGas || '1000000';
+                  const approvalSignResult = await privyClient.signEvmTransaction(evmWalletId, {
+                    to: currentQuote.inputMint,
+                    data: approvalData,
+                    value: '0x0',
+                    chain_id: chainConfig.chainId,
+                    nonce: toHex(approvalNonce),
+                    gas_limit: toHex(100000),
+                    max_fee_per_gas: toHex(approvalMaxFee),
+                    max_priority_fee_per_gas: toHex(approvalPriorityFee),
+                  });
+                  const signedApproval = approvalSignResult.data?.signed_transaction || approvalSignResult.signed_transaction;
+                  const approvalResult = await executeTransaction({ signedTransaction: signedApproval, chain, simulate: !noSimulate });
+                  if (approvalResult.status !== 'Success') {
+                    log(`  ❌ Approval failed for ${quoteName}: ${approvalResult.error || 'unknown'}`);
+                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                    lastQuoteError = `${quoteName} approval failed`;
+                    continue;
+                  }
+                  log(`  Waiting for approval confirmation...`);
+                  try {
+                    const receipt = await waitForReceipt(chain, approvalResult.txHash);
+                    log(`  ✓ Approval confirmed in block ${parseInt(receipt.blockNumber, 16)}: ${approvalResult.txHash}`);
+                  } catch (receiptErr) {
+                    log(`  ❌ Approval may not have confirmed: ${receiptErr.message}`);
+                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                    lastQuoteError = `${quoteName} approval unconfirmed`;
+                    continue;
+                  }
+                  await new Promise(r => setTimeout(r, 2000));
+                }
+              }
+
+              // Pre-flight simulation
+              if (!noSimulate) {
+                const sim = await simulateEvmCall(chain, {
+                  from: walletAddress,
+                  to: currentQuote.transaction.to,
+                  data: currentQuote.transaction.data,
+                  value: currentQuote.transaction.value ? '0x' + BigInt(currentQuote.transaction.value).toString(16) : '0x0',
+                });
+                if (!sim.success) {
+                  log(`  ⚠ Simulation failed for ${quoteName}: ${sim.reason}`);
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                  lastQuoteError = `${quoteName} simulation failed: ${sim.reason}`;
+                  continue;
+                }
+              }
+
+              // Gas resolution — fall back to eth_estimateGas if quote has no gas
+              const txData = currentQuote.transaction;
+              const apiGas = parseInt(currentQuote.gas || '0');
+              const txGas = parseInt(txData.gas || txData.gasLimit || '0');
+              let finalGas = apiGas > 0 ? apiGas : txGas;
+              if (finalGas === 0) {
+                try {
+                  const rpcUrl = EVM_RPC_URLS[chain];
+                  const estRes = await fetch(rpcUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      jsonrpc: '2.0', id: 1, method: 'eth_estimateGas',
+                      params: [{
+                        from: walletAddress, to: txData.to, data: txData.data || '0x',
+                        value: txData.value ? '0x' + BigInt(txData.value).toString(16) : '0x0',
+                      }],
+                    }),
+                  });
+                  const estBody = await estRes.json();
+                  if (estBody.result) finalGas = Math.ceil(parseInt(estBody.result, 16) * 1.5);
+                } catch { /* ignore */ }
+                if (finalGas === 0) finalGas = 210000;
+              }
+
+              log('  Fetching nonce...');
+              const nonce = await getEvmNonce(chain, walletAddress);
+
+              // Privy signs EIP-1559 (type 2) transactions, so convert gasPrice to EIP-1559 fields
+              const maxFee = txData.maxFeePerGas || txData.gasPrice || '1000000';
+              const priorityFee = txData.maxPriorityFeePerGas || '1000000';
+
+              log('  Signing EVM transaction via Privy...');
+              const signResult = await privyClient.signEvmTransaction(evmWalletId, {
+                to: txData.to,
+                data: txData.data || '0x',
+                value: txData.value ? '0x' + BigInt(txData.value).toString(16) : '0x0',
+                chain_id: chainConfig.chainId,
+                nonce: toHex(nonce),
+                gas_limit: toHex(finalGas),
+                max_fee_per_gas: toHex(maxFee),
+                max_priority_fee_per_gas: toHex(priorityFee),
+              });
+              signedTransaction = signResult.data?.signed_transaction || signResult.signed_transaction;
+
+            } else if (chainType === 'solana') {
               // Solana: transaction is either a base64 string (Jupiter) or an object
               // with a base58-encoded `data` field (OKX). Normalize to base64.
               let txBase64 = currentQuote.transaction;

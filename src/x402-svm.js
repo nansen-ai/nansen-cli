@@ -268,28 +268,15 @@ function signEd25519(message, keypairHex) {
 // ============= x402 Solana Payment =============
 
 /**
- * Build a Solana x402 payment transaction.
- * 
- * This builds an SPL TransferChecked instruction wrapped in a VersionedTransaction.
- * The facilitator is the fee payer (index 0), client signs at index 1.
+ * Build an unsigned Solana x402 payment transaction.
+ * Returns the serialized MessageV0 bytes and the full transaction bytes
+ * (with both signature slots as 64 zero bytes).
  *
- * NOTE: This requires a recent blockhash from Solana RPC. For the initial implementation,
- * we fetch it inline. In production, this should be cached.
- *
- * @param {object} requirements - Parsed PaymentRequirements from 402 response
- * @param {string} keypairHex - 128-char hex string (64 bytes: seed + pubkey)
- * @param {string} walletAddress - Signer's Solana address (base58)
- * @param {string} resource - Original request URL
- * @param {string} recentBlockhash - Recent blockhash from Solana RPC (base58)
- * @param {number} decimals - Token decimals (default 6 for USDC)
- * @param {string} tokenProgram - Token program address (auto-detect if not provided)
- * @returns {string} Base64-encoded PaymentPayload for Payment-Signature header
+ * Used by local-key signing (createSvmPaymentPayload) and Privy server wallet signing.
  */
-export function createSvmPaymentPayload(
+export function buildUnsignedSvmTransaction(
   requirements,
-  keypairHex,
   walletAddress,
-  resource,
   recentBlockhash,
   decimals = 6,
   tokenProgram = TOKEN_PROGRAM,
@@ -356,7 +343,6 @@ export function createSvmPaymentPayload(
     },
   ];
 
-  // Build MessageV0
   const messageBytes = buildMessageV0({
     feePayer: feePayerStr,
     instructions,
@@ -364,17 +350,50 @@ export function createSvmPaymentPayload(
     accounts: null,
   });
 
+  // Build transaction: compact-u16(numSignatures) + signatures + message
+  // 2 signatures: [facilitator placeholder (64 zero bytes), client placeholder (64 zero bytes)]
+  const numSigs = encodeCompactU16(2);
+  const txBytes = Buffer.concat([
+    numSigs,
+    Buffer.alloc(64), // facilitator placeholder
+    Buffer.alloc(64), // client placeholder
+    messageBytes,
+  ]);
+
+  return { messageBytes, txBase64: txBytes.toString('base64') };
+}
+
+/**
+ * Build a signed Solana x402 payment transaction using a local Ed25519 keypair.
+ * Calls buildUnsignedSvmTransaction internally, then signs with the private key.
+ *
+ * @returns {string} Base64-encoded PaymentPayload JSON for Payment-Signature header
+ */
+export function createSvmPaymentPayload(
+  requirements,
+  keypairHex,
+  walletAddress,
+  resource,
+  recentBlockhash,
+  decimals = 6,
+  tokenProgram = TOKEN_PROGRAM,
+) {
+  const { messageBytes } = buildUnsignedSvmTransaction(
+    requirements,
+    walletAddress,
+    recentBlockhash,
+    decimals,
+    tokenProgram,
+  );
+
   // Sign: client signs the full message (with 0x80 version prefix already included)
   const clientSignature = signEd25519(messageBytes, keypairHex);
 
-  // Build transaction: compact-u16(numSignatures) + signatures + message
-  // 2 signatures: [facilitator placeholder (64 zero bytes), client signature]
+  // Rebuild transaction with the real client signature at slot 1
   const numSigs = encodeCompactU16(2);
-  const facilitatorPlaceholder = Buffer.alloc(64); // all zeros
-  
   const txBytes = Buffer.concat([
     numSigs,
-    facilitatorPlaceholder,
+    Buffer.alloc(64), // facilitator placeholder
     clientSignature,
     messageBytes,
   ]);

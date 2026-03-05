@@ -1831,6 +1831,48 @@
           }
         }
       }
+    },
+    "wallet": {
+      "description": "Wallet management (local or Privy server wallets)",
+      "options": {
+        "provider": {
+          "type": "string",
+          "enum": ["local", "privy"],
+          "description": "Wallet provider (default: local). Use 'privy' for server-managed wallets."
+        }
+      },
+      "subcommands": {
+        "create": {
+          "description": "Create a new wallet",
+          "options": {
+            "name": { "type": "string", "description": "Wallet name (default: 'default')" }
+          }
+        },
+        "list": { "description": "List all wallets" },
+        "show": {
+          "description": "Show wallet details",
+          "options": {
+            "name": { "type": "string", "description": "Wallet name" }
+          }
+        },
+        "delete": {
+          "description": "Delete a wallet",
+          "options": {
+            "name": { "type": "string", "description": "Wallet name" }
+          }
+        },
+        "send": {
+          "description": "Send tokens or native currency",
+          "options": {
+            "to": { "type": "string", "required": true, "description": "Recipient address" },
+            "amount": { "type": "string", "description": "Amount to send" },
+            "chain": { "type": "string", "required": true, "description": "Blockchain to use" }
+          }
+        },
+        "export": { "description": "Export private keys (local only, requires password)" },
+        "default": { "description": "Set default wallet (local only)" },
+        "help": { "description": "Show wallet help" }
+      }
     }
   },
   "globalOptions": {

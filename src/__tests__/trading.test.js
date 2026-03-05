@@ -221,6 +221,14 @@ describe('quote storage', () => {
     expect(fs.existsSync(path.join(quotesDir, `${id1}.json`))).toBe(false);
     expect(fs.existsSync(path.join(quotesDir, `${id2}.json`))).toBe(true);
   });
+
+  it('should save Privy signerType and wallet IDs in quote', () => {
+    const privyWalletIds = { evm: 'wl_evm_1', solana: 'wl_sol_1' };
+    const quoteId = saveQuote(evmQuoteResponse, 'base', 'privy', privyWalletIds);
+    const loaded = loadQuote(quoteId);
+    expect(loaded.signerType).toBe('privy');
+    expect(loaded.privyWalletIds).toEqual(privyWalletIds);
+  });
 });
 
 // ============= Compact-u16 (Solana wire format) =============
@@ -947,6 +955,217 @@ describe('WalletConnect execute support', () => {
 
     expect(exitCalled).toBe(true);
     expect(logs.some(l => l.includes('WalletConnect is only supported for EVM chains'))).toBe(true);
+  });
+});
+
+// ============= Privy execute support =============
+
+describe('Privy execute support', () => {
+  let originalEnv;
+
+  beforeEach(() => {
+    originalEnv = { ...process.env };
+    process.env.PRIVY_APP_ID = 'test-app-id';
+    process.env.PRIVY_APP_SECRET = 'test-secret';
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+  });
+
+  it('should sign EVM transaction via Privy and broadcast via Trading API', async () => {
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'test',
+        inputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        inAmount: '1000000000000000000',
+        outAmount: '3000000000',
+        transaction: { to: '0xRouter', data: '0xSwapData', value: '1000000000000000000', gas: '210000' },
+      }],
+    }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' });
+
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      // Privy getWallet (to resolve address)
+      if (urlStr.includes('privy.io') && opts?.method === 'GET') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 'wl_evm_1', address: '0xPrivyAddr', chain_type: 'ethereum' }),
+        });
+      }
+      // Privy signEvmTransaction
+      if (urlStr.includes('privy.io') && opts?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ data: { signed_transaction: '0xSignedTxHex' } }),
+        });
+      }
+      // RPC call (nonce, simulation, waitForReceipt)
+      if (urlStr.includes('base') || urlStr.includes('mainnet')) {
+        const body = opts?.body ? JSON.parse(opts.body) : {};
+        if (body.method === 'eth_getTransactionCount') {
+          return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: '0x5' }) });
+        }
+        if (body.method === 'eth_call') {
+          return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: '0x' }) });
+        }
+        if (body.method === 'eth_getTransactionReceipt') {
+          return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: { status: '0x1', blockNumber: '0x100' } }) });
+        }
+        return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: null }) });
+      }
+      // Trading API executeTransaction
+      if (urlStr.includes('trading-api')) {
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', txHash: '0xTxHash', chainType: 'evm', broadcaster: 'test' })),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }));
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      log: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    await cmds.execute([], null, {}, { quote: quoteId });
+
+    // Should have signed via Privy without password
+    expect(logs.some(l => l.includes('Signing EVM transaction via Privy'))).toBe(true);
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(true);
+    expect(logs.every(l => !l.includes('Enter wallet password'))).toBe(true);
+  });
+
+  it('should sign Solana transaction via Privy and broadcast via Trading API', async () => {
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'test',
+        inputMint: 'So11111111111111111111111111111111111111112',
+        outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        inAmount: '1000000000',
+        outAmount: '50000000',
+        transaction: 'AQAAAA==',
+        metadata: { requestId: 'req-123' },
+      }],
+    }, 'solana', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' });
+
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      // Privy signSolanaTransaction
+      if (urlStr.includes('privy.io')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ data: { signed_transaction: 'c2lnbmVkVHg=' } }),
+        });
+      }
+      // Trading API executeTransaction
+      if (urlStr.includes('trading-api')) {
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolTxSig', chainType: 'solana', broadcaster: 'test' })),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }));
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      log: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    await cmds.execute([], null, {}, { quote: quoteId });
+
+    expect(logs.some(l => l.includes('Signing Solana transaction via Privy'))).toBe(true);
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(true);
+  });
+
+  it('should wait for approval receipt before swap via Privy EVM', async () => {
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'test',
+        inputMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC (ERC-20, not native)
+        outputMint: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+        inAmount: '1000000',
+        outAmount: '990000',
+        inputAmount: '1000000',
+        approvalAddress: '0xRouterApproval',
+        transaction: {
+          to: '0xRouter',
+          data: '0xSwapData',
+          value: '0',
+          gas: '210000',
+          maxFeePerGas: '1000000',
+          maxPriorityFeePerGas: '1000000',
+        },
+      }],
+    }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' });
+
+    const rpcCalls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      // Privy getWallet
+      if (urlStr.includes('privy.io') && opts?.method === 'GET') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 'wl_evm_1', address: '0xPrivyAddr', chain_type: 'ethereum' }),
+        });
+      }
+      // Privy signEvmTransaction
+      if (urlStr.includes('privy.io') && opts?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ data: { signed_transaction: '0xSignedTxHex' } }),
+        });
+      }
+      // RPC calls
+      if (urlStr.includes('base') || urlStr.includes('mainnet')) {
+        const body = opts?.body ? JSON.parse(opts.body) : {};
+        rpcCalls.push(body.method);
+        if (body.method === 'eth_getTransactionCount') {
+          return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: '0x5' }) });
+        }
+        // eth_call for allowance check — return 0 (needs approval)
+        if (body.method === 'eth_call') {
+          return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: '0x0000000000000000000000000000000000000000000000000000000000000000' }) });
+        }
+        // eth_getTransactionReceipt (for waitForReceipt)
+        if (body.method === 'eth_getTransactionReceipt') {
+          return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: { status: '0x1', blockNumber: '0x100' } }) });
+        }
+        return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: null }) });
+      }
+      // Trading API executeTransaction
+      if (urlStr.includes('trading-api')) {
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', txHash: '0xApprovalHash', chainType: 'evm', broadcaster: 'test' })),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }));
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      log: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    await cmds.execute([], null, {}, { quote: quoteId });
+
+    // Verify approval receipt was waited for (eth_getTransactionReceipt called for approval)
+    expect(logs.some(l => l.includes('Waiting for approval confirmation'))).toBe(true);
+    expect(logs.some(l => l.includes('Approval confirmed in block'))).toBe(true);
   });
 });
 

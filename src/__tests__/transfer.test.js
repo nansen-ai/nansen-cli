@@ -15,11 +15,13 @@ import {
   validateEvmAddress,
   validateSolanaAddress,
   bigIntToHex,
+  buildUnsignedSolanaTransaction,
 } from '../transfer.js';
 import { signSecp256k1, rlpEncode } from '../crypto.js';
 import { base58Encode } from '../wallet.js';
 import * as wallet from '../wallet.js';
 import * as wcTrading from '../walletconnect-trading.js';
+
 
 // ============= Unit Tests =============
 
@@ -291,6 +293,12 @@ describe('sendTokens integration', () => {
       passwordHash: { salt: 'test', hash: 'test' },
     });
     vi.spyOn(wallet, 'verifyPassword').mockReturnValue(true);
+    vi.spyOn(wallet, 'showWallet').mockReturnValue({
+      name: 'test',
+      provider: 'local',
+      evm: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      solana: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+    });
     vi.spyOn(wallet, 'exportWallet').mockReturnValue({
       name: 'test',
       evm: { address: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', privateKey: '0123456789abcdef'.repeat(4) },
@@ -750,5 +758,336 @@ describe('sendTokens via WalletConnect', () => {
     expect(call.value).toBe('0');
 
     vi.restoreAllMocks();
+  });
+});
+
+// ============= buildUnsignedSolanaTransaction =============
+
+describe('buildUnsignedSolanaTransaction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  test('returns unsigned transaction with empty signature slot', async () => {
+    fetch.mockImplementation(async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      if (body.method === 'getLatestBlockhash') {
+        return {
+          json: () => Promise.resolve({
+            result: {
+              value: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 100 },
+              context: { slot: 1 },
+            },
+          }),
+        };
+      }
+      if (body.method === 'getBalance') {
+        return {
+          json: () => Promise.resolve({
+            result: { value: 1000000000, context: { slot: 1 } },
+          }),
+        };
+      }
+      return { json: () => Promise.resolve({ result: null }) };
+    });
+
+    const result = await buildUnsignedSolanaTransaction({
+      to: '11111111111111111111111111111112',
+      amount: 1000n,
+      fromAddress: '11111111111111111111111111111111',
+    });
+
+    expect(result.unsignedTransaction).toBeDefined();
+    const txBytes = Buffer.from(result.unsignedTransaction, 'base64');
+    expect(txBytes[0]).toBe(1); // 1 signature slot
+    expect(txBytes.subarray(1, 65).every((b) => b === 0)).toBe(true); // empty signature
+  });
+});
+
+// ============= sendTokens via Privy =============
+
+describe('sendTokens via Privy', () => {
+  let originalEnv;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    originalEnv = { ...process.env };
+    process.env.PRIVY_APP_ID = 'test-app-id';
+    process.env.PRIVY_APP_SECRET = 'test-secret';
+
+    vi.spyOn(wallet, 'getWalletConfig').mockReturnValue({
+      defaultWallet: 'pv',
+      passwordHash: null,
+    });
+    vi.spyOn(wallet, 'showWallet').mockReturnValue({
+      name: 'pv',
+      provider: 'privy',
+      evm: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      solana: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+      privyWalletIds: { evm: 'wl_evm_1', solana: 'wl_sol_1' },
+    });
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+  });
+
+  test('sends native ETH via Privy sendTransaction', async () => {
+    fetch.mockImplementation(async (url) => {
+      // Privy sendTransaction
+      if (url.includes('privy.io')) {
+        return {
+          ok: true,
+          json: () => Promise.resolve({ data: { hash: '0xTxHash123', caip2: 'eip155:8453' } }),
+        };
+      }
+      // EVM RPC for confirmation
+      return {
+        json: () => Promise.resolve({
+          result: { status: '0x1', blockNumber: '0x100' },
+        }),
+      };
+    });
+
+    const result = await sendTokens({
+      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      amount: '0.01',
+      chain: 'base',
+      wallet: 'pv',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.transactionHash).toBe('0xTxHash123');
+    expect(result.chain).toBe('base');
+  });
+
+  test('sends native ETH via Privy dry run', async () => {
+    const result = await sendTokens({
+      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      amount: '0.01',
+      chain: 'base',
+      wallet: 'pv',
+      dryRun: true,
+    });
+
+    expect(result.dryRun).toBe(true);
+    expect(result.from).toBe('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    expect(result.chain).toBe('base');
+  });
+
+  test('sends max native ETH via Privy with computed balance', async () => {
+    let privyBody;
+    fetch.mockImplementation(async (url, opts) => {
+      const body = typeof opts?.body === 'string' ? JSON.parse(opts.body) : null;
+      // RPC: eth_getBalance
+      if (body?.method === 'eth_getBalance') {
+        return { json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: '0xDE0B6B3A7640000' }) }; // 1 ETH
+      }
+      // RPC: eth_gasPrice
+      if (body?.method === 'eth_gasPrice') {
+        return { json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: '0x3B9ACA00' }) }; // 1 gwei
+      }
+      // Privy sendTransaction
+      if (url?.includes('privy.io')) {
+        privyBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          json: () => Promise.resolve({ data: { hash: '0xMaxTxHash', caip2: 'eip155:8453' } }),
+        };
+      }
+      // RPC: eth_getTransactionReceipt (confirmation)
+      if (body?.method === 'eth_getTransactionReceipt') {
+        return { json: () => Promise.resolve({ result: { status: '0x1', blockNumber: '0x100' } }) };
+      }
+      return { json: () => Promise.resolve({ result: '0x0' }) };
+    });
+
+    const result = await sendTokens({
+      to: '0x1234567890123456789012345678901234567890',
+      amount: '0', // ignored when max=true
+      chain: 'base',
+      wallet: 'pv',
+      max: true,
+    });
+
+    expect(result.transactionHash).toBe('0xMaxTxHash');
+    // Value should be defined and less than 1 ETH (gas reserved)
+    const txValue = privyBody.params.transaction.value;
+    expect(txValue).toBeDefined();
+    expect(BigInt(txValue)).toBeGreaterThan(0n);
+    expect(BigInt(txValue)).toBeLessThan(BigInt('0xDE0B6B3A7640000'));
+  });
+
+  test('throws for missing Privy EVM wallet', async () => {
+    vi.spyOn(wallet, 'showWallet').mockReturnValue({
+      name: 'pv',
+      provider: 'privy',
+      evm: null,
+      solana: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+      privyWalletIds: { evm: undefined, solana: 'wl_sol_1' },
+    });
+
+    await expect(sendTokens({
+      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      amount: '0.01',
+      chain: 'base',
+      wallet: 'pv',
+    })).rejects.toThrow('No EVM wallet');
+  });
+
+  test('sends native SOL via Privy sign + broadcast', async () => {
+    let signCallBody;
+    fetch.mockImplementation(async (url, opts) => {
+      const body = typeof opts?.body === 'string' ? JSON.parse(opts.body) : null;
+      // Solana RPC: getBalance
+      if (body?.method === 'getBalance') {
+        return { json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: { value: 1000000000, context: { slot: 1 } } }) };
+      }
+      // Solana RPC: getLatestBlockhash
+      if (body?.method === 'getLatestBlockhash') {
+        return {
+          json: () => Promise.resolve({
+            jsonrpc: '2.0', id: body.id,
+            result: { value: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 100 }, context: { slot: 1 } },
+          }),
+        };
+      }
+      // Privy signSolanaTransaction
+      if (url?.includes('privy.io')) {
+        signCallBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          json: () => Promise.resolve({ data: { signed_transaction: 'c2lnbmVkdHg=' } }),
+        };
+      }
+      // Solana RPC: sendTransaction
+      if (body?.method === 'sendTransaction') {
+        return { json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: 'SolTxHash123' }) };
+      }
+      // Solana RPC: getSignatureStatuses
+      if (body?.method === 'getSignatureStatuses') {
+        return {
+          json: () => Promise.resolve({
+            jsonrpc: '2.0', id: body.id,
+            result: { value: [{ confirmationStatus: 'confirmed', err: null }], context: { slot: 1 } },
+          }),
+        };
+      }
+      return { json: () => Promise.resolve({ jsonrpc: '2.0', id: body?.id, result: null }) };
+    });
+
+    const result = await sendTokens({
+      to: '11111111111111111111111111111112',
+      amount: '0.001',
+      chain: 'solana',
+      wallet: 'pv',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.transactionHash).toBe('SolTxHash123');
+    expect(result.chain).toBe('solana');
+    expect(signCallBody.method).toBe('signTransaction');
+    expect(signCallBody.params.encoding).toBe('base64');
+  });
+
+  test('sends max SPL token via Privy Solana (fetches token balance)', async () => {
+    const TOKEN_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+
+    fetch.mockImplementation(async (url, opts) => {
+      const body = typeof opts?.body === 'string' ? JSON.parse(opts.body) : null;
+      // getAccountInfo (getTokenInfo)
+      if (body?.method === 'getAccountInfo' && body.params?.[0] === TOKEN_MINT) {
+        return {
+          json: () => Promise.resolve({
+            jsonrpc: '2.0', id: body.id,
+            result: {
+              value: {
+                owner: TOKEN_PROGRAM,
+                data: { parsed: { info: { decimals: 6 } } },
+              },
+              context: { slot: 1 },
+            },
+          }),
+        };
+      }
+      // getTokenAccountBalance (max SPL balance query)
+      if (body?.method === 'getTokenAccountBalance') {
+        return {
+          json: () => Promise.resolve({
+            jsonrpc: '2.0', id: body.id,
+            result: { value: { amount: '5000000', uiAmountString: '5.0' }, context: { slot: 1 } },
+          }),
+        };
+      }
+      // getLatestBlockhash
+      if (body?.method === 'getLatestBlockhash') {
+        return {
+          json: () => Promise.resolve({
+            jsonrpc: '2.0', id: body.id,
+            result: { value: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 100 }, context: { slot: 1 } },
+          }),
+        };
+      }
+      // getBalance
+      if (body?.method === 'getBalance') {
+        return { json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: { value: 1000000000, context: { slot: 1 } } }) };
+      }
+      // Privy signSolanaTransaction
+      if (url?.includes('privy.io')) {
+        return {
+          ok: true,
+          json: () => Promise.resolve({ data: { signed_transaction: 'c2lnbmVkdHg=' } }),
+        };
+      }
+      // sendTransaction
+      if (body?.method === 'sendTransaction') {
+        return { json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: 'SplTxHash123' }) };
+      }
+      // getSignatureStatuses
+      if (body?.method === 'getSignatureStatuses') {
+        return {
+          json: () => Promise.resolve({
+            jsonrpc: '2.0', id: body.id,
+            result: { value: [{ confirmationStatus: 'confirmed', err: null }], context: { slot: 1 } },
+          }),
+        };
+      }
+      return { json: () => Promise.resolve({ jsonrpc: '2.0', id: body?.id, result: null }) };
+    });
+
+    const result = await sendTokens({
+      to: '11111111111111111111111111111112',
+      amount: '0',
+      chain: 'solana',
+      wallet: 'pv',
+      token: TOKEN_MINT,
+      max: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.transactionHash).toBe('SplTxHash123');
+    // The amount returned should be the full token balance, not '0'
+    expect(result.amount).toBe('5.0');
+  });
+
+  test('sends SOL via Privy dry run without making RPC calls', async () => {
+    fetch.mockImplementation(async () => {
+      throw new Error('No RPC calls should be made during Solana Privy dry run');
+    });
+
+    const result = await sendTokens({
+      to: '11111111111111111111111111111112',
+      amount: '0.001',
+      chain: 'solana',
+      wallet: 'pv',
+      dryRun: true,
+    });
+
+    expect(result.dryRun).toBe(true);
+    expect(result.from).toBe('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
+    expect(result.chain).toBe('solana');
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

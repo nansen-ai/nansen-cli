@@ -5,6 +5,9 @@
  * Run with live API: npm run test:live (requires NANSEN_API_KEY)
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { NansenAPI, ErrorCode } from '../api.js';
 
@@ -275,9 +278,9 @@ describe('NansenAPI', () => {
   });
 
   afterEach(() => {
-    // Clear mock call history between tests
+    // Reset mocks fully (clears call history AND queued mockResolvedValueOnce values)
     if (mockFetch) {
-      mockFetch.mockClear();
+      mockFetch.mockReset();
     }
     // Always restore real timers (safety net if test fails mid-execution)
     vi.useRealTimers();
@@ -2409,6 +2412,18 @@ describe('NansenAPI', () => {
   // =================== x402 Auto-Payment ===================
 
   describe('x402 Auto-Payment', () => {
+    // Override HOME so the x402 handler doesn't find real wallet config on disk
+    const savedHome = process.env.HOME;
+    let tmpHome;
+    beforeEach(() => {
+      tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'nansen-api-test-'));
+      process.env.HOME = tmpHome;
+    });
+    afterEach(() => {
+      process.env.HOME = savedHome;
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    });
+
     it('should auto-pay on 402 and retry successfully', async () => {
       if (LIVE_TEST) return;
 
