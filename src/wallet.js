@@ -302,8 +302,6 @@ function hashPassword(password) {
 // ============= Prompt Helper =============
 
 async function getPassword(deps = {}, context = 'operation') {
-  if (process.env.NANSEN_WALLET_PASSWORD) return process.env.NANSEN_WALLET_PASSWORD;
-
   // Try OS keychain
   try {
     const kcPassword = await keychainGet();
@@ -324,7 +322,7 @@ async function getPassword(deps = {}, context = 'operation') {
       success: false,
       error: `Password required for ${context}`,
       code: 'PASSWORD_REQUIRED',
-      hint: 'Set NANSEN_WALLET_PASSWORD env var',
+      hint: 'Store password in OS keychain or .credentials file',
     };
     throw Object.assign(new Error(err.error), { structured: err });
   }
