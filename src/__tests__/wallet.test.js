@@ -695,6 +695,46 @@ describe('CLI handler: no-TTY hard fail for export/delete', () => {
     await cmds.wallet(['export'], null, {}, { name: 'secure-wallet' });
     expect(logs.join('')).toContain('Private keys');
   });
+
+  it('export succeeds when password is in .credentials file (no TTY, no env var)', async () => {
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.writeFileSync(path.join(walletsDir, '.credentials'), `NANSEN_WALLET_PASSWORD=${PASSWORD}\n`, { mode: 0o600 });
+
+    const logs = [];
+    const cmds = buildWalletCommands({
+      log: (m) => logs.push(m),
+      isTTY: false,
+    });
+    await cmds.wallet(['export'], null, {}, { name: 'secure-wallet' });
+    expect(logs.join('')).toContain('Private keys');
+  });
+
+  it('delete succeeds when password is in .credentials file (no TTY, no env var)', async () => {
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.writeFileSync(path.join(walletsDir, '.credentials'), `NANSEN_WALLET_PASSWORD=${PASSWORD}\n`, { mode: 0o600 });
+
+    const logs = [];
+    const cmds = buildWalletCommands({
+      log: (m) => logs.push(m),
+      isTTY: false,
+    });
+    await cmds.wallet(['delete'], null, {}, { name: 'secure-wallet' });
+    expect(logs.join('')).toContain('deleted');
+  });
+
+  it('export succeeds when password is in keychain (no TTY, no env var)', async () => {
+    const keychainMod = await import('../keychain.js');
+    vi.spyOn(keychainMod, 'keychainGet').mockResolvedValue(PASSWORD);
+
+    const logs = [];
+    const cmds = buildWalletCommands({
+      log: (m) => logs.push(m),
+      isTTY: false,
+    });
+    await cmds.wallet(['export'], null, {}, { name: 'secure-wallet' });
+    expect(logs.join('')).toContain('Private keys');
+    vi.restoreAllMocks();
+  });
 });
 
 describe('CLI check subcommand', () => {

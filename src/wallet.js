@@ -303,6 +303,22 @@ function hashPassword(password) {
 
 async function getPassword(deps = {}, context = 'operation') {
   if (process.env.NANSEN_WALLET_PASSWORD) return process.env.NANSEN_WALLET_PASSWORD;
+
+  // Try OS keychain
+  try {
+    const kcPassword = await keychainGet();
+    if (kcPassword) return kcPassword;
+  } catch (_e) { /* intentional */ }
+
+  // Try .credentials file
+  try {
+    const credFilePath = path.join(getWalletsDir(), '.credentials');
+    const credContent = fs.readFileSync(credFilePath, 'utf8');
+    const credMatch = credContent?.match(/^NANSEN_WALLET_PASSWORD=(.+)$/m);
+    if (credMatch) return credMatch[1];
+  } catch (_e) { /* intentional: missing .credentials is not an error */ }
+
+  // Prompt if TTY available
   if (!resolveTTY(deps)) {
     const err = {
       success: false,
