@@ -896,9 +896,11 @@ export function buildWalletCommands(deps = {}) {
           const { stored, method } = storePassword(password);
           if (stored && method === 'keychain') {
             // Only remove the .credentials file — keychain entry is already set
-            deleteCredentialsFile();
+            const fileRemoved = deleteCredentialsFile();
             log('✓ Password migrated to OS keychain (secure).');
-            log('  Removed ~/.nansen/wallets/.credentials.');
+            if (fileRemoved) {
+              log('  Removed ~/.nansen/wallets/.credentials.');
+            }
             log(`  Previous source: ${source}`);
           } else {
             log('⚠️  OS keychain is not available on this system.');
