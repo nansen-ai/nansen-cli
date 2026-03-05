@@ -30,15 +30,25 @@ Use this skill when a user already has a nansen-cli wallet set up with the
 
 ## Detect current state
 
+`wallet show` only displays addresses and does NOT load or check the password.
+To detect the actual password situation, check for stored password sources:
+
 ```bash
-# Check wallet status and password source
-nansen wallet show default 2>&1
+# 1. Check if a wallet exists at all
+nansen wallet list 2>&1
+
+# 2. Check for insecure password stores
+ls -la ~/.nansen/.env 2>/dev/null && echo "FOUND: ~/.nansen/.env (insecure)"
+ls -la ~/.nansen/wallets/.credentials 2>/dev/null && echo "FOUND: .credentials file (insecure)"
+
+# 3. Try an operation that requires the password (without setting env var)
+nansen wallet export default 2>&1
 ```
 
-Look for:
-- `⚠ Password loaded from insecure .credentials file` — needs migration
-- Works without env var set — already on keychain, no migration needed
-- `PASSWORD_REQUIRED` JSON error — password not persisted anywhere
+Interpret the `export` output:
+- `⚠ Password loaded from ~/.nansen/wallets/.credentials` on stderr → needs migration (Path B)
+- Export succeeds silently → password is in keychain, no migration needed
+- `PASSWORD_REQUIRED` JSON error → password not persisted anywhere (Path C or D)
 
 ## Migration paths
 
@@ -54,20 +64,28 @@ The previous wallet skill told agents to write the password to `~/.nansen/.env`.
 
 **Step 2 — Migrate:**
 
+The `source` and `nansen wallet secure` MUST run in the same shell so the env
+var is available to the node process:
+
 ```bash
-# Load existing password and migrate to keychain
-source ~/.nansen/.env 2>/dev/null
-nansen wallet secure
+source ~/.nansen/.env 2>/dev/null && nansen wallet secure
 ```
 
-**Step 3 — Verify and clean up:**
+**Step 3 — Verify the password actually decrypts the wallet:**
 
 ```bash
-# Verify wallet works without env var
+# Unset env var to prove keychain works, then export to verify decryption
 unset NANSEN_WALLET_PASSWORD
-nansen wallet show default
+nansen wallet export default 2>&1
+```
 
-# If successful, remove the insecure file
+If export succeeds (shows private keys), the migration worked. If it shows
+`Incorrect password`, the wrong password was migrated — run `nansen wallet
+forget-password` and retry with the correct password.
+
+**Step 4 — Clean up the insecure file:**
+
+```bash
 rm -f ~/.nansen/.env
 ```
 
@@ -76,18 +94,30 @@ rm -f ~/.nansen/.env
 This happens when `wallet create` couldn't access the OS keychain (containers, CI).
 
 ```bash
-# Migrate from .credentials to keychain
 nansen wallet secure
 ```
 
 If the keychain is still unavailable (e.g. containerized Linux without D-Bus),
 `nansen wallet secure` will explain the situation and suggest alternatives.
 
+After migrating, verify decryption works:
+
+```bash
+nansen wallet export default 2>&1
+```
+
 ### Path C: Password only in `NANSEN_WALLET_PASSWORD` env var
 
 ```bash
 # Persist the env var password to keychain
 nansen wallet secure
+```
+
+Then verify without the env var:
+
+```bash
+unset NANSEN_WALLET_PASSWORD
+nansen wallet export default 2>&1
 ```
 
 ### Path D: Password lost entirely
@@ -108,16 +138,23 @@ NANSEN_WALLET_PASSWORD="<new_password_from_user>" nansen wallet create --name ne
 
 ## Post-migration verification
 
-After any migration, confirm the wallet works without manual password entry:
+After any migration, confirm the password was migrated correctly by proving
+the keychain password can actually decrypt the wallet:
 
 ```bash
 # Unset env var to prove keychain works
 unset NANSEN_WALLET_PASSWORD
 
-# These should all succeed without prompts or warnings
-nansen wallet list
-nansen wallet show default
-nansen wallet send --to <test_addr> --amount 0.001 --chain evm --dry-run
+# This MUST succeed — it proves the keychain password decrypts the wallet
+nansen wallet export default 2>&1
+```
+
+If export shows `Incorrect password`, the wrong password was saved to the
+keychain. Fix with:
+
+```bash
+nansen wallet forget-password
+NANSEN_WALLET_PASSWORD="<correct_password>" nansen wallet secure
 ```
 
 If `stderr` still shows the `.credentials` warning, the keychain migration did
@@ -143,3 +180,4 @@ wallet operations will require `NANSEN_WALLET_PASSWORD` env var or re-running
 - **NEVER use `--human` flag** — interactive prompts break agents
 - If the human authorizes reading `~/.nansen/.env`, read it in the same command
   (`source ~/.nansen/.env && nansen wallet secure`) — do not echo or log the value
+- **ALWAYS verify after migration** with `nansen wallet export default` — `wallet show` does NOT prove the password works (it never loads the password)

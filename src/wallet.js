@@ -523,12 +523,15 @@ export function deleteWallet(name, password) {
 
   fs.unlinkSync(walletFile);
 
-  if (config.defaultWallet === name) {
-    // Pick another wallet as default, or null
-    const remaining = fs.readdirSync(getWalletsDir()).filter(f => f.endsWith('.json') && f !== 'config.json');
-    config.defaultWallet = remaining.length > 0 ? remaining[0].replace('.json', '') : null;
-    saveWalletConfig(config);
+  const remaining = fs.readdirSync(getWalletsDir()).filter(f => f.endsWith('.json') && f !== 'config.json');
+
+  if (remaining.length === 0) {
+    config.defaultWallet = null;
+    config.passwordHash = null;
+  } else if (config.defaultWallet === name) {
+    config.defaultWallet = remaining[0].replace('.json', '');
   }
+  saveWalletConfig(config);
 
   return { deleted: name, newDefault: config.defaultWallet };
 }

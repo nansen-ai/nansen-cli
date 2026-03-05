@@ -274,6 +274,23 @@ describe('wallet CRUD', () => {
     const list = listWallets();
     expect(list.defaultWallet).toBe('b');
   });
+
+  it('should clear passwordHash when last wallet is deleted', () => {
+    createWallet('only', PASSWORD);
+    deleteWallet('only', PASSWORD);
+    const config = getWalletConfig();
+    expect(config.passwordHash).toBeNull();
+  });
+
+  it('should allow new password after deleting all wallets', () => {
+    createWallet('old', PASSWORD);
+    deleteWallet('old', PASSWORD);
+    const NEW_PASSWORD = 'completely-different-password';
+    const result = createWallet('fresh', NEW_PASSWORD);
+    expect(result.evm).toBeDefined();
+    const exported = exportWallet('fresh', NEW_PASSWORD);
+    expect(exported.evm.privateKey).toBeTruthy();
+  });
 });
 
 describe('passwordless encryption', () => {
