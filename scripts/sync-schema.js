@@ -622,7 +622,7 @@ function mergeWithPreserved(newSchema, currentSchema, overrides) {
 /**
  * Generate diff between two objects
  */
-function generateDiff(oldObj, newObj, path = "") {
+function generateDiff(oldObj, newObj, _path = "") {
   const diffs = [];
 
   const oldStr = JSON.stringify(oldObj, null, 2);
