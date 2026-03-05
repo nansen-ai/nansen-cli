@@ -528,6 +528,7 @@ export function deleteWallet(name, password) {
   if (remaining.length === 0) {
     config.defaultWallet = null;
     config.passwordHash = null;
+    deletePassword();
   } else if (config.defaultWallet === name) {
     config.defaultWallet = remaining[0].replace('.json', '');
   }
@@ -940,12 +941,16 @@ export function buildWalletCommands(deps = {}) {
             }
             log(`  Previous source: ${source}`);
           } else {
-            log('⚠️  OS keychain is not available on this system.');
-            log('   Your password is stored in ~/.nansen/wallets/.credentials (insecure).');
-            log('   Recommended alternatives:');
-            log('     - Set NANSEN_WALLET_PASSWORD in a secrets manager or system keyring');
-            log('     - Use a containerized secrets agent (e.g. Vault, 1Password CLI)');
-            log('     - Move to server-managed wallets (Privy) when available');
+            log(JSON.stringify({
+              error: 'KEYCHAIN_UNAVAILABLE',
+              message: 'OS keychain is not available. Password remains in ~/.nansen/wallets/.credentials (insecure).',
+              resolution: [
+                'Set NANSEN_WALLET_PASSWORD in a secrets manager or system keyring',
+                'Use a containerized secrets agent (e.g. Vault, 1Password CLI)',
+              ],
+            }));
+            exit(1);
+            return;
           }
         },
 
