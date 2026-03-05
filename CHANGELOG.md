@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.15.0
+
+### Minor Changes
+
+- [#216](https://github.com/nansen-ai/nansen-cli/pull/216) [`5b88241`](https://github.com/nansen-ai/nansen-cli/commit/5b882411134efc5ece44d640adc105c8dd8c5771) Thanks [@TimNooren](https://github.com/TimNooren)! - Unified wallet abstraction: Privy server wallets are first-class citizens.
+
+  - `wallet create --provider privy` creates EVM + Solana wallets via Privy and stores a local reference
+  - All wallet commands (list, show, delete, default, send) work by name regardless of provider
+  - Trading (quote + execute) supports Privy wallets with sign-only + Trading API broadcast
+  - x402 auto-payment routes through Privy when credentials are configured
+
+### Patch Changes
+
+- [#232](https://github.com/nansen-ai/nansen-cli/pull/232) [`443aaad`](https://github.com/nansen-ai/nansen-cli/commit/443aaad15da051ac65e0999b4c4b09436050d0fe) Thanks [@kome12](https://github.com/kome12)! - Remove unsupported chains (zksync, unichain) from CLI
+
 ## 1.14.0
 
 ### Minor Changes
