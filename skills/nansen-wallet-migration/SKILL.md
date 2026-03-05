@@ -13,7 +13,7 @@ metadata:
       - kind: node
         package: nansen-cli
         bins: [nansen]
-allowed-tools: Bash
+allowed-tools: Bash(nansen:*)
 ---
 
 # Wallet Migration — Old Flow to Secure Keychain

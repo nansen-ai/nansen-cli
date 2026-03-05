@@ -13,7 +13,7 @@ metadata:
       - kind: node
         package: nansen-cli
         bins: [nansen]
-allowed-tools: Bash
+allowed-tools: Bash(nansen:*)
 ---
 
 # Smart Money

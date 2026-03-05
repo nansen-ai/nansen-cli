@@ -1,7 +1,7 @@
 ---
 name: nansen-prediction-market
 description: Polymarket prediction market analytics — screener, OHLCV, orderbook, holders, trades, PnL. Use when researching prediction markets, checking market prices, or analyzing trader positions.
-allowed-tools: Bash
+allowed-tools: Bash(nansen:*)
 ---
 
 # Prediction Market Analytics (Polymarket)
