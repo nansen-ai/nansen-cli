@@ -112,36 +112,11 @@ nansen wallet forget-password
 
 ## Migrate to Secure Storage
 
-If you or a user had a wallet set up with the old password flow (env var only, `~/.nansen/.env`, or `.credentials` file), migrate to the new secure flow:
-
 ```bash
-# Step 1: Set the existing password in the environment
-NANSEN_WALLET_PASSWORD="<existing_password>" nansen wallet secure
-
-# If the password was in ~/.nansen/.env (old skill):
-source ~/.nansen/.env && nansen wallet secure
-```
-
-The `secure` command will:
-- **If OS keychain is available:** migrate the password there and remove the `.credentials` file
-- **If no keychain:** explain the situation and recommend alternatives (secrets manager, env var via a secure source)
-
-### Migration from old `~/.nansen/.env` pattern
-
-The previous wallet skill instructed agents to store passwords in `~/.nansen/.env`. This is no longer recommended. To migrate:
-
-```bash
-# 1. Load the old password
-source ~/.nansen/.env 2>/dev/null
-
-# 2. Migrate to keychain (or .credentials as fallback)
 nansen wallet secure
-
-# 3. Clean up the old insecure file
-rm -f ~/.nansen/.env
 ```
 
-After migration, all wallet commands work without setting any env var — the password is retrieved automatically.
+For detailed migration steps (from `~/.nansen/.env`, `.credentials`, or env-var-only setups), see the **nansen-wallet-migration** skill.
 
 ## Flags
 
