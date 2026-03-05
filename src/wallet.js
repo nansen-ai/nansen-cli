@@ -943,7 +943,9 @@ export function buildWalletCommands(deps = {}) {
           } else {
             log(JSON.stringify({
               error: 'KEYCHAIN_UNAVAILABLE',
-              message: 'OS keychain is not available. Password remains in ~/.nansen/wallets/.credentials (insecure).',
+              message: source === 'file'
+                ? 'OS keychain is not available. Password remains in ~/.nansen/wallets/.credentials (insecure).'
+                : 'OS keychain is not available. Password is only in the NANSEN_WALLET_PASSWORD env var (not persisted).',
               resolution: [
                 'Set NANSEN_WALLET_PASSWORD in a secrets manager or system keyring',
                 'Use a containerized secrets agent (e.g. Vault, 1Password CLI)',
