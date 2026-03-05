@@ -72,5 +72,4 @@ nansen research profiler trace --address $ADDR --chain $CHAIN --depth 2 --width 
 | **Exclude** | ENS alone, single CEX withdrawal, single deployer |
 
 **Output:** `address` · `owner` · `confidence (H/M/L)` · `signals` · `role`
-
 Warning: `trace` is credit-heavy; keep `--width 3` or lower. L2 counterparty loop adds 4 API calls per address. Historical balances reveal past holdings on drained wallets — useful fingerprint.
