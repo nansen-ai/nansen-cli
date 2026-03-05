@@ -862,7 +862,10 @@ describe('WalletConnect execute support', () => {
 
     // Mock global fetch for waitForReceipt RPC calls
     const originalFetch = global.fetch;
+    const rpcResponse = JSON.stringify({ result: { status: '0x1', blockNumber: '0x100' } });
     global.fetch = vi.fn(async () => ({
+      status: 200,
+      text: () => Promise.resolve(rpcResponse),
       json: () => Promise.resolve({ result: { status: '0x1', blockNumber: '0x100' } }),
     }));
 

@@ -80,6 +80,7 @@ If you are contributing changes, read [CONTRIBUTING.md](CONTRIBUTING.md) for the
 5. **Token-2022:** use `TOKEN_2022_PROGRAM_ID` + `TransferCheckedInstruction`
 6. **CreateATA path** (transfer.js) has limited test coverage — add tests if modifying
 7. **`CHAIN_RPCS`** in transfer.js only has RPC endpoints for ethereum, base, and solana — adding a new EVM transfer chain requires adding an entry there. (`CHAIN_IDS` in the same file already covers 11+ chains via chain-ids.js.)
+8. **`EVM_RPC_URLS`** in trading.js holds RPC endpoints used for simulation/gas estimation/nonce fetching in trades (currently base only). Override per-chain via `NANSEN_RPC_BASE` etc. Adding a new trading chain requires an entry here as well.
 
 ## Networks
 

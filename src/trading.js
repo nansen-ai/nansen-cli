@@ -83,7 +83,13 @@ async function evmRpcCall(chain, method, params = []) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
-  const body = await res.json();
+  const text = await res.text();
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new Error(`RPC endpoint returned non-JSON response (HTTP ${res.status}) for ${method}: ${text.slice(0, 100)}`);
+  }
   if (body.error) throw new Error(`RPC error (${method}): ${body.error.message}`);
   return body.result;
 }
@@ -373,13 +379,19 @@ export async function getEvmNonce(chain, address) {
 export async function waitForReceipt(chain, txHash, timeoutMs = 30000, pollMs = 2000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const receipt = await evmRpcCall(chain, 'eth_getTransactionReceipt', [txHash]);
-    if (receipt) {
-      const status = parseInt(receipt.status, 16);
-      if (status !== 1) {
-        throw new Error(`Transaction reverted on-chain (status: ${receipt.status}). Tx: ${txHash}`);
+    try {
+      const receipt = await evmRpcCall(chain, 'eth_getTransactionReceipt', [txHash]);
+      if (receipt) {
+        const status = parseInt(receipt.status, 16);
+        if (status !== 1) {
+          throw new Error(`Transaction reverted on-chain (status: ${receipt.status}). Tx: ${txHash}`);
+        }
+        return receipt;
       }
-      return receipt;
+    } catch (e) {
+      // Re-throw confirmed on-chain reverts immediately; swallow transient RPC/network errors
+      if (e.message?.startsWith('Transaction reverted')) throw e;
+      // else: continue polling (pending tx, transient network error, etc.)
     }
     // Receipt not yet available — wait and retry
     await new Promise(r => setTimeout(r, pollMs));
@@ -400,9 +412,13 @@ export async function simulateEvmCall(chain, { from, to, data, value, gas }) {
     await evmRpcCall(chain, 'eth_call', [callObj, 'latest']);
     return { success: true };
   } catch (e) {
-    // evmRpcCall throws on RPC error — map to { success: false }
-    // Network failures are also caught and treated as non-blocking
-    return { success: false, reason: (e.message || 'unknown').replace(/^RPC error \(eth_call\): /, '') };
+    const msg = e.message || 'unknown';
+    // Only block on actual contract-level revert errors from the RPC
+    if (msg.startsWith('RPC error (eth_call):')) {
+      return { success: false, reason: msg.replace(/^RPC error \(eth_call\): /, '') };
+    }
+    // Network/infrastructure errors (fetch failure, rate limit, non-JSON response) → non-blocking
+    return { success: true };
   }
 }
 
