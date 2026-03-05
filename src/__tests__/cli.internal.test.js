@@ -359,21 +359,23 @@ describe('buildCommands', () => {
 
   describe('login command', () => {
     it('should exit when no API key provided', async () => {
-      mockDeps.promptFn.mockResolvedValue('');
+      const savedEnv = process.env.NANSEN_API_KEY;
+      delete process.env.NANSEN_API_KEY;
       await commands.login([], null, {}, {});
+      if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
       expect(mockDeps.exit).toHaveBeenCalledWith(1);
     });
 
     it('should exit when API key is whitespace', async () => {
-      mockDeps.promptFn.mockResolvedValue('   ');
-      await commands.login([], null, {}, {});
+      const savedEnv = process.env.NANSEN_API_KEY;
+      delete process.env.NANSEN_API_KEY;
+      await commands.login([], null, {}, { 'api-key': '   ' });
+      if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
       expect(mockDeps.exit).toHaveBeenCalledWith(1);
     });
 
-    it('should save config without validation', async () => {
-      mockDeps.promptFn.mockResolvedValue('valid-api-key');
-
-      await commands.login([], null, {}, {});
+    it('should save config with --api-key option', async () => {
+      await commands.login([], null, {}, { 'api-key': 'valid-api-key' });
 
       expect(mockDeps.saveConfigFn).toHaveBeenCalledWith({
         apiKey: 'valid-api-key',
@@ -381,9 +383,7 @@ describe('buildCommands', () => {
       });
     });
 
-    it('should exit when non-TTY and no API key available', async () => {
-      mockDeps.isTTY = false;
-      commands = buildCommands(mockDeps);
+    it('should exit when no API key available', async () => {
       const savedEnv = process.env.NANSEN_API_KEY;
       delete process.env.NANSEN_API_KEY;
 
@@ -391,7 +391,7 @@ describe('buildCommands', () => {
 
       if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
       expect(mockDeps.exit).toHaveBeenCalledWith(1);
-      expect(logs.some(l => l.includes('No API key provided'))).toBe(true);
+      expect(logs.some(l => l.includes('API_KEY_REQUIRED'))).toBe(true);
     });
 
   });
@@ -1079,17 +1079,19 @@ describe('login/logout flow', () => {
   });
 
   describe('login command', () => {
-    it('should prompt for API key in TTY mode', async () => {
-      mockDeps.promptFn.mockResolvedValue('');
-      await commands.login([], null, {}, {});
-      
+    it('should prompt for API key with --human flag in TTY mode', async () => {
+      mockDeps.promptFn.mockResolvedValue('test-key');
+      const savedEnv = process.env.NANSEN_API_KEY;
+      delete process.env.NANSEN_API_KEY;
+
+      await commands.login([], null, { human: true }, {});
+
+      if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
       expect(mockDeps.promptFn).toHaveBeenCalledWith('Enter your API key: ', true);
     });
 
     it('should trim whitespace from API key', async () => {
-      mockDeps.promptFn.mockResolvedValue('  api-key-with-spaces  ');
-      
-      await commands.login([], null, {}, {});
+      await commands.login([], null, {}, { 'api-key': '  api-key-with-spaces  ' });
       
       expect(mockDeps.saveConfigFn).toHaveBeenCalledWith({
         apiKey: 'api-key-with-spaces',
@@ -1097,18 +1099,20 @@ describe('login/logout flow', () => {
       });
     });
 
-    it('should display login instructions', async () => {
-      mockDeps.promptFn.mockResolvedValue('');
-      await commands.login([], null, {}, {});
-      
+    it('should display login instructions with --human flag', async () => {
+      mockDeps.promptFn.mockResolvedValue('some-key');
+      const savedEnv = process.env.NANSEN_API_KEY;
+      delete process.env.NANSEN_API_KEY;
+
+      await commands.login([], null, { human: true }, {});
+
+      if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
       expect(logs.some(l => l.includes('Nansen CLI Login'))).toBe(true);
       expect(logs.some(l => l.includes('https://app.nansen.ai/api'))).toBe(true);
     });
 
-    it('should save config without validation', async () => {
-      mockDeps.promptFn.mockResolvedValue('test-key');
-      
-      await commands.login([], null, {}, {});
+    it('should save config with --api-key option', async () => {
+      await commands.login([], null, {}, { 'api-key': 'test-key' });
       
       expect(mockDeps.saveConfigFn).toHaveBeenCalledWith({
         apiKey: 'test-key',
@@ -1117,16 +1121,14 @@ describe('login/logout flow', () => {
       expect(logs.some(l => l.includes('Saved to'))).toBe(true);
     });
 
-    it('should exit when non-TTY and no API key available', async () => {
-      mockDeps.isTTY = false;
-      commands = buildCommands(mockDeps);
+    it('should exit when no API key available', async () => {
       const savedEnv = process.env.NANSEN_API_KEY;
       delete process.env.NANSEN_API_KEY;
       
       await commands.login([], null, {}, {});
       
       if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
-      expect(logs.some(l => l.includes('No API key provided'))).toBe(true);
+      expect(logs.some(l => l.includes('API_KEY_REQUIRED'))).toBe(true);
       expect(mockDeps.exit).toHaveBeenCalledWith(1);
     });
   });

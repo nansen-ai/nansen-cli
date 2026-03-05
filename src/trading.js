@@ -12,6 +12,7 @@ import { exportWallet, getDefaultAddress, showWallet, listWallets, getWalletConf
 import { base58Decode } from './transfer.js';
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendApprovalViaWalletConnect } from './walletconnect-trading.js';
+import { retrievePassword } from './keychain.js';
 
 // ============= Constants =============
 
@@ -652,31 +653,15 @@ export function getWalletChainType(chainName) {
 
 // ============= CLI Helpers =============
 
-async function promptPassword(prompt, deps = {}) {
-  if (deps.promptFn) return deps.promptFn(prompt);
-  const readline = await import('readline');
-  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-  return new Promise((resolve) => {
-    process.stderr.write(prompt);
-    let input = '';
-    const stdin = process.stdin;
-    const wasRaw = stdin.isRaw;
-    if (stdin.setRawMode) stdin.setRawMode(true);
-    stdin.resume();
-    const onData = (ch) => {
-      const c = ch.toString();
-      if (c === '\n' || c === '\r') {
-        if (stdin.setRawMode) stdin.setRawMode(wasRaw || false);
-        stdin.removeListener('data', onData);
-        process.stderr.write('\n');
-        rl.close();
-        resolve(input);
-      } else if (c === '\u0003') { rl.close(); process.exit(1); }
-      else if (c === '\u007f' || c === '\b') { input = input.slice(0, -1); }
-      else { input += c; }
-    };
-    stdin.on('data', onData);
-  });
+function resolveTradePassword() {
+  const { password, source } = retrievePassword();
+  if (source === 'file') {
+    process.stderr.write(
+      '⚠️  Password loaded from ~/.nansen/wallets/.credentials (insecure — plaintext on disk).\n' +
+      '   For better security, migrate to OS keychain: nansen wallet secure\n'
+    );
+  }
+  return password;
 }
 
 function isNativeToken(mintAddress) {
@@ -958,9 +943,22 @@ EXAMPLES:
         if (!isWalletConnect) {
           // Get wallet credentials once (before the loop)
           const walletConfig = getWalletConfig();
-          const password = walletConfig.passwordHash
-            ? (process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps))
-            : null;
+          let password = null;
+          if (walletConfig.passwordHash) {
+            password = resolveTradePassword();
+            if (!password) {
+              log(JSON.stringify({
+                error: 'PASSWORD_REQUIRED',
+                message: 'Wallet is encrypted and no password was found.',
+                resolution: [
+                  'Set NANSEN_WALLET_PASSWORD environment variable',
+                  'Or run: nansen wallet create (password is saved to OS keychain automatically)',
+                ],
+              }));
+              exit(1);
+              return;
+            }
+          }
 
           let effectiveWalletName = walletName;
           if (!effectiveWalletName) {

@@ -163,7 +163,7 @@ export function parseArgs(args) {
       const key = arg.slice(2);
       const next = args[i + 1];
       
-      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full') {
+      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full' || key === 'human') {
         result.flags[key] = true;
       } else if (next && !next.startsWith('-')) {
         // Try to parse as JSON first (for objects/arrays/booleans),
@@ -669,8 +669,8 @@ USAGE: nansen <command> [subcommand] [options]
 COMMANDS:
   research    smart-money, profiler, token, search, perp, portfolio, points
   trade       quote, execute
-  wallet      create, list, show, export, default, delete
-  login       Save API key (--api-key <key> or interactive)
+  wallet      create, list, show, export, default, delete, forget-password
+  login       Save API key (--api-key <key> or NANSEN_API_KEY env var)
   logout      Remove saved API key
   schema      JSON schema for all commands (use "nansen schema <cmd>" for one)
   cache       clear
@@ -761,43 +761,51 @@ export function buildCommands(deps = {}) {
       if (flags.help || flags.h) {
         log('nansen login - Save your Nansen API key\n');
         log('USAGE:');
-        log('  nansen login                    (interactive)');
-        log('  nansen login --api-key <key>    (non-interactive)\n');
+        log('  nansen login --api-key <key>');
+        log('  NANSEN_API_KEY=<key> nansen login');
+        log('  nansen login --human              (interactive prompt)\n');
         log('OPTIONS:');
         log('  --api-key <key>   Your Nansen API key');
+        log('  --human           Enable interactive prompt');
         log('  --help            Show this help\n');
         log('Get your API key at: https://app.nansen.ai/api');
         return;
       }
 
-      // Support non-interactive: nansen login --api-key <key>
       let apiKey = options['api-key'] || options.apiKey;
 
       if (!apiKey) {
-        if (!isTTY) {
-          // Non-interactive mode: check env var fallback
-          apiKey = process.env.NANSEN_API_KEY;
-          if (!apiKey) {
-            log('❌ No API key provided. Use: nansen login --api-key <key>\n   Or set NANSEN_API_KEY environment variable.\n   Get your API key at: https://app.nansen.ai/api');
-            exit(1);
-            return;
-          }
-        } else {
-          log('Nansen CLI Login\n');
-          log('Get your API key at: https://app.nansen.ai/api\n');
-          log('Tip: For non-interactive use: nansen login --api-key <key>\n');
+        apiKey = process.env.NANSEN_API_KEY;
+      }
 
-          apiKey = await promptFn('Enter your API key: ', true);
+      if (!apiKey && flags.human) {
+        if (!isTTY) {
+          log(JSON.stringify({
+            error: 'NOT_A_TTY',
+            message: '--human requires an interactive terminal. Use --api-key or NANSEN_API_KEY env var instead.',
+          }));
+          exit(1);
+          return;
         }
+        log('Nansen CLI Login\n');
+        log('Get your API key at: https://app.nansen.ai/api\n');
+        apiKey = await promptFn('Enter your API key: ', true);
       }
 
       if (!apiKey || apiKey.trim().length === 0) {
-        log('\n❌ No API key provided');
+        log(JSON.stringify({
+          error: 'API_KEY_REQUIRED',
+          message: 'No API key provided.',
+          resolution: [
+            'Run: nansen login --api-key <key>',
+            'Or set NANSEN_API_KEY environment variable',
+            'Get your API key at: https://app.nansen.ai/api',
+          ],
+        }));
         exit(1);
         return;
       }
 
-      // Save the config without validation
       saveConfigFn({
         apiKey: apiKey.trim(),
         baseUrl: 'https://api.nansen.ai'
