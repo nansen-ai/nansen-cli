@@ -12,6 +12,7 @@ import { exportWallet, getDefaultAddress, showWallet, listWallets, getWalletConf
 import { base58Decode } from './transfer.js';
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendApprovalViaWalletConnect } from './walletconnect-trading.js';
+import { retrievePassword } from './keychain.js';
 
 // ============= Constants =============
 
@@ -651,8 +652,6 @@ export function getWalletChainType(chainName) {
 }
 
 // ============= CLI Helpers =============
-
-import { retrievePassword } from './keychain.js';
 
 function resolveTradePassword() {
   const { password, source } = retrievePassword();

@@ -617,6 +617,16 @@ export function buildWalletCommands(deps = {}) {
             }
           }
 
+          // Verify password matches existing wallets BEFORE touching keychain
+          if (password !== null) {
+            const config = getWalletConfig();
+            if (config.passwordHash && !verifyPassword(password, config)) {
+              log('❌ Incorrect password — does not match existing wallets.');
+              exit(1);
+              return;
+            }
+          }
+
           // Persist password BEFORE creating wallet so we know the storage situation
           let storageResult = { stored: false, method: 'none' };
           if (password !== null) {
