@@ -916,9 +916,14 @@ export function buildWalletCommands(deps = {}) {
             log(JSON.stringify({
               error: 'INCORRECT_PASSWORD',
               message: `Password from '${source}' does not match the wallet's stored hash.`,
-              resolution: [
-                'Unset NANSEN_WALLET_PASSWORD if it is stale, then re-run: nansen wallet secure',
-              ],
+              resolution: source === 'file'
+                ? [
+                    'The password in ~/.nansen/wallets/.credentials is incorrect.',
+                    'Run: nansen wallet forget-password  then re-run with the correct password: NANSEN_WALLET_PASSWORD=<pw> nansen wallet secure',
+                  ]
+                : [
+                    'Unset NANSEN_WALLET_PASSWORD if it is stale, then re-run: nansen wallet secure',
+                  ],
             }));
             exit(1);
             return;
