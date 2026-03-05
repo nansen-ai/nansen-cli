@@ -933,13 +933,14 @@ export function buildWalletCommands(deps = {}) {
           // Try to migrate to keychain
           const { stored, method } = storePassword(password);
           if (stored && method === 'keychain') {
-            // Only remove the .credentials file — keychain entry is already set
             const fileRemoved = deleteCredentialsFile();
-            log('✓ Password migrated to OS keychain (secure).');
+            const fromLabel = source === 'file'
+              ? '~/.nansen/wallets/.credentials file'
+              : 'NANSEN_WALLET_PASSWORD env var';
+            log(`✓ Password migrated from ${fromLabel} → OS keychain (secure).`);
             if (fileRemoved) {
               log('  Removed ~/.nansen/wallets/.credentials.');
             }
-            log(`  Previous source: ${source}`);
           } else {
             log(JSON.stringify({
               error: 'KEYCHAIN_UNAVAILABLE',
