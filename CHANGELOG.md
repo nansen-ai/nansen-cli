@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.16.0
+
+### Minor Changes
+
+- [#196](https://github.com/nansen-ai/nansen-cli/pull/196) [`0c286c2`](https://github.com/nansen-ai/nansen-cli/commit/0c286c2d75f977894da8ff18a105aaf21f55f9f2) Thanks [@arein](https://github.com/arein)! - Add Solana WalletConnect support for trading (quote and execute). Solana wallets like Phantom and Solflare can now sign DEX swap transactions via WalletConnect v2.
+
 ## 1.15.0
 
 ### Minor Changes
