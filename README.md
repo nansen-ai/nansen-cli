@@ -55,7 +55,7 @@ Run `nansen schema --pretty` for the full subcommand and field reference.
 
 ## Supported Chains
 
-`ethereum` `solana` `base` `bnb` `arbitrum` `polygon` `optimism` `avalanche` `linea` `scroll` `zksync` `mantle` `ronin` `sei` `plasma` `sonic` `unichain` `monad` `hyperevm` `iotaevm`
+`ethereum` `solana` `base` `bnb` `arbitrum` `polygon` `optimism` `avalanche` `linea` `scroll` `mantle` `ronin` `sei` `plasma` `sonic` `monad` `hyperevm` `iotaevm`
 
 > Run `nansen schema` to get the current chain list (source of truth).
 
