@@ -79,7 +79,7 @@ If you are contributing changes, read [CONTRIBUTING.md](CONTRIBUTING.md) for the
 4. **`--max` native SOL:** reserve 5000 lamports. EVM L2s: reserve 3x gas for L1 data fees
 5. **Token-2022:** use `TOKEN_2022_PROGRAM_ID` + `TransferCheckedInstruction`
 6. **CreateATA path** (transfer.js) has limited test coverage — add tests if modifying
-7. **`CHAIN_IDS`** only maps ethereum + base — new EVM chains need this updated
+7. **`CHAIN_RPCS`** in transfer.js only has RPC endpoints for ethereum, base, and solana — adding a new EVM transfer chain requires adding an entry there. (`CHAIN_IDS` in the same file already covers 11+ chains via chain-ids.js.)
 
 ## Networks
 

@@ -67,6 +67,27 @@ const EVM_RPC_URLS = {
   base:     process.env.NANSEN_RPC_BASE     || 'https://mainnet.base.org',
 };
 
+/**
+ * Make a JSON-RPC call to an EVM RPC endpoint.
+ * @param {string} chain - Chain name (key into EVM_RPC_URLS)
+ * @param {string} method - JSON-RPC method name
+ * @param {Array} params - Method parameters
+ * @returns {Promise<*>} Parsed result value
+ * @throws {Error} If chain has no configured RPC or the RPC returns an error
+ */
+async function evmRpcCall(chain, method, params = []) {
+  const rpcUrl = EVM_RPC_URLS[chain];
+  if (!rpcUrl) throw new Error(`No RPC URL configured for chain: ${chain}`);
+  const res = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  });
+  const body = await res.json();
+  if (body.error) throw new Error(`RPC error (${method}): ${body.error.message}`);
+  return body.result;
+}
+
 function getQuotesDir() {
   const configDir = path.join(process.env.HOME || process.env.USERPROFILE || '', '.nansen');
   return path.join(configDir, 'quotes');
@@ -335,22 +356,8 @@ export function signEvmTransaction(txData, privateKeyHex, chain, nonce) {
  * @returns {Promise<number>} Nonce
  */
 export async function getEvmNonce(chain, address) {
-  const rpcUrl = EVM_RPC_URLS[chain];
-  if (!rpcUrl) throw new Error(`No RPC URL configured for chain: ${chain}`);
-
-  const res = await fetch(rpcUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'eth_getTransactionCount',
-      params: [address, 'pending'],
-    }),
-  });
-  const body = await res.json();
-  if (body.error) throw new Error(`RPC error: ${body.error.message}`);
-  return parseInt(body.result, 16);
+  const result = await evmRpcCall(chain, 'eth_getTransactionCount', [address, 'pending']);
+  return parseInt(result, 16);
 }
 
 /**
@@ -364,28 +371,15 @@ export async function getEvmNonce(chain, address) {
  * @returns {Promise<object>} Transaction receipt
  */
 export async function waitForReceipt(chain, txHash, timeoutMs = 30000, pollMs = 2000) {
-  const rpcUrl = EVM_RPC_URLS[chain];
-  if (!rpcUrl) throw new Error(`No RPC URL configured for chain: ${chain}`);
-
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const res = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_getTransactionReceipt',
-        params: [txHash],
-      }),
-    });
-    const body = await res.json();
-    if (body.result) {
-      const status = parseInt(body.result.status, 16);
+    const receipt = await evmRpcCall(chain, 'eth_getTransactionReceipt', [txHash]);
+    if (receipt) {
+      const status = parseInt(receipt.status, 16);
       if (status !== 1) {
-        throw new Error(`Transaction reverted on-chain (status: ${body.result.status}). Tx: ${txHash}`);
+        throw new Error(`Transaction reverted on-chain (status: ${receipt.status}). Tx: ${txHash}`);
       }
-      return body.result;
+      return receipt;
     }
     // Receipt not yet available — wait and retry
     await new Promise(r => setTimeout(r, pollMs));
@@ -398,30 +392,17 @@ export async function waitForReceipt(chain, txHash, timeoutMs = 30000, pollMs = 
  * Returns { success: true } or { success: false, reason: string }.
  */
 export async function simulateEvmCall(chain, { from, to, data, value, gas }) {
-  const rpcUrl = EVM_RPC_URLS[chain];
-  if (!rpcUrl) return { success: true }; // Can't simulate, skip
+  if (!EVM_RPC_URLS[chain]) return { success: true }; // Can't simulate, skip
 
   try {
     const callObj = { from, to, data, value: value || '0x0' };
     if (gas) callObj.gas = gas; // Pass gas limit to catch under-gassed quotes
-    const res = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_call',
-        params: [callObj, 'latest'],
-      }),
-    });
-    const body = await res.json();
-    if (body.error) {
-      const reason = body.error.message || 'unknown';
-      return { success: false, reason };
-    }
+    await evmRpcCall(chain, 'eth_call', [callObj, 'latest']);
     return { success: true };
-  } catch {
-    return { success: true }; // Network error — don't block, let broadcast decide
+  } catch (e) {
+    // evmRpcCall throws on RPC error — map to { success: false }
+    // Network failures are also caught and treated as non-blocking
+    return { success: false, reason: (e.message || 'unknown').replace(/^RPC error \(eth_call\): /, '') };
   }
 }
 
@@ -430,23 +411,11 @@ export async function simulateEvmCall(chain, { from, to, data, value, gas }) {
  * Used to fix under-gassed quotes from aggregators.
  */
 export async function estimateEvmGas(chain, { from, to, data, value }) {
-  const rpcUrl = EVM_RPC_URLS[chain];
-  if (!rpcUrl) return null;
+  if (!EVM_RPC_URLS[chain]) return null;
 
   try {
-    const res = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_estimateGas',
-        params: [{ from, to, data, value: value || '0x0' }],
-      }),
-    });
-    const body = await res.json();
-    if (body.error) return null;
-    return parseInt(body.result, 16);
+    const result = await evmRpcCall(chain, 'eth_estimateGas', [{ from, to, data, value: value || '0x0' }]);
+    return parseInt(result, 16);
   } catch {
     return null;
   }
@@ -457,27 +426,16 @@ export async function estimateEvmGas(chain, { from, to, data, value }) {
  * Returns the allowance as a BigInt, or 0n on failure.
  */
 export async function checkErc20Allowance(chain, tokenAddress, ownerAddress, spenderAddress) {
-  const rpcUrl = EVM_RPC_URLS[chain];
-  if (!rpcUrl) return 0n;
+  if (!EVM_RPC_URLS[chain]) return 0n;
 
   try {
     // allowance(address,address) selector = 0xdd62ed3e
     const data = '0xdd62ed3e'
       + ownerAddress.slice(2).toLowerCase().padStart(64, '0')
       + spenderAddress.slice(2).toLowerCase().padStart(64, '0');
-    const res = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_call',
-        params: [{ to: tokenAddress, data }, 'latest'],
-      }),
-    });
-    const body = await res.json();
-    if (body.error || !body.result) return 0n;
-    return BigInt(body.result);
+    const result = await evmRpcCall(chain, 'eth_call', [{ to: tokenAddress, data }, 'latest']);
+    if (!result) return 0n;
+    return BigInt(result);
   } catch {
     return 0n;
   }
