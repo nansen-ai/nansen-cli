@@ -11,6 +11,7 @@ import {
   fetchRecentBlockhash,
   getSolanaRpcUrl,
 } from './x402-svm.js';
+import { resolvePassword } from './keychain.js';
 
 /**
  * Parse PaymentRequirements from a 402 response.
@@ -108,9 +109,8 @@ export async function* createPaymentSignatures(response, url, options = {}) {
 
   const walletConfig = getWalletConfig();
   const password = walletConfig.passwordHash
-    ? (options.password || process.env.NANSEN_WALLET_PASSWORD || null)
+    ? (options.password || resolvePassword() || null)
     : null;
-  // Encrypted wallets need a password -- silently skip if unavailable
   if (walletConfig.passwordHash && password === null) return;
 
   const wallets = listWallets();

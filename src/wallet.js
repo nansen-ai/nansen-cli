@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import * as readline from 'readline';
 import { base58 } from '@scure/base';
+import { storePassword, retrievePassword, resolvePassword as keychainResolve, deletePassword } from './keychain.js';
 
 // ============= Constants =============
 
@@ -265,7 +266,7 @@ async function promptPassword(question, deps = {}) {
   if (promptFn) {
     return promptFn(question, true);
   }
-  // Fallback to readline
+  // Fallback to readline (only available in --human mode)
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
     if (process.stdout.isTTY) {
@@ -296,6 +297,60 @@ async function promptPassword(question, deps = {}) {
       rl.question(question, (answer) => { rl.close(); resolve(answer); });
     }
   });
+}
+
+/**
+ * Resolve wallet password from all available sources (non-interactive).
+ * Order: NANSEN_WALLET_PASSWORD env var → OS keychain → .credentials file → null
+ * Emits a warning to stderr when using the insecure .credentials file.
+ * @returns {string|null}
+ */
+function resolveWalletPassword() {
+  const { password, source } = retrievePassword();
+  if (source === 'file') {
+    process.stderr.write(
+      '⚠️  Password loaded from ~/.nansen/wallets/.credentials (insecure — plaintext on disk).\n' +
+      '   For better security, migrate to OS keychain: nansen wallet secure\n' +
+      '   Or set NANSEN_WALLET_PASSWORD via a secrets manager.\n'
+    );
+  }
+  return password;
+}
+
+/**
+ * Resolve wallet password for a command. If --human flag is set and no
+ * password found, falls back to interactive prompt. Otherwise returns
+ * structured error info for agents.
+ *
+ * @param {object} config - wallet config (needs config.passwordHash)
+ * @param {object} flags - CLI flags
+ * @param {object} deps - { promptFn, log, exit }
+ * @returns {{ password: string|null, error: string|null }}
+ */
+async function resolvePasswordForCommand(config, flags, deps) {
+  if (!config.passwordHash) {
+    return { password: null, error: null };
+  }
+
+  const password = resolveWalletPassword();
+  if (password) return { password, error: null };
+
+  if (flags.human && (process.stdin.isTTY || deps.promptFn)) {
+    const prompted = await promptPassword('Enter wallet password: ', deps);
+    if (prompted) return { password: prompted, error: null };
+  }
+
+  return {
+    password: null,
+    error: JSON.stringify({
+      error: 'PASSWORD_REQUIRED',
+      message: 'Wallet is encrypted and no password was found.',
+      resolution: [
+        'Set NANSEN_WALLET_PASSWORD environment variable',
+        'Or re-run wallet create with the password (it will be persisted for future use)',
+      ],
+    }),
+  };
 }
 
 // ============= Public API =============
@@ -512,29 +567,42 @@ export function buildWalletCommands(deps = {}) {
           if (flags['unsafe-no-password']) {
             process.stderr.write('WARNING: --unsafe-no-password is set. Private keys will be stored UNENCRYPTED on disk.\nAnyone with access to this machine can steal your funds.\n');
             password = null;
-          } else if (!process.env.NANSEN_WALLET_PASSWORD && !process.stdin.isTTY && !deps.promptFn) {
-            log('❌ No password provided. Either:');
-            log('   set NANSEN_WALLET_PASSWORD, or');
-            log('   use --unsafe-no-password (WARNING: Private keys will be stored UNENCRYPTED on disk. Anyone with access to this machine can steal your funds.)');
-            exit(1);
-            return;
           } else {
-            password = process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps);
-            if (!password || password.length < 12) {
-              log('❌ Password must be at least 12 characters');
+            // Step 1: Check env var and keychain
+            password = resolveWalletPassword();
+
+            // Step 2: If --human flag, allow interactive prompt
+            if (!password && flags.human && (process.stdin.isTTY || deps.promptFn)) {
+              password = await promptPassword('Enter wallet password: ', deps);
+              if (password) {
+                const config = getWalletConfig();
+                if (!config.passwordHash) {
+                  const confirm = await promptPassword('Confirm password: ', deps);
+                  if (password !== confirm) {
+                    log('❌ Passwords do not match');
+                    exit(1);
+                    return;
+                  }
+                }
+              }
+            }
+
+            // Step 3: No password available — return structured error for agents
+            if (!password) {
+              log(JSON.stringify({
+                error: 'PASSWORD_REQUIRED',
+                message: 'A wallet password is required. Ask the user to provide one.',
+                instructions: 'Re-run with: NANSEN_WALLET_PASSWORD=<password> nansen wallet create',
+                note: 'Password must be at least 12 characters. After creation, the password is saved to the OS keychain automatically — future operations will not require it.',
+              }));
               exit(1);
               return;
             }
 
-            // Confirm password for first wallet (skip if set via env var)
-            const config = getWalletConfig();
-            if (!config.passwordHash && !process.env.NANSEN_WALLET_PASSWORD) {
-              const confirm = await promptPassword('Confirm password: ', deps);
-              if (password !== confirm) {
-                log('❌ Passwords do not match');
-                exit(1);
-                return;
-              }
+            if (password.length < 12) {
+              log('❌ Password must be at least 12 characters');
+              exit(1);
+              return;
             }
           }
 
@@ -552,8 +620,23 @@ export function buildWalletCommands(deps = {}) {
             if (password === null) {
               log('  ⚠️  This is an UNENCRYPTED hot wallet — private keys are stored in plaintext on disk.');
             } else {
-              log('  ⚠️  This is a hot wallet and is fundamentally insecure — do not deposit more than you can afford to lose.');
-              log('     Store and handle your password securely, e.g. using a secrets manager or system keychain.');
+              const { stored, method } = storePassword(password);
+              if (stored && method === 'keychain') {
+                log('  ✓ Password saved to system keychain (secure).');
+                log('    Future wallet operations will retrieve the password automatically.');
+              } else if (stored && method === 'file') {
+                log('  ⚠️  No OS keychain available. Password saved to ~/.nansen/wallets/.credentials (insecure — plaintext on disk).');
+                log('     Future wallet operations will retrieve the password automatically.');
+                log('     To improve security: migrate to OS keychain with `nansen wallet secure`,');
+                log('     or set NANSEN_WALLET_PASSWORD via a secrets manager.');
+              } else {
+                log('  ⚠️  Could not persist password (no keychain, no writable filesystem).');
+                log('     Set NANSEN_WALLET_PASSWORD in your environment to avoid re-entering.');
+              }
+              log('');
+              log('  IMPORTANT: Back up your password separately (e.g. password manager).');
+              log('  If you lose access to this machine AND forget the password, funds are unrecoverable.');
+              log('  This is a hot wallet — do not deposit more than you can afford to lose.');
             }
             log('');
             return;
@@ -608,9 +691,12 @@ export function buildWalletCommands(deps = {}) {
             return;
           }
           const config = getWalletConfig();
-          const password = config.passwordHash
-            ? (process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps))
-            : null;
+          const { password, error } = await resolvePasswordForCommand(config, flags, deps);
+          if (error) {
+            log(error);
+            exit(1);
+            return;
+          }
           try {
             const result = exportWallet(name, password);
             log(`\n⚠️  Private keys for "${result.name}" — do not share!\n`);
@@ -653,9 +739,12 @@ export function buildWalletCommands(deps = {}) {
             return;
           }
           const config = getWalletConfig();
-          const password = config.passwordHash
-            ? (process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps))
-            : null;
+          const { password, error } = await resolvePasswordForCommand(config, flags, deps);
+          if (error) {
+            log(error);
+            exit(1);
+            return;
+          }
           try {
             const result = deleteWallet(name, password);
             log(`✓ Wallet "${result.deleted}" deleted`);
@@ -703,9 +792,13 @@ export function buildWalletCommands(deps = {}) {
             password = null;
           } else {
             const sendConfig = getWalletConfig();
-            password = sendConfig.passwordHash
-              ? (process.env.NANSEN_WALLET_PASSWORD || await promptPassword('Enter wallet password: ', deps))
-              : null;
+            const resolved = await resolvePasswordForCommand(sendConfig, flags, deps);
+            if (resolved.error) {
+              log(resolved.error);
+              exit(1);
+              return;
+            }
+            password = resolved.password;
           }
           const dryRun = flags['dry-run'] || flags.dryRun;
 
@@ -723,7 +816,6 @@ export function buildWalletCommands(deps = {}) {
             };
 
             if (dryRun) {
-              // Build the transaction but don't broadcast
               const result = await sendTokens(sendOpts);
               log(`\nDry run — transaction not broadcast\n`);
               log(`  From:   ${result.from}`);
@@ -755,6 +847,56 @@ export function buildWalletCommands(deps = {}) {
           }
         },
 
+        'forget-password': async () => {
+          const result = deletePassword();
+          if (result.keychain || result.file) {
+            log('✓ Password removed from:');
+            if (result.keychain) log('  - System keychain');
+            if (result.file) log('  - Credentials file (~/.nansen/wallets/.credentials)');
+          } else {
+            log('No saved password found (keychain or credentials file).');
+          }
+        },
+
+        'secure': async () => {
+          const { password, source } = retrievePassword();
+          if (!password) {
+            log(JSON.stringify({
+              error: 'NO_PASSWORD_FOUND',
+              message: 'No wallet password found in any store.',
+              resolution: [
+                'Set NANSEN_WALLET_PASSWORD and run: nansen wallet secure',
+                'This will store it in the OS keychain.',
+              ],
+            }));
+            exit(1);
+            return;
+          }
+
+          if (source === 'keychain') {
+            log('✓ Password is already stored in the OS keychain (secure).');
+            return;
+          }
+
+          // Try to migrate to keychain
+          const { stored, method } = storePassword(password);
+          if (stored && method === 'keychain') {
+            // Remove the .credentials file now that keychain has it
+            deletePassword(); // removes both, so re-store in keychain
+            storePassword(password); // re-store in keychain only
+            log('✓ Password migrated to OS keychain (secure).');
+            log('  Removed ~/.nansen/wallets/.credentials.');
+            log(`  Previous source: ${source}`);
+          } else {
+            log('⚠️  OS keychain is not available on this system.');
+            log('   Your password is stored in ~/.nansen/wallets/.credentials (insecure).');
+            log('   Recommended alternatives:');
+            log('     - Set NANSEN_WALLET_PASSWORD in a secrets manager or system keyring');
+            log('     - Use a containerized secrets agent (e.g. Vault, 1Password CLI)');
+            log('     - Move to server-managed wallets (Privy) when available');
+          }
+        },
+
         'help': async () => {
           log(`
 Wallet Management - Local key storage for EVM and Solana
@@ -772,6 +914,8 @@ COMMANDS:
   delete <name>              Delete a wallet (requires password)
   send --to <address> --amount <number> --chain <evm|solana> [--token <address>] [--wallet <name>] [--max] [--dry-run]
                              Send tokens or native currency (--max sends entire balance, --dry-run previews without sending)
+  forget-password            Remove saved password from all stores
+  secure                     Migrate password from insecure storage to OS keychain
 
 OPTIONS:
   --name <label>             Wallet name (default: "default")
@@ -782,19 +926,26 @@ OPTIONS:
   --wallet <name>            Wallet to use (optional, uses default if omitted; use "walletconnect" or "wc" for WalletConnect, EVM only)
   --max                      Send entire balance (deducts gas for native transfers)
   --unsafe-no-password       Skip encryption — private keys stored UNENCRYPTED on disk (create only)
+  --human                    Enable interactive prompts (for human terminal use only)
+
+PASSWORD RESOLUTION (automatic, in order):
+  1. NANSEN_WALLET_PASSWORD env var
+  2. OS keychain (saved automatically on wallet create)
+  3. Interactive prompt (only with --human flag)
 
 ENVIRONMENT:
-  NANSEN_WALLET_PASSWORD     Password for non-interactive use (e.g. CI/scripts)
+  NANSEN_WALLET_PASSWORD     Wallet encryption password
   NANSEN_EVM_RPC            Custom EVM RPC endpoint
   NANSEN_SOLANA_RPC         Custom Solana RPC endpoint
 
 EXAMPLES:
-  nansen wallet create --name trading
+  NANSEN_WALLET_PASSWORD=mypass nansen wallet create --name trading
   nansen wallet list
   nansen wallet export trading
   nansen wallet default trading
   nansen wallet send --to 0x742d35Cc... --amount 1.5 --chain evm
   nansen wallet send --to 9WzDXw... --amount 0.1 --chain solana --token So11...
+  nansen wallet forget-password
 `);
           return;
         },
