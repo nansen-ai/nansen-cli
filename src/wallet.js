@@ -585,6 +585,11 @@ export function buildWalletCommands(deps = {}) {
             }
             if (!password && flags.human && (process.stdin.isTTY || deps.promptFn)) {
               password = await promptPassword('Enter wallet password: ', deps);
+              if (password && password.length < 12) {
+                log('❌ Password must be at least 12 characters');
+                exit(1);
+                return;
+              }
               if (password) {
                 const config = getWalletConfig();
                 if (!config.passwordHash) {
@@ -902,6 +907,20 @@ export function buildWalletCommands(deps = {}) {
 
           if (source === 'keychain') {
             log('✓ Password is already stored in the OS keychain (secure).');
+            return;
+          }
+
+          // Verify password actually decrypts wallets before overwriting keychain
+          const walletConfig = getWalletConfig();
+          if (walletConfig.passwordHash && !verifyPassword(password, walletConfig)) {
+            log(JSON.stringify({
+              error: 'INCORRECT_PASSWORD',
+              message: `Password from '${source}' does not match the wallet's stored hash.`,
+              resolution: [
+                'Unset NANSEN_WALLET_PASSWORD if it is stale, then re-run: nansen wallet secure',
+              ],
+            }));
+            exit(1);
             return;
           }
 
