@@ -4,7 +4,7 @@ description: "Has SM been in this token for weeks, or did they just enter? Are t
 ---
 ```bash
 TOKEN=<address> CHAIN=ethereum
-nansen research smart-money netflow --chain $CHAIN --limit 100
+nansen research smart-money netflow --chain $CHAIN --limit 200
 # → filter by token_address; net_flow_1h_usd, net_flow_24h_usd, net_flow_7d_usd, net_flow_30d_usd
 nansen research token holders --token $TOKEN --chain $CHAIN --smart-money --limit 20
 # → address_label, value_usd, balance_change_24h, balance_change_7d, balance_change_30d
