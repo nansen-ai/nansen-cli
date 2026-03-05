@@ -1007,15 +1007,15 @@ describe('Privy execute support', () => {
       if (urlStr.includes('base') || urlStr.includes('mainnet')) {
         const body = opts?.body ? JSON.parse(opts.body) : {};
         if (body.method === 'eth_getTransactionCount') {
-          return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: '0x5' }) });
+          return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5' })) });
         }
         if (body.method === 'eth_call') {
-          return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: '0x' }) });
+          return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x' })) });
         }
         if (body.method === 'eth_getTransactionReceipt') {
-          return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: { status: '0x1', blockNumber: '0x100' } }) });
+          return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { status: '0x1', blockNumber: '0x100' } })) });
         }
-        return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: null }) });
+        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: null })) });
       }
       // Trading API executeTransaction
       if (urlStr.includes('trading-api')) {
@@ -1132,17 +1132,17 @@ describe('Privy execute support', () => {
         const body = opts?.body ? JSON.parse(opts.body) : {};
         rpcCalls.push(body.method);
         if (body.method === 'eth_getTransactionCount') {
-          return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: '0x5' }) });
+          return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5' })) });
         }
         // eth_call for allowance check — return 0 (needs approval)
         if (body.method === 'eth_call') {
-          return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: '0x0000000000000000000000000000000000000000000000000000000000000000' }) });
+          return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x0000000000000000000000000000000000000000000000000000000000000000' })) });
         }
         // eth_getTransactionReceipt (for waitForReceipt)
         if (body.method === 'eth_getTransactionReceipt') {
-          return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: { status: '0x1', blockNumber: '0x100' } }) });
+          return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { status: '0x1', blockNumber: '0x100' } })) });
         }
-        return Promise.resolve({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: null }) });
+        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: null })) });
       }
       // Trading API executeTransaction
       if (urlStr.includes('trading-api')) {
