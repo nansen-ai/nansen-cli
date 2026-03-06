@@ -213,7 +213,7 @@ export function formatAlertsTable(alerts) {
     return channels.map(ch => ch.type).join(', ');
   };
 
-  const formatEnabled = (isEnabled) => isEnabled ? '✓' : '';
+  const formatEnabled = (isEnabled) => isEnabled ? '✓' : '✗';
 
   const truncate = (str, maxLen) => {
     if (!str) return '';
