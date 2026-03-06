@@ -500,145 +500,7 @@ export class NansenAPI {
         } else if (code === ErrorCode.CREDITS_EXHAUSTED) {
           message = message.replace(/\.+$/, '') + '. No retry will help. Check your Nansen dashboard for credit balance.';
         } else if (code === ErrorCode.PAYMENT_REQUIRED) {
-          // Try x402 auto-payment: local wallet (with network fallback), then WalletConnect
-          const hasManualSignature = !!(this.defaultHeaders['Payment-Signature'] || options.headers?.['Payment-Signature']);
-
-          if (!hasManualSignature) {
-            // Determine payment method from default wallet's provider
-            let defaultWalletProvider = 'local';
-            let defaultWalletName = 'unknown';
-            try {
-              const { getWalletConfig, showWallet } = await import('./wallet.js');
-              const walletConfig = getWalletConfig();
-              if (walletConfig.defaultWallet) {
-                defaultWalletName = walletConfig.defaultWallet;
-                const wallet = showWallet(walletConfig.defaultWallet);
-                defaultWalletProvider = wallet.provider || 'local';
-              }
-            } catch (err) {
-              if (process.env.DEBUG) console.error(`[x402] Failed to detect wallet provider: ${err.message}`);
-            }
-
-            if (defaultWalletProvider === 'privy') {
-              // Default wallet is Privy: sign via Privy
-              try {
-                const { createPrivyPaymentSignatures } = await import('./privy.js');
-                for await (const { signature, network } of createPrivyPaymentSignatures(response, url)) {
-                  const paidResponse = await fetch(url, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'X-Client-Type': 'nansen-cli',
-                      'X-Client-Version': packageVersion,
-                      'Payment-Signature': signature,
-                      ...this.defaultHeaders,
-                      ...options.headers,
-                    },
-                    body: JSON.stringify(NansenAPI.cleanBody(body)),
-                  });
-                  if (paidResponse.ok) {
-                    console.error(`[x402] Paid via Privy wallet ${defaultWalletName} (${network})`);
-                    try {
-                      const { checkX402Balance } = await import('./x402.js');
-                      const balance = await checkX402Balance(network);
-                      if (balance !== null && balance < 0.25) {
-                        console.error(`[x402] Warning: USDC balance low ($${balance.toFixed(2)}). Fund your wallet to avoid interruptions.`);
-                      }
-                    } catch { /* balance check is best-effort */ }
-                    return await paidResponse.json();
-                  }
-                }
-              } catch (privyErr) {
-                message = `x402 Privy payment failed: ${privyErr.message}`;
-              }
-            } else {
-              // Local wallet or no wallet: existing local wallet + WalletConnect flow
-              // 1. Try local wallet with fallback across payment networks
-              try {
-                const { createPaymentSignatures } = await import('./x402.js');
-                for await (const { signature, network } of createPaymentSignatures(response, url)) {
-                  const paidResponse = await fetch(url, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'X-Client-Type': 'nansen-cli',
-                      'X-Client-Version': packageVersion,
-                      'Payment-Signature': signature,
-                      ...this.defaultHeaders,
-                      ...options.headers,
-                    },
-                    body: JSON.stringify(NansenAPI.cleanBody(body)),
-                  });
-                  if (paidResponse.ok) {
-                    console.error(`[x402] Paid via local wallet ${defaultWalletName} (${network})`);
-                    // Check remaining balance and warn if low
-                    try {
-                      const { checkX402Balance } = await import('./x402.js');
-                      const balance = await checkX402Balance(network);
-                      if (balance !== null && balance < 0.25) {
-                        console.error(`[x402] Warning: USDC balance low ($${balance.toFixed(2)}). Fund your wallet to avoid interruptions.`);
-                      }
-                    } catch { /* balance check is best-effort */ }
-                    return await paidResponse.json();
-                  }
-                  // This payment option was rejected, try next
-                }
-              } catch { /* local wallet unavailable, try WalletConnect */ }
-
-              // 2. Fall back to WalletConnect (walletconnect-x402.js)
-              {
-                let paymentRequirements;
-                const paymentHeader = response.headers.get('payment-required');
-                if (paymentHeader) {
-                  try {
-                    paymentRequirements = JSON.parse(atob(paymentHeader));
-                  } catch {
-                    data.paymentRequiredRaw = paymentHeader;
-                  }
-                }
-                if (!paymentRequirements && data.paymentRequirements) {
-                  paymentRequirements = data.paymentRequirements;
-                }
-
-                if (paymentRequirements) {
-                  try {
-                    const { handleX402Payment } = await import('./walletconnect-x402.js');
-                    const paymentSignature = await handleX402Payment(paymentRequirements);
-                    const paidResponse = await fetch(url, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'X-Client-Type': 'nansen-cli',
-                        'X-Client-Version': packageVersion,
-                        'Payment-Signature': paymentSignature,
-                        ...this.defaultHeaders,
-                        ...options.headers,
-                      },
-                      body: JSON.stringify(NansenAPI.cleanBody(body)),
-                    });
-                    if (paidResponse.ok) {
-                      return await paidResponse.json();
-                    }
-                  } catch (x402Err) {
-                    if (!this.apiKey) {
-                      message = 'No API key configured. Two ways to authenticate:\n' +
-                        '  1. API key: nansen login --api-key <key> (get key at https://app.nansen.ai/api)\n' +
-                        '  2. x402 micropayment: nansen wallet create + fund with USDC (no API key needed)';
-                    } else {
-                      message = `x402 auto-payment failed: ${x402Err.message}`;
-                    }
-                  }
-                  if (this.apiKey) {
-                    data.paymentRequirements = paymentRequirements;
-                  }
-                }
-              }
-            }
-          }
-
-          if (!message || message === data.message) {
-            message = 'Payment required (x402). Sign the paymentRequirements below per https://docs.x402.org and pass the result with --x402-payment-signature <value>.';
-          }
+          return await this._handlePaymentRequired(response, url, body, options, { data, attempt, retryAfterMs });
         }
 
         lastError = new NansenError(message, code, response.status, {
@@ -672,6 +534,169 @@ export class NansenAPI {
     
     // Should not reach here, but just in case
     throw lastError;
+  }
+
+  /**
+   * Handles a 402 Payment Required response by attempting automatic x402 payment.
+   * Tries Privy first if the default wallet is a Privy wallet, then falls back to
+   * local wallet (with network fallback across payment networks) and WalletConnect
+   * as a last resort. Returns the parsed JSON from the successful paid response, or
+   * throws a NansenError with an actionable message if payment failed or was not attempted.
+   *
+   * @param {Response} response - The original 402 API response
+   * @param {string} url - The request URL to retry after payment
+   * @param {object} body - The original request body (pre-cleaned)
+   * @param {object} options - Request options (headers, etc.)
+   * @param {object} ctx - Context from request(): { data, attempt, retryAfterMs }
+   * @returns {Promise<object>} Parsed JSON from the successful paid response
+   * @throws {NansenError} If payment failed or was not attempted
+   */
+  async _handlePaymentRequired(response, url, body, options, { data, attempt, retryAfterMs }) {
+    let message = data.message || data.error || `API error: ${response.status}`;
+    const hasManualSignature = !!(this.defaultHeaders['Payment-Signature'] || options.headers?.['Payment-Signature']);
+
+    if (!hasManualSignature) {
+      // Determine payment method from default wallet's provider
+      let defaultWalletProvider = 'local';
+      let defaultWalletName = 'unknown';
+      try {
+        const { getWalletConfig, showWallet } = await import('./wallet.js');
+        const walletConfig = getWalletConfig();
+        if (walletConfig.defaultWallet) {
+          defaultWalletName = walletConfig.defaultWallet;
+          const wallet = showWallet(walletConfig.defaultWallet);
+          defaultWalletProvider = wallet.provider || 'local';
+        }
+      } catch (err) {
+        if (process.env.DEBUG) console.error(`[x402] Failed to detect wallet provider: ${err.message}`);
+      }
+
+      if (defaultWalletProvider === 'privy') {
+        // Default wallet is Privy: sign via Privy
+        try {
+          const { createPrivyPaymentSignatures } = await import('./privy.js');
+          for await (const { signature, network } of createPrivyPaymentSignatures(response, url)) {
+            const paidResponse = await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Client-Type': 'nansen-cli',
+                'X-Client-Version': packageVersion,
+                'Payment-Signature': signature,
+                ...this.defaultHeaders,
+                ...options.headers,
+              },
+              body: JSON.stringify(NansenAPI.cleanBody(body)),
+            });
+            if (paidResponse.ok) {
+              console.error(`[x402] Paid via Privy wallet ${defaultWalletName} (${network})`);
+              try {
+                const { checkX402Balance } = await import('./x402.js');
+                const balance = await checkX402Balance(network);
+                if (balance !== null && balance < 0.25) {
+                  console.error(`[x402] Warning: USDC balance low ($${balance.toFixed(2)}). Fund your wallet to avoid interruptions.`);
+                }
+              } catch { /* balance check is best-effort */ }
+              return await paidResponse.json();
+            }
+          }
+        } catch (privyErr) {
+          message = `x402 Privy payment failed: ${privyErr.message}`;
+        }
+      } else {
+        // Local wallet or no wallet: existing local wallet + WalletConnect flow
+        // 1. Try local wallet with fallback across payment networks
+        try {
+          const { createPaymentSignatures } = await import('./x402.js');
+          for await (const { signature, network } of createPaymentSignatures(response, url)) {
+            const paidResponse = await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Client-Type': 'nansen-cli',
+                'X-Client-Version': packageVersion,
+                'Payment-Signature': signature,
+                ...this.defaultHeaders,
+                ...options.headers,
+              },
+              body: JSON.stringify(NansenAPI.cleanBody(body)),
+            });
+            if (paidResponse.ok) {
+              console.error(`[x402] Paid via local wallet ${defaultWalletName} (${network})`);
+              // Check remaining balance and warn if low
+              try {
+                const { checkX402Balance } = await import('./x402.js');
+                const balance = await checkX402Balance(network);
+                if (balance !== null && balance < 0.25) {
+                  console.error(`[x402] Warning: USDC balance low ($${balance.toFixed(2)}). Fund your wallet to avoid interruptions.`);
+                }
+              } catch { /* balance check is best-effort */ }
+              return await paidResponse.json();
+            }
+            // This payment option was rejected, try next
+          }
+        } catch { /* local wallet unavailable, try WalletConnect */ }
+
+        // 2. Fall back to WalletConnect (walletconnect-x402.js)
+        {
+          let paymentRequirements;
+          const paymentHeader = response.headers.get('payment-required');
+          if (paymentHeader) {
+            try {
+              paymentRequirements = JSON.parse(atob(paymentHeader));
+            } catch {
+              data.paymentRequiredRaw = paymentHeader;
+            }
+          }
+          if (!paymentRequirements && data.paymentRequirements) {
+            paymentRequirements = data.paymentRequirements;
+          }
+
+          if (paymentRequirements) {
+            try {
+              const { handleX402Payment } = await import('./walletconnect-x402.js');
+              const paymentSignature = await handleX402Payment(paymentRequirements);
+              const paidResponse = await fetch(url, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Client-Type': 'nansen-cli',
+                  'X-Client-Version': packageVersion,
+                  'Payment-Signature': paymentSignature,
+                  ...this.defaultHeaders,
+                  ...options.headers,
+                },
+                body: JSON.stringify(NansenAPI.cleanBody(body)),
+              });
+              if (paidResponse.ok) {
+                return await paidResponse.json();
+              }
+            } catch (x402Err) {
+              if (!this.apiKey) {
+                message = 'No API key configured. Two ways to authenticate:\n' +
+                  '  1. API key: nansen login --api-key <key> (get key at https://app.nansen.ai/api)\n' +
+                  '  2. x402 micropayment: nansen wallet create + fund with USDC (no API key needed)';
+              } else {
+                message = `x402 auto-payment failed: ${x402Err.message}`;
+              }
+            }
+            if (this.apiKey) {
+              data.paymentRequirements = paymentRequirements;
+            }
+          }
+        }
+      }
+    }
+
+    if (!message || message === data.message) {
+      message = 'Payment required (x402). Sign the paymentRequirements below per https://docs.x402.org and pass the result with --x402-payment-signature <value>.';
+    }
+
+    throw new NansenError(message, ErrorCode.PAYMENT_REQUIRED, response.status, {
+      ...data,
+      attempt: attempt + 1,
+      retryAfterMs
+    });
   }
 
   // ============= Smart Money Endpoints =============
