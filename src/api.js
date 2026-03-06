@@ -439,8 +439,9 @@ export class NansenAPI {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       let response;
       try {
+        const method = options.method || 'POST';
         response = await fetch(url, {
-          method: 'POST',
+          method,
           headers: {
             'Content-Type': 'application/json',
             'X-Client-Type': 'nansen-cli',
@@ -449,7 +450,7 @@ export class NansenAPI {
             ...this.defaultHeaders,
             ...options.headers
           },
-          body: JSON.stringify(NansenAPI.cleanBody(body))
+          ...(method === 'GET' || method === 'DELETE' ? {} : { body: JSON.stringify(NansenAPI.cleanBody(body)) }),
         });
       } catch (err) {
         // Network-level errors - retry these too
@@ -1265,6 +1266,28 @@ export class NansenAPI {
     return this.request('/api/v1/portfolio/defi-holdings', {
       wallet_address: walletAddress
     });
+  }
+
+  // ============= Smart Alert Endpoints =============
+
+  async alertsList() {
+    return this.request('/api/v1/smart-alert/list', {}, { method: 'GET' });
+  }
+
+  async alertsCreate(params = {}) {
+    return this.request('/api/v1/smart-alert', params);
+  }
+
+  async alertsUpdate(params = {}) {
+    return this.request('/api/v1/smart-alert', params, { method: 'PATCH' });
+  }
+
+  async alertsToggle(params = {}) {
+    return this.request('/api/v1/smart-alert/toggle', params, { method: 'PATCH' });
+  }
+
+  async alertsDelete(alertId) {
+    return this.request(`/api/v1/smart-alert/${alertId}`, {}, { method: 'DELETE' });
   }
 }
 
