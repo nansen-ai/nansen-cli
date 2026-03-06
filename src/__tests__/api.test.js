@@ -1738,9 +1738,9 @@ describe('NansenAPI', () => {
   // =================== Error Handling ===================
 
   describe('Error Handling', () => {
-    it('should throw with message from API error response', async () => {
+    it('should throw with original message for 401 when API key exists', async () => {
       if (LIVE_TEST) return;
-      
+
       const errorResponse = {
         ok: false,
         status: 401,
@@ -1748,10 +1748,27 @@ describe('NansenAPI', () => {
         json: async () => ({ error: 'Unauthorized', message: 'Invalid API key' })
       };
       errorResponse.headers.get = () => null;
-      
+
       mockFetch.mockResolvedValueOnce(errorResponse);
 
       await expect(api.smartMoneyNetflow({})).rejects.toThrow('Invalid API key');
+    });
+
+    it('should show login guidance for 401 when no API key', async () => {
+      if (LIVE_TEST) return;
+
+      const apiNoKey = new NansenAPI(null, 'https://api.nansen.ai');
+      const errorResponse = {
+        ok: false,
+        status: 401,
+        headers: new Map(),
+        json: async () => ({ error: 'Unauthorized', message: 'Invalid API key' })
+      };
+      errorResponse.headers.get = () => null;
+
+      mockFetch.mockResolvedValueOnce(errorResponse);
+
+      await expect(apiNoKey.smartMoneyNetflow({})).rejects.toThrow('Not logged in. Run: nansen login');
     });
 
     it('should throw on network errors after retries', async () => {

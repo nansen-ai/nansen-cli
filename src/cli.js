@@ -1335,7 +1335,7 @@ SYMBOLS:
   // 'alerts' — smart alert CRUD
   cmds['alerts'] = async (args, apiInstance, flags, options) => {
     const sub = args[0];
-    if (!sub || sub === 'help') {
+    if (!sub || sub === 'help' || flags.help || flags.h) {
       log(`nansen alerts — Smart alert management
 
 SUBCOMMANDS:
@@ -1348,23 +1348,24 @@ SUBCOMMANDS:
 USAGE:
   nansen alerts list
   nansen alerts create --name <name> --type <type> --time-window <window> --chains <chains> --telegram <chatId> [--data '<json>']
-  nansen alerts update --id <id> [--name <name>] [--chains <chains>] [--data '<json>']
-  nansen alerts toggle --id <id> --enabled
-  nansen alerts toggle --id <id> --disabled
-  nansen alerts delete --id <id>
+  nansen alerts update <id> [--name <name>] [--chains <chains>] [--data '<json>']
+  nansen alerts toggle <id> --enabled
+  nansen alerts toggle <id> --disabled
+  nansen alerts delete <id>
 
 OPTIONS:
   --chains <chains>       Comma-separated chains (e.g. ethereum,solana). Merged into --data.
-  --telegram <chatId>     Send to Telegram chat. Use --channels for multiple.
+  --telegram <chatId>     Send to Telegram chat.
   --slack <webhookUrl>    Send to Slack webhook.
-  --discord <webhookUrl>  Send to Discord webhook.
+  --discord <webhookUrl>  Send to Discord webhook. Combine multiple channel flags for multi-channel alerts.
   --data '<json>'         Alert config as JSON. --chains is merged on top if both provided.
+  --description '<text>'  Alert description. Use single quotes to avoid shell interpolation.
 
 EXAMPLES:
   nansen alerts list --pretty
-  nansen alerts create --name "ETH SM Flows" --type sm-token-flows --time-window 1h --chains ethereum --telegram 5238612255 --data '{"events":["sm-token-flows"],"inflow_1h":{"min":100000}}'
-  nansen alerts toggle --id abc123 --disabled
-  nansen alerts delete --id abc123`);
+  nansen alerts create --name 'ETH SM Flows' --type sm-token-flows --time-window 1h --chains ethereum --telegram 5238612255 --description 'Alert when SM pours $1M+ into ETH' --data '{"events":["sm-token-flows"],"inflow_1h":{"min":100000}}'
+  nansen alerts toggle abc123 --disabled
+  nansen alerts delete abc123`);
       return;
     }
 
@@ -1397,8 +1398,13 @@ EXAMPLES:
         const timeWindow = options['time-window'];
         const channels = buildChannels();
         const data = buildAlertData();
-        if (!name || !type || !timeWindow || !channels) {
-          throw new NansenError('Required: --name, --type, --time-window, and a channel (--telegram, --slack, or --discord)', ErrorCode.MISSING_PARAM);
+        const missing = [];
+        if (!name) missing.push('--name');
+        if (!type) missing.push('--type');
+        if (!timeWindow) missing.push('--time-window');
+        if (!channels) missing.push('a channel (--telegram, --slack, or --discord)');
+        if (missing.length > 0) {
+          throw new NansenError(`Required: ${missing.join(', ')}`, ErrorCode.MISSING_PARAM);
         }
         return apiInstance.alertsCreate({
           name,
@@ -1411,8 +1417,8 @@ EXAMPLES:
         });
       },
       'update': () => {
-        const id = options.id;
-        if (!id) throw new NansenError('Required: --id', ErrorCode.MISSING_PARAM);
+        const id = args[1];
+        if (!id) throw new NansenError('Required: <id>', ErrorCode.MISSING_PARAM);
         const params = { id };
         if (options.name) params.name = options.name;
         if (options.type) params.type = options.type;
@@ -1427,15 +1433,15 @@ EXAMPLES:
         return apiInstance.alertsUpdate(params);
       },
       'toggle': () => {
-        const id = options.id;
-        if (!id) throw new NansenError('Required: --id', ErrorCode.MISSING_PARAM);
+        const id = args[1];
+        if (!id) throw new NansenError('Required: <id>', ErrorCode.MISSING_PARAM);
         const isEnabled = flags.enabled ? true : flags.disabled ? false : undefined;
         if (isEnabled === undefined) throw new NansenError('Required: --enabled or --disabled', ErrorCode.MISSING_PARAM);
         return apiInstance.alertsToggle({ id, isEnabled });
       },
       'delete': () => {
-        const id = options.id;
-        if (!id) throw new NansenError('Required: --id', ErrorCode.MISSING_PARAM);
+        const id = args[1];
+        if (!id) throw new NansenError('Required: <id>', ErrorCode.MISSING_PARAM);
         return apiInstance.alertsDelete(id);
       },
     };

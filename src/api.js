@@ -496,7 +496,9 @@ export class NansenAPI {
         const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'));
 
         // Enhance messages for specific error codes
-        if (code === ErrorCode.UNSUPPORTED_FILTER) {
+        if (code === ErrorCode.UNAUTHORIZED) {
+          message = this.apiKey ? message : 'Not logged in. Run: nansen login';
+        } else if (code === ErrorCode.UNSUPPORTED_FILTER) {
           message = message.replace(/\.+$/, '') + '. This filter is not supported for this token/chain combination. Do not retry.';
         } else if (code === ErrorCode.CREDITS_EXHAUSTED) {
           message = message.replace(/\.+$/, '') + '. No retry will help. Check your Nansen dashboard for credit balance.';
