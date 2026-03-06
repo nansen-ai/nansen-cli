@@ -207,6 +207,7 @@ describe('update notification in CLI', () => {
   let _exitCode;
 
   beforeEach(() => {
+    vi.resetModules(); // prevent ESM module cache from carrying CI=true across test files (Node 22)
     backupCache();
     delete process.env.NO_UPDATE_NOTIFIER;
     delete process.env.CI;
