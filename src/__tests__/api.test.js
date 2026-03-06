@@ -262,7 +262,15 @@ const MOCK_RESPONSES = {
       { category: 'Politics', active_markets: 50, total_volume: 5000000, total_volume_24hr: 100000 }
     ],
     pagination: { page: 1, per_page: 100 }
-  }
+  },
+  // Smart Alert endpoints
+  alertsList: [
+    { id: 'alert-1', name: 'ETH SM Flows', type: 'sm-token-flows', isEnabled: true }
+  ],
+  alertsCreate: { id: 'alert-2', name: 'New Alert', type: 'sm-token-flows', isEnabled: true },
+  alertsUpdate: { id: 'alert-1', name: 'Updated Alert', isEnabled: true },
+  alertsToggle: { id: 'alert-1', isEnabled: false },
+  alertsDelete: { success: true }
 };
 
 describe('NansenAPI', () => {
@@ -309,28 +317,32 @@ describe('NansenAPI', () => {
    * @param {string} expectedEndpoint - Expected API endpoint path
    * @param {object} expectedBodyContains - Object with keys/values that must be in the body
    */
-  function expectFetchCalledWith(expectedEndpoint, expectedBodyContains = {}) {
+  function expectFetchCalledWith(expectedEndpoint, expectedBodyContains = {}, expectedMethod = 'POST') {
     if (LIVE_TEST) return;
-    
+
     expect(mockFetch).toHaveBeenCalled();
     const [url, options] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-    
+
     // Verify URL
     expect(url).toBe(`https://api.nansen.ai${expectedEndpoint}`);
-    
+
     // Verify method and headers
-    expect(options.method).toBe('POST');
+    expect(options.method).toBe(expectedMethod);
     expect(options.headers['Content-Type']).toBe('application/json');
     expect(options.headers['X-Client-Type']).toBe('nansen-cli');
     expect(options.headers['X-Client-Version']).toMatch(/^\d+\.\d+\.\d+/);
     expect(options.headers['apikey']).toBe('test-api-key');
-    
-    // Verify body contains expected fields
+
+    // Verify body contains expected fields (skip for GET/DELETE)
+    if (expectedMethod === 'GET' || expectedMethod === 'DELETE') {
+      expect(options.body).toBeUndefined();
+      return;
+    }
     const body = JSON.parse(options.body);
     for (const [key, value] of Object.entries(expectedBodyContains)) {
       expect(body[key]).toEqual(value);
     }
-    
+
     return body;
   }
 
@@ -2636,6 +2648,47 @@ describe('NansenAPI', () => {
       expect(thrownError.details?.paymentRequirements).toBeUndefined();
 
       vi.doUnmock('../walletconnect-x402.js');
+    });
+  });
+
+  // =================== Smart Alert Endpoints ===================
+
+  describe('Smart Alerts', () => {
+    it('alertsList should GET /api/v1/smart-alert/list', async () => {
+      setupMock(MOCK_RESPONSES.alertsList);
+      const result = await api.alertsList();
+      expectFetchCalledWith('/api/v1/smart-alert/list', {}, 'GET');
+      expect(result).toBeInstanceOf(Array);
+      expect(result[0]).toHaveProperty('id', 'alert-1');
+    });
+
+    it('alertsCreate should POST /api/v1/smart-alert', async () => {
+      setupMock(MOCK_RESPONSES.alertsCreate);
+      const params = { name: 'Test', type: 'sm-token-flows', timeWindow: '1h', channels: [], data: {} };
+      const result = await api.alertsCreate(params);
+      expectFetchCalledWith('/api/v1/smart-alert', { name: 'Test', type: 'sm-token-flows' });
+      expect(result).toHaveProperty('id', 'alert-2');
+    });
+
+    it('alertsUpdate should PATCH /api/v1/smart-alert', async () => {
+      setupMock(MOCK_RESPONSES.alertsUpdate);
+      const result = await api.alertsUpdate({ id: 'alert-1', name: 'Updated Alert' });
+      expectFetchCalledWith('/api/v1/smart-alert', { id: 'alert-1', name: 'Updated Alert' }, 'PATCH');
+      expect(result).toHaveProperty('name', 'Updated Alert');
+    });
+
+    it('alertsToggle should PATCH /api/v1/smart-alert/toggle', async () => {
+      setupMock(MOCK_RESPONSES.alertsToggle);
+      const result = await api.alertsToggle({ id: 'alert-1', isEnabled: false });
+      expectFetchCalledWith('/api/v1/smart-alert/toggle', { id: 'alert-1', isEnabled: false }, 'PATCH');
+      expect(result).toHaveProperty('isEnabled', false);
+    });
+
+    it('alertsDelete should DELETE /api/v1/smart-alert/:id', async () => {
+      setupMock(MOCK_RESPONSES.alertsDelete);
+      const result = await api.alertsDelete('alert-1');
+      expectFetchCalledWith('/api/v1/smart-alert/alert-1', {}, 'DELETE');
+      expect(result).toHaveProperty('success', true);
     });
   });
 

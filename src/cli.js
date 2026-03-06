@@ -163,7 +163,7 @@ export function parseArgs(args) {
       const key = arg.slice(2);
       const next = args[i + 1];
       
-      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full' || key === 'human') {
+      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full' || key === 'human' || key === 'enabled' || key === 'disabled') {
         result.flags[key] = true;
       } else if (next && !next.startsWith('-')) {
         // Try to parse as JSON first (for objects/arrays/booleans),
@@ -1340,6 +1340,120 @@ SYMBOLS:
     return tradingCmds[sub](args.slice(1), apiInstance, flags, options);
   };
 
+  // 'alerts' — smart alert CRUD
+  cmds['alerts'] = async (args, apiInstance, flags, options) => {
+    const sub = args[0];
+    if (!sub || sub === 'help') {
+      log(`nansen alerts — Smart alert management
+
+SUBCOMMANDS:
+  list        List all alerts
+  create      Create a new alert
+  update      Update an existing alert
+  toggle      Enable or disable an alert
+  delete      Delete an alert
+
+USAGE:
+  nansen alerts list
+  nansen alerts create --name <name> --type <type> --time-window <window> --chains <chains> --telegram <chatId> [--data '<json>']
+  nansen alerts update --id <id> [--name <name>] [--chains <chains>] [--data '<json>']
+  nansen alerts toggle --id <id> --enabled
+  nansen alerts toggle --id <id> --disabled
+  nansen alerts delete --id <id>
+
+OPTIONS:
+  --chains <chains>       Comma-separated chains (e.g. ethereum,solana). Merged into --data.
+  --telegram <chatId>     Send to Telegram chat. Use --channels for multiple.
+  --slack <webhookUrl>    Send to Slack webhook.
+  --discord <webhookUrl>  Send to Discord webhook.
+  --data '<json>'         Alert config as JSON. --chains is merged on top if both provided.
+
+EXAMPLES:
+  nansen alerts list --pretty
+  nansen alerts create --name "ETH SM Flows" --type sm-token-flows --time-window 1h --chains ethereum --telegram 5238612255 --data '{"events":["sm-token-flows"],"inflow_1h":{"min":100000}}'
+  nansen alerts toggle --id abc123 --disabled
+  nansen alerts delete --id abc123`);
+      return;
+    }
+
+    // Build alert data by merging --chains into --data (if provided)
+    function buildAlertData() {
+      let data = options.data
+        ? (typeof options.data === 'string' ? JSON.parse(options.data) : options.data)
+        : {};
+      if (options.chains) {
+        const chains = typeof options.chains === 'string' ? options.chains.split(',') : Array.isArray(options.chains) ? options.chains : [options.chains];
+        data = { ...data, chains };
+      }
+      return data;
+    }
+
+    // Build channels array from --telegram/--slack/--discord flags
+    function buildChannels() {
+      const channels = [];
+      if (options.telegram) channels.push({ type: 'telegram', data: { chatId: String(options.telegram) } });
+      if (options.slack) channels.push({ type: 'slack', data: { webhookUrl: options.slack } });
+      if (options.discord) channels.push({ type: 'discord', data: { webhookUrl: options.discord } });
+      return channels.length > 0 ? channels : null;
+    }
+
+    const handlers = {
+      'list': () => apiInstance.alertsList(),
+      'create': () => {
+        const name = options.name;
+        const type = options.type;
+        const timeWindow = options['time-window'];
+        const channels = buildChannels();
+        const data = buildAlertData();
+        if (!name || !type || !timeWindow || !channels) {
+          throw new NansenError('Required: --name, --type, --time-window, and a channel (--telegram, --slack, or --discord)', ErrorCode.MISSING_PARAM);
+        }
+        return apiInstance.alertsCreate({
+          name,
+          type,
+          timeWindow,
+          channels,
+          data,
+          ...(options.description ? { description: options.description } : {}),
+          isEnabled: !flags.disabled,
+        });
+      },
+      'update': () => {
+        const id = options.id;
+        if (!id) throw new NansenError('Required: --id', ErrorCode.MISSING_PARAM);
+        const params = { id };
+        if (options.name) params.name = options.name;
+        if (options.type) params.type = options.type;
+        if (options['time-window']) params.timeWindow = options['time-window'];
+        const channels = buildChannels();
+        if (channels) params.channels = channels;
+        const data = buildAlertData();
+        if (Object.keys(data).length > 0) params.data = data;
+        if (options.description) params.description = options.description;
+        if (flags.enabled) params.isEnabled = true;
+        if (flags.disabled) params.isEnabled = false;
+        return apiInstance.alertsUpdate(params);
+      },
+      'toggle': () => {
+        const id = options.id;
+        if (!id) throw new NansenError('Required: --id', ErrorCode.MISSING_PARAM);
+        const isEnabled = flags.enabled ? true : flags.disabled ? false : undefined;
+        if (isEnabled === undefined) throw new NansenError('Required: --enabled or --disabled', ErrorCode.MISSING_PARAM);
+        return apiInstance.alertsToggle({ id, isEnabled });
+      },
+      'delete': () => {
+        const id = options.id;
+        if (!id) throw new NansenError('Required: --id', ErrorCode.MISSING_PARAM);
+        return apiInstance.alertsDelete(id);
+      },
+    };
+
+    if (!handlers[sub]) {
+      throw new NansenError(`Unknown alerts subcommand: ${sub}. Available: list, create, update, toggle, delete`, ErrorCode.UNKNOWN);
+    }
+    return handlers[sub]();
+  };
+
   return cmds;
 }
 
@@ -1486,7 +1600,7 @@ export async function runCLI(rawArgs, deps = {}) {
       }
       // First try subcommand help
       // Skip for 'trade' — its handlers show their own rich usage when required args are missing
-      if (command && subcommand && command !== 'trade') {
+      if (command && subcommand && command !== 'trade' && command !== 'alerts') {
         const subHelp = generateSubcommandHelp(command, subcommand);
         if (subHelp) {
           output(subHelp);
@@ -1496,7 +1610,7 @@ export async function runCLI(rawArgs, deps = {}) {
       }
       // Then try command-level help (list subcommands)
       // Skip for 'trade' — let the handler show its own usage
-      const cmdSchemaLookup = command !== 'trade' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
+      const cmdSchemaLookup = command !== 'trade' && command !== 'alerts' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
       if (command && cmdSchemaLookup) {
         const cmdSchema = cmdSchemaLookup;
         const lines = [`${command} — ${cmdSchema.description}`];

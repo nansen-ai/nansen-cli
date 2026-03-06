@@ -497,7 +497,7 @@ export class NansenAPI {
             ...this.defaultHeaders,
             ...options.headers
           },
-          ...(!isGet && { body: JSON.stringify(NansenAPI.cleanBody(body)) })
+          ...(!isGet && method !== 'DELETE' && { body: JSON.stringify(NansenAPI.cleanBody(body)) })
         });
       } catch (err) {
         // Network-level errors - retry these too
@@ -1263,6 +1263,28 @@ export class NansenAPI {
     return this.request('/api/v1/portfolio/defi-holdings', {
       wallet_address: walletAddress
     });
+  }
+
+  // ============= Smart Alert Endpoints =============
+
+  async alertsList() {
+    return this.request('/api/v1/smart-alert/list', {}, { method: 'GET' });
+  }
+
+  async alertsCreate(params = {}) {
+    return this.request('/api/v1/smart-alert', params);
+  }
+
+  async alertsUpdate(params = {}) {
+    return this.request('/api/v1/smart-alert', params, { method: 'PATCH' });
+  }
+
+  async alertsToggle(params = {}) {
+    return this.request('/api/v1/smart-alert/toggle', params, { method: 'PATCH' });
+  }
+
+  async alertsDelete(alertId) {
+    return this.request(`/api/v1/smart-alert/${alertId}`, {}, { method: 'DELETE' });
   }
 }
 

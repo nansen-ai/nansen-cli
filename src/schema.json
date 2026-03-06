@@ -568,6 +568,61 @@
         }
       }
     },
+    "alerts": {
+      "description": "Smart alert management — create, update, toggle, delete alerts",
+      "subcommands": {
+        "list": {
+          "description": "List all alerts",
+          "returns": ["id", "name", "type", "timeWindow", "isEnabled", "channels", "data", "description"]
+        },
+        "create": {
+          "description": "Create a new alert",
+          "options": {
+            "name": { "type": "string", "required": true, "description": "Alert name" },
+            "type": { "type": "string", "required": true, "description": "Alert type (e.g. sm-token-flows, common-token-transfer)" },
+            "time-window": { "type": "string", "required": true, "description": "Time window (e.g. 1h, realtime)" },
+            "chains": { "type": "string", "description": "Comma-separated chains (e.g. ethereum,solana). Merged into data." },
+            "telegram": { "type": "string", "description": "Telegram chat ID for notifications" },
+            "slack": { "type": "string", "description": "Slack webhook URL for notifications" },
+            "discord": { "type": "string", "description": "Discord webhook URL for notifications" },
+            "data": { "type": "string", "description": "Alert config JSON. --chains is merged on top." },
+            "description": { "type": "string", "description": "Optional description" },
+            "disabled": { "type": "boolean", "description": "Create alert in disabled state" }
+          }
+        },
+        "update": {
+          "description": "Update an existing alert",
+          "options": {
+            "id": { "type": "string", "required": true, "description": "Alert ID" },
+            "name": { "type": "string", "description": "Alert name" },
+            "type": { "type": "string", "description": "Alert type" },
+            "time-window": { "type": "string", "description": "Time window" },
+            "chains": { "type": "string", "description": "Comma-separated chains. Merged into data." },
+            "telegram": { "type": "string", "description": "Telegram chat ID" },
+            "slack": { "type": "string", "description": "Slack webhook URL" },
+            "discord": { "type": "string", "description": "Discord webhook URL" },
+            "data": { "type": "string", "description": "Alert config JSON. --chains merged on top." },
+            "description": { "type": "string", "description": "Description" },
+            "enabled": { "type": "boolean", "description": "Enable alert" },
+            "disabled": { "type": "boolean", "description": "Disable alert" }
+          }
+        },
+        "toggle": {
+          "description": "Enable or disable an alert",
+          "options": {
+            "id": { "type": "string", "required": true, "description": "Alert ID" },
+            "enabled": { "type": "boolean", "description": "Enable alert" },
+            "disabled": { "type": "boolean", "description": "Disable alert" }
+          }
+        },
+        "delete": {
+          "description": "Delete an alert",
+          "options": {
+            "id": { "type": "string", "required": true, "description": "Alert ID" }
+          }
+        }
+      }
+    },
     "trade": {
       "description": "DEX trading commands",
       "subcommands": {
