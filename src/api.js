@@ -499,6 +499,76 @@ export class NansenAPI {
           message = message.replace(/\.+$/, '') + '. This filter is not supported for this token/chain combination. Do not retry.';
         } else if (code === ErrorCode.CREDITS_EXHAUSTED) {
           message = message.replace(/\.+$/, '') + '. No retry will help. Check your Nansen dashboard for credit balance.';
+        } else if (code === ErrorCode.UNAUTHORIZED && !this.apiKey) {
+          // 401 without API key: suggest x402 payment as alternative auth method
+          const hasPaymentSig = !!(this.defaultHeaders['Payment-Signature'] || options.headers?.['Payment-Signature']);
+          if (!hasPaymentSig) {
+            // Check if a wallet is available for x402 auto-payment
+            let hasWallet = false;
+            try {
+              const { listWallets } = await import('./wallet.js');
+              const wallets = listWallets();
+              hasWallet = wallets.wallets.length > 0;
+            } catch { /* wallet module not available */ }
+
+            if (hasWallet) {
+              // Retry as x402 payment: make a fresh request that will trigger 402 flow
+              // Some endpoints return 401 instead of 402 when not yet x402-enabled on the server.
+              // By adding X-Prefer-Payment: x402 header, we signal to the server that this
+              // client supports x402 payment, and the server should return 402 instead of 401.
+              try {
+                const x402Response = await fetch(url, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'X-Client-Type': 'nansen-cli',
+                    'X-Client-Version': packageVersion,
+                    'X-Prefer-Payment': 'x402',
+                    ...this.defaultHeaders,
+                    ...options.headers,
+                  },
+                  body: JSON.stringify(NansenAPI.cleanBody(body)),
+                });
+                if (x402Response.status === 402) {
+                  // Server supports x402 for this endpoint - attempt auto-payment
+                  const { createPaymentSignatures } = await import('./x402.js');
+                  const { getWalletConfig, showWallet } = await import('./wallet.js');
+                  const walletConfig = getWalletConfig();
+                  const walletName = walletConfig.defaultWallet || 'unknown';
+
+                  for await (const { signature, network } of createPaymentSignatures(x402Response, url)) {
+                    const paidResponse = await fetch(url, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'X-Client-Type': 'nansen-cli',
+                        'X-Client-Version': packageVersion,
+                        'Payment-Signature': signature,
+                        ...this.defaultHeaders,
+                        ...options.headers,
+                      },
+                      body: JSON.stringify(NansenAPI.cleanBody(body)),
+                    });
+                    if (paidResponse.ok) {
+                      console.error(`[x402] Paid via wallet ${walletName} (${network}) [401->402 fallback]`);
+                      try {
+                        const { checkX402Balance } = await import('./x402.js');
+                        const balance = await checkX402Balance(network);
+                        if (balance !== null && balance < 0.25) {
+                          console.error(`[x402] Warning: USDC balance low ($${balance.toFixed(2)}). Fund your wallet to avoid interruptions.`);
+                        }
+                      } catch { /* balance check is best-effort */ }
+                      return await paidResponse.json();
+                    }
+                  }
+                }
+              } catch { /* x402 fallback failed, continue with original 401 error */ }
+            }
+
+            message = 'No API key configured. Two ways to authenticate:\n' +
+              '  1. API key: nansen login --api-key <key> (get key at https://app.nansen.ai/api)\n' +
+              '  2. x402 micropayment: nansen wallet create + fund with USDC (no API key needed)';
+          }
         } else if (code === ErrorCode.PAYMENT_REQUIRED) {
           // Try x402 auto-payment: local wallet (with network fallback), then WalletConnect
           const hasManualSignature = !!(this.defaultHeaders['Payment-Signature'] || options.headers?.['Payment-Signature']);
