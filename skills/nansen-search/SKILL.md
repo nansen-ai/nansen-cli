@@ -28,7 +28,7 @@ nansen research search "bonk" --chain solana --fields address,name,symbol,chain
 |------|---------|
 | `--type` | `token` or `entity` |
 | `--chain` | Filter by chain |
-| `--limit` | Number of results (default 25) |
+| `--limit` | Number of results (default 25, max 50) |
 | `--fields` | Select specific output fields |
 
 Case-insensitive. Does NOT match by address — use `profiler labels` for address lookup.
