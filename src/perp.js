@@ -312,6 +312,10 @@ async function hlExchangeRequest(payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new NansenError(`Hyperliquid exchange error (${response.status}): ${text}`, ErrorCode.SERVER_ERROR);
+  }
   const data = await response.json();
   if (data.status === 'err') {
     throw new NansenError(`Hyperliquid: ${data.response}`, ErrorCode.INVALID_PARAMS);
@@ -619,7 +623,7 @@ export function buildPerpCommands(deps = {}) {
       const size = options.size;
       const triggerPrice = options['trigger-price'];
       const tpsl = options.tpsl;
-      const isMarket = flags['is-market'];
+      const isMarket = Boolean(flags['is-market']);
       const builderAddress = options['builder-address'] || null;
       const builderFee = options['builder-fee'] ? parseInt(options['builder-fee']) : DEFAULT_BUILDER_FEE;
 

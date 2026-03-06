@@ -1799,6 +1799,7 @@
                 "reduce-only": { "type": "boolean", "description": "Reduce-only order" },
                 "tif": { "type": "string", "description": "Time-in-force: gtc, ioc, or alo (default: gtc for limit)" },
                 "wallet": { "type": "string", "description": "Wallet name" },
+                "builder-address": { "type": "string", "description": "Builder fee recipient address (requires prior approveBuilderFee)" },
                 "builder-fee": { "type": "string", "description": "Builder fee in tenths of bps (default: 1)" }
               },
               "returns": ["statuses", "response"]
@@ -1831,7 +1832,9 @@
                 "trigger-price": { "type": "string", "required": true, "description": "Trigger price" },
                 "tpsl": { "type": "string", "required": true, "description": "tp (take-profit) or sl (stop-loss)" },
                 "is-market": { "type": "boolean", "description": "Execute as market order when triggered" },
-                "wallet": { "type": "string", "description": "Wallet name" }
+                "wallet": { "type": "string", "description": "Wallet name" },
+                "builder-address": { "type": "string", "description": "Builder fee recipient address (requires prior approveBuilderFee)" },
+                "builder-fee": { "type": "string", "description": "Builder fee in tenths of bps (default: 1)" }
               },
               "returns": ["statuses", "response"]
             },
