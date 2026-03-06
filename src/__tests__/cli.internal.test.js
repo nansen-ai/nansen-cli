@@ -2022,10 +2022,13 @@ describe('profiler trace command', () => {
 // =================== profiler compare ===================
 
 describe('profiler compare command', () => {
-  it('should appear in SCHEMA', () => {
+  it('should appear in SCHEMA with address1/address2 alternatives', () => {
     const compare = SCHEMA.commands.research.subcommands['profiler'].subcommands['compare'];
     expect(compare).toBeDefined();
-    expect(compare.options.addresses.required).toBe(true);
+    // --addresses is optional; --address1/--address2 are valid alternatives
+    expect(compare.options.addresses).toBeDefined();
+    expect(compare.options.address1).toBeDefined();
+    expect(compare.options.address2).toBeDefined();
   });
 
   it('should parse two comma-separated addresses', async () => {
@@ -2195,6 +2198,45 @@ describe('profiler compare address parsing', () => {
         delay: '0'
       })
     ).rejects.toThrow('--addresses must be a comma-separated list or JSON array');
+  });
+
+  it('should support --address1 and --address2 as aliases', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['compare'], mockApi, {}, {
+      address1: '0x0000000000000000000000000000000000000001',
+      address2: '0x0000000000000000000000000000000000000002',
+      chain: 'ethereum',
+      delay: '0'
+    });
+
+    expect(result.addresses).toHaveLength(2);
+    expect(result.addresses[0]).toBe('0x0000000000000000000000000000000000000001');
+    expect(result.addresses[1]).toBe('0x0000000000000000000000000000000000000002');
+  });
+
+  it('should support --address1 alone when --address2 is missing', async () => {
+    const commands = buildCommands({});
+    await expect(
+      commands['profiler'](['compare'], {}, {}, {
+        address1: '0x0000000000000000000000000000000000000001',
+        chain: 'ethereum',
+        delay: '0'
+      })
+    ).rejects.toThrow('Exactly 2 addresses are required for comparison');
+  });
+
+  it('should show format hint in error when no addresses provided', async () => {
+    const commands = buildCommands({});
+    await expect(
+      commands['profiler'](['compare'], {}, {}, {
+        chain: 'ethereum',
+        delay: '0'
+      })
+    ).rejects.toThrow('--addresses addr1,addr2 or --address1 addr1 --address2 addr2');
   });
 });
 

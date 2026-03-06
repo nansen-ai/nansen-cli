@@ -606,7 +606,10 @@ export async function traceCounterparties(api, params = {}) {
 export async function compareWallets(api, params = {}) {
   const { addresses = [], chain = 'ethereum', days = 30, delayMs = 1000 } = params;
   if (addresses.length !== 2) {
-    throw new NansenError('Exactly 2 addresses are required for comparison', ErrorCode.INVALID_PARAMS);
+    throw new NansenError(
+      'Exactly 2 addresses are required for comparison. Use: --addresses addr1,addr2 or --address1 addr1 --address2 addr2',
+      ErrorCode.INVALID_PARAMS
+    );
   }
   const [addr1, addr2] = addresses;
   for (const addr of [addr1, addr2]) {
@@ -1030,7 +1033,11 @@ export function buildCommands(deps = {}) {
           return traceCounterparties(apiInstance, { address, chain, depth, width, days, delayMs });
         },
         'compare': () => {
-          const addrs = parseAddressList(options.addresses);
+          // Support both --addresses addr1,addr2 and --address1 addr1 --address2 addr2
+          let addrs = parseAddressList(options.addresses);
+          if (addrs.length === 0 && (options.address1 || options.address2)) {
+            addrs = [options.address1, options.address2].filter(Boolean);
+          }
           return compareWallets(apiInstance, { addresses: addrs, chain, days });
         },
         'help': () => ({

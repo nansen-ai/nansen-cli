@@ -612,8 +612,15 @@
               "options": {
                 "addresses": {
                   "type": "string",
-                  "required": true,
-                  "description": "Two comma-separated addresses"
+                  "description": "Two comma-separated addresses (e.g. addr1,addr2 or JSON array)"
+                },
+                "address1": {
+                  "type": "string",
+                  "description": "First address (alternative to --addresses)"
+                },
+                "address2": {
+                  "type": "string",
+                  "description": "Second address (alternative to --addresses)"
                 },
                 "chain": {
                   "type": "string",
