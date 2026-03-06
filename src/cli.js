@@ -220,21 +220,23 @@ export function formatAlertsTable(alerts) {
     return str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
   };
 
+  const idWidth = Math.max(2, Math.max(...alerts.map(a => (a.id || '').length)));
   const nameWidth = Math.max(4, Math.min(30, Math.max(...alerts.map(a => (a.name || '').length))));
   const typeWidth = Math.max(4, Math.min(25, Math.max(...alerts.map(a => (a.type || '').length))));
   const channelsWidth = Math.max(8, Math.min(20, Math.max(...alerts.map(a => formatChannels(a.channels).length))));
 
   const lines = [];
-  const header = `${'NAME'.padEnd(nameWidth)} │ ${'TYPE'.padEnd(typeWidth)} │ ${'ENABLED'.padEnd(7)} │ ${'CHANNELS'.padEnd(channelsWidth)}`;
+  const header = `${'ID'.padEnd(idWidth)} │ ${'NAME'.padEnd(nameWidth)} │ ${'TYPE'.padEnd(typeWidth)} │ ${'ENABLED'.padEnd(7)} │ ${'CHANNELS'.padEnd(channelsWidth)}`;
   lines.push(header);
-  lines.push('─'.repeat(nameWidth) + '─┼─' + '─'.repeat(typeWidth) + '─┼─' + '─'.repeat(7) + '─┼─' + '─'.repeat(channelsWidth));
+  lines.push('─'.repeat(idWidth) + '─┼─' + '─'.repeat(nameWidth) + '─┼─' + '─'.repeat(typeWidth) + '─┼─' + '─'.repeat(7) + '─┼─' + '─'.repeat(channelsWidth));
 
   for (const alert of alerts) {
+    const id = (alert.id || '').padEnd(idWidth);
     const name = truncate(alert.name, nameWidth).padEnd(nameWidth);
     const type = truncate(alert.type, typeWidth).padEnd(typeWidth);
     const enabled = formatEnabled(alert.isEnabled).padEnd(7);
     const channels = truncate(formatChannels(alert.channels), channelsWidth).padEnd(channelsWidth);
-    lines.push(`${name} │ ${type} │ ${enabled} │ ${channels}`);
+    lines.push(`${id} │ ${name} │ ${type} │ ${enabled} │ ${channels}`);
   }
 
   return lines.join('\n');
@@ -1744,17 +1746,17 @@ export async function runCLI(rawArgs, deps = {}) {
       return { type: 'schema', data: result };
     }
 
+    // Apply field filtering if --fields is specified
+    const fields = parseFields(options.fields);
+    if (fields) {
+      result = filterFields(result, fields);
+    }
+
     // Alerts list with --table uses custom table format
     if (command === 'alerts' && subcommand === 'list' && table) {
       output(formatAlertsTable(result));
       notify();
       return { type: 'success', data: result };
-    }
-
-    // Apply field filtering if --fields is specified
-    const fields = parseFields(options.fields);
-    if (fields) {
-      result = filterFields(result, fields);
     }
 
     // Output in requested format
