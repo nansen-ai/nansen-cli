@@ -2707,6 +2707,12 @@ describe('NansenAPI', () => {
       expectFetchCalledWith('/api/v1/smart-alert/alert-1', {}, 'DELETE');
       expect(result).toHaveProperty('success', true);
     });
+
+    it('alertsDelete should encode special characters in alert ID', async () => {
+      setupMock(MOCK_RESPONSES.alertsDelete);
+      await api.alertsDelete('alert/with/slashes');
+      expectFetchCalledWith('/api/v1/smart-alert/alert%2Fwith%2Fslashes', {}, 'DELETE');
+    });
   });
 
   // =================== Supported Chains ===================
