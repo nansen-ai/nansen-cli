@@ -1409,9 +1409,18 @@ EXAMPLES:
 
     // Build alert data by merging --chains into --data (if provided)
     function buildAlertData() {
-      let data = options.data
-        ? (typeof options.data === 'string' ? JSON.parse(options.data) : options.data)
-        : {};
+      let data = {};
+      if (options.data) {
+        if (typeof options.data === 'string') {
+          try {
+            data = JSON.parse(options.data);
+          } catch {
+            throw new NansenError('--data must be valid JSON', ErrorCode.INVALID_PARAM);
+          }
+        } else {
+          data = options.data;
+        }
+      }
       if (options.chains) {
         const chains = typeof options.chains === 'string' ? options.chains.split(',') : Array.isArray(options.chains) ? options.chains : [options.chains];
         data = { ...data, chains };

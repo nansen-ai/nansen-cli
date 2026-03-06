@@ -1804,9 +1804,8 @@
           }
         },
         "update": {
-          "description": "Update an existing alert",
+          "description": "Update an existing alert. Usage: nansen alerts update <id> [options]",
           "options": {
-            "id": { "type": "string", "required": true, "description": "Alert ID" },
             "name": { "type": "string", "description": "Alert name" },
             "type": { "type": "string", "description": "Alert type" },
             "time-window": { "type": "string", "description": "Time window" },
@@ -1821,18 +1820,15 @@
           }
         },
         "toggle": {
-          "description": "Enable or disable an alert",
+          "description": "Enable or disable an alert. Usage: nansen alerts toggle <id> --enabled|--disabled",
           "options": {
-            "id": { "type": "string", "required": true, "description": "Alert ID" },
             "enabled": { "type": "boolean", "description": "Enable alert" },
             "disabled": { "type": "boolean", "description": "Disable alert" }
           }
         },
         "delete": {
-          "description": "Delete an alert",
-          "options": {
-            "id": { "type": "string", "required": true, "description": "Alert ID" }
-          }
+          "description": "Delete an alert. Usage: nansen alerts delete <id>",
+          "options": {}
         }
       }
     },

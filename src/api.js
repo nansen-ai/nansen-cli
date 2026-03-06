@@ -1289,7 +1289,7 @@ export class NansenAPI {
   }
 
   async alertsDelete(alertId) {
-    return this.request(`/api/v1/smart-alert/${alertId}`, {}, { method: 'DELETE' });
+    return this.request(`/api/v1/smart-alert/${encodeURIComponent(alertId)}`, {}, { method: 'DELETE' });
   }
 }
 
