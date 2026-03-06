@@ -100,6 +100,26 @@ describe('resolveTokenAddress', () => {
     expect(resolveTokenAddress('Eth', 'base')).toBe('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
   });
 
+  it('should resolve extended Solana symbols', () => {
+    expect(resolveTokenAddress('JUP',  'solana')).toBe('JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN');
+    expect(resolveTokenAddress('BONK', 'solana')).toBe('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263');
+    expect(resolveTokenAddress('WIF',  'solana')).toBe('EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm');
+    expect(resolveTokenAddress('JTO',  'solana')).toBe('jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL');
+    expect(resolveTokenAddress('PYTH', 'solana')).toBe('HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3');
+    expect(resolveTokenAddress('RAY',  'solana')).toBe('4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R');
+    expect(resolveTokenAddress('RNDR', 'solana')).toBe('rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof');
+  });
+
+  it('should resolve extended Base symbols', () => {
+    expect(resolveTokenAddress('WBTC',   'base')).toBe('0x0555e30da8f98308edb960aa94c0db47230d2b9c');
+    expect(resolveTokenAddress('CBBTC',  'base')).toBe('0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf');
+    expect(resolveTokenAddress('CBETH',  'base')).toBe('0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22');
+    expect(resolveTokenAddress('WSTETH', 'base')).toBe('0xc1cba3fcea344f92d9239c08c0568f6f2f0ee452');
+    expect(resolveTokenAddress('DAI',    'base')).toBe('0x50c5725949a6f0c72e6c4a641f24049a917db0cb');
+    expect(resolveTokenAddress('AERO',   'base')).toBe('0x940181a94a35a4569e4529a3cdfb74e38fd98631');
+    expect(resolveTokenAddress('DEGEN',  'base')).toBe('0x4ed4e862860bed51a9570b96d89af5e1b0efefed');
+  });
+
   it('should pass through raw addresses unchanged', () => {
     const addr = '0x1234567890abcdef1234567890abcdef12345678';
     expect(resolveTokenAddress(addr, 'base')).toBe(addr);
@@ -107,8 +127,36 @@ describe('resolveTokenAddress', () => {
       .toBe('So11111111111111111111111111111111111111112');
   });
 
-  it('should pass through unknown symbols unchanged', () => {
-    expect(resolveTokenAddress('SHIB', 'solana')).toBe('SHIB');
+  it('should pass through unknown symbols unchanged and emit a hint', () => {
+    const stderrLines = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (msg) => { stderrLines.push(msg); return true; };
+    const result = resolveTokenAddress('SHIB', 'solana');
+    process.stderr.write = origWrite;
+    expect(result).toBe('SHIB');
+    expect(stderrLines.some(l => l.includes('not a recognised symbol'))).toBe(true);
+    expect(stderrLines.some(l => l.includes('SHIB'))).toBe(true);
+  });
+
+  it('should NOT emit a hint for raw 0x addresses that are not in the map', () => {
+    const stderrLines = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (msg) => { stderrLines.push(msg); return true; };
+    const raw = '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+    const result = resolveTokenAddress(raw, 'base');
+    process.stderr.write = origWrite;
+    expect(result).toBe(raw);
+    expect(stderrLines.length).toBe(0);
+  });
+
+  it('should NOT emit a hint for full-length Solana addresses', () => {
+    const stderrLines = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (msg) => { stderrLines.push(msg); return true; };
+    const solAddr = 'So11111111111111111111111111111111111111112';
+    resolveTokenAddress(solAddr, 'solana');
+    process.stderr.write = origWrite;
+    expect(stderrLines.length).toBe(0);
   });
 
   it('should handle null/undefined gracefully', () => {

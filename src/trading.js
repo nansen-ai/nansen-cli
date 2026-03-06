@@ -35,18 +35,45 @@ const WRAPPED_NATIVE_TOKENS = {
 const EVM_NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 const TOKEN_SYMBOLS = {
   solana: {
-    SOL:  'So11111111111111111111111111111111111111112',
-    WSOL: 'So11111111111111111111111111111111111111112',
-    USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-    USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+    // Native / wrapped native
+    SOL:   'So11111111111111111111111111111111111111112',
+    WSOL:  'So11111111111111111111111111111111111111112',
+    // Stablecoins
+    USDC:  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    USDT:  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+    PYUSD: '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo',
+    // Major ecosystem tokens
+    JUP:   'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
+    BONK:  'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+    WIF:   'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
+    JTO:   'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL',
+    PYTH:  'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3',
+    RNDR:  'rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof',
+    RAY:   '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R',
   },
   base: {
-    ETH:  EVM_NATIVE,
-    WETH: WRAPPED_NATIVE_TOKENS.base.address,
-    USDC: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    // Native / wrapped native
+    ETH:   EVM_NATIVE,
+    WETH:  WRAPPED_NATIVE_TOKENS.base.address,
+    // Stablecoins
+    USDC:  '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
     // NOTE: Legacy L2-bridged USDT on Base. If Tether deploys natively on Base
     // (like Circle did with USDC), this address will need updating.
-    USDT: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
+    USDT:  '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
+    DAI:   '0x50c5725949a6f0c72e6c4a641f24049a917db0cb',
+    USDS:  '0x820c137612271f1108a1dc6c96e9e4f81dd23c72',
+    // Wrapped BTC
+    WBTC:  '0x0555e30da8f98308edb960aa94c0db47230d2b9c',
+    CBBTC: '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf',
+    // Liquid staking / liquid restaking
+    CBETH: '0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22',
+    WSTETH:'0xc1cba3fcea344f92d9239c08c0568f6f2f0ee452',
+    // Major Base ecosystem tokens
+    AERO:  '0x940181a94a35a4569e4529a3cdfb74e38fd98631',
+    BRETT: '0x532f27101965dd16442e59d40670faf5ebb142e4',
+    TOSHI: '0xac1bd2486aaf3b5c0fc3fd868558b082a531b2b4',
+    DEGEN: '0x4ed4e862860bed51a9570b96d89af5e1b0efefed',
+    WELL:  '0xa88594d404727625a9437c3f886c7643872296ae',
   },
 };
 
@@ -54,13 +81,32 @@ const TOKEN_SYMBOLS = {
  * Resolve a token symbol (e.g. "SOL", "USDC") to its canonical address
  * for the given chain. Returns the input unchanged if no match is found
  * (assumes it's already a raw address).
+ *
+ * Emits a stderr hint when a short, all-uppercase token-like string is
+ * passed that does not match any known symbol — helps users catch typos
+ * before the quote API returns a confusing "invalid address" error.
  */
 export function resolveTokenAddress(symbolOrAddress, chainName) {
   if (!symbolOrAddress || !chainName) return symbolOrAddress;
   const chainTokens = TOKEN_SYMBOLS[chainName.toLowerCase()];
   if (!chainTokens) return symbolOrAddress;
-  const resolved = chainTokens[symbolOrAddress.toUpperCase()];
-  return resolved || symbolOrAddress;
+  const upper = symbolOrAddress.toUpperCase();
+  const resolved = chainTokens[upper];
+  if (resolved) return resolved;
+
+  // Emit a hint if input looks like an intended symbol (1–10 uppercase/digit chars,
+  // no 0x prefix, no spaces) but wasn't found in the map.
+  const looksLikeSymbol = /^[A-Z0-9]{1,10}$/.test(upper) && !symbolOrAddress.startsWith('0x');
+  if (looksLikeSymbol) {
+    const known = Object.keys(chainTokens).join(', ');
+    process.stderr.write(
+      `ℹ️  "${symbolOrAddress}" is not a recognised symbol on ${chainName}. ` +
+      `Known symbols: ${known}.\n` +
+      `   Treating it as a raw address — the quote API will validate it.\n`
+    );
+  }
+
+  return symbolOrAddress;
 }
 
 // Default public RPC endpoints (used for nonce fetching)
@@ -743,8 +789,8 @@ PREREQUISITE:
 
 OPTIONS:
   --chain <chain>           Chain: solana, base
-  --from <symbol|address>   Input token (symbol like SOL, USDC or address)
-  --to <symbol|address>     Output token (symbol like USDC, ETH or address)
+  --from <symbol|address>   Input token (symbol like SOL, USDC, JUP, ETH, WBTC or address)
+  --to <symbol|address>     Output token (symbol like USDC, ETH, BONK, DAI or address)
   --amount <units>          Amount in BASE UNITS (e.g. lamports, wei)
   --wallet <name>           Wallet name (default: default wallet). Use "walletconnect" or "wc" for WalletConnect.
   --slippage <pct>          Slippage as decimal (e.g. 0.03 for 3%). Default: 0.03
@@ -754,7 +800,10 @@ OPTIONS:
 
 EXAMPLES:
   nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
-  nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000
+  nansen trade quote --chain solana --from SOL --to JUP  --amount 1000000000
+  nansen trade quote --chain base   --from ETH --to USDC --amount 1000000000000000000
+  nansen trade quote --chain base   --from ETH --to DEGEN --amount 1000000000000000000
+  nansen trade quote --chain base   --from USDC --to WBTC --amount 10000000
   nansen trade quote --chain solana --from So11111111111111111111111111111111111111112 --to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 1000000000
 `);
         exit(1);
