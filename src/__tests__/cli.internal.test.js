@@ -9,6 +9,7 @@ import {
   parseArgs,
   formatValue,
   formatTable,
+  formatAlertsTable,
   formatOutput,
   formatError,
   formatStream,
@@ -176,6 +177,46 @@ describe('formatTable', () => {
     const header = lines[0];
     // token_symbol should come before zebra (priority field)
     expect(header.indexOf('token_symbol')).toBeLessThan(header.indexOf('zebra'));
+  });
+});
+
+describe('formatAlertsTable', () => {
+  it('should return "No alerts" for empty array', () => {
+    expect(formatAlertsTable([])).toBe('No alerts');
+  });
+
+  it('should format alerts as table with NAME, TYPE, ENABLED, CHANNELS columns', () => {
+    const alerts = [
+      { id: 'a1', name: 'ETH Whale Alert', type: 'sm-token-flows', isEnabled: true, channels: [{ type: 'telegram' }] },
+      { id: 'a2', name: 'USDC Transfer Alert', type: 'common-token-transfer', isEnabled: false, channels: [{ type: 'slack' }, { type: 'discord' }] }
+    ];
+    const result = formatAlertsTable(alerts);
+    expect(result).toContain('NAME');
+    expect(result).toContain('TYPE');
+    expect(result).toContain('ENABLED');
+    expect(result).toContain('CHANNELS');
+    expect(result).toContain('ETH Whale Alert');
+    expect(result).toContain('sm-token-flows');
+    expect(result).toContain('✓');
+    expect(result).toContain('telegram');
+    expect(result).toContain('slack, discord');
+  });
+
+  it('should handle alerts with no channels', () => {
+    const alerts = [
+      { id: 'a1', name: 'Test Alert', type: 'sm-token-flows', isEnabled: true, channels: [] }
+    ];
+    const result = formatAlertsTable(alerts);
+    expect(result).toContain('Test Alert');
+    expect(result).not.toContain('undefined');
+  });
+
+  it('should truncate long names', () => {
+    const alerts = [
+      { id: 'a1', name: 'A very long alert name that exceeds the column width and should be truncated', type: 'sm-token-flows', isEnabled: true, channels: [] }
+    ];
+    const result = formatAlertsTable(alerts);
+    expect(result).toContain('…');
   });
 });
 

@@ -202,6 +202,44 @@ export function formatValue(val) {
   return String(val);
 }
 
+// Format alerts list as human-readable table
+export function formatAlertsTable(alerts) {
+  if (!Array.isArray(alerts) || alerts.length === 0) {
+    return 'No alerts';
+  }
+
+  const formatChannels = (channels) => {
+    if (!channels || !Array.isArray(channels) || channels.length === 0) return '';
+    return channels.map(ch => ch.type).join(', ');
+  };
+
+  const formatEnabled = (isEnabled) => isEnabled ? '✓' : '';
+
+  const truncate = (str, maxLen) => {
+    if (!str) return '';
+    return str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
+  };
+
+  const nameWidth = Math.max(4, Math.min(30, Math.max(...alerts.map(a => (a.name || '').length))));
+  const typeWidth = Math.max(4, Math.min(25, Math.max(...alerts.map(a => (a.type || '').length))));
+  const channelsWidth = Math.max(8, Math.min(20, Math.max(...alerts.map(a => formatChannels(a.channels).length))));
+
+  const lines = [];
+  const header = `${'NAME'.padEnd(nameWidth)} │ ${'TYPE'.padEnd(typeWidth)} │ ${'ENABLED'.padEnd(7)} │ ${'CHANNELS'.padEnd(channelsWidth)}`;
+  lines.push(header);
+  lines.push('─'.repeat(nameWidth) + '─┼─' + '─'.repeat(typeWidth) + '─┼─' + '─'.repeat(7) + '─┼─' + '─'.repeat(channelsWidth));
+
+  for (const alert of alerts) {
+    const name = truncate(alert.name, nameWidth).padEnd(nameWidth);
+    const type = truncate(alert.type, typeWidth).padEnd(typeWidth);
+    const enabled = formatEnabled(alert.isEnabled).padEnd(7);
+    const channels = truncate(formatChannels(alert.channels), channelsWidth).padEnd(channelsWidth);
+    lines.push(`${name} │ ${type} │ ${enabled} │ ${channels}`);
+  }
+
+  return lines.join('\n');
+}
+
 // Table formatter for human-readable output
 export function formatTable(data) {
   // Extract array of records from various response shapes
@@ -226,7 +264,7 @@ export function formatTable(data) {
   // Get columns from first record, prioritize common useful fields
   const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
   const allKeys = [...new Set(records.flatMap(r => Object.keys(r)))];
-  
+
   // Sort: priority fields first, then alphabetically
   const columns = allKeys.sort((a, b) => {
     const aIdx = priorityFields.indexOf(a);
@@ -250,12 +288,12 @@ export function formatTable(data) {
   // Build table
   const separator = '─';
   const lines = [];
-  
+
   // Header
   const header = columns.map((col, i) => col.padEnd(widths[i])).join(' │ ');
   lines.push(header);
   lines.push(widths.map(w => separator.repeat(w)).join('─┼─'));
-  
+
   // Rows
   for (const record of records.slice(0, 50)) { // Limit to 50 rows
     const row = columns.map((col, i) => {
@@ -1370,7 +1408,7 @@ OPTIONS:
   --description '<text>'  Alert description. Use single quotes to avoid shell interpolation.
 
 EXAMPLES:
-  nansen alerts list --pretty
+  nansen alerts list --table
   nansen alerts create --name 'ETH SM Flows' --type sm-token-flows --time-window 1h --chains ethereum --telegram 5238612255 --description 'Alert when SM pours $1M+ into ETH' --data '{"events":["sm-token-flows"],"inflow_1h":{"min":100000}}'
   nansen alerts toggle abc123 --disabled
   nansen alerts delete abc123`);
@@ -1606,7 +1644,7 @@ export async function runCLI(rawArgs, deps = {}) {
       }
       // First try subcommand help
       // Skip for 'trade' — its handlers show their own rich usage when required args are missing
-      if (command && subcommand && command !== 'trade' && command !== 'alerts') {
+      if (command && subcommand && command !== 'trade') {
         const subHelp = generateSubcommandHelp(command, subcommand);
         if (subHelp) {
           output(subHelp);
@@ -1616,7 +1654,7 @@ export async function runCLI(rawArgs, deps = {}) {
       }
       // Then try command-level help (list subcommands)
       // Skip for 'trade' — let the handler show its own usage
-      const cmdSchemaLookup = command !== 'trade' && command !== 'alerts' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
+      const cmdSchemaLookup = command !== 'trade' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
       if (command && cmdSchemaLookup) {
         const cmdSchema = cmdSchemaLookup;
         const lines = [`${command} — ${cmdSchema.description}`];
@@ -1695,6 +1733,13 @@ export async function runCLI(rawArgs, deps = {}) {
       output(formatted.text);
       notify();
       return { type: 'schema', data: result };
+    }
+
+    // Alerts list with --table uses custom table format
+    if (command === 'alerts' && subcommand === 'list' && table) {
+      output(formatAlertsTable(result));
+      notify();
+      return { type: 'success', data: result };
     }
 
     // Apply field filtering if --fields is specified

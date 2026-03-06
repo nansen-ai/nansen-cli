@@ -23,7 +23,7 @@ CRUD management for smart alerts. Alerts are internal-only (requires Nansen inte
 ## List
 
 ```bash
-nansen alerts list --pretty
+nansen alerts list --table
 ```
 
 ## Create
@@ -299,5 +299,5 @@ Multiple channels can be combined: `--telegram 123 --slack https://...`
 ## Notes
 
 - Alert endpoints are internal-only. Non-internal users receive 404.
-- `--channels` and `--data` accept JSON strings.
+- `--data` accepts a JSON string.
 - `list` returns an array directly.
