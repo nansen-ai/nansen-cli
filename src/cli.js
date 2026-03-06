@@ -1549,8 +1549,9 @@ export async function runCLI(rawArgs, deps = {}) {
     };
 
     const defaultHeaders = {};
-    if (options['x402-payment-signature']) {
-      defaultHeaders['Payment-Signature'] = options['x402-payment-signature'];
+    const x402Sig = options['x402-payment-signature'] || process.env.NANSEN_X402_PAYMENT_SIGNATURE;
+    if (x402Sig) {
+      defaultHeaders['Payment-Signature'] = x402Sig;
     }
     const api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders });
     let result = await commands[command](subArgs, api, flags, options);

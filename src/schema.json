@@ -1907,7 +1907,7 @@
     },
     "x402-payment-signature": {
       "type": "string",
-      "description": "Pre-signed x402 payment signature header"
+      "description": "Pre-signed x402 payment signature header (also settable via NANSEN_X402_PAYMENT_SIGNATURE env var)"
     }
   },
   "chains": [

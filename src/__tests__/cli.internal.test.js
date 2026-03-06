@@ -732,6 +732,73 @@ describe('runCLI', () => {
     expect(apiOptions.retry.maxRetries).toBe(5);
   });
 
+  it('should pass --x402-payment-signature to defaultHeaders', async () => {
+    let apiOptions;
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI(key, url, opts) {
+        apiOptions = opts;
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue({ data: [] });
+      }
+    };
+
+    await runCLI(['smart-money', 'netflow', '--x402-payment-signature', 'test-sig'], deps);
+    expect(apiOptions.defaultHeaders['Payment-Signature']).toBe('test-sig');
+  });
+
+  it('should pick up NANSEN_X402_PAYMENT_SIGNATURE env var', async () => {
+    let apiOptions;
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI(key, url, opts) {
+        apiOptions = opts;
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue({ data: [] });
+      }
+    };
+
+    process.env.NANSEN_X402_PAYMENT_SIGNATURE = 'env-sig';
+    try {
+      await runCLI(['smart-money', 'netflow'], deps);
+      expect(apiOptions.defaultHeaders['Payment-Signature']).toBe('env-sig');
+    } finally {
+      delete process.env.NANSEN_X402_PAYMENT_SIGNATURE;
+    }
+  });
+
+  it('should prefer --x402-payment-signature over env var', async () => {
+    let apiOptions;
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI(key, url, opts) {
+        apiOptions = opts;
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue({ data: [] });
+      }
+    };
+
+    process.env.NANSEN_X402_PAYMENT_SIGNATURE = 'env-sig';
+    try {
+      await runCLI(['smart-money', 'netflow', '--x402-payment-signature', 'cli-sig'], deps);
+      expect(apiOptions.defaultHeaders['Payment-Signature']).toBe('cli-sig');
+    } finally {
+      delete process.env.NANSEN_X402_PAYMENT_SIGNATURE;
+    }
+  });
+
+  it('should not set Payment-Signature when neither option nor env var provided', async () => {
+    let apiOptions;
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI(key, url, opts) {
+        apiOptions = opts;
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue({ data: [] });
+      }
+    };
+
+    delete process.env.NANSEN_X402_PAYMENT_SIGNATURE;
+    await runCLI(['smart-money', 'netflow'], deps);
+    expect(apiOptions.defaultHeaders['Payment-Signature']).toBeUndefined();
+  });
+
   it('should output pretty JSON when --pretty', async () => {
     const deps = {
       ...mockDeps(),

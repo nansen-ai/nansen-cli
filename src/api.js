@@ -530,6 +530,7 @@ export class NansenAPI {
                       'Content-Type': 'application/json',
                       'X-Client-Type': 'nansen-cli',
                       'X-Client-Version': packageVersion,
+                      ...(this.apiKey ? { 'apikey': this.apiKey } : {}),
                       'Payment-Signature': signature,
                       ...this.defaultHeaders,
                       ...options.headers,
@@ -563,6 +564,7 @@ export class NansenAPI {
                       'Content-Type': 'application/json',
                       'X-Client-Type': 'nansen-cli',
                       'X-Client-Version': packageVersion,
+                      ...(this.apiKey ? { 'apikey': this.apiKey } : {}),
                       'Payment-Signature': signature,
                       ...this.defaultHeaders,
                       ...options.headers,
@@ -610,6 +612,7 @@ export class NansenAPI {
                         'Content-Type': 'application/json',
                         'X-Client-Type': 'nansen-cli',
                         'X-Client-Version': packageVersion,
+                        ...(this.apiKey ? { 'apikey': this.apiKey } : {}),
                         'Payment-Signature': paymentSignature,
                         ...this.defaultHeaders,
                         ...options.headers,
@@ -637,7 +640,7 @@ export class NansenAPI {
           }
 
           if (!message || message === data.message) {
-            message = 'Payment required (x402). Sign the paymentRequirements below per https://docs.x402.org and pass the result with --x402-payment-signature <value>.';
+            message = 'Payment required (x402). Sign the paymentRequirements below per https://docs.x402.org and pass the result with --x402-payment-signature <value> or NANSEN_X402_PAYMENT_SIGNATURE env var.';
           }
         }
 

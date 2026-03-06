@@ -2467,10 +2467,11 @@ describe('NansenAPI', () => {
       const result = await autoPayApi.smartMoneyNetflow({});
       expect(result.netflows).toBeDefined();
 
-      // Verify the retry had the Payment-Signature header
+      // Verify the retry had the Payment-Signature header and apikey
       expect(mockFetch).toHaveBeenCalledTimes(2);
       const retryCall = mockFetch.mock.calls[1];
       expect(retryCall[1].headers['Payment-Signature']).toBe('mock-payment-sig');
+      expect(retryCall[1].headers['apikey']).toBe('test-key');
 
       vi.doUnmock('../walletconnect-x402.js');
     });
