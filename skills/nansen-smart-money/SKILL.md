@@ -68,3 +68,4 @@ nansen research smart-money netflow --chain solana --labels "Fund" --limit 10
 ## Notes
 
 - `perp-trades` is Hyperliquid-only. No `--chain` flag.
+- For a time-series view of SM positions: `nansen research smart-money historical-holdings --chain <chain> --days 30`
