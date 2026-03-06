@@ -198,6 +198,7 @@ describe('formatAlertsTable', () => {
     expect(result).toContain('ETH Whale Alert');
     expect(result).toContain('sm-token-flows');
     expect(result).toContain('✓');
+    expect(result).toContain('✗');
     expect(result).toContain('telegram');
     expect(result).toContain('slack, discord');
   });
