@@ -2700,10 +2700,11 @@ describe('deprecation warnings', () => {
       errorOutput: (msg) => errors.push(msg),
       exit: () => {}
     };
-    // quote with no args shows its help; confirms handler was reached
+    // quote with no args now returns a JSON error (MISSING_PARAM); confirms handler was reached
     const result = await runCLI(['quote'], deps);
     expect(errors.some(e => e.includes('nansen trade quote'))).toBe(true);
-    expect(result.type).toBe('no-output');
+    expect(result.type).toBe('error');
+    expect(result.data).toMatchObject({ code: 'MISSING_PARAM' });
   });
 });
 

@@ -13,6 +13,7 @@ import { base58Decode } from './transfer.js';
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendSolanaTransactionViaWalletConnect, sendApprovalViaWalletConnect } from './walletconnect-trading.js';
 import { retrievePassword } from './keychain.js';
+import { NansenError, ErrorCode } from './api.js';
 
 // ============= Constants =============
 
@@ -733,39 +734,23 @@ export function buildTradingCommands(deps = {}) {
       const swapMode = options['swap-mode'] || 'exactIn';
 
       if (!chain || !from || !to || !amount) {
-        log(`
-Usage: nansen trade quote --chain <chain> --from <token> --to <token> --amount <baseUnits>
-
-PREREQUISITE:
-  A wallet must be configured before using this command (the trading API builds
-  a transaction specific to your sender address).
-  Set one up with: nansen wallet create
-
-OPTIONS:
-  --chain <chain>           Chain: solana, base
-  --from <symbol|address>   Input token (symbol like SOL, USDC or address)
-  --to <symbol|address>     Output token (symbol like USDC, ETH or address)
-  --amount <units>          Amount in BASE UNITS (e.g. lamports, wei)
-  --wallet <name>           Wallet name (default: default wallet). Use "walletconnect" or "wc" for WalletConnect.
-  --slippage <pct>          Slippage as decimal (e.g. 0.03 for 3%). Default: 0.03
-  --auto-slippage           Enable auto slippage calculation
-  --max-auto-slippage <pct> Max auto slippage when auto-slippage enabled
-  --swap-mode <mode>        exactIn (default) or exactOut
-
-EXAMPLES:
-  nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
-  nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000
-  nansen trade quote --chain solana --from So11111111111111111111111111111111111111112 --to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 1000000000
-`);
-        exit(1);
-        return;
+        const missing = [!chain && '--chain', !from && '--from', !to && '--to', !amount && '--amount'].filter(Boolean);
+        throw new NansenError(
+          `Missing required option(s): ${missing.join(', ')}`,
+          ErrorCode.MISSING_PARAM,
+          null,
+          {
+            usage: 'nansen trade quote --chain <chain> --from <token> --to <token> --amount <baseUnits>',
+            chains: 'solana, base',
+            example: 'nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000',
+            prerequisite: 'A wallet must be set up first: nansen wallet create',
+          }
+        );
       }
 
       const amountError = validateBaseUnitAmount(amount);
       if (amountError) {
-        log(`Error: ${amountError}`);
-        exit(1);
-        return;
+        throw new NansenError(amountError, ErrorCode.INVALID_PARAMS);
       }
 
       try {
@@ -808,9 +793,12 @@ EXAMPLES:
         }
 
         if (!walletAddress) {
-          log('No wallet found. A wallet address is required for quotes because the trading API builds a transaction specific to the sender.\nCreate one with: nansen wallet create');
-          exit(1);
-          return;
+          throw new NansenError(
+            'No wallet found. A wallet address is required for quotes because the trading API builds a transaction specific to the sender.',
+            ErrorCode.MISSING_PARAM,
+            null,
+            { resolution: 'nansen wallet create' }
+          );
         }
 
         log(`\nFetching quote on ${chainConfig.name}...`);
@@ -862,6 +850,8 @@ EXAMPLES:
         return undefined; // Output already printed above
 
       } catch (err) {
+        // Re-throw structured errors so the main CLI handler can format them as JSON
+        if (err instanceof NansenError) throw err;
         let message = err.message;
         if (err.code === 'INVALID_AMOUNT' || /amount/i.test(err.message)) {
           message += '. Amounts must be in base units (e.g., 1000000000 lamports for 1 SOL, 1000000000000000000 wei for 1 ETH)';
@@ -878,19 +868,16 @@ EXAMPLES:
       const noSimulate = flags['no-simulate'] || flags.noSimulate;
 
       if (!quoteId) {
-        log(`
-Usage: nansen trade execute --quote <quoteId> [options]
-
-OPTIONS:
-  --quote <id>              Quote ID from 'nansen quote'
-  --wallet <name>           Wallet name (default: default wallet)
-  --no-simulate             Skip pre-broadcast simulation
-
-EXAMPLES:
-  nansen trade execute --quote 1708900000000-abc123
-`);
-        exit(1);
-        return;
+        throw new NansenError(
+          'Missing required option: --quote <id>',
+          ErrorCode.MISSING_PARAM,
+          null,
+          {
+            usage: 'nansen trade execute --quote <quoteId>',
+            example: 'nansen trade execute --quote 1708900000000-abc123',
+            hint: 'Get a quote first with: nansen trade quote --chain <chain> --from <token> --to <token> --amount <baseUnits>',
+          }
+        );
       }
 
       try {
@@ -1559,6 +1546,8 @@ EXAMPLES:
         return undefined;
 
       } catch (err) {
+        // Re-throw structured errors so the main CLI handler can format them as JSON
+        if (err instanceof NansenError) throw err;
         log(`Error: ${err.message}`);
         if (err.details) log(`  Details: ${JSON.stringify(err.details)}`);
         exit(1);

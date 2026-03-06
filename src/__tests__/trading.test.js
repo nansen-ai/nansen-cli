@@ -550,56 +550,33 @@ describe('buildApprovalTransaction', () => {
 // ============= CLI Command Validation =============
 
 describe('buildTradingCommands', () => {
-  it('should show help when required params missing for quote', async () => {
-    const logs = [];
-    let exitCalled = false;
-    const cmds = buildTradingCommands({
-      log: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
-    });
+  it('should throw JSON-serialisable error when required params missing for quote', async () => {
+    const cmds = buildTradingCommands({});
 
-    await cmds.quote([], null, {}, {});
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('Usage: nansen trade quote'))).toBe(true);
+    await expect(cmds.quote([], null, {}, {})).rejects.toMatchObject({
+      code: 'MISSING_PARAM',
+      message: expect.stringContaining('--chain'),
+    });
   });
 
-  it('should show help when quote-id missing for execute', async () => {
-    const logs = [];
-    let exitCalled = false;
-    const cmds = buildTradingCommands({
-      log: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
-    });
+  it('should throw JSON-serialisable error when quote-id missing for execute', async () => {
+    const cmds = buildTradingCommands({});
 
-    await cmds.execute([], null, {}, {});
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('Usage: nansen trade execute'))).toBe(true);
+    await expect(cmds.execute([], null, {}, {})).rejects.toMatchObject({
+      code: 'MISSING_PARAM',
+      message: expect.stringContaining('--quote'),
+    });
   });
 
-  it('should error when no wallet exists for quote', async () => {
-    const logs = [];
-    let exitCalled = false;
+  it('should throw JSON-serialisable error when no wallet exists for quote', async () => {
+    const cmds = buildTradingCommands({});
 
-    // Mock fetch for the API call
-    const origFetch = global.fetch;
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      text: async () => JSON.stringify({ success: true, quotes: [{ aggregator: 'test' }] }),
+    await expect(
+      cmds.quote([], null, {}, { chain: 'solana', from: 'So111', to: 'EPjFW', amount: '1000' })
+    ).rejects.toMatchObject({
+      code: 'MISSING_PARAM',
+      message: expect.stringContaining('No wallet found'),
     });
-
-    const cmds = buildTradingCommands({
-      log: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
-    });
-
-    await cmds.quote([], null, {}, {
-      chain: 'solana', from: 'So111', to: 'EPjFW', amount: '1000',
-    });
-
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('No wallet') || l.includes('No default wallet'))).toBe(true);
-
-    global.fetch = origFetch;
   });
 
   it('should reject ERC-20 swap with non-zero tx.value', async () => {
@@ -1319,23 +1296,19 @@ describe('validateBaseUnitAmount', () => {
 });
 
 describe('quote handler rejects decimal amounts before API call', () => {
-  it('should error on decimal amount and not call fetch', async () => {
+  it('should throw JSON-serialisable error on decimal amount and not call fetch', async () => {
     const origFetch = global.fetch;
     global.fetch = vi.fn();
 
-    const logs = [];
-    let exitCalled = false;
-    const cmds = buildTradingCommands({
-      log: (msg) => logs.push(msg),
-      exit: () => { exitCalled = true; },
+    const cmds = buildTradingCommands({});
+
+    await expect(
+      cmds.quote([], null, {}, { chain: 'solana', from: 'So111', to: 'EPjFW', amount: '0.005' })
+    ).rejects.toMatchObject({
+      code: 'INVALID_PARAMS',
+      message: expect.stringContaining('base units'),
     });
 
-    await cmds.quote([], null, {}, {
-      chain: 'solana', from: 'So111', to: 'EPjFW', amount: '0.005',
-    });
-
-    expect(exitCalled).toBe(true);
-    expect(logs.some(l => l.includes('base units'))).toBe(true);
     expect(global.fetch).not.toHaveBeenCalled();
 
     global.fetch = origFetch;
