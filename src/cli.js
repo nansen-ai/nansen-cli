@@ -1345,7 +1345,8 @@ export const COMMAND_ALIASES = {
   'tgm': 'token',           // Token God Mode
   'sm': 'smart-money',      // Smart Money
   'prof': 'profiler',       // Profiler
-  'port': 'portfolio'       // Portfolio
+  'port': 'portfolio',      // Portfolio
+  'pm': 'prediction-market' // Prediction Market
 };
 
 // Aliases used inside the 'research' namespace

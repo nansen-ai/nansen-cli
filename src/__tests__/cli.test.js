@@ -125,6 +125,13 @@ describe('CLI Smoke Tests', () => {
     expect(stdout).toContain('categories');
   });
 
+  it('should route top-level pm alias to prediction-market', () => {
+    const { stdout } = runCLI('pm help');
+    expect(stdout).toContain('ohlcv');
+    expect(stdout).toContain('market-screener');
+    expect(stdout).toContain('categories');
+  });
+
   it('should error on pm ohlcv without --market-id', () => {
     const { stdout, stderr, exitCode } = runCLI('research pm ohlcv');
     expect(exitCode).not.toBe(0);
