@@ -6,6 +6,7 @@
 import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
 import { buildWalletCommands } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
+import { buildPerpCommands } from './perp.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
@@ -1296,38 +1297,66 @@ export function buildCommands(deps = {}) {
     return cmds[category](args.slice(1), apiInstance, flags, options);
   };
 
-  // 'trade' delegates to quote/execute from buildTradingCommands
+  // 'trade' delegates to quote/execute from buildTradingCommands + perp from buildPerpCommands
   const tradingCmds = buildTradingCommands(deps);
+  const perpCmds = buildPerpCommands(deps);
   cmds['trade'] = async (args, apiInstance, flags, options) => {
     const sub = args[0];
     if (!sub || sub === 'help') {
-      log(`nansen trade — DEX trading commands
+      log(`nansen trade — Trading commands
 
 SUBCOMMANDS:
-  quote       Get a swap quote (price, route, fees)
+  quote       Get a DEX swap quote (price, route, fees)
   execute     Sign and broadcast a quoted swap
+  perp        Hyperliquid perpetual trading
 
 USAGE:
   nansen trade quote --chain <chain> --from <token> --to <token> --amount <units> [--wallet <name>]
   nansen trade execute --quote <quoteId> [--wallet <name>]
+  nansen trade perp <subcommand> [options]
 
 EXAMPLES:
   nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
-  nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000
-  nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000 --wallet walletconnect
   nansen trade execute --quote 1708900000000-abc123
-
-WALLET:
-  --wallet <name>   Use a named wallet, or "walletconnect" / "wc" for WalletConnect (EVM only).
-                    Defaults to the default local wallet if omitted.
-
-SYMBOLS:
-  Common tokens resolve automatically: SOL, ETH, USDC, USDT, WETH
-  Raw addresses are also accepted.`);
+  nansen trade perp place-order --asset BTC --side buy --size 0.01 --type market
+  nansen trade perp positions`);
       return;
     }
+
+    if (sub === 'perp') {
+      const perpSub = args[1];
+      if (!perpSub || perpSub === 'help') {
+        log(`nansen trade perp — Hyperliquid perpetual trading
+
+SUBCOMMANDS:
+  place-order       Place a market or limit order
+  cancel            Cancel open orders
+  update-leverage   Change leverage for an asset
+  tp-sl             Set take-profit or stop-loss trigger orders
+  positions         View current positions
+  open-orders       View open orders
+
+EXAMPLES:
+  nansen trade perp place-order --asset BTC --side buy --size 0.01 --type market
+  nansen trade perp place-order --asset ETH --side sell --size 1.5 --type limit --price 3200
+  nansen trade perp cancel --asset BTC --oid 123456
+  nansen trade perp update-leverage --asset BTC --leverage 10
+  nansen trade perp tp-sl --asset BTC --side sell --size 0.01 --trigger-price 70000 --tpsl sl --is-market
+  nansen trade perp positions
+  nansen trade perp open-orders`);
+        return;
+      }
+      if (!perpCmds[perpSub]) {
+        throw new NansenError(
+          `Unknown perp subcommand: ${perpSub}. Available: ${Object.keys(perpCmds).join(', ')}`,
+          ErrorCode.UNKNOWN
+        );
+      }
+      return perpCmds[perpSub](args.slice(2), apiInstance, flags, options);
+    }
+
     if (!tradingCmds[sub]) {
-      throw new NansenError(`Unknown trade subcommand: ${sub}. Available: quote, execute`, ErrorCode.UNKNOWN);
+      throw new NansenError(`Unknown trade subcommand: ${sub}. Available: quote, execute, perp`, ErrorCode.UNKNOWN);
     }
     return tradingCmds[sub](args.slice(1), apiInstance, flags, options);
   };

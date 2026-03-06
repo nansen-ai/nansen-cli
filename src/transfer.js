@@ -26,6 +26,7 @@ const CHAIN_RPCS = {
   'ethereum': process.env.NANSEN_EVM_RPC || DEFAULT_EVM_RPC,
   'evm': process.env.NANSEN_EVM_RPC || DEFAULT_EVM_RPC,
   'base': process.env.NANSEN_BASE_RPC || 'https://mainnet.base.org',
+  'arbitrum': process.env.NANSEN_ARB_RPC || 'https://arb1.arbitrum.io/rpc',
   'solana': process.env.NANSEN_SOLANA_RPC || DEFAULT_SOLANA_RPC,
 };
 

@@ -1782,8 +1782,91 @@
       }
     },
     "trade": {
-      "description": "DEX trading commands",
+      "description": "Trading commands (DEX swaps + Hyperliquid perps)",
       "subcommands": {
+        "perp": {
+          "description": "Hyperliquid perpetual trading",
+          "subcommands": {
+            "place-order": {
+              "description": "Place a market or limit perpetual order on Hyperliquid",
+              "options": {
+                "asset": { "type": "string", "required": true, "description": "Asset symbol (BTC, ETH, SOL, etc.)" },
+                "side": { "type": "string", "required": true, "description": "buy or sell" },
+                "size": { "type": "string", "required": true, "description": "Position size in asset units" },
+                "type": { "type": "string", "required": true, "description": "market or limit" },
+                "price": { "type": "string", "description": "Limit price (required for limit orders)" },
+                "slippage": { "type": "string", "description": "Slippage for market orders as decimal (default: 0.03)" },
+                "reduce-only": { "type": "boolean", "description": "Reduce-only order" },
+                "tif": { "type": "string", "description": "Time-in-force: gtc, ioc, or alo (default: gtc for limit)" },
+                "wallet": { "type": "string", "description": "Wallet name" },
+                "builder-fee": { "type": "string", "description": "Builder fee in tenths of bps (default: 1)" }
+              },
+              "returns": ["statuses", "response"]
+            },
+            "cancel": {
+              "description": "Cancel open perpetual orders",
+              "options": {
+                "asset": { "type": "string", "required": true, "description": "Asset symbol" },
+                "oid": { "type": "string", "required": true, "description": "Order ID(s) to cancel" },
+                "wallet": { "type": "string", "description": "Wallet name" }
+              },
+              "returns": ["statuses", "response"]
+            },
+            "update-leverage": {
+              "description": "Update leverage for an asset",
+              "options": {
+                "asset": { "type": "string", "required": true, "description": "Asset symbol" },
+                "leverage": { "type": "number", "required": true, "description": "Leverage multiplier" },
+                "margin-type": { "type": "string", "description": "cross or isolated (default: cross)" },
+                "wallet": { "type": "string", "description": "Wallet name" }
+              },
+              "returns": ["status", "response"]
+            },
+            "tp-sl": {
+              "description": "Place take-profit or stop-loss trigger order",
+              "options": {
+                "asset": { "type": "string", "required": true, "description": "Asset symbol" },
+                "side": { "type": "string", "required": true, "description": "buy or sell" },
+                "size": { "type": "string", "required": true, "description": "Position size" },
+                "trigger-price": { "type": "string", "required": true, "description": "Trigger price" },
+                "tpsl": { "type": "string", "required": true, "description": "tp (take-profit) or sl (stop-loss)" },
+                "is-market": { "type": "boolean", "description": "Execute as market order when triggered" },
+                "wallet": { "type": "string", "description": "Wallet name" }
+              },
+              "returns": ["statuses", "response"]
+            },
+            "positions": {
+              "description": "View current perpetual positions",
+              "options": {
+                "wallet": { "type": "string", "description": "Wallet name" }
+              },
+              "returns": ["assetPositions", "crossMarginSummary", "marginSummary"]
+            },
+            "open-orders": {
+              "description": "View open perpetual orders",
+              "options": {
+                "wallet": { "type": "string", "description": "Wallet name" }
+              },
+              "returns": ["coin", "side", "limitPx", "sz", "oid", "timestamp", "origSz"]
+            },
+            "deposit": {
+              "description": "Deposit USDC to Hyperliquid via Arbitrum bridge",
+              "options": {
+                "amount": { "type": "string", "required": true, "description": "USDC amount to deposit (minimum 5 USDC)" },
+                "wallet": { "type": "string", "description": "Wallet name" }
+              },
+              "returns": ["status"]
+            },
+            "withdraw": {
+              "description": "Withdraw USDC from Hyperliquid to your wallet on Arbitrum",
+              "options": {
+                "amount": { "type": "string", "required": true, "description": "USDC amount to withdraw ($1 fee deducted)" },
+                "wallet": { "type": "string", "description": "Wallet name" }
+              },
+              "returns": ["status", "response"]
+            }
+          }
+        },
         "quote": {
           "description": "Get a DEX swap quote (chain, tokens, amount)",
           "options": {
