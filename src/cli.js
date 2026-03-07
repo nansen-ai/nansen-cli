@@ -978,6 +978,27 @@ export function buildCommands(deps = {}) {
       const pagination = buildPagination(options);
       const days = options.days ? parseInt(options.days) : 30;
 
+      // Validate required params client-side before hitting the API.
+      // Without this, missing --address returns a misleading UNAUTHORIZED or PAYMENT_REQUIRED error.
+      // TODO: full fix would be a generic schema-driven validator that auto-checks all required:true
+      //       params across every command — see PR for this issue.
+      const ADDRESS_REQUIRED_SUBS = new Set([
+        'balance', 'labels', 'transactions', 'pnl', 'historical-balances',
+        'related-wallets', 'counterparties', 'pnl-summary', 'perp-positions', 'perp-trades'
+      ]);
+      if (ADDRESS_REQUIRED_SUBS.has(subcommand) && !address && !entityName) {
+        throw new NansenError(
+          `--address is required. Example: nansen research profiler ${subcommand} --address 0x... --chain ${chain}`,
+          ErrorCode.MISSING_PARAM
+        );
+      }
+      if (subcommand === 'search' && !options.query) {
+        throw new NansenError(
+          '--query is required. Example: nansen research profiler search --query "vitalik"',
+          ErrorCode.MISSING_PARAM
+        );
+      }
+
       const handlers = {
         'balance': () => apiInstance.addressBalance({ address, entityName, chain, filters, orderBy }),
         'labels': () => apiInstance.addressLabels({ address, chain, pagination }),
@@ -1069,6 +1090,28 @@ export function buildCommands(deps = {}) {
       if (onlySmartMoney) {
         filters.include_smart_money_labels = filters.include_smart_money_labels || 
           ['Fund', 'Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader'];
+      }
+
+      // Validate required params client-side before hitting the API.
+      // Without this, missing --token returns a misleading UNAUTHORIZED or PAYMENT_REQUIRED error.
+      // TODO: full fix would be a generic schema-driven validator that auto-checks all required:true
+      //       params across every command — see PR for this issue.
+      const TOKEN_ADDRESS_REQUIRED_SUBS = new Set([
+        'indicators', 'ohlcv', 'info', 'holders', 'flows', 'dex-trades',
+        'pnl', 'who-bought-sold', 'flow-intelligence', 'transfers', 'jup-dca'
+      ]);
+      const TOKEN_SYMBOL_REQUIRED_SUBS = new Set(['perp-trades', 'perp-positions', 'perp-pnl-leaderboard']);
+      if (TOKEN_ADDRESS_REQUIRED_SUBS.has(subcommand) && !tokenAddress) {
+        throw new NansenError(
+          `--token is required. Example: nansen research token ${subcommand} --token 0x... --chain ${chain}`,
+          ErrorCode.MISSING_PARAM
+        );
+      }
+      if (TOKEN_SYMBOL_REQUIRED_SUBS.has(subcommand) && !tokenSymbol) {
+        throw new NansenError(
+          `--symbol is required. Example: nansen research token ${subcommand} --symbol BTC`,
+          ErrorCode.MISSING_PARAM
+        );
       }
 
       const handlers = {
@@ -1210,8 +1253,15 @@ export function buildCommands(deps = {}) {
     },
 
     'search': async (args, apiInstance, flags, options) => {
+      const query = args[0] || options.query;
+      if (!query) {
+        throw new NansenError(
+          '--query is required. Example: nansen research search --query "ethereum" --type token',
+          ErrorCode.MISSING_PARAM
+        );
+      }
       return apiInstance.generalSearch({
-        query: args[0] || options.query,
+        query,
         resultType: options.type,
         chain: options.chain,
         limit: options.limit

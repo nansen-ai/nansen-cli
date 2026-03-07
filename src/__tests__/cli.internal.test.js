@@ -465,6 +465,24 @@ describe('buildCommands', () => {
         expect.objectContaining({ query: 'Vitalik' })
       );
     });
+
+    it('should throw MISSING_PARAM when --address is omitted for balance', async () => {
+      await expect(
+        commands['profiler'](['balance'], {}, {}, { chain: 'ethereum' })
+      ).rejects.toThrow('--address is required');
+    });
+
+    it('should throw MISSING_PARAM when --address is omitted for labels', async () => {
+      await expect(
+        commands['profiler'](['labels'], {}, {}, { chain: 'ethereum' })
+      ).rejects.toThrow('--address is required');
+    });
+
+    it('should throw MISSING_PARAM when --query is omitted for profiler search', async () => {
+      await expect(
+        commands['profiler'](['search'], {}, {}, {})
+      ).rejects.toThrow('--query is required');
+    });
   });
 
   describe('token command', () => {
@@ -626,6 +644,24 @@ describe('buildCommands', () => {
       expect(mockApi.tokenFlowIntelligence).toHaveBeenCalledWith(
         expect.objectContaining({ days: 7 })
       );
+    });
+
+    it('should throw MISSING_PARAM when --token is omitted for info', async () => {
+      await expect(
+        commands['token'](['info'], {}, {}, { chain: 'solana' })
+      ).rejects.toThrow('--token is required');
+    });
+
+    it('should throw MISSING_PARAM when --token is omitted for holders', async () => {
+      await expect(
+        commands['token'](['holders'], {}, {}, { chain: 'ethereum' })
+      ).rejects.toThrow('--token is required');
+    });
+
+    it('should throw MISSING_PARAM when --symbol is omitted for perp-trades', async () => {
+      await expect(
+        commands['token'](['perp-trades'], {}, {}, {})
+      ).rejects.toThrow('--symbol is required');
     });
   });
 
@@ -2617,6 +2653,12 @@ describe('research command routing', () => {
     const commands = buildCommands({});
     await expect(commands.research(['unknown'], null, {}, {}))
       .rejects.toThrow('Unknown research category');
+  });
+
+  it('should throw MISSING_PARAM when research search is called without --query', async () => {
+    const commands = buildCommands({});
+    await expect(commands.research(['search'], null, {}, {}))
+      .rejects.toThrow('--query is required');
   });
 });
 
