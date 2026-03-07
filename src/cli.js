@@ -11,6 +11,7 @@ import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
+import { encode as toonEncode } from '@toon-format/toon';
 
 const require = createRequire(import.meta.url);
 const { version: VERSION } = require('../package.json');
@@ -311,8 +312,14 @@ export function formatCsv(data) {
 }
 
 // Format output data (returns string, does not print)
-export function formatOutput(data, { pretty = false, table = false, csv = false } = {}) {
-  if (csv) {
+export function formatOutput(data, { pretty = false, table = false, csv = false, toon = false } = {}) {
+  if (toon) {
+    if (data.success === false) {
+      return { type: 'error', text: `Error: ${data.error}` };
+    }
+    const toonData = data.data ?? data;
+    return { type: 'toon', text: toonEncode(toonData) };
+  } else if (csv) {
     if (data.success === false) {
       return { type: 'error', text: `Error: ${data.error}` };
     }
@@ -1384,6 +1391,11 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
     lines.push(`Returns: ${subSchema.returns.join(', ')}`);
   }
 
+  // Show --format options for research subcommands (prefix is set for all research calls)
+  if (prefix !== null) {
+    lines.push('--format <fmt>   Output format: json, csv, table, toon (default: json)');
+  }
+
   const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
   const chain = subSchema.options?.chain?.default || 'solana';
   const cmdPrefix = prefix || (DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command);
@@ -1430,6 +1442,7 @@ export async function runCLI(rawArgs, deps = {}) {
   const table = flags.table || flags.t;
   const stream = flags.stream || flags.s;
   const csv = options.format === 'csv';
+  const toon = options.format === 'toon';
 
   // Update check (read cached result + schedule background refresh)
   const updateNotification = getUpdateNotification(VERSION);
@@ -1587,13 +1600,13 @@ export async function runCLI(rawArgs, deps = {}) {
     }
 
     const successData = { success: true, data: result };
-    const formatted = formatOutput(successData, { pretty, table, csv });
+    const formatted = formatOutput(successData, { pretty, table, csv, toon });
     output(formatted.text);
     notify();
-    return { type: csv ? 'csv' : 'success', data: result };
+    return { type: csv ? 'csv' : toon ? 'toon' : 'success', data: result };
   } catch (error) {
     const errorData = formatError(error);
-    const formatted = formatOutput(errorData, { pretty, table, csv });
+    const formatted = formatOutput(errorData, { pretty, table, csv, toon });
     output(formatted.text);
     notify();
     exit(1);

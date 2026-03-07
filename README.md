@@ -68,6 +68,11 @@ nansen research smart-money netflow --chain solana --fields token_symbol,net_flo
 
 **Use `--stream` for large results** — outputs NDJSON instead of buffering a giant array.
 
+**Use `--format toon` for agent pipelines** — TOON (Token-Oriented Object Notation) is a compact representation for uniform arrays of objects. It reduces token count ~40% vs JSON, making it ideal when piping nansen-cli output directly into LLM prompts:
+```bash
+nansen research smart-money token-flows --chain ethereum --format toon
+```
+
 **ENS names** work anywhere `--address` is accepted: `--address vitalik.eth`
 
 ## Output Format
