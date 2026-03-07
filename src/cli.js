@@ -684,7 +684,7 @@ COMMANDS:
   changelog   --since <version> to filter
 
 OPTIONS: --chain --limit --sort field:dir --fields a,b --days N --filters '{}'
-FORMAT:  --pretty --table --format csv --stream (NDJSON)
+FORMAT:  --pretty --table --format csv|toon --stream (NDJSON)
 RETRY:   --no-retry --retries N --cache --cache-ttl N
 
 EXAMPLES:
