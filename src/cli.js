@@ -310,9 +310,70 @@ export function formatCsv(data) {
   return lines.join('\n');
 }
 
+/**
+ * Format data as GitHub-flavoured Markdown for LLM consumption.
+ * Arrays → GFM table. Single objects → bold key-value list.
+ */
+export function formatMarkdown(data) {
+  // Extract records from various response shapes
+  let records = [];
+  if (Array.isArray(data)) {
+    records = data;
+  } else if (data?.data && Array.isArray(data.data)) {
+    records = data.data;
+  } else if (data?.results && Array.isArray(data.results)) {
+    records = data.results;
+  } else if (data?.data?.results && Array.isArray(data.data.results)) {
+    records = data.data.results;
+  } else if (typeof data === 'object' && data !== null) {
+    // Single object — render as bold key-value list
+    const lines = [];
+    for (const [k, v] of Object.entries(data)) {
+      const val = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
+      lines.push(`- **${k}**: ${val}`);
+    }
+    return lines.join('\n') || '*(empty)*';
+  }
+
+  if (records.length === 0) return '*(no results)*';
+
+  // Pick columns (same priority logic as formatTable)
+  const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
+  const allKeys = [...new Set(records.flatMap(r => Object.keys(r)))];
+  const columns = allKeys.sort((a, b) => {
+    const aIdx = priorityFields.indexOf(a);
+    const bIdx = priorityFields.indexOf(b);
+    if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+    if (aIdx !== -1) return -1;
+    if (bIdx !== -1) return 1;
+    return a.localeCompare(b);
+  }).slice(0, 10); // one more than table; markdown handles wide columns fine
+
+  const shown = records.slice(0, 100);
+  const header = `| ${columns.join(' | ')} |`;
+  const separator = `| ${columns.map(() => '---').join(' | ')} |`;
+  const rows = shown.map(r =>
+    `| ${columns.map(col => {
+      const v = formatValue(r[col]);
+      // Escape pipes inside cell values
+      return v.replace(/\|/g, '\\|');
+    }).join(' | ')} |`
+  );
+
+  const lines = [`## Results (${records.length} item${records.length === 1 ? '' : 's'})`, '', header, separator, ...rows];
+  if (records.length > 100) lines.push(``, `*Showing 100 of ${records.length} results*`);
+  return lines.join('\n');
+}
+
 // Format output data (returns string, does not print)
-export function formatOutput(data, { pretty = false, table = false, csv = false } = {}) {
-  if (csv) {
+export function formatOutput(data, { pretty = false, table = false, csv = false, markdown = false } = {}) {
+  if (markdown) {
+    if (data.success === false) {
+      return { type: 'error', text: `**Error:** ${data.error}` };
+    }
+    const mdData = data.data ?? data;
+    return { type: 'markdown', text: formatMarkdown(mdData) };
+  } else if (csv) {
     if (data.success === false) {
       return { type: 'error', text: `Error: ${data.error}` };
     }
@@ -677,7 +738,7 @@ COMMANDS:
   changelog   --since <version> to filter
 
 OPTIONS: --chain --limit --sort field:dir --fields a,b --days N --filters '{}'
-FORMAT:  --pretty --table --format csv --stream (NDJSON)
+FORMAT:  --pretty --table --format csv|markdown --stream (NDJSON)
 RETRY:   --no-retry --retries N --cache --cache-ttl N
 
 EXAMPLES:
@@ -1387,6 +1448,11 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
     lines.push(`Returns: ${subSchema.returns.join(', ')}`);
   }
 
+  // Show --format options for research subcommands (prefix is set for all research calls)
+  if (prefix !== null) {
+    lines.push('--format <fmt>   Output format: json, csv, table, markdown (default: json)');
+  }
+
   const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
   const chain = subSchema.options?.chain?.default || 'solana';
   const cmdPrefix = prefix || (DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command);
@@ -1433,6 +1499,7 @@ export async function runCLI(rawArgs, deps = {}) {
   const table = flags.table || flags.t;
   const stream = flags.stream || flags.s;
   const csv = options.format === 'csv';
+  const markdown = options.format === 'markdown';
 
   // Update check (read cached result + schedule background refresh)
   const updateNotification = getUpdateNotification(VERSION);
@@ -1531,7 +1598,7 @@ export async function runCLI(rawArgs, deps = {}) {
       error: `Unknown command: ${command}`,
       available: Object.keys(commands)
     };
-    const formatted = formatOutput(errorData, { pretty, table });
+    const formatted = formatOutput(errorData, { pretty, table, markdown });
     output(formatted.text);
     notify();
     exit(1);
@@ -1590,13 +1657,13 @@ export async function runCLI(rawArgs, deps = {}) {
     }
 
     const successData = { success: true, data: result };
-    const formatted = formatOutput(successData, { pretty, table, csv });
+    const formatted = formatOutput(successData, { pretty, table, csv, markdown });
     output(formatted.text);
     notify();
-    return { type: csv ? 'csv' : 'success', data: result };
+    return { type: csv ? 'csv' : markdown ? 'markdown' : 'success', data: result };
   } catch (error) {
     const errorData = formatError(error);
-    const formatted = formatOutput(errorData, { pretty, table, csv });
+    const formatted = formatOutput(errorData, { pretty, table, csv, markdown });
     output(formatted.text);
     notify();
     exit(1);

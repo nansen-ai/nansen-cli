@@ -68,6 +68,11 @@ nansen research smart-money netflow --chain solana --fields token_symbol,net_flo
 
 **Use `--stream` for large results** — outputs NDJSON instead of buffering a giant array.
 
+**Use `--format markdown` for agent pipelines** — renders arrays as GFM tables and objects as bold key-value lists. LLMs parse markdown natively, making it ideal when piping nansen-cli output directly into prompts or agent context:
+```bash
+nansen research smart-money token-flows --chain ethereum --format markdown
+```
+
 **ENS names** work anywhere `--address` is accepted: `--address vitalik.eth`
 
 ## Output Format
