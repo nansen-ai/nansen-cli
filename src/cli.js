@@ -355,8 +355,8 @@ export function formatMarkdown(data) {
   const rows = shown.map(r =>
     `| ${columns.map(col => {
       const v = formatValue(r[col]);
-      // Escape pipes inside cell values
-      return v.replace(/\|/g, '\\|');
+      // Escape pipes and newlines to keep GFM table structure intact
+      return v.replace(/\|/g, '\\|').replace(/[\n\r]/g, ' ');
     }).join(' | ')} |`
   );
 
@@ -1450,7 +1450,8 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
 
   // Show --format options for research subcommands (prefix is set for all research calls)
   if (prefix !== null) {
-    lines.push('--format <fmt>   Output format: json, csv, table, markdown (default: json)');
+    lines.push('--table / -t       Human-readable table output');
+    lines.push('--format <fmt>     Output format: json, csv, markdown (default: json)');
   }
 
   const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };

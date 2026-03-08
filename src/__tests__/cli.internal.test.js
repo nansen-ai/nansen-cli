@@ -9,6 +9,7 @@ import {
   parseArgs,
   formatValue,
   formatTable,
+  formatMarkdown,
   formatOutput,
   formatError,
   formatStream,
@@ -201,6 +202,72 @@ describe('formatOutput', () => {
     const result = formatOutput({ success: false, error: 'Oops' }, { table: true });
     expect(result.type).toBe('error');
     expect(result.text).toBe('Error: Oops');
+  });
+});
+
+describe('formatMarkdown', () => {
+  it('should return *(no results)* for empty array', () => {
+    expect(formatMarkdown([])).toBe('*(no results)*');
+  });
+
+  it('should render array as GFM table', () => {
+    const data = [
+      { symbol: 'ETH', price_usd: 2100 },
+      { symbol: 'BTC', price_usd: 48000 },
+    ];
+    const result = formatMarkdown(data);
+    expect(result).toContain('## Results (2 items)');
+    expect(result).toContain('| symbol | price_usd |');
+    expect(result).toContain('| --- | --- |');
+    expect(result).toContain('| ETH |');
+    expect(result).toContain('| BTC |');
+  });
+
+  it('should extract array from data.data wrapper', () => {
+    const result = formatMarkdown({ data: [{ x: 1 }] });
+    expect(result).toContain('## Results (1 item)');
+    expect(result).toContain('| x |');
+  });
+
+  it('should extract array from data.results wrapper', () => {
+    const result = formatMarkdown({ results: [{ x: 1 }] });
+    expect(result).toContain('## Results (1 item)');
+  });
+
+  it('should extract array from data.data.results wrapper', () => {
+    const result = formatMarkdown({ data: { results: [{ x: 1 }] } });
+    expect(result).toContain('## Results (1 item)');
+  });
+
+  it('should render single object as bold key-value list', () => {
+    const result = formatMarkdown({ address: '0xabc', chain: 'eth' });
+    expect(result).toContain('- **address**: 0xabc');
+    expect(result).toContain('- **chain**: eth');
+  });
+
+  it('should escape pipes in cell values', () => {
+    const result = formatMarkdown([{ label: 'a|b' }]);
+    expect(result).toContain('a\\|b');
+  });
+
+  it('should replace newlines in cell values with spaces', () => {
+    const result = formatMarkdown([{ label: 'line1\nline2' }]);
+    // The raw newline inside the value should be replaced, but table row separators (\n|) are expected
+    expect(result).not.toContain('line1\nline2');
+    expect(result).toContain('line1 line2');
+  });
+
+  it('formatOutput with markdown:true wraps array correctly', () => {
+    const data = { success: true, data: [{ symbol: 'SOL', price_usd: 150 }] };
+    const result = formatOutput(data, { markdown: true });
+    expect(result.type).toBe('markdown');
+    expect(result.text).toContain('| symbol |');
+  });
+
+  it('formatOutput with markdown:true returns bold error on failure', () => {
+    const result = formatOutput({ success: false, error: 'Oops' }, { markdown: true });
+    expect(result.type).toBe('error');
+    expect(result.text).toBe('**Error:** Oops');
   });
 });
 
