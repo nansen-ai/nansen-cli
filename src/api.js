@@ -461,7 +461,7 @@ export class NansenAPI {
         }
       } catch { /* balance check is best-effort */ }
     }
-    return paidResponse.json();
+    return await paidResponse.json();
   }
 
   async request(endpoint, body = {}, options = {}) {
