@@ -1238,6 +1238,34 @@ export class NansenAPI {
     });
   }
 
+  // ============= X (Twitter) Endpoints =============
+
+  async xPostsByToken(params = {}) {
+    const { date, tokenName, tokenSymbol, minLikes, minViews, orderBy, pagination } = params;
+    return this.request('/api/v1/ra-agent/posts-by-token', {
+      date,
+      token_name: tokenName,
+      token_symbol: tokenSymbol,
+      min_likes: minLikes,
+      min_views: minViews,
+      order_by: orderBy,
+      pagination
+    });
+  }
+
+  async xPostsByUser(params = {}) {
+    const { date, username, minLikes, minViews, orderBy, pagination } = params;
+    if (!username) throw new NansenError('--username is required', ErrorCode.MISSING_PARAM);
+    return this.request('/api/v1/ra-agent/posts-by-user', {
+      date,
+      username,
+      min_likes: minLikes,
+      min_views: minViews,
+      order_by: orderBy,
+      pagination
+    });
+  }
+
   // ============= Points Endpoints =============
 
   async pointsLeaderboard(params = {}) {

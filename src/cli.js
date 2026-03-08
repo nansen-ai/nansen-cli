@@ -667,7 +667,7 @@ export const HELP = `Nansen CLI v${VERSION} — designed for AI agents.
 USAGE: nansen <command> [subcommand] [options]
 
 COMMANDS:
-  research    smart-money, profiler, token, search, perp, portfolio, points
+  research    smart-money, profiler, token, search, perp, portfolio, points, x
   trade       quote, execute
   wallet      create, list, show, export, default, delete, forget-password
   login       Save API key (--api-key <key> or NANSEN_API_KEY env var)
@@ -1276,11 +1276,43 @@ export function buildCommands(deps = {}) {
       }
 
       return handlers[subcommand]();
+    },
+
+    'x': async (args, apiInstance, flags, options) => {
+      const subcommand = args[0] || 'help';
+      const orderBy = parseSort(options.sort, options['order-by']);
+      const pagination = buildPagination(options);
+      const days = options.days ? parseInt(options.days) : 7;
+      const date = parseDateOption(options.date, days);
+      const minLikes = options['min-likes'] ? parseInt(options['min-likes']) : undefined;
+      const minViews = options['min-views'] ? parseInt(options['min-views']) : undefined;
+
+      const handlers = {
+        'posts-by-token': () => apiInstance.xPostsByToken({
+          date, tokenName: options['token-name'], tokenSymbol: options['token-symbol'],
+          minLikes, minViews, orderBy, pagination
+        }),
+        'posts-by-user': () => apiInstance.xPostsByUser({
+          date, username: options.username,
+          minLikes, minViews, orderBy, pagination
+        }),
+        'help': () => ({
+          commands: ['posts-by-token', 'posts-by-user'],
+          description: 'X (Twitter) post analytics',
+          example: 'nansen research x posts-by-token --token-symbol BTC --days 7'
+        })
+      };
+
+      if (!handlers[subcommand]) {
+        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+      }
+
+      return handlers[subcommand]();
     }
   };
 
   // 'research' delegates to the category handlers defined above
-  const RESEARCH_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points', 'prediction-market']);
+  const RESEARCH_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points', 'prediction-market', 'x']);
 
   cmds['research'] = async (args, apiInstance, flags, options) => {
     const rawCategory = args[0];
@@ -1339,7 +1371,7 @@ SYMBOLS:
 }
 
 // Categories that moved under 'research'
-export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points']);
+export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points', 'x']);
 // Subcommands that moved under 'trade'
 export const DEPRECATED_TO_TRADE = new Set(['quote', 'execute']);
 
