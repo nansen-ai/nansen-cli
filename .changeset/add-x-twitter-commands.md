@@ -1,5 +1,5 @@
 ---
-"nansen": minor
+"nansen-cli": minor
 ---
 
 Add X (Twitter) post analytics commands under `nansen research x`
