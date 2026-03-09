@@ -285,8 +285,9 @@ export function buildAlertsCommands(deps = {}) {
   return {
     'alerts': async (args, apiInstance, flags, options) => {
       const sub = args[0];
-      if (!sub || sub === 'help' || flags.help || flags.h) {
-        log(`nansen alerts — Smart alert management
+
+      const HELP = {
+        _top: `nansen alerts — Smart alert management
 
 SUBCOMMANDS:
   list        List all alerts
@@ -295,76 +296,98 @@ SUBCOMMANDS:
   toggle      Enable or disable an alert
   delete      Delete an alert
 
+Run: nansen alerts <subcommand> --help`,
+
+        list: `nansen alerts list — List all alerts
+
 USAGE:
-  nansen alerts list [--type sm-token-flows] [--enabled] [--disabled] [--token-address <addr>] [--chain <chain>] [--limit <n>] [--offset <n>]
-  nansen alerts create --name <name> --type <type> --chains <chains> --telegram <chatId>
-  nansen alerts update <id> [--name <name>] [--chains <chains>]
-  nansen alerts toggle <id> --enabled
-  nansen alerts toggle <id> --disabled
-  nansen alerts delete <id>
+  nansen alerts list [--table] [--type <type>] [--enabled|--disabled] [--token-address <addr>] [--chain <chain>] [--limit <n>] [--offset <n>]
 
-SUBJECT TYPES:
-  address, entity, label, custom-label
-  Example: --subject address:0xabc  --subject label:"Centralized Exchange"
-
-  Chain aliases: For Hyperliquid use hyperevm, for BSC use bnb.
-
-OPTIONS (all types):
-  --chains <chains>            Comma-separated chains (e.g. ethereum,solana).
-  --token <address:chain>      Filter by token (repeatable). Adds to inclusion list.
-  --exclude-token <addr:chain> Exclude token (repeatable). Adds to exclusion list.
-  --telegram <chatId>          Send to Telegram chat.
-  --slack <webhookUrl>         Send to Slack webhook.
-  --discord <webhookUrl>       Send to Discord webhook. Combine multiple channel flags.
-  --description '<text>'       Alert description.
-
-OPTIONS (sm-token-flows):
-  --inflow-1h-min <usd>    --inflow-1h-max <usd>
-  --inflow-1d-min <usd>    --inflow-1d-max <usd>
-  --inflow-7d-min <usd>    --inflow-7d-max <usd>
-  --outflow-1h-min <usd>   --outflow-1h-max <usd>
-  --outflow-1d-min <usd>   --outflow-1d-max <usd>
-  --outflow-7d-min <usd>   --outflow-7d-max <usd>
-  --netflow-1h-min <usd>   --netflow-1h-max <usd>
-  --netflow-1d-min <usd>   --netflow-1d-max <usd>
-  --netflow-7d-min <usd>   --netflow-7d-max <usd>
-  --token-sector <name>        Filter by token sector (repeatable).
-  --exclude-token-sector <name> Exclude token sector (repeatable).
-  --token-age-max <days>       Maximum token age in days.
-  --market-cap-min <usd>       --market-cap-max <usd>
-  --fdv-min <usd>              --fdv-max <usd>
-
-OPTIONS (common-token-transfer):
-  --events <buy,sell,swap,send,receive>   Comma-separated event types.
-  --usd-min <usd>              --usd-max <usd>
-  --token-amount-min <n>       --token-amount-max <n>
-  --subject <type:value>       Filter by subject (repeatable, e.g. label:"Centralized Exchange").
-  --counterparty <type:value>  Filter by counterparty (repeatable, same format as --subject).
-  --token-sector <name>        Filter by token sector (repeatable).
-  --exclude-token-sector <name> Exclude token sector (repeatable).
-  --token-age-min <days>       --token-age-max <days>
-  --market-cap-min <usd>       --market-cap-max <usd>
-  --exclude-from <type:value>  Exclude by sender (repeatable).
-  --exclude-to <type:value>    Exclude by recipient (repeatable).
-
-OPTIONS (smart-contract-call):
-  --usd-min <usd>              --usd-max <usd>
-  --signature-hash <hash>      Function signature hash (repeatable).
-  --caller <type:value>        Include callers (repeatable).
-  --contract <type:value>      Include smart contracts (repeatable).
-  --exclude-caller <type:value>    Exclude callers (repeatable).
-  --exclude-contract <type:value>  Exclude contracts (repeatable).
+OPTIONS:
+  --table                      Human-readable table output
+  --type <type>                Filter by alert type (sm-token-flows, common-token-transfer, smart-contract-call)
+  --enabled / --disabled       Filter by enabled state
+  --token-address <addr>       Filter by token address
+  --chain <chain>              Filter by chain
+  --limit <n>                  Max results
+  --offset <n>                 Skip first N results
 
 EXAMPLES:
   nansen alerts list --table
-  nansen alerts list --type sm-token-flows --enabled
+  nansen alerts list --type sm-token-flows --enabled`,
+
+        create: `nansen alerts create — Create a new alert
+
+USAGE:
+  nansen alerts create --name <name> --type <type> --chains <chains> --telegram <chatId> [options]
+
+REQUIRED:
+  --name <name>                Alert name
+  --type <type>                sm-token-flows | common-token-transfer | smart-contract-call
+  At least one channel:        --telegram <chatId> | --slack <url> | --discord <url>
+
+OPTIONS (all types):
+  --chains <chains>            Comma-separated chains (e.g. ethereum,solana)
+  --token <address:chain>      Include token (repeatable)
+  --exclude-token <addr:chain> Exclude token (repeatable)
+  --description '<text>'       Alert description
+  --disabled                   Create in disabled state
+  --data '<json>'              Raw JSON merged on top of named flags (escape hatch)
+
+OPTIONS (sm-token-flows):
+  --inflow-1h-min/max <usd>   --outflow-1h-min/max <usd>   --netflow-1h-min/max <usd>
+  --inflow-1d-min/max <usd>   --outflow-1d-min/max <usd>   --netflow-1d-min/max <usd>
+  --inflow-7d-min/max <usd>   --outflow-7d-min/max <usd>   --netflow-7d-min/max <usd>
+  --token-sector <name>        --exclude-token-sector <name> (repeatable)
+  --token-age-max <days>       --market-cap-min/max <usd>    --fdv-min/max <usd>
+
+OPTIONS (common-token-transfer):
+  --events <buy,sell,swap,send,receive>   Comma-separated event types
+  --usd-min/max <usd>         --token-amount-min/max <n>
+  --subject <type:value>       Filter by subject (repeatable, e.g. label:"Centralized Exchange")
+  --counterparty <type:value>  Filter by counterparty (repeatable, requires --subject)
+  --token-sector <name>        --exclude-token-sector <name> (repeatable)
+  --token-age-min/max <days>   --market-cap-min/max <usd>
+  --exclude-from <type:value>  --exclude-to <type:value> (repeatable)
+
+OPTIONS (smart-contract-call):
+  --usd-min/max <usd>         --signature-hash <hash> (repeatable)
+  --caller <type:value>        --exclude-caller <type:value> (repeatable)
+  --contract <type:value>      --exclude-contract <type:value> (repeatable)
+
+SUBJECT TYPES: address, entity, label, custom-label
+CHAIN ALIASES: Hyperliquid = hyperevm, BSC = bnb
+
+EXAMPLES:
   nansen alerts create --name 'ETH SM Inflow' --type sm-token-flows --chains ethereum --telegram 5238612255 --inflow-1h-min 1000000
   nansen alerts create --name 'USDC Transfers' --type common-token-transfer --chains ethereum --telegram 5238612255 --events send,receive --usd-min 1000000 --subject label:"Centralized Exchange"
-  nansen alerts create --name 'Contract Calls' --type smart-contract-call --chains ethereum --telegram 5238612255 --signature-hash 0xa9059cbb --caller address:0xabc
-  nansen alerts toggle abc123 --disabled
-  nansen alerts delete abc123
+  nansen alerts create --name 'Contract Calls' --type smart-contract-call --chains ethereum --telegram 5238612255 --signature-hash 0xa9059cbb --caller address:0xabc`,
 
-Advanced: use --data '<json>' to pass the full alert config directly (merged on top of any named flags).`);
+        update: `nansen alerts update — Update an existing alert
+
+USAGE:
+  nansen alerts update <id> [--name <name>] [--type <type>] [--chains <chains>] [--enabled|--disabled] ...
+
+All create options are accepted. Only provided fields are updated.
+
+EXAMPLES:
+  nansen alerts update abc123 --name 'New Name'
+  nansen alerts update abc123 --chains ethereum,base --inflow-1h-min 2000000`,
+
+        toggle: `nansen alerts toggle — Enable or disable an alert
+
+USAGE:
+  nansen alerts toggle <id> --enabled
+  nansen alerts toggle <id> --disabled`,
+
+        delete: `nansen alerts delete — Delete an alert
+
+USAGE:
+  nansen alerts delete <id>`,
+      };
+
+      if (!sub || sub === 'help') {
+        log(HELP._top);
         return;
       }
 
@@ -454,6 +477,13 @@ Advanced: use --data '<json>' to pass the full alert config directly (merged on 
       if (!handlers[sub]) {
         throw new NansenError(`Unknown alerts subcommand: ${sub}. Available: list, create, update, toggle, delete`, ErrorCode.UNKNOWN);
       }
+
+      // Subcommand-level help: --help flag or "help" as second positional arg
+      if (flags.help || flags.h || args[1] === 'help') {
+        log(HELP[sub] || HELP._top);
+        return;
+      }
+
       return handlers[sub]();
     },
   };
