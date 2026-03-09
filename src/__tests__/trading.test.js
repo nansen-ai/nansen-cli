@@ -29,6 +29,7 @@ import {
   validateBaseUnitAmount,
   resolveTokenAddress,
   formatQuote,
+  simulateEvmCall,
 } from '../trading.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
@@ -1460,5 +1461,56 @@ describe('formatQuote price impact warning', () => {
     const output = formatQuote({ aggregator: 'jupiter', inputMint: 'So11111111111111111111111111111111111111112', outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', inAmount: '1000', outAmount: '500' });
     expect(output).not.toContain('Price Impact');
     expect(output).not.toContain('WARNING');
+  });
+});
+
+describe('simulateEvmCall — insufficient funds error formatting', () => {
+  it('returns human-readable error when wallet has no ETH', async () => {
+    const origFetch = global.fetch;
+    // evmRpcCall uses res.text() so mock must expose text(), not json()
+    const rpcBody = JSON.stringify({
+      error: {
+        message: 'err: insufficient funds for gas * price + value: address 0x49Cf91e5B2f7eC18AE861b4AC7565FEa69B29d84 have 0 want 400000000000000 (supplied gas 600000000)',
+      },
+    });
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => rpcBody });
+
+    const result = await simulateEvmCall('base', {
+      from: '0x49Cf91e5B2f7eC18AE861b4AC7565FEa69B29d84',
+      to: '0x1234567890abcdef1234567890abcdef12345678',
+      data: '0xabcd',
+      value: '0x16345785d8a0000',
+    });
+
+    global.fetch = origFetch;
+
+    expect(result.success).toBe(false);
+    // Should NOT leak raw wei amounts or cryptic RPC jargon
+    expect(result.reason).not.toContain('400000000000000');
+    expect(result.reason).not.toContain('600000000');
+    expect(result.reason).not.toContain('supplied gas');
+    // Should be human-readable in ETH
+    expect(result.reason).toContain('ETH');
+    expect(result.reason).toContain('0.000000 ETH'); // wallet has 0
+    expect(result.reason).toContain('0.000400 ETH'); // trade needs 0.0004 ETH
+    // Should include wallet address for funding
+    expect(result.reason).toContain('0x49Cf91e5B2f7eC18AE861b4AC7565FEa69B29d84');
+  });
+
+  it('passes through non-funds simulation errors unchanged', async () => {
+    const origFetch = global.fetch;
+    const rpcBody = JSON.stringify({ error: { message: 'execution reverted: INSUFFICIENT_OUTPUT_AMOUNT' } });
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => rpcBody });
+
+    const result = await simulateEvmCall('base', {
+      from: '0x49Cf91e5B2f7eC18AE861b4AC7565FEa69B29d84',
+      to: '0x1234567890abcdef1234567890abcdef12345678',
+      data: '0xabcd',
+    });
+
+    global.fetch = origFetch;
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toContain('INSUFFICIENT_OUTPUT_AMOUNT');
   });
 });

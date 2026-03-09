@@ -414,7 +414,24 @@ export async function simulateEvmCall(chain, { from, to, data, value, gas }) {
     const msg = e.message || 'unknown';
     // Only block on actual contract-level revert errors from the RPC
     if (msg.startsWith('RPC error (eth_call):')) {
-      return { success: false, reason: msg.replace(/^RPC error \(eth_call\): /, '') };
+      const rawReason = msg.replace(/^RPC error \(eth_call\): /, '');
+      // Convert raw "insufficient funds" RPC errors (amounts in wei) into a human-readable message.
+      // EVM nodes emit: "insufficient funds for gas * price + value: address 0x... have X want Y (supplied gas Z)"
+      // TODO: full fix would be a pre-flight eth_getBalance check at quote-fetch time so the error
+      //       surfaces before simulation with an estimated ETH requirement — see PR for this fix.
+      const m = rawReason.match(/insufficient funds[\s\S]*?\bhave (\d+)\s+want (\d+)/i);
+      if (m) {
+        const haveWei = BigInt(m[1]);
+        const wantWei = BigInt(m[2]);
+        const haveEth = (Number(haveWei) / 1e18).toFixed(6);
+        const wantEth = (Number(wantWei) / 1e18).toFixed(6);
+        const fundHint = from ? ` Send ETH to ${from} before trading.` : '';
+        return {
+          success: false,
+          reason: `Insufficient ETH: wallet has ${haveEth} ETH but this trade needs ~${wantEth} ETH (amount + gas).${fundHint}`,
+        };
+      }
+      return { success: false, reason: rawReason };
     }
     // Network/infrastructure errors (fetch failure, rate limit, non-JSON response) → non-blocking
     return { success: true };
