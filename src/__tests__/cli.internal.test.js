@@ -34,6 +34,7 @@ import {
   buildSmTokenFlowsData,
   buildCommonTokenTransferData,
   buildSmartContractCallData,
+  buildAlertsCommands,
 } from '../commands/alerts.js';
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode } from '../api.js';
 import { EVM_CHAINS } from '../chain-ids.js';
@@ -469,6 +470,187 @@ describe('buildSmartContractCallData', () => {
     const result = buildAlertData({ type: 'smart-contract-call', chains: 'ethereum', 'signature-hash': '0xa9059cbb' });
     expect(result.chains).toEqual(['ethereum']);
     expect(result.signatureHash).toEqual(['0xa9059cbb']);
+  });
+});
+
+describe('buildSmTokenFlowsData new inclusion/exclusion flags', () => {
+  it('should add token-sector to inclusion.tokenSectors', () => {
+    const result = buildSmTokenFlowsData({ 'token-sector': 'DeFi' });
+    expect(result.inclusion.tokenSectors).toEqual(['DeFi']);
+  });
+
+  it('should handle repeated --token-sector', () => {
+    const result = buildSmTokenFlowsData({ 'token-sector': ['DeFi', 'NFT'] });
+    expect(result.inclusion.tokenSectors).toEqual(['DeFi', 'NFT']);
+  });
+
+  it('should add exclude-token-sector to exclusion.tokenSectors', () => {
+    const result = buildSmTokenFlowsData({ 'exclude-token-sector': 'Meme' });
+    expect(result.exclusion.tokenSectors).toEqual(['Meme']);
+  });
+
+  it('should add token-age-max to inclusion.tokenAge', () => {
+    const result = buildSmTokenFlowsData({ 'token-age-max': '30' });
+    expect(result.inclusion.tokenAge).toEqual({ max: 30 });
+  });
+
+  it('should add market-cap range to inclusion.marketCap', () => {
+    const result = buildSmTokenFlowsData({ 'market-cap-min': '1000000', 'market-cap-max': '9000000' });
+    expect(result.inclusion.marketCap).toEqual({ min: 1000000, max: 9000000 });
+  });
+
+  it('should add fdv range to inclusion.fdvUsd', () => {
+    const result = buildSmTokenFlowsData({ 'fdv-min': '500000' });
+    expect(result.inclusion.fdvUsd).toEqual({ min: 500000, max: null });
+  });
+
+  it('should merge token-sector with existing inclusion.tokens', () => {
+    const result = buildSmTokenFlowsData({ token: '0xabc:ethereum', 'token-sector': 'DeFi' });
+    expect(result.inclusion.tokens).toEqual([{ address: '0xabc', chain: 'ethereum' }]);
+    expect(result.inclusion.tokenSectors).toEqual(['DeFi']);
+  });
+});
+
+describe('buildCommonTokenTransferData new inclusion/exclusion flags', () => {
+  it('should add token-sector to inclusion.tokenSectors', () => {
+    const result = buildCommonTokenTransferData({ 'token-sector': 'DeFi' });
+    expect(result.inclusion.tokenSectors).toEqual(['DeFi']);
+  });
+
+  it('should add exclude-token-sector to exclusion.tokenSectors', () => {
+    const result = buildCommonTokenTransferData({ 'exclude-token-sector': ['Meme', 'GameFi'] });
+    expect(result.exclusion.tokenSectors).toEqual(['Meme', 'GameFi']);
+  });
+
+  it('should add token-age-min and token-age-max to inclusion.tokenAge', () => {
+    const result = buildCommonTokenTransferData({ 'token-age-min': '7', 'token-age-max': '90' });
+    expect(result.inclusion.tokenAge).toEqual({ min: 7, max: 90 });
+  });
+
+  it('should add token-age-max only', () => {
+    const result = buildCommonTokenTransferData({ 'token-age-max': '30' });
+    expect(result.inclusion.tokenAge).toEqual({ max: 30 });
+  });
+
+  it('should add market-cap range to inclusion.marketCap', () => {
+    const result = buildCommonTokenTransferData({ 'market-cap-min': '1000000' });
+    expect(result.inclusion.marketCap).toEqual({ min: 1000000, max: null });
+  });
+
+  it('should add exclude-from to exclusion.fromTargets', () => {
+    const result = buildCommonTokenTransferData({ 'exclude-from': 'address:0xbad' });
+    expect(result.exclusion.fromTargets).toEqual([{ type: 'address', value: '0xbad' }]);
+  });
+
+  it('should add exclude-to to exclusion.toTargets', () => {
+    const result = buildCommonTokenTransferData({ 'exclude-to': ['label:Bot', 'label:Scammer'] });
+    expect(result.exclusion.toTargets).toEqual([
+      { type: 'label', value: 'Bot' },
+      { type: 'label', value: 'Scammer' },
+    ]);
+  });
+
+  it('should merge token-sector with existing inclusion.tokens', () => {
+    const result = buildCommonTokenTransferData({ token: '0xabc:base', 'token-sector': 'DeFi' });
+    expect(result.inclusion.tokens).toEqual([{ address: '0xabc', chain: 'base' }]);
+    expect(result.inclusion.tokenSectors).toEqual(['DeFi']);
+  });
+
+  it('should merge exclude-from with existing exclusion.tokens', () => {
+    const result = buildCommonTokenTransferData({ 'exclude-token': '0xbad:ethereum', 'exclude-from': 'label:Bot' });
+    expect(result.exclusion.tokens).toEqual([{ address: '0xbad', chain: 'ethereum' }]);
+    expect(result.exclusion.fromTargets).toEqual([{ type: 'label', value: 'Bot' }]);
+  });
+});
+
+describe('alerts list client-side filtering', () => {
+  const mockAlerts = [
+    { id: '1', type: 'sm-token-flows', isEnabled: true, channels: [], data: { chains: ['ethereum'], inclusion: { tokens: [{ address: '0xabc', chain: 'ethereum' }] } } },
+    { id: '2', type: 'common-token-transfer', isEnabled: false, channels: [], data: { chains: ['base'] } },
+    { id: '3', type: 'sm-token-flows', isEnabled: false, channels: [], data: { chains: ['ethereum'] } },
+  ];
+
+  function makeApi() {
+    return { alertsList: vi.fn().mockResolvedValue(mockAlerts) };
+  }
+
+  async function callList(flags = {}, options = {}) {
+    const logs = [];
+    const cmd = buildAlertsCommands({ log: (...a) => logs.push(a) })['alerts'];
+    return cmd(['list'], makeApi(), flags, options);
+  }
+
+  it('should return all alerts when no filters', async () => {
+    const result = await callList();
+    expect(result).toHaveLength(3);
+  });
+
+  it('should filter by --type', async () => {
+    const result = await callList({}, { type: 'sm-token-flows' });
+    expect(result).toHaveLength(2);
+    expect(result.every(a => a.type === 'sm-token-flows')).toBe(true);
+  });
+
+  it('should filter by --disabled flag', async () => {
+    const result = await callList({ disabled: true });
+    expect(result).toHaveLength(2);
+    expect(result.every(a => a.isEnabled === false)).toBe(true);
+  });
+
+  it('should filter by --enabled flag', async () => {
+    const result = await callList({ enabled: true });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('1');
+  });
+
+  it('should apply --limit slicing', async () => {
+    const result = await callList({}, { limit: '2' });
+    expect(result).toHaveLength(2);
+  });
+
+  it('should apply --offset slicing', async () => {
+    const result = await callList({}, { offset: '2' });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('3');
+  });
+
+  it('should apply --limit and --offset together', async () => {
+    const result = await callList({}, { limit: '1', offset: '1' });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('2');
+  });
+});
+
+describe('alerts create does not require --time-window', () => {
+  it('should throw only for missing --name, --type, and channel (not --time-window)', async () => {
+    const logs = [];
+    const mockApi = { alertsCreate: vi.fn().mockResolvedValue({ id: 'new' }) };
+    const cmd = buildAlertsCommands({ log: (...a) => logs.push(a) })['alerts'];
+    // Missing --name and --type but has channel — should complain about name and type, not time-window
+    let err;
+    try {
+      await cmd(['create'], mockApi, {}, { telegram: '123' });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err.message).toContain('--name');
+    expect(err.message).toContain('--type');
+    expect(err.message).not.toContain('--time-window');
+  });
+
+  it('should use TIME_WINDOW_BY_TYPE for sm-token-flows', async () => {
+    const mockApi = { alertsCreate: vi.fn().mockResolvedValue({ id: 'new' }) };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['create'], mockApi, {}, { name: 'Test', type: 'sm-token-flows', telegram: '123' });
+    expect(mockApi.alertsCreate).toHaveBeenCalledWith(expect.objectContaining({ timeWindow: '1h' }));
+  });
+
+  it('should use realtime for common-token-transfer', async () => {
+    const mockApi = { alertsCreate: vi.fn().mockResolvedValue({ id: 'new' }) };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['create'], mockApi, {}, { name: 'Test', type: 'common-token-transfer', telegram: '123' });
+    expect(mockApi.alertsCreate).toHaveBeenCalledWith(expect.objectContaining({ timeWindow: 'realtime' }));
   });
 });
 

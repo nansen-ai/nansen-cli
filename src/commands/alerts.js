@@ -99,6 +99,14 @@ function buildRange(minVal, maxVal) {
 }
 
 /**
+ * Normalise a repeatable string option to array, or undefined if absent.
+ */
+function normArray(val) {
+  if (!val) return undefined;
+  return Array.isArray(val) ? val : [val];
+}
+
+/**
  * Build the data payload for sm-token-flows alerts from named flags.
  */
 export function buildSmTokenFlowsData(options) {
@@ -118,8 +126,23 @@ export function buildSmTokenFlowsData(options) {
 
   const tokens = parseTokens(options.token);
   const excludeTokens = parseTokens(options['exclude-token']);
-  if (tokens) data.inclusion = { tokens };
-  if (excludeTokens) data.exclusion = { tokens: excludeTokens };
+  if (tokens) data.inclusion = { ...data.inclusion, tokens };
+  if (excludeTokens) data.exclusion = { ...data.exclusion, tokens: excludeTokens };
+
+  const sectors = normArray(options['token-sector']);
+  if (sectors) data.inclusion = { ...data.inclusion, tokenSectors: sectors };
+  const excludeSectors = normArray(options['exclude-token-sector']);
+  if (excludeSectors) data.exclusion = { ...data.exclusion, tokenSectors: excludeSectors };
+
+  if (options['token-age-max'] !== undefined) {
+    data.inclusion = { ...data.inclusion, tokenAge: { max: Number(options['token-age-max']) } };
+  }
+
+  const marketCapRange = buildRange(options['market-cap-min'], options['market-cap-max']);
+  if (marketCapRange) data.inclusion = { ...data.inclusion, marketCap: marketCapRange };
+
+  const fdvRange = buildRange(options['fdv-min'], options['fdv-max']);
+  if (fdvRange) data.inclusion = { ...data.inclusion, fdvUsd: fdvRange };
 
   return data;
 }
@@ -151,8 +174,30 @@ export function buildCommonTokenTransferData(options) {
 
   const tokens = parseTokens(options.token);
   const excludeTokens = parseTokens(options['exclude-token']);
-  if (tokens) data.inclusion = { tokens };
-  if (excludeTokens) data.exclusion = { tokens: excludeTokens };
+  if (tokens) data.inclusion = { ...data.inclusion, tokens };
+  if (excludeTokens) data.exclusion = { ...data.exclusion, tokens: excludeTokens };
+
+  const sectors = normArray(options['token-sector']);
+  if (sectors) data.inclusion = { ...data.inclusion, tokenSectors: sectors };
+  const excludeSectors = normArray(options['exclude-token-sector']);
+  if (excludeSectors) data.exclusion = { ...data.exclusion, tokenSectors: excludeSectors };
+
+  const tokenAgeMin = options['token-age-min'];
+  const tokenAgeMax = options['token-age-max'];
+  if (tokenAgeMin !== undefined || tokenAgeMax !== undefined) {
+    const tokenAge = {};
+    if (tokenAgeMin !== undefined) tokenAge.min = Number(tokenAgeMin);
+    if (tokenAgeMax !== undefined) tokenAge.max = Number(tokenAgeMax);
+    data.inclusion = { ...data.inclusion, tokenAge };
+  }
+
+  const marketCapRange = buildRange(options['market-cap-min'], options['market-cap-max']);
+  if (marketCapRange) data.inclusion = { ...data.inclusion, marketCap: marketCapRange };
+
+  const excludeFrom = parseSubjects(options['exclude-from']);
+  if (excludeFrom) data.exclusion = { ...data.exclusion, fromTargets: excludeFrom };
+  const excludeTo = parseSubjects(options['exclude-to']);
+  if (excludeTo) data.exclusion = { ...data.exclusion, toTargets: excludeTo };
 
   return data;
 }
@@ -180,16 +225,10 @@ export function buildSmartContractCallData(options) {
   const excludeCallers = parseSubjects(options['exclude-caller']);
   const excludeContracts = parseSubjects(options['exclude-contract']);
 
-  if (callers || contracts) {
-    data.inclusion = {};
-    if (callers) data.inclusion.caller = callers;
-    if (contracts) data.inclusion.smartContract = contracts;
-  }
-  if (excludeCallers || excludeContracts) {
-    data.exclusion = {};
-    if (excludeCallers) data.exclusion.caller = excludeCallers;
-    if (excludeContracts) data.exclusion.smartContract = excludeContracts;
-  }
+  if (callers) data.inclusion = { ...data.inclusion, caller: callers };
+  if (contracts) data.inclusion = { ...data.inclusion, smartContract: contracts };
+  if (excludeCallers) data.exclusion = { ...data.exclusion, caller: excludeCallers };
+  if (excludeContracts) data.exclusion = { ...data.exclusion, smartContract: excludeContracts };
 
   return data;
 }
@@ -234,6 +273,12 @@ export function buildAlertData(options) {
 
 // ============= Command Builder =============
 
+const TIME_WINDOW_BY_TYPE = {
+  'common-token-transfer': 'realtime',
+  'smart-contract-call': 'realtime',
+  'sm-token-flows': '1h',
+};
+
 export function buildAlertsCommands(deps = {}) {
   const { log = console.log } = deps;
 
@@ -252,7 +297,7 @@ SUBCOMMANDS:
 
 USAGE:
   nansen alerts list [--type sm-token-flows] [--enabled] [--disabled] [--token-address <addr>] [--chain <chain>] [--limit <n>] [--offset <n>]
-  nansen alerts create --name <name> --type <type> --time-window <window> --chains <chains> --telegram <chatId>
+  nansen alerts create --name <name> --type <type> --chains <chains> --telegram <chatId>
   nansen alerts update <id> [--name <name>] [--chains <chains>]
   nansen alerts toggle <id> --enabled
   nansen alerts toggle <id> --disabled
@@ -283,6 +328,11 @@ OPTIONS (sm-token-flows):
   --netflow-1h-min <usd>   --netflow-1h-max <usd>
   --netflow-1d-min <usd>   --netflow-1d-max <usd>
   --netflow-7d-min <usd>   --netflow-7d-max <usd>
+  --token-sector <name>        Filter by token sector (repeatable).
+  --exclude-token-sector <name> Exclude token sector (repeatable).
+  --token-age-max <days>       Maximum token age in days.
+  --market-cap-min <usd>       --market-cap-max <usd>
+  --fdv-min <usd>              --fdv-max <usd>
 
 OPTIONS (common-token-transfer):
   --events <buy,sell,swap,send,receive>   Comma-separated event types.
@@ -290,6 +340,12 @@ OPTIONS (common-token-transfer):
   --token-amount-min <n>       --token-amount-max <n>
   --subject <type:value>       Filter by subject (repeatable, e.g. label:"Centralized Exchange").
   --counterparty <type:value>  Filter by counterparty (repeatable, same format as --subject).
+  --token-sector <name>        Filter by token sector (repeatable).
+  --exclude-token-sector <name> Exclude token sector (repeatable).
+  --token-age-min <days>       --token-age-max <days>
+  --market-cap-min <usd>       --market-cap-max <usd>
+  --exclude-from <type:value>  Exclude by sender (repeatable).
+  --exclude-to <type:value>    Exclude by recipient (repeatable).
 
 OPTIONS (smart-contract-call):
   --usd-min <usd>              --usd-max <usd>
@@ -302,9 +358,9 @@ OPTIONS (smart-contract-call):
 EXAMPLES:
   nansen alerts list --table
   nansen alerts list --type sm-token-flows --enabled
-  nansen alerts create --name 'ETH SM Inflow' --type sm-token-flows --time-window 1h --chains ethereum --telegram 5238612255 --inflow-1h-min 1000000
-  nansen alerts create --name 'USDC Transfers' --type common-token-transfer --time-window 1h --chains ethereum --telegram 5238612255 --events send,receive --usd-min 1000000 --subject label:"Centralized Exchange"
-  nansen alerts create --name 'Contract Calls' --type smart-contract-call --time-window 1h --chains ethereum --telegram 5238612255 --signature-hash 0xa9059cbb --caller address:0xabc
+  nansen alerts create --name 'ETH SM Inflow' --type sm-token-flows --chains ethereum --telegram 5238612255 --inflow-1h-min 1000000
+  nansen alerts create --name 'USDC Transfers' --type common-token-transfer --chains ethereum --telegram 5238612255 --events send,receive --usd-min 1000000 --subject label:"Centralized Exchange"
+  nansen alerts create --name 'Contract Calls' --type smart-contract-call --chains ethereum --telegram 5238612255 --signature-hash 0xa9059cbb --caller address:0xabc
   nansen alerts toggle abc123 --disabled
   nansen alerts delete abc123
 
@@ -322,27 +378,48 @@ Advanced: use --data '<json>' to pass the full alert config directly (merged on 
       }
 
       const handlers = {
-        'list': () => {
+        'list': async () => {
           const params = {};
           if (options.type) params.type = options.type;
           if (options['token-address']) params.tokenAddress = options['token-address'];
           if (options.chain) params.chain = options.chain;
-          if (options.limit) params.limit = options.limit;
-          if (options.offset) params.offset = options.offset;
+          if (options.limit) params.limit = Number(options.limit);
+          if (options.offset) params.offset = Number(options.offset);
           if (flags.enabled) params.isEnabled = true;
           if (flags.disabled) params.isEnabled = false;
-          return apiInstance.alertsList(params);
+
+          let results = await apiInstance.alertsList(params);
+          // Normalise to array
+          if (!Array.isArray(results)) results = results?.alerts ?? results?.data ?? [];
+
+          // Client-side filters (defensive — backend may or may not support them)
+          if (params.type) results = results.filter(a => a.type === params.type);
+          if (params.isEnabled !== undefined) results = results.filter(a => a.isEnabled === params.isEnabled);
+          if (params.tokenAddress) {
+            const addr = params.tokenAddress.toLowerCase();
+            results = results.filter(a => {
+              const tokens = [...(a.data?.inclusion?.tokens ?? []), ...(a.data?.exclusion?.tokens ?? [])];
+              return tokens.some(t => t.address?.toLowerCase() === addr);
+            });
+          }
+          if (params.chain) {
+            const chain = params.chain.toLowerCase();
+            results = results.filter(a => (a.data?.chains ?? []).some(c => c.toLowerCase() === chain));
+          }
+          const offset = params.offset ?? 0;
+          const limit = params.limit;
+          results = results.slice(offset, limit != null ? offset + limit : undefined);
+          return results;
         },
         'create': () => {
           const name = options.name;
           const type = options.type;
-          const timeWindow = options['time-window'];
+          const timeWindow = TIME_WINDOW_BY_TYPE[type] ?? 'realtime';
           const channels = buildChannels();
           const data = buildAlertData(options);
           const missing = [];
           if (!name) missing.push('--name');
           if (!type) missing.push('--type');
-          if (!timeWindow) missing.push('--time-window');
           if (!channels) missing.push('a channel (--telegram, --slack, or --discord)');
           if (missing.length > 0) {
             throw new NansenError(`Required: ${missing.join(', ')}`, ErrorCode.MISSING_PARAM);
@@ -362,8 +439,10 @@ Advanced: use --data '<json>' to pass the full alert config directly (merged on 
           if (!id) throw new NansenError('Required: <id>', ErrorCode.MISSING_PARAM);
           const params = { id };
           if (options.name) params.name = options.name;
-          if (options.type) params.type = options.type;
-          if (options['time-window']) params.timeWindow = options['time-window'];
+          if (options.type) {
+            params.type = options.type;
+            params.timeWindow = TIME_WINDOW_BY_TYPE[options.type] ?? 'realtime';
+          }
           const channels = buildChannels();
           if (channels) params.channels = channels;
           const data = buildAlertData(options);
