@@ -33,6 +33,7 @@ import {
   buildAlertData,
   buildSmTokenFlowsData,
   buildCommonTokenTransferData,
+  buildSmartContractCallData,
 } from '../commands/alerts.js';
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode } from '../api.js';
 import { EVM_CHAINS } from '../chain-ids.js';
@@ -391,6 +392,83 @@ describe('buildAlertData', () => {
   it('should work with no type (no flags)', () => {
     const result = buildAlertData({});
     expect(result).toEqual({});
+  });
+});
+
+describe('buildSmTokenFlowsData netflow fields', () => {
+  it('should include netflow-1h range', () => {
+    const result = buildSmTokenFlowsData({ 'netflow-1h-min': '100000' });
+    expect(result.netflow_1h).toEqual({ min: 100000, max: null });
+  });
+
+  it('should include netflow-1d and netflow-7d ranges', () => {
+    const result = buildSmTokenFlowsData({ 'netflow-1d-min': '500000', 'netflow-7d-max': '2000000' });
+    expect(result.netflow_1d).toEqual({ min: 500000, max: null });
+    expect(result.netflow_7d).toEqual({ min: null, max: 2000000 });
+  });
+});
+
+describe('buildCommonTokenTransferData counterparty', () => {
+  it('should add counterparties when --counterparty is provided', () => {
+    const result = buildCommonTokenTransferData({ counterparty: 'address:0xabc' });
+    expect(result.counterparties).toEqual([{ type: 'address', value: '0xabc' }]);
+  });
+
+  it('should handle repeated --counterparty flags as array', () => {
+    const result = buildCommonTokenTransferData({ counterparty: ['address:0xabc', 'label:Whale'] });
+    expect(result.counterparties).toEqual([
+      { type: 'address', value: '0xabc' },
+      { type: 'label', value: 'Whale' },
+    ]);
+  });
+
+  it('should not add counterparties when flag is absent', () => {
+    const result = buildCommonTokenTransferData({ chains: 'ethereum' });
+    expect(result.counterparties).toBeUndefined();
+  });
+});
+
+describe('buildSmartContractCallData', () => {
+  it('should build data with chains and usd range', () => {
+    const result = buildSmartContractCallData({ chains: 'ethereum,base', 'usd-min': '1000', 'usd-max': '9999' });
+    expect(result.chains).toEqual(['ethereum', 'base']);
+    expect(result.usdValue).toEqual({ min: 1000, max: 9999 });
+  });
+
+  it('should build signatureHash as array from single value', () => {
+    const result = buildSmartContractCallData({ 'signature-hash': '0xa9059cbb' });
+    expect(result.signatureHash).toEqual(['0xa9059cbb']);
+  });
+
+  it('should build signatureHash as array from repeated flags', () => {
+    const result = buildSmartContractCallData({ 'signature-hash': ['0xa9059cbb', '0x23b872dd'] });
+    expect(result.signatureHash).toEqual(['0xa9059cbb', '0x23b872dd']);
+  });
+
+  it('should build inclusion.caller from --caller', () => {
+    const result = buildSmartContractCallData({ caller: 'address:0xabc' });
+    expect(result.inclusion.caller).toEqual([{ type: 'address', value: '0xabc' }]);
+  });
+
+  it('should build inclusion.smartContract from --contract', () => {
+    const result = buildSmartContractCallData({ contract: 'address:0xdef' });
+    expect(result.inclusion.smartContract).toEqual([{ type: 'address', value: '0xdef' }]);
+  });
+
+  it('should build exclusion.caller from --exclude-caller', () => {
+    const result = buildSmartContractCallData({ 'exclude-caller': 'label:Bot' });
+    expect(result.exclusion.caller).toEqual([{ type: 'label', value: 'Bot' }]);
+  });
+
+  it('should build exclusion.smartContract from --exclude-contract', () => {
+    const result = buildSmartContractCallData({ 'exclude-contract': 'address:0x999' });
+    expect(result.exclusion.smartContract).toEqual([{ type: 'address', value: '0x999' }]);
+  });
+
+  it('should dispatch to buildSmartContractCallData for smart-contract-call type', () => {
+    const result = buildAlertData({ type: 'smart-contract-call', chains: 'ethereum', 'signature-hash': '0xa9059cbb' });
+    expect(result.chains).toEqual(['ethereum']);
+    expect(result.signatureHash).toEqual(['0xa9059cbb']);
   });
 });
 
