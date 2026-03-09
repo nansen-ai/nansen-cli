@@ -107,7 +107,7 @@ export function buildSmTokenFlowsData(options) {
   const chains = parseChains(options.chains);
   if (chains) data.chains = chains;
 
-  const flowFields = ['inflow-1h', 'inflow-1d', 'inflow-7d', 'outflow-1h', 'outflow-1d', 'outflow-7d'];
+  const flowFields = ['inflow-1h', 'inflow-1d', 'inflow-7d', 'outflow-1h', 'outflow-1d', 'outflow-7d', 'netflow-1h', 'netflow-1d', 'netflow-7d'];
   for (const field of flowFields) {
     const range = buildRange(options[`${field}-min`], options[`${field}-max`]);
     if (range) {
@@ -146,10 +146,50 @@ export function buildCommonTokenTransferData(options) {
   const subjects = parseSubjects(options.subject);
   if (subjects) data.subjects = subjects;
 
+  const counterparties = parseSubjects(options.counterparty);
+  if (counterparties) data.counterparties = counterparties;
+
   const tokens = parseTokens(options.token);
   const excludeTokens = parseTokens(options['exclude-token']);
   if (tokens) data.inclusion = { tokens };
   if (excludeTokens) data.exclusion = { tokens: excludeTokens };
+
+  return data;
+}
+
+/**
+ * Build the data payload for smart-contract-call alerts from named flags.
+ */
+export function buildSmartContractCallData(options) {
+  const data = {};
+
+  const chains = parseChains(options.chains);
+  if (chains) data.chains = chains;
+
+  const usdRange = buildRange(options['usd-min'], options['usd-max']);
+  if (usdRange) data.usdValue = usdRange;
+
+  if (options['signature-hash']) {
+    data.signatureHash = Array.isArray(options['signature-hash'])
+      ? options['signature-hash']
+      : [options['signature-hash']];
+  }
+
+  const callers = parseSubjects(options.caller);
+  const contracts = parseSubjects(options.contract);
+  const excludeCallers = parseSubjects(options['exclude-caller']);
+  const excludeContracts = parseSubjects(options['exclude-contract']);
+
+  if (callers || contracts) {
+    data.inclusion = {};
+    if (callers) data.inclusion.caller = callers;
+    if (contracts) data.inclusion.smartContract = contracts;
+  }
+  if (excludeCallers || excludeContracts) {
+    data.exclusion = {};
+    if (excludeCallers) data.exclusion.caller = excludeCallers;
+    if (excludeContracts) data.exclusion.smartContract = excludeContracts;
+  }
 
   return data;
 }
@@ -165,6 +205,8 @@ export function buildAlertData(options) {
     data = buildSmTokenFlowsData(options);
   } else if (options.type === 'common-token-transfer') {
     data = buildCommonTokenTransferData(options);
+  } else if (options.type === 'smart-contract-call') {
+    data = buildSmartContractCallData(options);
   } else {
     // Unknown / no type — minimal fallback: just handle chains
     data = {};
@@ -209,12 +251,18 @@ SUBCOMMANDS:
   delete      Delete an alert
 
 USAGE:
-  nansen alerts list
+  nansen alerts list [--type sm-token-flows] [--enabled] [--disabled] [--token-address <addr>] [--chain <chain>] [--limit <n>] [--offset <n>]
   nansen alerts create --name <name> --type <type> --time-window <window> --chains <chains> --telegram <chatId>
   nansen alerts update <id> [--name <name>] [--chains <chains>]
   nansen alerts toggle <id> --enabled
   nansen alerts toggle <id> --disabled
   nansen alerts delete <id>
+
+SUBJECT TYPES:
+  address, entity, label, custom-label
+  Example: --subject address:0xabc  --subject label:"Centralized Exchange"
+
+  Chain aliases: For Hyperliquid use hyperevm, for BSC use bnb.
 
 OPTIONS (all types):
   --chains <chains>            Comma-separated chains (e.g. ethereum,solana).
@@ -226,23 +274,37 @@ OPTIONS (all types):
   --description '<text>'       Alert description.
 
 OPTIONS (sm-token-flows):
-  --inflow-1h-min <usd>   --inflow-1h-max <usd>
-  --inflow-1d-min <usd>   --inflow-1d-max <usd>
-  --inflow-7d-min <usd>   --inflow-7d-max <usd>
-  --outflow-1h-min <usd>  --outflow-1h-max <usd>
-  --outflow-1d-min <usd>  --outflow-1d-max <usd>
-  --outflow-7d-min <usd>  --outflow-7d-max <usd>
+  --inflow-1h-min <usd>    --inflow-1h-max <usd>
+  --inflow-1d-min <usd>    --inflow-1d-max <usd>
+  --inflow-7d-min <usd>    --inflow-7d-max <usd>
+  --outflow-1h-min <usd>   --outflow-1h-max <usd>
+  --outflow-1d-min <usd>   --outflow-1d-max <usd>
+  --outflow-7d-min <usd>   --outflow-7d-max <usd>
+  --netflow-1h-min <usd>   --netflow-1h-max <usd>
+  --netflow-1d-min <usd>   --netflow-1d-max <usd>
+  --netflow-7d-min <usd>   --netflow-7d-max <usd>
 
 OPTIONS (common-token-transfer):
   --events <buy,sell,swap,send,receive>   Comma-separated event types.
-  --usd-min <usd>          --usd-max <usd>
-  --token-amount-min <n>   --token-amount-max <n>
-  --subject <type:value>   Filter by subject (repeatable, e.g. label:"Centralized Exchange").
+  --usd-min <usd>              --usd-max <usd>
+  --token-amount-min <n>       --token-amount-max <n>
+  --subject <type:value>       Filter by subject (repeatable, e.g. label:"Centralized Exchange").
+  --counterparty <type:value>  Filter by counterparty (repeatable, same format as --subject).
+
+OPTIONS (smart-contract-call):
+  --usd-min <usd>              --usd-max <usd>
+  --signature-hash <hash>      Function signature hash (repeatable).
+  --caller <type:value>        Include callers (repeatable).
+  --contract <type:value>      Include smart contracts (repeatable).
+  --exclude-caller <type:value>    Exclude callers (repeatable).
+  --exclude-contract <type:value>  Exclude contracts (repeatable).
 
 EXAMPLES:
   nansen alerts list --table
+  nansen alerts list --type sm-token-flows --enabled
   nansen alerts create --name 'ETH SM Inflow' --type sm-token-flows --time-window 1h --chains ethereum --telegram 5238612255 --inflow-1h-min 1000000
   nansen alerts create --name 'USDC Transfers' --type common-token-transfer --time-window 1h --chains ethereum --telegram 5238612255 --events send,receive --usd-min 1000000 --subject label:"Centralized Exchange"
+  nansen alerts create --name 'Contract Calls' --type smart-contract-call --time-window 1h --chains ethereum --telegram 5238612255 --signature-hash 0xa9059cbb --caller address:0xabc
   nansen alerts toggle abc123 --disabled
   nansen alerts delete abc123
 
@@ -260,7 +322,17 @@ Advanced: use --data '<json>' to pass the full alert config directly (merged on 
       }
 
       const handlers = {
-        'list': () => apiInstance.alertsList(),
+        'list': () => {
+          const params = {};
+          if (options.type) params.type = options.type;
+          if (options['token-address']) params.tokenAddress = options['token-address'];
+          if (options.chain) params.chain = options.chain;
+          if (options.limit) params.limit = options.limit;
+          if (options.offset) params.offset = options.offset;
+          if (flags.enabled) params.isEnabled = true;
+          if (flags.disabled) params.isEnabled = false;
+          return apiInstance.alertsList(params);
+        },
         'create': () => {
           const name = options.name;
           const type = options.type;

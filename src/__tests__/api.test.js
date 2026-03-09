@@ -2679,6 +2679,12 @@ describe('NansenAPI', () => {
       expect(result[0]).toHaveProperty('id', 'alert-1');
     });
 
+    it('alertsList should append filter params as query string', async () => {
+      setupMock(MOCK_RESPONSES.alertsList);
+      await api.alertsList({ type: 'sm-token-flows', isEnabled: true, limit: 10 });
+      expectFetchCalledWith('/api/v1/smart-alert/list?type=sm-token-flows&isEnabled=true&limit=10', {}, 'GET');
+    });
+
     it('alertsCreate should POST /api/v1/smart-alert', async () => {
       setupMock(MOCK_RESPONSES.alertsCreate);
       const params = { name: 'Test', type: 'sm-token-flows', timeWindow: '1h', channels: [], data: {} };

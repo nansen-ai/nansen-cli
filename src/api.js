@@ -1269,8 +1269,10 @@ export class NansenAPI {
 
   // ============= Smart Alert Endpoints =============
 
-  async alertsList() {
-    return this.request('/api/v1/smart-alert/list', {}, { method: 'GET' });
+  async alertsList(params = {}) {
+    const defined = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined));
+    const qs = Object.keys(defined).length > 0 ? '?' + new URLSearchParams(defined).toString() : '';
+    return this.request(`/api/v1/smart-alert/list${qs}`, {}, { method: 'GET' });
   }
 
   async alertsCreate(params = {}) {
