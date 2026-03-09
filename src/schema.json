@@ -580,7 +580,7 @@
           "options": {
             "name": { "type": "string", "required": true, "description": "Alert name" },
             "type": { "type": "string", "required": true, "description": "Alert type (e.g. sm-token-flows, common-token-transfer)" },
-            "time-window": { "type": "string", "required": true, "description": "Time window (e.g. 1h, realtime)" },
+            "time-window": { "type": "string", "description": "Auto-inferred from --type (sm-token-flows→1h, others→realtime). Ignored if provided." },
             "chains": { "type": "string", "description": "Comma-separated chains (e.g. ethereum,solana). Merged into data." },
             "telegram": { "type": "string", "description": "Telegram chat ID for notifications" },
             "slack": { "type": "string", "description": "Slack webhook URL for notifications" },
@@ -595,7 +595,7 @@
           "options": {
             "name": { "type": "string", "description": "Alert name" },
             "type": { "type": "string", "description": "Alert type" },
-            "time-window": { "type": "string", "description": "Time window" },
+            "time-window": { "type": "string", "description": "Auto-inferred from --type. Ignored if provided." },
             "chains": { "type": "string", "description": "Comma-separated chains. Merged into data." },
             "telegram": { "type": "string", "description": "Telegram chat ID" },
             "slack": { "type": "string", "description": "Slack webhook URL" },
