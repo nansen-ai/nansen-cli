@@ -6,7 +6,7 @@
 import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
 import { buildWalletCommands } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
-import { formatAlertsTable, buildAlertsCommands, buildAlertData } from './commands/alerts.js';
+import { formatAlertsTable, buildAlertsCommands } from './commands/alerts.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
@@ -212,9 +212,6 @@ export function formatValue(val) {
   if (typeof val === 'object') return JSON.stringify(val);
   return String(val);
 }
-
-// Re-exported from ./commands/alerts.js for convenience (e.g. tests, external callers)
-export { formatAlertsTable, buildAlertData };
 
 // Table formatter for human-readable output
 export function formatTable(data) {
