@@ -58,7 +58,7 @@ function parseTokens(tokenArg) {
   const tokens = Array.isArray(tokenArg) ? tokenArg : [tokenArg];
   return tokens.map(t => {
     const colonIdx = t.lastIndexOf(':');
-    if (colonIdx === -1) throw new NansenError(`Invalid token format: "${t}". Expected address:chain`, ErrorCode.INVALID_PARAM);
+    if (colonIdx === -1) throw new NansenError(`Invalid token format: "${t}". Expected address:chain`, ErrorCode.INVALID_PARAMS);
     return { address: t.slice(0, colonIdx), chain: t.slice(colonIdx + 1) };
   });
 }
@@ -72,7 +72,7 @@ function parseSubjects(subjectArg) {
   const subjects = Array.isArray(subjectArg) ? subjectArg : [subjectArg];
   return subjects.map(s => {
     const colonIdx = s.indexOf(':');
-    if (colonIdx === -1) throw new NansenError(`Invalid subject format: "${s}". Expected type:value`, ErrorCode.INVALID_PARAM);
+    if (colonIdx === -1) throw new NansenError(`Invalid subject format: "${s}". Expected type:value`, ErrorCode.INVALID_PARAMS);
     return { type: s.slice(0, colonIdx), value: s.slice(colonIdx + 1) };
   });
 }
@@ -260,7 +260,7 @@ export function buildAlertData(options) {
       try {
         override = JSON.parse(options.data);
       } catch {
-        throw new NansenError('--data must be valid JSON', ErrorCode.INVALID_PARAM);
+        throw new NansenError('--data must be valid JSON', ErrorCode.INVALID_PARAMS);
       }
     } else {
       override = options.data;
@@ -385,6 +385,7 @@ Advanced: use --data '<json>' to pass the full alert config directly (merged on 
           if (options.chain) params.chain = options.chain;
           if (options.limit) params.limit = Number(options.limit);
           if (options.offset) params.offset = Number(options.offset);
+          if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAMS);
           if (flags.enabled) params.isEnabled = true;
           if (flags.disabled) params.isEnabled = false;
 
@@ -430,7 +431,7 @@ Advanced: use --data '<json>' to pass the full alert config directly (merged on 
           const data = buildAlertData(options);
           if (Object.keys(data).length > 0) params.data = data;
           if (options.description) params.description = options.description;
-          if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAM);
+          if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAMS);
           if (flags.enabled) params.isEnabled = true;
           if (flags.disabled) params.isEnabled = false;
           return apiInstance.alertsUpdate(params);
@@ -438,7 +439,7 @@ Advanced: use --data '<json>' to pass the full alert config directly (merged on 
         'toggle': () => {
           const id = args[1];
           if (!id) throw new NansenError('Required: <id>', ErrorCode.MISSING_PARAM);
-          if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAM);
+          if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAMS);
           const isEnabled = flags.enabled ? true : flags.disabled ? false : undefined;
           if (isEnabled === undefined) throw new NansenError('Required: --enabled or --disabled', ErrorCode.MISSING_PARAM);
           return apiInstance.alertsToggle({ id, isEnabled });
