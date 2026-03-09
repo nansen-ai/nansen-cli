@@ -448,6 +448,7 @@ Advanced: use --data '<json>' to pass the full alert config directly (merged on 
           const data = buildAlertData(options);
           if (Object.keys(data).length > 0) params.data = data;
           if (options.description) params.description = options.description;
+          if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAM);
           if (flags.enabled) params.isEnabled = true;
           if (flags.disabled) params.isEnabled = false;
           return apiInstance.alertsUpdate(params);
@@ -455,6 +456,7 @@ Advanced: use --data '<json>' to pass the full alert config directly (merged on 
         'toggle': () => {
           const id = args[1];
           if (!id) throw new NansenError('Required: <id>', ErrorCode.MISSING_PARAM);
+          if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAM);
           const isEnabled = flags.enabled ? true : flags.disabled ? false : undefined;
           if (isEnabled === undefined) throw new NansenError('Required: --enabled or --disabled', ErrorCode.MISSING_PARAM);
           return apiInstance.alertsToggle({ id, isEnabled });

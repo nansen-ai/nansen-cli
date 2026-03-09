@@ -213,7 +213,7 @@ export function formatValue(val) {
   return String(val);
 }
 
-// formatAlertsTable is exported from ./commands/alerts.js (re-exported for backwards compat)
+// Re-exported from ./commands/alerts.js for convenience (e.g. tests, external callers)
 export { formatAlertsTable, buildAlertData };
 
 // Table formatter for human-readable output

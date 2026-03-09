@@ -242,17 +242,11 @@ Track smart contract call events when the system detects contract interactions m
     ],
     "smartContract": [
       { "type": "address|entity|label|custom-label", "value": "Uniswap V3" }
-    ],
-    "tokenIn": [
-      { "address": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", "chain": "ethereum" }
-    ],
-    "tokenOut": []
+    ]
   },
   "exclusion": {
     "caller": [],
-    "smartContract": [],
-    "tokenIn": [],
-    "tokenOut": []
+    "smartContract": []
   }
 }
 ```
@@ -263,8 +257,7 @@ Track smart contract call events when the system detects contract interactions m
 - `signatureHash`: Function signature hashes to monitor (e.g., `0x095ea7b3` for `approve`). Empty array tracks all function calls.
 - `inclusion.caller`: Caller addresses/entities/labels to track. Empty array tracks all callers.
 - `inclusion.smartContract`: Contract addresses/entities/labels to monitor. Empty array tracks all contracts.
-- `inclusion.tokenIn` / `tokenOut`: Input/output tokens involved in the call.
-- `exclusion`: Callers/contracts/tokens to ignore.
+- `exclusion`: Callers/contracts to exclude.
 
 **Example:**
 ```bash
