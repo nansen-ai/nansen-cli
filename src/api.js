@@ -1240,12 +1240,23 @@ export class NansenAPI {
 
   // ============= X (Twitter) Endpoints =============
 
+  /**
+   * Strip the input to its longest contiguous ASCII alphanumeric segment.
+   * The Nansen API hasTokenCaseInsensitive constraint rejects spaces and punctuation,
+   * so "pump.fun" → "pump", "Pudgy Penguins" → "Penguins", "T-2049" → "2049".
+   */
+  _longestAsciiAlnumSegment(text) {
+    if (!text) return '';
+    const segments = text.match(/[A-Za-z0-9]+/g) || [];
+    return segments.reduce((a, b) => (b.length > a.length ? b : a), '');
+  }
+
   async xPostsByToken(params = {}) {
     const { date, tokenName, tokenSymbol, minLikes, minViews, orderBy, pagination } = params;
     return this.request('/api/v1/ra-agent/posts-by-token', {
       date,
-      token_name: tokenName,
-      token_symbol: tokenSymbol,
+      token_name: this._longestAsciiAlnumSegment(tokenName),
+      token_symbol: this._longestAsciiAlnumSegment(tokenSymbol),
       min_likes: minLikes,
       min_views: minViews,
       order_by: orderBy,

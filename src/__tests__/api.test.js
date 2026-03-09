@@ -1756,6 +1756,14 @@ describe('NansenAPI', () => {
         expect(body.min_likes).toBe(100);
         expect(body.min_views).toBe(1000);
       });
+
+      it('should sanitize token_name and token_symbol to longest ASCII alnum segment', async () => {
+        setupMock(MOCK_RESPONSES.xPostsByToken);
+        await api.xPostsByToken({ date: { from: '2026-03-01', to: '2026-03-08' }, tokenSymbol: 'pump.fun', tokenName: 'Pudgy Penguins' });
+        const body = expectFetchCalledWith('/api/v1/ra-agent/posts-by-token');
+        expect(body.token_symbol).toBe('pump');
+        expect(body.token_name).toBe('Penguins');
+      });
     });
 
     describe('xPostsByUser', () => {
