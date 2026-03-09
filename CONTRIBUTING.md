@@ -8,14 +8,9 @@ npm test
 npm run lint
 ```
 
-All tests are mocked (no API key needed). Passing output:
+All tests are mocked (no API key needed). All test files should pass with 0 failures (a small number of skipped tests is expected).
 
-```
- Test Files  15 passed (15)
-      Tests  678 passed | 2 skipped (680)
-```
-
-Paste the final output in your PR description so reviewers can verify.
+Paste the final `npm test` output in your PR description so reviewers can verify.
 
 ## Changesets
 
