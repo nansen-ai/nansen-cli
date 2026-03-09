@@ -481,8 +481,11 @@ USAGE:
           const channels = buildChannels();
           if (channels) params.channels = channels;
           const effectiveOptions = type ? { ...options, type } : options;
-          const data = buildAlertData(effectiveOptions);
-          if (Object.keys(data).length > 0) params.data = data;
+          const builtData = buildAlertData(effectiveOptions);
+          if (Object.keys(builtData).length > 0) {
+            // Merge with existing data so fields not mentioned in this update are preserved
+            params.data = existing?.data ? { ...existing.data, ...builtData } : builtData;
+          }
           if (options.description) params.description = options.description;
           if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAMS);
           if (flags.enabled) params.isEnabled = true;

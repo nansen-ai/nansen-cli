@@ -1291,7 +1291,9 @@ export class NansenAPI {
   }
 
   async alertsGet(id) {
-    return this.request('/api/v1/smart-alert/' + encodeURIComponent(id), {}, { method: 'GET' });
+    const result = await this.alertsList();
+    const alerts = Array.isArray(result) ? result : result?.alerts ?? result?.data ?? [];
+    return alerts.find(a => a.id === id) ?? null;
   }
 
   async alertsDelete(alertId) {
