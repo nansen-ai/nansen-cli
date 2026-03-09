@@ -29,6 +29,11 @@ import {
   buildPagination,
   parseAddressList
 } from '../cli.js';
+import {
+  buildAlertData,
+  buildSmTokenFlowsData,
+  buildCommonTokenTransferData,
+} from '../commands/alerts.js';
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode } from '../api.js';
 import { EVM_CHAINS } from '../chain-ids.js';
 import * as fs from 'fs';
@@ -229,6 +234,175 @@ describe('formatAlertsTable', () => {
     ];
     const result = formatAlertsTable(alerts);
     expect(result).toContain('very-long-alert-id-that-should-not-be-truncated');
+  });
+});
+
+describe('buildSmTokenFlowsData', () => {
+  it('should build data with inflow range flags', () => {
+    const result = buildSmTokenFlowsData({
+      chains: 'ethereum',
+      'inflow-1h-min': '5000000',
+    });
+    expect(result.chains).toEqual(['ethereum']);
+    expect(result.inflow_1h).toEqual({ min: 5000000, max: null });
+  });
+
+  it('should build data with multiple flow ranges', () => {
+    const result = buildSmTokenFlowsData({
+      'inflow-1h-min': '1000000',
+      'outflow-7d-max': '500000',
+    });
+    expect(result.inflow_1h).toEqual({ min: 1000000, max: null });
+    expect(result.outflow_7d).toEqual({ min: null, max: 500000 });
+  });
+
+  it('should parse --token into inclusion.tokens', () => {
+    const result = buildSmTokenFlowsData({
+      token: '0xabc123:ethereum',
+    });
+    expect(result.inclusion).toEqual({ tokens: [{ address: '0xabc123', chain: 'ethereum' }] });
+  });
+
+  it('should parse repeated --token into inclusion.tokens array', () => {
+    const result = buildSmTokenFlowsData({
+      token: ['0xabc:ethereum', '0xdef:base'],
+    });
+    expect(result.inclusion).toEqual({
+      tokens: [
+        { address: '0xabc', chain: 'ethereum' },
+        { address: '0xdef', chain: 'base' },
+      ],
+    });
+  });
+
+  it('should parse --exclude-token into exclusion.tokens', () => {
+    const result = buildSmTokenFlowsData({
+      'exclude-token': '0xbad:ethereum',
+    });
+    expect(result.exclusion).toEqual({ tokens: [{ address: '0xbad', chain: 'ethereum' }] });
+  });
+
+  it('should return empty object when no flags provided', () => {
+    const result = buildSmTokenFlowsData({});
+    expect(result).toEqual({});
+  });
+});
+
+describe('buildCommonTokenTransferData', () => {
+  it('should build data with events and USD range', () => {
+    const result = buildCommonTokenTransferData({
+      chains: 'ethereum',
+      events: 'send,receive',
+      'usd-min': '1000000',
+    });
+    expect(result.chains).toEqual(['ethereum']);
+    expect(result.events).toEqual(['send', 'receive']);
+    expect(result.usdValue).toEqual({ min: 1000000, max: null });
+  });
+
+  it('should build data with token amount range', () => {
+    const result = buildCommonTokenTransferData({
+      'token-amount-min': '100',
+      'token-amount-max': '5000',
+    });
+    expect(result.tokenAmount).toEqual({ min: 100, max: 5000 });
+  });
+
+  it('should parse --subject into subjects array', () => {
+    const result = buildCommonTokenTransferData({
+      subject: 'label:Centralized Exchange',
+    });
+    expect(result.subjects).toEqual([{ type: 'label', value: 'Centralized Exchange' }]);
+  });
+
+  it('should parse repeated --subject values', () => {
+    const result = buildCommonTokenTransferData({
+      subject: ['label:CEX', 'label:DEX'],
+    });
+    expect(result.subjects).toEqual([
+      { type: 'label', value: 'CEX' },
+      { type: 'label', value: 'DEX' },
+    ]);
+  });
+
+  it('should parse --token into inclusion.tokens', () => {
+    const result = buildCommonTokenTransferData({
+      token: '0xusdc:ethereum',
+    });
+    expect(result.inclusion).toEqual({ tokens: [{ address: '0xusdc', chain: 'ethereum' }] });
+  });
+});
+
+describe('buildAlertData', () => {
+  it('should dispatch to buildSmTokenFlowsData for sm-token-flows type', () => {
+    const result = buildAlertData({
+      type: 'sm-token-flows',
+      chains: 'ethereum',
+      'inflow-1h-min': '5000000',
+    });
+    expect(result.chains).toEqual(['ethereum']);
+    expect(result.inflow_1h).toEqual({ min: 5000000, max: null });
+  });
+
+  it('should dispatch to buildCommonTokenTransferData for common-token-transfer type', () => {
+    const result = buildAlertData({
+      type: 'common-token-transfer',
+      chains: 'ethereum',
+      events: 'send,receive',
+      'usd-min': '1000000',
+    });
+    expect(result.chains).toEqual(['ethereum']);
+    expect(result.events).toEqual(['send', 'receive']);
+    expect(result.usdValue).toEqual({ min: 1000000, max: null });
+  });
+
+  it('should fall back to chains-only for unknown type', () => {
+    const result = buildAlertData({
+      type: 'unknown-type',
+      chains: 'solana',
+    });
+    expect(result).toEqual({ chains: ['solana'] });
+  });
+
+  it('should merge --data JSON on top of named flags (override)', () => {
+    const result = buildAlertData({
+      type: 'sm-token-flows',
+      chains: 'ethereum',
+      'inflow-1h-min': '100000',
+      data: '{"inflow_1h":{"min":999999},"chains":["base"]}',
+    });
+    // --data overrides named flags
+    expect(result.chains).toEqual(['base']);
+    expect(result.inflow_1h).toEqual({ min: 999999 });
+  });
+
+  it('should accept --data as object (not string)', () => {
+    const result = buildAlertData({
+      type: 'sm-token-flows',
+      data: { chains: ['solana'] },
+    });
+    expect(result.chains).toEqual(['solana']);
+  });
+
+  it('should throw on invalid --data JSON', () => {
+    expect(() => buildAlertData({ type: 'sm-token-flows', data: 'not-json' })).toThrow();
+  });
+
+  it('should work with no type (no flags)', () => {
+    const result = buildAlertData({});
+    expect(result).toEqual({});
+  });
+});
+
+describe('parseArgs repeatable flags', () => {
+  it('should accumulate repeated options into arrays', () => {
+    const result = parseArgs(['--token', '0xabc:ethereum', '--token', '0xdef:base']);
+    expect(result.options.token).toEqual(['0xabc:ethereum', '0xdef:base']);
+  });
+
+  it('should keep single option as string', () => {
+    const result = parseArgs(['--token', '0xabc:ethereum']);
+    expect(result.options.token).toBe('0xabc:ethereum');
   });
 });
 

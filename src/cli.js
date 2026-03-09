@@ -6,6 +6,7 @@
 import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
 import { buildWalletCommands } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
+import { formatAlertsTable, buildAlertsCommands, buildAlertData } from './commands/alerts.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
@@ -169,13 +170,23 @@ export function parseArgs(args) {
         // Try to parse as JSON first (for objects/arrays/booleans),
         // but keep numeric strings as strings to avoid precision loss
         // and scientific notation for large integers (e.g. 1e+21).
+        let parsedValue;
         try {
           const parsed = JSON.parse(next);
-          result.options[key] = typeof parsed === 'number' ? next : parsed;
+          parsedValue = typeof parsed === 'number' ? next : parsed;
         } catch {
-          result.options[key] = next;
+          parsedValue = next;
         }
         i++;
+        // Accumulate repeated options into arrays (supports repeatable flags like --token, --subject)
+        if (key in result.options) {
+          if (!Array.isArray(result.options[key])) {
+            result.options[key] = [result.options[key]];
+          }
+          result.options[key].push(parsedValue);
+        } else {
+          result.options[key] = parsedValue;
+        }
       } else {
         result.flags[key] = true;
       }
@@ -202,45 +213,8 @@ export function formatValue(val) {
   return String(val);
 }
 
-// Format alerts list as human-readable table
-export function formatAlertsTable(alerts) {
-  if (!Array.isArray(alerts) || alerts.length === 0) {
-    return 'No alerts';
-  }
-
-  const formatChannels = (channels) => {
-    if (!channels || !Array.isArray(channels) || channels.length === 0) return '';
-    return channels.map(ch => ch.type).join(', ');
-  };
-
-  const formatEnabled = (isEnabled) => isEnabled ? '✓' : '✗';
-
-  const truncate = (str, maxLen) => {
-    if (!str) return '';
-    return str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
-  };
-
-  const idWidth = Math.max(2, Math.max(...alerts.map(a => (a.id || '').length)));
-  const nameWidth = Math.max(4, Math.min(30, Math.max(...alerts.map(a => (a.name || '').length))));
-  const typeWidth = Math.max(4, Math.min(25, Math.max(...alerts.map(a => (a.type || '').length))));
-  const channelsWidth = Math.max(8, Math.min(20, Math.max(...alerts.map(a => formatChannels(a.channels).length))));
-
-  const lines = [];
-  const header = `${'ID'.padEnd(idWidth)} │ ${'NAME'.padEnd(nameWidth)} │ ${'TYPE'.padEnd(typeWidth)} │ ${'ENABLED'.padEnd(7)} │ ${'CHANNELS'.padEnd(channelsWidth)}`;
-  lines.push(header);
-  lines.push('─'.repeat(idWidth) + '─┼─' + '─'.repeat(nameWidth) + '─┼─' + '─'.repeat(typeWidth) + '─┼─' + '─'.repeat(7) + '─┼─' + '─'.repeat(channelsWidth));
-
-  for (const alert of alerts) {
-    const id = (alert.id || '').padEnd(idWidth);
-    const name = truncate(alert.name, nameWidth).padEnd(nameWidth);
-    const type = truncate(alert.type, typeWidth).padEnd(typeWidth);
-    const enabled = formatEnabled(alert.isEnabled).padEnd(7);
-    const channels = truncate(formatChannels(alert.channels), channelsWidth).padEnd(channelsWidth);
-    lines.push(`${id} │ ${name} │ ${type} │ ${enabled} │ ${channels}`);
-  }
-
-  return lines.join('\n');
-}
+// formatAlertsTable is exported from ./commands/alerts.js (re-exported for backwards compat)
+export { formatAlertsTable, buildAlertData };
 
 // Table formatter for human-readable output
 export function formatTable(data) {
@@ -1372,135 +1346,6 @@ SYMBOLS:
     return tradingCmds[sub](args.slice(1), apiInstance, flags, options);
   };
 
-  // 'alerts' — smart alert CRUD
-  cmds['alerts'] = async (args, apiInstance, flags, options) => {
-    const sub = args[0];
-    if (!sub || sub === 'help' || flags.help || flags.h) {
-      log(`nansen alerts — Smart alert management
-
-SUBCOMMANDS:
-  list        List all alerts
-  create      Create a new alert
-  update      Update an existing alert
-  toggle      Enable or disable an alert
-  delete      Delete an alert
-
-USAGE:
-  nansen alerts list
-  nansen alerts create --name <name> --type <type> --time-window <window> --chains <chains> --telegram <chatId> [--data '<json>']
-  nansen alerts update <id> [--name <name>] [--chains <chains>] [--data '<json>']
-  nansen alerts toggle <id> --enabled
-  nansen alerts toggle <id> --disabled
-  nansen alerts delete <id>
-
-OPTIONS:
-  --chains <chains>       Comma-separated chains (e.g. ethereum,solana). Merged into --data.
-  --telegram <chatId>     Send to Telegram chat.
-  --slack <webhookUrl>    Send to Slack webhook.
-  --discord <webhookUrl>  Send to Discord webhook. Combine multiple channel flags for multi-channel alerts.
-  --data '<json>'         Alert config as JSON. --chains is merged on top if both provided.
-  --description '<text>'  Alert description. Use single quotes to avoid shell interpolation.
-
-EXAMPLES:
-  nansen alerts list --table
-  nansen alerts create --name 'ETH SM Flows' --type sm-token-flows --time-window 1h --chains ethereum --telegram 5238612255 --description 'Alert when SM pours $1M+ into ETH' --data '{"events":["sm-token-flows"],"inflow_1h":{"min":100000}}'
-  nansen alerts toggle abc123 --disabled
-  nansen alerts delete abc123`);
-      return;
-    }
-
-    // Build alert data by merging --chains into --data (if provided)
-    function buildAlertData() {
-      let data = {};
-      if (options.data) {
-        if (typeof options.data === 'string') {
-          try {
-            data = JSON.parse(options.data);
-          } catch {
-            throw new NansenError('--data must be valid JSON', ErrorCode.INVALID_PARAM);
-          }
-        } else {
-          data = options.data;
-        }
-      }
-      if (options.chains) {
-        const chains = typeof options.chains === 'string' ? options.chains.split(',') : Array.isArray(options.chains) ? options.chains : [options.chains];
-        data = { ...data, chains };
-      }
-      return data;
-    }
-
-    // Build channels array from --telegram/--slack/--discord flags
-    function buildChannels() {
-      const channels = [];
-      if (options.telegram) channels.push({ type: 'telegram', data: { chatId: String(options.telegram) } });
-      if (options.slack) channels.push({ type: 'slack', data: { webhookUrl: options.slack } });
-      if (options.discord) channels.push({ type: 'discord', data: { webhookUrl: options.discord } });
-      return channels.length > 0 ? channels : null;
-    }
-
-    const handlers = {
-      'list': () => apiInstance.alertsList(),
-      'create': () => {
-        const name = options.name;
-        const type = options.type;
-        const timeWindow = options['time-window'];
-        const channels = buildChannels();
-        const data = buildAlertData();
-        const missing = [];
-        if (!name) missing.push('--name');
-        if (!type) missing.push('--type');
-        if (!timeWindow) missing.push('--time-window');
-        if (!channels) missing.push('a channel (--telegram, --slack, or --discord)');
-        if (missing.length > 0) {
-          throw new NansenError(`Required: ${missing.join(', ')}`, ErrorCode.MISSING_PARAM);
-        }
-        return apiInstance.alertsCreate({
-          name,
-          type,
-          timeWindow,
-          channels,
-          data,
-          ...(options.description ? { description: options.description } : {}),
-          isEnabled: !flags.disabled,
-        });
-      },
-      'update': () => {
-        const id = args[1];
-        if (!id) throw new NansenError('Required: <id>', ErrorCode.MISSING_PARAM);
-        const params = { id };
-        if (options.name) params.name = options.name;
-        if (options.type) params.type = options.type;
-        if (options['time-window']) params.timeWindow = options['time-window'];
-        const channels = buildChannels();
-        if (channels) params.channels = channels;
-        const data = buildAlertData();
-        if (Object.keys(data).length > 0) params.data = data;
-        if (options.description) params.description = options.description;
-        if (flags.enabled) params.isEnabled = true;
-        if (flags.disabled) params.isEnabled = false;
-        return apiInstance.alertsUpdate(params);
-      },
-      'toggle': () => {
-        const id = args[1];
-        if (!id) throw new NansenError('Required: <id>', ErrorCode.MISSING_PARAM);
-        const isEnabled = flags.enabled ? true : flags.disabled ? false : undefined;
-        if (isEnabled === undefined) throw new NansenError('Required: --enabled or --disabled', ErrorCode.MISSING_PARAM);
-        return apiInstance.alertsToggle({ id, isEnabled });
-      },
-      'delete': () => {
-        const id = args[1];
-        if (!id) throw new NansenError('Required: <id>', ErrorCode.MISSING_PARAM);
-        return apiInstance.alertsDelete(id);
-      },
-    };
-
-    if (!handlers[sub]) {
-      throw new NansenError(`Unknown alerts subcommand: ${sub}. Available: list, create, update, toggle, delete`, ErrorCode.UNKNOWN);
-    }
-    return handlers[sub]();
-  };
-
   return cmds;
 }
 
@@ -1609,7 +1454,7 @@ export async function runCLI(rawArgs, deps = {}) {
     if (updateNotification) errorOutput(updateNotification);
   };
 
-  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...commandOverrides };
+  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...buildAlertsCommands(deps), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);
