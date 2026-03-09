@@ -134,3 +134,4 @@ nansen alerts create \
 - Multiple channels can be combined: `--telegram 123 --slack https://...`
 - `--data '<json>'` merges raw JSON on top of named flags (escape hatch for fields without named flags).
 - Alert endpoints are internal-only. Non-internal users receive 404.
+- Use single quotes for names with `$` or special characters: `--name 'SM >$1M'`

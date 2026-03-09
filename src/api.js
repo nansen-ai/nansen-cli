@@ -1287,6 +1287,14 @@ export class NansenAPI {
     return this.request('/api/v1/smart-alert/toggle', params, { method: 'PATCH' });
   }
 
+  async alertsGet(id) {
+    // TODO: replace with GET /api/v1/smart-alert/{id} once a get-by-id endpoint exists.
+    // Fetching the full list does not scale for users with many alerts.
+    const result = await this.alertsList();
+    const alerts = Array.isArray(result) ? result : result?.alerts ?? result?.data ?? [];
+    return alerts.find(a => a.id === id) ?? null;
+  }
+
   async alertsDelete(alertId) {
     return this.request(`/api/v1/smart-alert/${encodeURIComponent(alertId)}`, {}, { method: 'DELETE' });
   }

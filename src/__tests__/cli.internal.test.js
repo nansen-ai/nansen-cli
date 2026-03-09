@@ -596,6 +596,81 @@ describe('alerts create does not require --time-window', () => {
   });
 });
 
+describe('alerts update — type inference', () => {
+  it('should call alertsGet to infer type when type-specific flags used without --type', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({ type: 'sm-token-flows' }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { 'inflow-1h-min': 500000 });
+    expect(mockApi.alertsGet).toHaveBeenCalledWith('abc123');
+    expect(mockApi.alertsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'abc123',
+      type: 'sm-token-flows',
+      timeWindow: '1h',
+    }));
+  });
+
+  it('should reject --type that differs from existing alert type', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({ type: 'common-token-transfer' }),
+      alertsUpdate: vi.fn(),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await expect(cmd(['update', 'abc123'], mockApi, {}, { type: 'sm-token-flows', 'inflow-1h-min': 500000 }))
+      .rejects.toThrow('Cannot change alert type');
+    expect(mockApi.alertsUpdate).not.toHaveBeenCalled();
+  });
+
+  it('should allow --type that matches existing alert type', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({ type: 'sm-token-flows', data: { chains: ['ethereum'] } }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { type: 'sm-token-flows', 'inflow-1h-min': 500000 });
+    expect(mockApi.alertsUpdate).toHaveBeenCalledWith(expect.objectContaining({ type: 'sm-token-flows' }));
+  });
+
+  it('should always call alertsGet even for simple field updates like rename', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({ type: 'sm-token-flows' }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { name: 'New Name' });
+    expect(mockApi.alertsGet).toHaveBeenCalledWith('abc123');
+    expect(mockApi.alertsUpdate).toHaveBeenCalledWith(expect.objectContaining({ name: 'New Name' }));
+  });
+
+  it('should infer type from nested data field if top-level type is absent', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({ data: { type: 'common-token-transfer' } }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { 'usd-min': 1000 });
+    expect(mockApi.alertsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'common-token-transfer',
+      timeWindow: 'realtime',
+    }));
+  });
+
+  it('should throw if --id is missing', async () => {
+    const mockApi = { alertsGet: vi.fn(), alertsUpdate: vi.fn() };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await expect(cmd(['update'], mockApi, {}, {})).rejects.toThrow('Required: <id>');
+  });
+
+  it('should throw if alert is not found', async () => {
+    const mockApi = { alertsGet: vi.fn().mockResolvedValue(null), alertsUpdate: vi.fn() };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await expect(cmd(['update', 'nonexistent'], mockApi, {}, { name: 'X' })).rejects.toThrow('Alert not found');
+    expect(mockApi.alertsUpdate).not.toHaveBeenCalled();
+  });
+});
+
 describe('parseArgs repeatable flags', () => {
   it('should accumulate repeated options into arrays', () => {
     const result = parseArgs(['--token', '0xabc:ethereum', '--token', '0xdef:base']);

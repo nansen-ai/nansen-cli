@@ -319,10 +319,11 @@ Run: nansen alerts <subcommand> --help`,
         list: `nansen alerts list — List all alerts
 
 USAGE:
-  nansen alerts list [--table] [--type <type>] [--enabled|--disabled] [--token-address <addr>] [--chain <chain>] [--limit <n>] [--offset <n>]
+  nansen alerts list [--table] [--pretty] [--type <type>] [--enabled|--disabled] [--token-address <addr>] [--chain <chain>] [--limit <n>] [--offset <n>]
 
 OPTIONS:
-  --table                      Human-readable table output
+  --table                      Human-readable table output (columns: ID, NAME, TYPE, ENABLED, CHANNELS)
+  --pretty                     Indented JSON output
   --type <type>                Filter by alert type (sm-token-flows, common-token-transfer, smart-contract-call)
   --enabled / --disabled       Filter by enabled state
   --token-address <addr>       Filter by token address
@@ -332,6 +333,7 @@ OPTIONS:
 
 EXAMPLES:
   nansen alerts list --table
+  nansen alerts list --pretty
   nansen alerts list --type sm-token-flows --enabled`,
 
         create: `nansen alerts create — Create a new alert
@@ -376,6 +378,8 @@ OPTIONS (smart-contract-call):
 SUBJECT TYPES: address, entity, label, custom-label
 CHAIN ALIASES: Hyperliquid = hyperevm, BSC = bnb
 
+NOTE: Use single quotes for names with $ or special chars: --name 'SM >$1M'
+
 EXAMPLES:
   nansen alerts create --name 'ETH SM Inflow' --type sm-token-flows --chains ethereum --telegram 5238612255 --inflow-1h-min 1000000
   nansen alerts create --name 'USDC Transfers' --type common-token-transfer --chains ethereum --telegram 5238612255 --events send,receive --usd-min 1000000 --subject label:"Centralized Exchange"
@@ -388,8 +392,11 @@ USAGE:
 
 All create options are accepted. Only provided fields are updated.
 
+NOTE: Use single quotes for names with $ or special chars: --name 'SM >$1M'
+
 EXAMPLES:
   nansen alerts update abc123 --name 'New Name'
+  nansen alerts update abc123 --inflow-1h-min 2000000
   nansen alerts update abc123 --type sm-token-flows --chains ethereum,base --inflow-1h-min 2000000`,
 
         toggle: `nansen alerts toggle — Enable or disable an alert
@@ -458,19 +465,34 @@ USAGE:
             isEnabled: !flags.disabled,
           });
         },
-        'update': () => {
+        'update': async () => {
           const id = args[1];
           if (!id) throw new NansenError('Required: <id>', ErrorCode.MISSING_PARAM);
+
+          const existing = await apiInstance.alertsGet(id);
+          if (!existing) throw new NansenError(`Alert not found: ${id}`, ErrorCode.NOT_FOUND);
+          const existingType = existing.type ?? existing.data?.type;
+          if (options.type && options.type !== existingType) {
+            throw new NansenError(
+              `Cannot change alert type (${existingType} → ${options.type}). Delete and recreate the alert instead.`,
+              ErrorCode.INVALID_PARAMS,
+            );
+          }
+          const type = existingType;
+
           const params = { id };
           if (options.name) params.name = options.name;
-          if (options.type) {
-            params.type = options.type;
-            params.timeWindow = TIME_WINDOW_BY_TYPE[options.type] ?? 'realtime';
+          if (type) {
+            params.type = type;
+            params.timeWindow = TIME_WINDOW_BY_TYPE[type] ?? 'realtime';
           }
           const channels = buildChannels();
           if (channels) params.channels = channels;
-          const data = buildAlertData(options);
-          if (Object.keys(data).length > 0) params.data = data;
+          const effectiveOptions = type ? { ...options, type } : options;
+          const builtData = buildAlertData(effectiveOptions);
+          if (Object.keys(builtData).length > 0) {
+            params.data = existing.data ? { ...existing.data, ...builtData } : builtData;
+          }
           if (options.description) params.description = options.description;
           if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAMS);
           if (flags.enabled) params.isEnabled = true;
