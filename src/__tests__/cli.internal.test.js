@@ -584,14 +584,14 @@ describe('alerts create does not require --time-window', () => {
   it('should use TIME_WINDOW_BY_TYPE for sm-token-flows', async () => {
     const mockApi = { alertsCreate: vi.fn().mockResolvedValue({ id: 'new' }) };
     const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
-    await cmd(['create'], mockApi, {}, { name: 'Test', type: 'sm-token-flows', telegram: '123' });
+    await cmd(['create'], mockApi, {}, { name: 'Test', type: 'sm-token-flows', chains: 'ethereum', telegram: '123' });
     expect(mockApi.alertsCreate).toHaveBeenCalledWith(expect.objectContaining({ timeWindow: '1h' }));
   });
 
   it('should use realtime for common-token-transfer', async () => {
     const mockApi = { alertsCreate: vi.fn().mockResolvedValue({ id: 'new' }) };
     const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
-    await cmd(['create'], mockApi, {}, { name: 'Test', type: 'common-token-transfer', telegram: '123' });
+    await cmd(['create'], mockApi, {}, { name: 'Test', type: 'common-token-transfer', chains: 'ethereum', telegram: '123' });
     expect(mockApi.alertsCreate).toHaveBeenCalledWith(expect.objectContaining({ timeWindow: 'realtime' }));
   });
 });
@@ -668,6 +668,28 @@ describe('alerts update — type inference', () => {
     const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
     await expect(cmd(['update', 'nonexistent'], mockApi, {}, { name: 'X' })).rejects.toThrow('Alert not found');
     expect(mockApi.alertsUpdate).not.toHaveBeenCalled();
+  });
+
+  it('should merge inclusion/exclusion so adding --token does not drop tokenSectors', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({
+        type: 'sm-token-flows',
+        data: {
+          chains: ['ethereum'],
+          inclusion: { tokens: [{ address: '0xA', chain: 'ethereum' }], tokenSectors: ['DeFi'] },
+        },
+      }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { token: '0xB:ethereum' });
+    const sentData = mockApi.alertsUpdate.mock.calls[0][0].data;
+    // New token replaces the tokens array
+    expect(sentData.inclusion.tokens).toEqual([{ address: '0xB', chain: 'ethereum' }]);
+    // But tokenSectors from existing data is preserved
+    expect(sentData.inclusion.tokenSectors).toEqual(['DeFi']);
+    // Top-level fields also preserved
+    expect(sentData.chains).toEqual(['ethereum']);
   });
 });
 

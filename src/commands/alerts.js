@@ -449,6 +449,7 @@ USAGE:
           const missing = [];
           if (!name) missing.push('--name');
           if (!type) missing.push('--type');
+          if (!options.chains) missing.push('--chains');
           if (!channels) missing.push('a channel (--telegram, --slack, or --discord)');
           if (missing.length > 0) {
             throw new NansenError(`Required: ${missing.join(', ')}`, ErrorCode.MISSING_PARAM);
@@ -491,7 +492,15 @@ USAGE:
           const effectiveOptions = type ? { ...options, type } : options;
           const builtData = buildAlertData(effectiveOptions);
           if (Object.keys(builtData).length > 0) {
-            params.data = existing.data ? { ...existing.data, ...builtData } : builtData;
+            const merged = existing.data ? { ...existing.data, ...builtData } : builtData;
+            // Merge inclusion/exclusion so e.g. --token doesn't drop tokenSectors
+            if (existing.data?.inclusion && builtData.inclusion) {
+              merged.inclusion = { ...existing.data.inclusion, ...builtData.inclusion };
+            }
+            if (existing.data?.exclusion && builtData.exclusion) {
+              merged.exclusion = { ...existing.data.exclusion, ...builtData.exclusion };
+            }
+            params.data = merged;
           }
           if (options.description) params.description = options.description;
           if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAMS);
