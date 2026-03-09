@@ -253,6 +253,7 @@ export function buildAlertData(options) {
       'outflow-1h-min', 'outflow-1h-max', 'outflow-1d-min', 'outflow-1d-max', 'outflow-7d-min', 'outflow-7d-max',
       'netflow-1h-min', 'netflow-1h-max', 'netflow-1d-min', 'netflow-1d-max', 'netflow-7d-min', 'netflow-7d-max',
       'events', 'usd-min', 'usd-max', 'token-amount-min', 'token-amount-max',
+      'token', 'exclude-token',
       'subject', 'counterparty', 'signature-hash', 'caller', 'contract',
       'exclude-caller', 'exclude-contract', 'exclude-from', 'exclude-to',
       'token-sector', 'exclude-token-sector', 'token-age-min', 'token-age-max',
