@@ -3,6 +3,7 @@ name: Sync Skills to ClawHub
 on:
   release:
     types: [published]
+  workflow_dispatch: # allow manual trigger for testing / forced resync
 
 jobs:
   sync-clawhub:
