@@ -152,6 +152,15 @@ describe('CLI Smoke Tests', () => {
     expect(json.code).toBe('MISSING_PARAM');
   });
 
+  it('should throw on unknown x subcommand with non-zero exit', () => {
+    const { stdout, stderr, exitCode } = runCLI('research x bogus-subcommand');
+    expect(exitCode).not.toBe(0);
+    const output = stdout || stderr;
+    const json = JSON.parse(output.split('\n').find(l => l.startsWith('{')));
+    expect(json.code).toBe('UNKNOWN');
+    expect(json.error).toContain('bogus-subcommand');
+  });
+
   it('should error on pm ohlcv without --market-id', () => {
     const { stdout, stderr, exitCode } = runCLI('research pm ohlcv');
     expect(exitCode).not.toBe(0);

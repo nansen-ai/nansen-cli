@@ -1764,6 +1764,14 @@ describe('NansenAPI', () => {
         expect(body.token_symbol).toBe('pump');
         expect(body.token_name).toBe('Penguins');
       });
+
+      it('should omit token fields (not send empty strings) when input is falsy or all punctuation', async () => {
+        setupMock(MOCK_RESPONSES.xPostsByToken);
+        await api.xPostsByToken({ date: { from: '2026-03-01', to: '2026-03-08' }, tokenSymbol: '!!!', tokenName: undefined });
+        const body = expectFetchCalledWith('/api/v1/ra-agent/posts-by-token');
+        expect(body.token_symbol).toBeUndefined();
+        expect(body.token_name).toBeUndefined();
+      });
     });
 
     describe('xPostsByUser', () => {

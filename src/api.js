@@ -1246,9 +1246,10 @@ export class NansenAPI {
    * so "pump.fun" → "pump", "Pudgy Penguins" → "Penguins", "T-2049" → "2049".
    */
   _longestAsciiAlnumSegment(text) {
-    if (!text) return '';
+    if (!text) return undefined;
     const segments = text.match(/[A-Za-z0-9]+/g) || [];
-    return segments.reduce((a, b) => (b.length > a.length ? b : a), '');
+    const longest = segments.reduce((a, b) => (b.length > a.length ? b : a), '');
+    return longest || undefined;
   }
 
   async xPostsByToken(params = {}) {
