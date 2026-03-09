@@ -319,10 +319,11 @@ Run: nansen alerts <subcommand> --help`,
         list: `nansen alerts list — List all alerts
 
 USAGE:
-  nansen alerts list [--table] [--type <type>] [--enabled|--disabled] [--token-address <addr>] [--chain <chain>] [--limit <n>] [--offset <n>]
+  nansen alerts list [--table] [--pretty] [--type <type>] [--enabled|--disabled] [--token-address <addr>] [--chain <chain>] [--limit <n>] [--offset <n>]
 
 OPTIONS:
-  --table                      Human-readable table output
+  --table                      Human-readable table output (columns: ID, NAME, TYPE, ENABLED, CHANNELS)
+  --pretty                     Indented JSON output (consistent with other nansen commands)
   --type <type>                Filter by alert type (sm-token-flows, common-token-transfer, smart-contract-call)
   --enabled / --disabled       Filter by enabled state
   --token-address <addr>       Filter by token address
@@ -332,6 +333,7 @@ OPTIONS:
 
 EXAMPLES:
   nansen alerts list --table
+  nansen alerts list --pretty
   nansen alerts list --type sm-token-flows --enabled`,
 
         create: `nansen alerts create — Create a new alert
@@ -376,6 +378,8 @@ OPTIONS (smart-contract-call):
 SUBJECT TYPES: address, entity, label, custom-label
 CHAIN ALIASES: Hyperliquid = hyperevm, BSC = bnb
 
+NOTE: Use single quotes for names with $ or special chars: --name 'SM >$1M'
+
 EXAMPLES:
   nansen alerts create --name 'ETH SM Inflow' --type sm-token-flows --chains ethereum --telegram 5238612255 --inflow-1h-min 1000000
   nansen alerts create --name 'USDC Transfers' --type common-token-transfer --chains ethereum --telegram 5238612255 --events send,receive --usd-min 1000000 --subject label:"Centralized Exchange"
@@ -387,9 +391,13 @@ USAGE:
   nansen alerts update <id> [--name <name>] [--type <type>] [--chains <chains>] [--enabled|--disabled] ...
 
 All create options are accepted. Only provided fields are updated.
+--type auto-inferred from existing alert when possible (no need to pass --type when using type-specific flags).
+
+NOTE: Use single quotes for names with $ or special chars: --name 'SM >$1M'
 
 EXAMPLES:
   nansen alerts update abc123 --name 'New Name'
+  nansen alerts update abc123 --inflow-1h-min 2000000
   nansen alerts update abc123 --type sm-token-flows --chains ethereum,base --inflow-1h-min 2000000`,
 
         toggle: `nansen alerts toggle — Enable or disable an alert
@@ -458,18 +466,41 @@ USAGE:
             isEnabled: !flags.disabled,
           });
         },
-        'update': () => {
+        'update': async () => {
           const id = args[1];
           if (!id) throw new NansenError('Required: <id>', ErrorCode.MISSING_PARAM);
           const params = { id };
           if (options.name) params.name = options.name;
-          if (options.type) {
-            params.type = options.type;
-            params.timeWindow = TIME_WINDOW_BY_TYPE[options.type] ?? 'realtime';
+
+          // Auto-infer type from existing alert when type-specific flags are used without --type
+          const typeSpecificFlagNames = [
+            'inflow-1h-min', 'inflow-1h-max', 'inflow-1d-min', 'inflow-1d-max', 'inflow-7d-min', 'inflow-7d-max',
+            'outflow-1h-min', 'outflow-1h-max', 'outflow-1d-min', 'outflow-1d-max', 'outflow-7d-min', 'outflow-7d-max',
+            'netflow-1h-min', 'netflow-1h-max', 'netflow-1d-min', 'netflow-1d-max', 'netflow-7d-min', 'netflow-7d-max',
+            'events', 'usd-min', 'usd-max', 'token-amount-min', 'token-amount-max',
+            'token', 'exclude-token',
+            'subject', 'counterparty', 'signature-hash', 'caller', 'contract',
+            'exclude-caller', 'exclude-contract', 'exclude-from', 'exclude-to',
+            'token-sector', 'exclude-token-sector', 'token-age-min', 'token-age-max',
+            'market-cap-min', 'market-cap-max', 'fdv-min', 'fdv-max',
+          ];
+          const hasTypeSpecificFlags = typeSpecificFlagNames.some(f => options[f] !== undefined);
+          let effectiveOptions = options;
+          if (hasTypeSpecificFlags && !options.type) {
+            const existing = await apiInstance.alertsGet(id);
+            const inferredType = existing?.type ?? existing?.data?.type;
+            if (inferredType) {
+              effectiveOptions = { ...options, type: inferredType };
+            }
+          }
+
+          if (effectiveOptions.type) {
+            params.type = effectiveOptions.type;
+            params.timeWindow = TIME_WINDOW_BY_TYPE[effectiveOptions.type] ?? 'realtime';
           }
           const channels = buildChannels();
           if (channels) params.channels = channels;
-          const data = buildAlertData(options);
+          const data = buildAlertData(effectiveOptions);
           if (Object.keys(data).length > 0) params.data = data;
           if (options.description) params.description = options.description;
           if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAMS);

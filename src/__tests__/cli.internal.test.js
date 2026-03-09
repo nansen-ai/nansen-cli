@@ -596,6 +596,63 @@ describe('alerts create does not require --time-window', () => {
   });
 });
 
+describe('alerts update — type inference', () => {
+  it('should call alertsGet to infer type when type-specific flags used without --type', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({ type: 'sm-token-flows' }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { 'inflow-1h-min': 500000 });
+    expect(mockApi.alertsGet).toHaveBeenCalledWith('abc123');
+    expect(mockApi.alertsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'abc123',
+      type: 'sm-token-flows',
+      timeWindow: '1h',
+    }));
+  });
+
+  it('should not call alertsGet when --type is explicitly provided', async () => {
+    const mockApi = {
+      alertsGet: vi.fn(),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { type: 'sm-token-flows', 'inflow-1h-min': 500000 });
+    expect(mockApi.alertsGet).not.toHaveBeenCalled();
+    expect(mockApi.alertsUpdate).toHaveBeenCalledWith(expect.objectContaining({ type: 'sm-token-flows' }));
+  });
+
+  it('should not call alertsGet when no type-specific flags are used', async () => {
+    const mockApi = {
+      alertsGet: vi.fn(),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { name: 'New Name' });
+    expect(mockApi.alertsGet).not.toHaveBeenCalled();
+  });
+
+  it('should infer type from nested data field if top-level type is absent', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({ data: { type: 'common-token-transfer' } }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { 'usd-min': 1000 });
+    expect(mockApi.alertsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'common-token-transfer',
+      timeWindow: 'realtime',
+    }));
+  });
+
+  it('should throw if --id is missing', async () => {
+    const mockApi = { alertsGet: vi.fn(), alertsUpdate: vi.fn() };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await expect(cmd(['update'], mockApi, {}, {})).rejects.toThrow('Required: <id>');
+  });
+});
+
 describe('parseArgs repeatable flags', () => {
   it('should accumulate repeated options into arrays', () => {
     const result = parseArgs(['--token', '0xabc:ethereum', '--token', '0xdef:base']);

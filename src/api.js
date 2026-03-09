@@ -1290,6 +1290,10 @@ export class NansenAPI {
     return this.request('/api/v1/smart-alert/toggle', params, { method: 'PATCH' });
   }
 
+  async alertsGet(id) {
+    return this.request('/api/v1/smart-alert/' + encodeURIComponent(id), {}, { method: 'GET' });
+  }
+
   async alertsDelete(alertId) {
     return this.request(`/api/v1/smart-alert/${encodeURIComponent(alertId)}`, {}, { method: 'DELETE' });
   }
