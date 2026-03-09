@@ -1496,8 +1496,8 @@ export async function runCLI(rawArgs, deps = {}) {
         }
       }
       // First try subcommand help
-      // Skip for 'trade' — its handlers show their own rich usage when required args are missing
-      if (command && subcommand && command !== 'trade') {
+      // Skip for 'trade'/'alerts' — their handlers show their own rich usage
+      if (command && subcommand && command !== 'trade' && command !== 'alerts') {
         const subHelp = generateSubcommandHelp(command, subcommand);
         if (subHelp) {
           output(subHelp);
@@ -1506,8 +1506,8 @@ export async function runCLI(rawArgs, deps = {}) {
         }
       }
       // Then try command-level help (list subcommands)
-      // Skip for 'trade' — let the handler show its own usage
-      const cmdSchemaLookup = command !== 'trade' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
+      // Skip for 'trade'/'alerts' — let the handler show its own usage
+      const cmdSchemaLookup = command !== 'trade' && command !== 'alerts' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
       if (command && cmdSchemaLookup) {
         const cmdSchema = cmdSchemaLookup;
         const lines = [`${command} — ${cmdSchema.description}`];
