@@ -601,7 +601,8 @@
                 "likes",
                 "views",
                 "tweet_id"
-              ]
+              ],
+              "example": "nansen research x posts-by-token --token-symbol BTC --days 7 --sort likes:desc --limit 20"
             },
             "posts-by-user": {
               "description": "Get posts by a specific X user",
@@ -639,7 +640,8 @@
                 "likes",
                 "views",
                 "tweet_id"
-              ]
+              ],
+              "example": "nansen research x posts-by-user --username vitalikbuterin --days 7 --min-likes 10"
             }
           }
         },
@@ -680,7 +682,7 @@
             },
             "wallet": {
               "type": "string",
-              "description": "Wallet name (or \"walletconnect\"/\"wc\" for WalletConnect, EVM only). A configured wallet is required — run `nansen wallet create` if you haven't set one up yet."
+              "description": "Wallet name (or \"walletconnect\"/\"wc\" for WalletConnect, EVM only). A configured wallet is required \u2014 run `nansen wallet create` if you haven't set one up yet."
             }
           },
           "prerequisites": [
