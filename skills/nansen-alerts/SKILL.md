@@ -36,7 +36,7 @@ nansen alerts delete <id>
 |------|--------|--------|--------|--------|
 | `<id>` (positional) | | required | required | required |
 | `--name` | required | optional | | |
-| `--type` | required | optional | | |
+| `--type` | required | required with type-specific flags | | |
 | `--chains` | recommended | optional | | |
 | `--telegram` | chat ID | optional | | |
 | `--slack` | webhook URL | optional | | |

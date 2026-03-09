@@ -247,7 +247,24 @@ export function buildAlertData(options) {
   } else if (options.type === 'smart-contract-call') {
     data = buildSmartContractCallData(options);
   } else {
-    // Unknown / no type — minimal fallback: just handle chains
+    // No type — only --chains and --data are valid; warn if type-specific flags are present
+    const typeSpecificFlags = [
+      'inflow-1h-min', 'inflow-1h-max', 'inflow-1d-min', 'inflow-1d-max', 'inflow-7d-min', 'inflow-7d-max',
+      'outflow-1h-min', 'outflow-1h-max', 'outflow-1d-min', 'outflow-1d-max', 'outflow-7d-min', 'outflow-7d-max',
+      'netflow-1h-min', 'netflow-1h-max', 'netflow-1d-min', 'netflow-1d-max', 'netflow-7d-min', 'netflow-7d-max',
+      'events', 'usd-min', 'usd-max', 'token-amount-min', 'token-amount-max',
+      'subject', 'counterparty', 'signature-hash', 'caller', 'contract',
+      'exclude-caller', 'exclude-contract', 'exclude-from', 'exclude-to',
+      'token-sector', 'exclude-token-sector', 'token-age-min', 'token-age-max',
+      'market-cap-min', 'market-cap-max', 'fdv-min', 'fdv-max',
+    ];
+    const present = typeSpecificFlags.filter(f => options[f] !== undefined);
+    if (present.length > 0) {
+      throw new NansenError(
+        `--type is required when using type-specific flags (${present.map(f => '--' + f).join(', ')})`,
+        ErrorCode.MISSING_PARAM,
+      );
+    }
     data = {};
     const chains = parseChains(options.chains);
     if (chains) data.chains = chains;
@@ -372,7 +389,7 @@ All create options are accepted. Only provided fields are updated.
 
 EXAMPLES:
   nansen alerts update abc123 --name 'New Name'
-  nansen alerts update abc123 --chains ethereum,base --inflow-1h-min 2000000`,
+  nansen alerts update abc123 --type sm-token-flows --chains ethereum,base --inflow-1h-min 2000000`,
 
         toggle: `nansen alerts toggle — Enable or disable an alert
 
