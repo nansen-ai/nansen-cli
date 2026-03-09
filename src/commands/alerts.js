@@ -388,35 +388,15 @@ Advanced: use --data '<json>' to pass the full alert config directly (merged on 
           if (flags.enabled) params.isEnabled = true;
           if (flags.disabled) params.isEnabled = false;
 
-          let results = await apiInstance.alertsList(params);
+          const results = await apiInstance.alertsList(params);
           // Normalise to array
-          if (!Array.isArray(results)) results = results?.alerts ?? results?.data ?? [];
-
-          // Client-side filters (defensive — backend may or may not support them)
-          if (params.type) results = results.filter(a => a.type === params.type);
-          if (params.isEnabled !== undefined) results = results.filter(a => a.isEnabled === params.isEnabled);
-          if (params.tokenAddress) {
-            const addr = params.tokenAddress.toLowerCase();
-            results = results.filter(a => {
-              const tokens = [...(a.data?.inclusion?.tokens ?? []), ...(a.data?.exclusion?.tokens ?? [])];
-              return tokens.some(t => t.address?.toLowerCase() === addr);
-            });
-          }
-          if (params.chain) {
-            const chain = params.chain.toLowerCase();
-            results = results.filter(a => (a.data?.chains ?? []).some(c => c.toLowerCase() === chain));
-          }
-          const offset = params.offset ?? 0;
-          const limit = params.limit;
-          results = results.slice(offset, limit != null ? offset + limit : undefined);
+          if (!Array.isArray(results)) return results?.alerts ?? results?.data ?? [];
           return results;
         },
         'create': () => {
           const name = options.name;
           const type = options.type;
-          const timeWindow = TIME_WINDOW_BY_TYPE[type] ?? 'realtime';
           const channels = buildChannels();
-          const data = buildAlertData(options);
           const missing = [];
           if (!name) missing.push('--name');
           if (!type) missing.push('--type');
@@ -424,6 +404,8 @@ Advanced: use --data '<json>' to pass the full alert config directly (merged on 
           if (missing.length > 0) {
             throw new NansenError(`Required: ${missing.join(', ')}`, ErrorCode.MISSING_PARAM);
           }
+          const timeWindow = TIME_WINDOW_BY_TYPE[type] ?? 'realtime';
+          const data = buildAlertData(options);
           return apiInstance.alertsCreate({
             name,
             type,

@@ -9,7 +9,6 @@ import {
   parseArgs,
   formatValue,
   formatTable,
-  formatAlertsTable,
   formatOutput,
   formatError,
   formatStream,
@@ -30,6 +29,7 @@ import {
   parseAddressList
 } from '../cli.js';
 import {
+  formatAlertsTable,
   buildAlertData,
   buildSmTokenFlowsData,
   buildCommonTokenTransferData,
@@ -560,64 +560,6 @@ describe('buildCommonTokenTransferData new inclusion/exclusion flags', () => {
     const result = buildCommonTokenTransferData({ 'exclude-token': '0xbad:ethereum', 'exclude-from': 'label:Bot' });
     expect(result.exclusion.tokens).toEqual([{ address: '0xbad', chain: 'ethereum' }]);
     expect(result.exclusion.fromTargets).toEqual([{ type: 'label', value: 'Bot' }]);
-  });
-});
-
-describe('alerts list client-side filtering', () => {
-  const mockAlerts = [
-    { id: '1', type: 'sm-token-flows', isEnabled: true, channels: [], data: { chains: ['ethereum'], inclusion: { tokens: [{ address: '0xabc', chain: 'ethereum' }] } } },
-    { id: '2', type: 'common-token-transfer', isEnabled: false, channels: [], data: { chains: ['base'] } },
-    { id: '3', type: 'sm-token-flows', isEnabled: false, channels: [], data: { chains: ['ethereum'] } },
-  ];
-
-  function makeApi() {
-    return { alertsList: vi.fn().mockResolvedValue(mockAlerts) };
-  }
-
-  async function callList(flags = {}, options = {}) {
-    const logs = [];
-    const cmd = buildAlertsCommands({ log: (...a) => logs.push(a) })['alerts'];
-    return cmd(['list'], makeApi(), flags, options);
-  }
-
-  it('should return all alerts when no filters', async () => {
-    const result = await callList();
-    expect(result).toHaveLength(3);
-  });
-
-  it('should filter by --type', async () => {
-    const result = await callList({}, { type: 'sm-token-flows' });
-    expect(result).toHaveLength(2);
-    expect(result.every(a => a.type === 'sm-token-flows')).toBe(true);
-  });
-
-  it('should filter by --disabled flag', async () => {
-    const result = await callList({ disabled: true });
-    expect(result).toHaveLength(2);
-    expect(result.every(a => a.isEnabled === false)).toBe(true);
-  });
-
-  it('should filter by --enabled flag', async () => {
-    const result = await callList({ enabled: true });
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe('1');
-  });
-
-  it('should apply --limit slicing', async () => {
-    const result = await callList({}, { limit: '2' });
-    expect(result).toHaveLength(2);
-  });
-
-  it('should apply --offset slicing', async () => {
-    const result = await callList({}, { offset: '2' });
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe('3');
-  });
-
-  it('should apply --limit and --offset together', async () => {
-    const result = await callList({}, { limit: '1', offset: '1' });
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe('2');
   });
 });
 
