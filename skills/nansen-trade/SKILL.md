@@ -93,3 +93,8 @@ nansen trade execute --quote "$quote_id"
 - Quotes expire after ~1 hour. If execute fails, get a fresh quote.
 - A wallet is required even for quotes (the API builds sender-specific transactions).
 - ERC-20 swaps may require an approval step — execute handles this automatically.
+
+## Source
+
+- npm: https://www.npmjs.com/package/nansen-cli
+- GitHub: https://github.com/nansen-ai/nansen-cli

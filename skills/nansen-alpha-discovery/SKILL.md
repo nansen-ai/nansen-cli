@@ -23,3 +23,8 @@ nansen research token flow-intelligence --token $TOKEN --chain $CHAIN
 ```
 
 Cross-reference screener results with positive netflow to find early accumulation.
+
+## Source
+
+- npm: https://www.npmjs.com/package/nansen-cli
+- GitHub: https://github.com/nansen-ai/nansen-cli
