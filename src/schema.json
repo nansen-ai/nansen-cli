@@ -3,1779 +3,566 @@
     "research": {
       "description": "Research and analytics commands",
       "subcommands": {
-        "smart-money": {
-          "description": "Smart Money analytics - track sophisticated market participants",
-          "subcommands": {
-            "netflow": {
-              "description": "Net capital flows (inflows vs outflows)",
-              "options": {
-                "chain": {
-                  "type": "string",
-                  "default": "solana",
-                  "description": "Blockchain to query"
-                },
-                "chains": {
-                  "type": "array",
-                  "description": "Multiple chains as JSON array"
-                },
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
-                },
-                "labels": {
-                  "type": "string|array",
-                  "description": "Smart Money label filter"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
-                }
-              },
-              "returns": [
-                "token_address",
-                "token_symbol",
-                "net_flow_1h_usd",
-                "net_flow_24h_usd",
-                "net_flow_7d_usd",
-                "net_flow_30d_usd",
-                "chain",
-                "token_sectors",
-                "trader_count",
-                "token_age_days",
-                "market_cap_usd"
-              ]
-            },
-            "dex-trades": {
-              "description": "Real-time DEX trading activity",
-              "options": {
-                "chain": {
-                  "type": "string",
-                  "default": "solana"
-                },
-                "chains": {
-                  "type": "array"
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "labels": {
-                  "type": "string|array"
-                },
-                "sort": {
-                  "type": "string"
-                },
-                "filters": {
-                  "type": "object"
-                }
-              },
-              "returns": [
-                "chain",
-                "block_timestamp",
-                "transaction_hash",
-                "trader_address",
-                "trader_address_label",
-                "token_bought_address",
-                "token_sold_address",
-                "token_bought_amount",
-                "token_sold_amount",
-                "token_bought_symbol",
-                "token_sold_symbol",
-                "token_bought_age_days",
-                "token_sold_age_days",
-                "token_bought_market_cap",
-                "token_sold_market_cap",
-                "trade_value_usd"
-              ]
-            },
-            "perp-trades": {
-              "description": "Perpetual trading on Hyperliquid",
-              "options": {
-                "limit": {
-                  "type": "number"
-                },
-                "labels": {
-                  "type": "string|array",
-                  "description": "Smart Money label filter"
-                },
-                "only-new-positions": {
-                  "type": "boolean",
-                  "description": "Show only position-opening trades (Open Long, Open Short)"
-                },
-                "sort": {
-                  "type": "string"
-                },
-                "filters": {
-                  "type": "object"
-                }
-              },
-              "returns": [
-                "trader_address_label",
-                "trader_address",
-                "token_symbol",
-                "side",
-                "action",
-                "token_amount",
-                "price_usd",
-                "value_usd",
-                "type",
-                "block_timestamp",
-                "transaction_hash"
-              ]
-            },
-            "holdings": {
-              "description": "Aggregated token balances",
-              "options": {
-                "chain": {
-                  "type": "string",
-                  "default": "solana"
-                },
-                "chains": {
-                  "type": "array"
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "labels": {
-                  "type": "string|array"
-                }
-              },
-              "returns": [
-                "chain",
-                "token_address",
-                "token_symbol",
-                "token_sectors",
-                "value_usd",
-                "balance_24h_percent_change",
-                "holders_count",
-                "share_of_holdings_percent",
-                "token_age_days",
-                "market_cap_usd"
-              ]
-            },
-            "dcas": {
-              "description": "DCA strategies on Jupiter",
-              "options": {
-                "limit": {
-                  "type": "number"
-                },
-                "filters": {
-                  "type": "object"
-                }
-              },
-              "returns": [
-                "dca_created_at",
-                "dca_updated_at",
-                "trader_address",
-                "transaction_hash",
-                "trader_address_label",
-                "dca_vault_address",
-                "input_token_address",
-                "output_token_address",
-                "deposit_token_amount",
-                "token_spent_amount",
-                "output_token_redeemed_amount",
-                "dca_status",
-                "input_token_symbol",
-                "output_token_symbol",
-                "deposit_value_usd"
-              ]
-            },
-            "historical-holdings": {
-              "description": "Historical holdings over time",
-              "options": {
-                "chain": {
-                  "type": "string",
-                  "default": "solana"
-                },
-                "chains": {
-                  "type": "array"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                }
-              },
-              "returns": [
-                "date",
-                "chain",
-                "token_address",
-                "token_symbol",
-                "token_sectors",
-                "smart_money_labels",
-                "balance",
-                "value_usd",
-                "balance_24h_percent_change",
-                "holders_count",
-                "share_of_holdings_percent",
-                "token_age_days",
-                "market_cap_usd"
-              ]
-            }
-          }
-        },
-        "profiler": {
-          "description": "Wallet profiling - detailed information about any blockchain address",
-          "subcommands": {
-            "balance": {
-              "description": "Current token holdings",
-              "options": {
-                "address": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Wallet address to query"
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "ethereum"
-                },
-                "entity": {
-                  "type": "string",
-                  "description": "Entity name instead of address"
-                }
-              },
-              "returns": [
-                "chain",
-                "address",
-                "token_address",
-                "token_symbol",
-                "token_name",
-                "token_amount",
-                "price_usd",
-                "value_usd"
-              ]
-            },
-            "labels": {
-              "description": "Behavioral and entity labels",
-              "options": {
-                "address": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "ethereum"
-                }
-              },
-              "returns": [
-                "label",
-                "category"
-              ]
-            },
-            "transactions": {
-              "description": "Transaction history",
-              "options": {
-                "address": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "ethereum"
-                },
-                "date": {
-                  "type": "string",
-                  "required": false,
-                  "description": "Date or date range"
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                }
-              },
-              "returns": [
-                "chain",
-                "method",
-                "tokens_sent",
-                "tokens_received",
-                "volume_usd",
-                "block_timestamp",
-                "transaction_hash",
-                "source_type"
-              ]
-            },
-            "pnl": {
-              "description": "PnL and trade performance",
-              "options": {
-                "address": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "ethereum"
-                },
-                "date": {
-                  "type": "string",
-                  "description": "Date or date range"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                }
-              },
-              "returns": [
-                "token_address",
-                "token_symbol",
-                "token_price",
-                "roi_percent_realised",
-                "pnl_usd_realised",
-                "pnl_usd_unrealised",
-                "roi_percent_unrealised",
-                "bought_amount",
-                "bought_usd",
-                "cost_basis_usd",
-                "sold_amount",
-                "sold_usd",
-                "avg_sold_price_usd",
-                "holding_amount",
-                "holding_usd",
-                "nof_buys",
-                "nof_sells",
-                "max_balance_held",
-                "max_balance_held_usd"
-              ]
-            },
-            "search": {
-              "description": "Search for entities by name",
-              "options": {
-                "query": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Search query"
-                },
-                "limit": {
-                  "type": "number"
-                }
-              },
-              "returns": [
-                "entity_name"
-              ]
-            },
-            "historical-balances": {
-              "description": "Historical balances over time",
-              "options": {
-                "address": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "ethereum"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                }
-              },
-              "returns": [
-                "block_timestamp",
-                "token_address",
-                "chain",
-                "token_amount",
-                "value_usd",
-                "token_symbol"
-              ]
-            },
-            "related-wallets": {
-              "description": "Find wallets related to an address",
-              "options": {
-                "address": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "ethereum"
-                },
-                "limit": {
-                  "type": "number"
-                }
-              },
-              "returns": [
-                "address",
-                "address_label",
-                "relation",
-                "transaction_hash",
-                "block_timestamp",
-                "order",
-                "chain"
-              ]
-            },
-            "counterparties": {
-              "description": "Top counterparties by volume",
-              "options": {
-                "address": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "ethereum"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                }
-              },
-              "returns": [
-                "counterparty_address",
-                "counterparty_address_label",
-                "interaction_count",
-                "total_volume_usd",
-                "volume_in_usd",
-                "volume_out_usd",
-                "tokens_info"
-              ]
-            },
-            "pnl-summary": {
-              "description": "Summarized PnL metrics",
-              "options": {
-                "address": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "ethereum"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                }
-              },
-              "returns": [
-                "pagination",
-                "top5_tokens[realized_pnl, realized_roi, token_address, token_symbol, chain]",
-                "traded_token_count",
-                "traded_times",
-                "realized_pnl_usd",
-                "realized_pnl_percent",
-                "win_rate"
-              ]
-            },
-            "perp-positions": {
-              "description": "Current perpetual positions",
-              "options": {
-                "address": {
-                  "type": "string",
-                  "required": true
-                },
-                "limit": {
-                  "type": "number"
-                }
-              },
-              "returns": [
-                "assetPositions",
-                "crossMaintenanceMarginUsed",
-                "cross_margin_summary_account_value_usd",
-                "cross_margin_summary_total_margin_used_usd",
-                "cross_margin_summary_total_net_liquidation_position_on_usd",
-                "cross_margin_summary_total_raw_usd",
-                "margin_summary_account_value_usd",
-                "margin_summary_total_margin_used_usd",
-                "margin_summary_total_net_liquidation_position_usd",
-                "margin_summary_total_raw_usd",
-                "time",
-                "withdrawable"
-              ]
-            },
-            "perp-trades": {
-              "description": "Perpetual trading history",
-              "options": {
-                "address": {
-                  "type": "string",
-                  "required": true
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                }
-              },
-              "returns": [
-                "timestamp",
-                "side",
-                "action",
-                "block_number",
-                "token_symbol",
-                "price",
-                "size",
-                "value_usd",
-                "start_position",
-                "closed_pnl",
-                "crossed",
-                "fee_usd",
-                "fee_token_symbol",
-                "transaction_hash",
-                "user",
-                "oid"
-              ]
-            },
-            "batch": {
-              "description": "Batch profile multiple addresses",
-              "options": {
-                "addresses": {
-                  "type": "string",
-                  "description": "Comma-separated addresses"
-                },
-                "file": {
-                  "type": "string",
-                  "description": "File with one address per line"
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "ethereum"
-                },
-                "include": {
-                  "type": "string",
-                  "default": "labels,balance",
-                  "description": "Comma-separated: labels,balance,pnl"
-                },
-                "delay": {
-                  "type": "number",
-                  "default": 1000,
-                  "description": "Delay between requests in ms"
-                }
-              },
-              "returns": [
-                "address",
-                "chain",
-                "labels",
-                "balance",
-                "pnl",
-                "error"
-              ]
-            },
-            "trace": {
-              "description": "Multi-hop counterparty trace (BFS)",
-              "options": {
-                "address": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "ethereum"
-                },
-                "depth": {
-                  "type": "number",
-                  "default": 2,
-                  "description": "Max hops (1-5)"
-                },
-                "width": {
-                  "type": "number",
-                  "default": 10,
-                  "description": "Top N counterparties per hop"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "delay": {
-                  "type": "number",
-                  "default": 1000,
-                  "description": "Delay between requests in ms"
-                }
-              },
-              "returns": [
-                "root",
-                "chain",
-                "depth",
-                "nodes",
-                "edges",
-                "stats"
-              ]
-            },
-            "compare": {
-              "description": "Compare two wallets (shared counterparties, tokens)",
-              "options": {
-                "addresses": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Two comma-separated addresses"
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "ethereum"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                }
-              },
-              "returns": [
-                "addresses",
-                "chain",
-                "shared_counterparties",
-                "shared_tokens",
-                "balances"
-              ]
-            }
-          }
-        },
-        "token": {
-          "description": "Token God Mode - deep analytics for any token",
-          "subcommands": {
-            "indicators": {
-              "description": "Risk and reward indicators for a token (Nansen Score)",
-              "options": {
-                "token": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Token address"
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "ethereum"
-                }
-              },
-              "returns": [
-                "token_address",
-                "chain",
-                "token_info",
-                "risk_indicators[indicator_type, score, signal, signal_percentile, last_trigger_on]",
-                "reward_indicators[indicator_type, score, signal, signal_percentile, last_trigger_on]"
-              ]
-            },
-            "ohlcv": {
-              "description": "OHLCV candle data for a token",
-              "options": {
-                "token": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Token address"
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "solana"
-                },
-                "timeframe": {
-                  "type": "string",
-                  "default": "1h",
-                  "enum": [
-                    "1m",
-                    "5m",
-                    "15m",
-                    "30m",
-                    "1h",
-                    "2h",
-                    "4h",
-                    "1d",
-                    "1w",
-                    "1M"
-                  ],
-                  "description": "Candle timeframe (e.g., 1h, 4h, 1d)"
-                }
-              },
-              "returns": [
-                "interval_start",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-                "volume_usd",
-                "market_cap"
-              ]
-            },
-            "info": {
-              "description": "Get detailed information for a specific token",
-              "options": {
-                "token": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Token address"
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "solana"
-                },
-                "timeframe": {
-                  "type": "string",
-                  "default": "1d",
-                  "enum": [
-                    "5m",
-                    "1h",
-                    "6h",
-                    "12h",
-                    "1d",
-                    "7d"
-                  ]
-                }
-              },
-              "returns": [
-                "name",
-                "symbol",
-                "contract_address",
-                "logo",
-                "token_details",
-                "spot_metrics"
-              ]
-            },
-            "screener": {
-              "description": "Discover and filter tokens",
-              "options": {
-                "chain": {
-                  "type": "string",
-                  "default": "solana"
-                },
-                "chains": {
-                  "type": "array"
-                },
-                "timeframe": {
-                  "type": "string",
-                  "default": "24h",
-                  "enum": [
-                    "5m",
-                    "10m",
-                    "1h",
-                    "6h",
-                    "24h",
-                    "7d",
-                    "30d"
-                  ]
-                },
-                "smart-money": {
-                  "type": "boolean",
-                  "description": "Filter for Smart Money only"
-                },
-                "search": {
-                  "type": "string",
-                  "description": "Filter results by token symbol or name (client-side)"
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., volume_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
-                }
-              },
-              "returns": [
-                "chain",
-                "token_address",
-                "token_symbol",
-                "token_age_days",
-                "market_cap_usd",
-                "liquidity",
-                "price_usd",
-                "price_change",
-                "fdv",
-                "fdv_mc_ratio",
-                "buy_volume",
-                "inflow_fdv_ratio",
-                "outflow_fdv_ratio",
-                "sell_volume",
-                "volume",
-                "netflow"
-              ]
-            },
-            "holders": {
-              "description": "Token holder analysis",
-              "options": {
-                "token": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "solana"
-                },
-                "smart-money": {
-                  "type": "boolean"
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
-                }
-              },
-              "returns": [
-                "address",
-                "address_label",
-                "token_amount",
-                "total_outflow",
-                "total_inflow",
-                "balance_change_24h",
-                "balance_change_7d",
-                "balance_change_30d",
-                "ownership_percentage",
-                "value_usd"
-              ]
-            },
-            "flows": {
-              "description": "Token flow metrics",
-              "options": {
-                "token": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "solana"
-                },
-                "date": {
-                  "type": "string",
-                  "required": false,
-                  "description": "Date or date range"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
-                }
-              },
-              "returns": [
-                "date",
-                "price_usd",
-                "token_amount",
-                "value_usd",
-                "holders_count",
-                "total_inflows_count",
-                "total_outflows_count"
-              ]
-            },
-            "dex-trades": {
-              "description": "DEX trading activity",
-              "options": {
-                "token": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "solana"
-                },
-                "smart-money": {
-                  "type": "boolean"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
-                }
-              },
-              "returns": [
-                "block_timestamp",
-                "transaction_hash",
-                "trader_address",
-                "trader_address_label",
-                "action",
-                "token_address",
-                "token_name",
-                "token_amount",
-                "traded_token_address",
-                "traded_token_name",
-                "traded_token_amount",
-                "estimated_swap_price_usd",
-                "estimated_value_usd"
-              ]
-            },
-            "pnl": {
-              "description": "PnL leaderboard",
-              "options": {
-                "token": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "solana"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., total_pnl_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
-                }
-              },
-              "returns": [
-                "trader_address",
-                "trader_address_label",
-                "price_usd",
-                "pnl_usd_realised",
-                "pnl_usd_unrealised",
-                "holding_amount",
-                "holding_usd",
-                "max_balance_held",
-                "max_balance_held_usd",
-                "still_holding_balance_ratio",
-                "netflow_amount_usd",
-                "netflow_amount",
-                "roi_percent_total",
-                "roi_percent_realised",
-                "roi_percent_unrealised",
-                "pnl_usd_total",
-                "nof_trades"
-              ]
-            },
-            "who-bought-sold": {
-              "description": "Recent buyers and sellers",
-              "options": {
-                "token": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "solana"
-                },
-                "date": {
-                  "type": "string",
-                  "required": false,
-                  "description": "Date or date range"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., trade_volume_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
-                }
-              },
-              "returns": [
-                "address",
-                "address_label",
-                "bought_token_volume",
-                "sold_token_volume",
-                "token_trade_volume",
-                "bought_volume_usd",
-                "sold_volume_usd",
-                "trade_volume_usd"
-              ]
-            },
-            "flow-intelligence": {
-              "description": "Detailed flow intelligence by label",
-              "options": {
-                "token": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "solana"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                }
-              },
-              "returns": [
-                "public_figure_net_flow_usd",
-                "public_figure_avg_flow_usd",
-                "public_figure_wallet_count",
-                "top_pnl_net_flow_usd",
-                "top_pnl_avg_flow_usd",
-                "top_pnl_wallet_count",
-                "whale_net_flow_usd",
-                "whale_avg_flow_usd",
-                "whale_wallet_count",
-                "smart_trader_net_flow_usd",
-                "smart_trader_avg_flow_usd",
-                "smart_trader_wallet_count",
-                "exchange_net_flow_usd",
-                "exchange_avg_flow_usd",
-                "exchange_wallet_count",
-                "fresh_wallets_net_flow_usd",
-                "fresh_wallets_avg_flow_usd",
-                "fresh_wallets_wallet_count"
-              ]
-            },
-            "transfers": {
-              "description": "Token transfer history",
-              "options": {
-                "token": {
-                  "type": "string",
-                  "required": true
-                },
-                "chain": {
-                  "type": "string",
-                  "default": "solana"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "from": {
-                  "type": "string",
-                  "description": "Filter by sender address"
-                },
-                "to": {
-                  "type": "string",
-                  "description": "Filter by recipient address"
-                },
-                "enrich": {
-                  "type": "boolean",
-                  "description": "Enrich addresses with Nansen labels"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
-                }
-              },
-              "returns": [
-                "block_timestamp",
-                "transaction_hash",
-                "from_address",
-                "to_address",
-                "from_address_label",
-                "to_address_label",
-                "transaction_type",
-                "transfer_amount",
-                "transfer_value_usd"
-              ]
-            },
-            "jup-dca": {
-              "description": "Jupiter DCA orders for token",
-              "options": {
-                "token": {
-                  "type": "string",
-                  "required": true
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., total_input:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
-                }
-              },
-              "returns": [
-                "since_timestamp",
-                "last_timestamp",
-                "trader_address",
-                "creation_hash",
-                "trader_label",
-                "dca_vault_address",
-                "input_mint_address",
-                "output_mint_address",
-                "deposit_amount",
-                "deposit_spent",
-                "other_token_redeemed",
-                "status",
-                "token_input",
-                "token_output",
-                "deposit_usd_value"
-              ]
-            },
-            "perp-trades": {
-              "description": "Perp trades by token symbol",
-              "options": {
-                "symbol": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Token symbol (e.g., BTC, ETH)"
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., value_usd:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
-                }
-              },
-              "returns": [
-                "trader_address_label",
-                "trader_address",
-                "token_symbol",
-                "side",
-                "action",
-                "token_amount",
-                "price_usd",
-                "value_usd",
-                "type",
-                "block_timestamp",
-                "transaction_hash"
-              ]
-            },
-            "perp-positions": {
-              "description": "Open perp positions by token symbol",
-              "options": {
-                "symbol": {
-                  "type": "string",
-                  "required": true
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., unrealized_pnl:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
-                }
-              },
-              "returns": [
-                "address",
-                "address_label",
-                "side",
-                "position_value_usd",
-                "position_size",
-                "leverage",
-                "leverage_type",
-                "entry_price",
-                "mark_price",
-                "liquidation_price",
-                "funding_usd",
-                "upnl_usd"
-              ]
-            },
-            "perp-pnl-leaderboard": {
-              "description": "Perp PnL leaderboard by token",
-              "options": {
-                "symbol": {
-                  "type": "string",
-                  "required": true
-                },
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., total_pnl:desc)"
-                },
-                "filters": {
-                  "type": "object",
-                  "description": "Additional filters as JSON"
-                }
-              },
-              "returns": [
-                "trader_address",
-                "trader_address_label",
-                "price_usd",
-                "pnl_usd_realised",
-                "pnl_usd_unrealised",
-                "holding_amount",
-                "position_value_usd",
-                "max_balance_held",
-                "max_balance_held_usd",
-                "still_holding_balance_ratio",
-                "netflow_amount_usd",
-                "netflow_amount",
-                "roi_percent_total",
-                "roi_percent_realised",
-                "roi_percent_unrealised",
-                "pnl_usd_total",
-                "nof_trades"
-              ]
-            }
-          }
-        },
-        "search": {
-          "description": "Search for tokens and entities across Nansen",
-          "options": {
-            "query": {
-              "type": "string",
-              "required": true,
-              "description": "Search query (token name, symbol, address, or entity)"
-            },
-            "type": {
-              "type": "string",
-              "default": "any",
-              "enum": [
-                "token",
-                "entity",
-                "any"
-              ],
-              "description": "Result type filter"
-            },
-            "chain": {
-              "type": "string",
-              "description": "Filter by chain (e.g., ethereum, solana)"
-            },
-            "limit": {
-              "type": "number",
-              "default": 25,
-              "description": "Max results (1-50)"
-            }
-          },
-          "returns": [
-            "tokens[name, symbol, chain, address, price]",
-            "entities[name, tags, rank]",
-            "total_results"
-          ]
-        },
-        "perp": {
-          "description": "Perpetual futures analytics",
-          "subcommands": {
-            "screener": {
-              "description": "Screen perpetual futures contracts",
-              "options": {
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "sort": {
-                  "type": "string"
-                },
-                "filters": {
-                  "type": "object"
-                }
-              },
-              "returns": [
-                "volume",
-                "buy_volume",
-                "sell_volume",
-                "buy_sell_pressure",
-                "trader_count",
-                "token_symbol",
-                "mark_price",
-                "funding",
-                "open_interest",
-                "previous_price_usd"
-              ]
-            },
-            "leaderboard": {
-              "description": "Perpetual futures PnL leaderboard",
-              "options": {
-                "days": {
-                  "type": "number",
-                  "default": 30
-                },
-                "limit": {
-                  "type": "number"
-                },
-                "sort": {
-                  "type": "string"
-                },
-                "filters": {
-                  "type": "object"
-                }
-              },
-              "returns": [
-                "trader_address",
-                "trader_address_label",
-                "total_pnl",
-                "roi",
-                "account_value"
-              ]
-            }
-          }
-        },
         "portfolio": {
-          "description": "Portfolio analytics",
           "subcommands": {
             "defi": {
               "description": "DeFi holdings across protocols",
               "options": {
                 "wallet": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Wallet address"
+                  "required": true
                 }
-              },
-              "returns": [
-                "protocol_name",
-                "chain",
-                "total_value_usd",
-                "total_assets_usd",
-                "total_debts_usd",
-                "total_rewards_usd",
-                "tokens"
-              ]
+              }
+            }
+          },
+          "description": "Portfolio analytics"
+        },
+        "smart-money": {
+          "subcommands": {
+            "netflow": {
+              "description": "Net capital flows (inflows vs outflows)",
+              "options": {
+                "chain": {
+                  "default": "solana"
+                }
+              }
+            },
+            "dex-trades": {
+              "description": "Real-time DEX trading activity",
+              "options": {
+                "chain": {
+                  "default": "solana"
+                }
+              }
+            },
+            "perp-trades": {
+              "description": "Perpetual trading on Hyperliquid"
+            },
+            "dcas": {
+              "description": "DCA strategies on Jupiter"
+            },
+            "holdings": {
+              "description": "Aggregated token balances",
+              "options": {
+                "chain": {
+                  "default": "solana"
+                }
+              }
+            },
+            "historical-holdings": {
+              "description": "Historical holdings over time",
+              "options": {
+                "chain": {
+                  "default": "solana"
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            }
+          },
+          "description": "Smart Money analytics - track sophisticated market participants"
+        },
+        "profiler": {
+          "subcommands": {
+            "transactions": {
+              "description": "Transaction history",
+              "options": {
+                "address": {
+                  "required": true
+                },
+                "chain": {
+                  "default": "ethereum"
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "pnl-summary": {
+              "description": "Summarized PnL metrics",
+              "options": {
+                "address": {
+                  "required": true
+                },
+                "chain": {
+                  "default": "ethereum"
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "balance": {
+              "description": "Current token holdings",
+              "options": {
+                "address": {
+                  "required": true
+                },
+                "chain": {
+                  "default": "ethereum"
+                }
+              }
+            },
+            "counterparties": {
+              "description": "Top counterparties by volume",
+              "options": {
+                "address": {
+                  "required": true
+                },
+                "chain": {
+                  "default": "ethereum"
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "historical-balances": {
+              "description": "Historical balances over time",
+              "options": {
+                "address": {
+                  "required": true
+                },
+                "chain": {
+                  "default": "ethereum"
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "related-wallets": {
+              "description": "Find wallets related to an address",
+              "options": {
+                "address": {
+                  "required": true
+                },
+                "chain": {
+                  "default": "ethereum"
+                }
+              }
+            },
+            "pnl": {
+              "description": "PnL and trade performance",
+              "options": {
+                "address": {
+                  "required": true
+                },
+                "chain": {
+                  "default": "ethereum"
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "labels": {
+              "description": "Behavioral and entity labels",
+              "options": {
+                "address": {
+                  "required": true
+                },
+                "chain": {
+                  "default": "ethereum"
+                }
+              }
+            },
+            "perp-positions": {
+              "description": "Current perpetual positions",
+              "options": {
+                "address": {
+                  "required": true
+                }
+              }
+            },
+            "perp-trades": {
+              "description": "Perpetual trading history",
+              "options": {
+                "address": {
+                  "required": true
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "search": {
+              "description": "Search for entities by name",
+              "options": {
+                "query": {
+                  "required": true
+                }
+              }
+            },
+            "batch": {
+              "description": "Batch profile multiple addresses",
+              "options": {
+                "chain": {
+                  "default": "ethereum"
+                },
+                "include": {
+                  "default": "labels,balance"
+                },
+                "delay": {
+                  "default": 1000
+                }
+              }
+            },
+            "trace": {
+              "description": "Multi-hop counterparty trace (BFS)",
+              "options": {
+                "address": {
+                  "required": true
+                },
+                "chain": {
+                  "default": "ethereum"
+                },
+                "depth": {
+                  "default": 2
+                },
+                "width": {
+                  "default": 10
+                },
+                "days": {
+                  "default": 30
+                },
+                "delay": {
+                  "default": 1000
+                }
+              }
+            },
+            "compare": {
+              "description": "Compare two wallets (shared counterparties, tokens)",
+              "options": {
+                "addresses": {
+                  "required": true
+                },
+                "chain": {
+                  "default": "ethereum"
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            }
+          },
+          "description": "Wallet profiling - detailed information about any blockchain address"
+        },
+        "token": {
+          "subcommands": {
+            "flows": {
+              "description": "Token flow metrics",
+              "options": {
+                "chain": {
+                  "default": "solana"
+                },
+                "token": {
+                  "required": true
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "who-bought-sold": {
+              "description": "Recent buyers and sellers",
+              "options": {
+                "chain": {
+                  "default": "solana"
+                },
+                "token": {
+                  "required": true
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "dex-trades": {
+              "description": "DEX trading activity",
+              "options": {
+                "chain": {
+                  "default": "solana"
+                },
+                "token": {
+                  "required": true
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "transfers": {
+              "description": "Token transfer history",
+              "options": {
+                "chain": {
+                  "default": "solana"
+                },
+                "token": {
+                  "required": true
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "holders": {
+              "description": "Token holder analysis",
+              "options": {
+                "chain": {
+                  "default": "solana"
+                },
+                "token": {
+                  "required": true
+                }
+              }
+            },
+            "pnl": {
+              "description": "PnL leaderboard",
+              "options": {
+                "chain": {
+                  "default": "solana"
+                },
+                "token": {
+                  "required": true
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "perp-pnl-leaderboard": {
+              "description": "Perp PnL leaderboard by token",
+              "options": {
+                "symbol": {
+                  "required": true
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "perp-positions": {
+              "description": "Open perp positions by token symbol",
+              "options": {
+                "symbol": {
+                  "required": true
+                }
+              }
+            },
+            "perp-trades": {
+              "description": "Perp trades by token symbol",
+              "options": {
+                "symbol": {
+                  "required": true
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "flow-intelligence": {
+              "description": "Detailed flow intelligence by label",
+              "options": {
+                "chain": {
+                  "default": "solana"
+                },
+                "token": {
+                  "required": true
+                },
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "info": {
+              "description": "Get detailed information for a specific token",
+              "options": {
+                "chain": {
+                  "default": "solana"
+                },
+                "token": {
+                  "required": true
+                },
+                "timeframe": {
+                  "default": "1d"
+                }
+              }
+            },
+            "indicators": {
+              "description": "Risk and reward indicators for a token (Nansen Score)",
+              "options": {
+                "chain": {
+                  "default": "ethereum"
+                },
+                "token": {
+                  "required": true
+                }
+              }
+            },
+            "ohlcv": {
+              "description": "OHLCV candle data for a token",
+              "options": {
+                "chain": {
+                  "default": "solana"
+                },
+                "token": {
+                  "required": true
+                },
+                "timeframe": {
+                  "default": "1h"
+                }
+              }
+            },
+            "jup-dca": {
+              "description": "Jupiter DCA orders for token",
+              "options": {
+                "token": {
+                  "required": true
+                }
+              }
+            },
+            "screener": {
+              "description": "Discover and filter tokens",
+              "options": {
+                "timeframe": {
+                  "default": "24h"
+                },
+                "chain": {
+                  "default": "solana"
+                }
+              }
+            }
+          },
+          "description": "Token God Mode - deep analytics for any token"
+        },
+        "search": {
+          "description": "Search for tokens and entities across Nansen",
+          "options": {
+            "query": {
+              "required": true
+            },
+            "type": {
+              "default": "any"
+            },
+            "limit": {
+              "default": 25
             }
           }
+        },
+        "perp": {
+          "subcommands": {
+            "screener": {
+              "description": "Screen perpetual futures contracts",
+              "options": {
+                "days": {
+                  "default": 30
+                }
+              }
+            },
+            "leaderboard": {
+              "description": "Perpetual futures PnL leaderboard",
+              "options": {
+                "days": {
+                  "default": 30
+                }
+              }
+            }
+          },
+          "description": "Perpetual futures analytics"
         },
         "prediction-market": {
-          "description": "Polymarket prediction market analytics",
-          "aliases": [
-            "pm"
-          ],
           "subcommands": {
             "ohlcv": {
-              "description": "OHLCV candle data for a market",
+              "description": "Get Prediction Market OHLCV Candles",
               "options": {
                 "market-id": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Market ID"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., period_start:desc)"
-                },
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
+                  "required": true
                 }
-              },
-              "returns": [
-                "market_id",
-                "token_id",
-                "side",
-                "outcome_index",
-                "period_start",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume_usd",
-                "trade_count",
-                "unique_traders"
-              ]
+              }
             },
             "orderbook": {
-              "description": "Current orderbook levels",
+              "description": "Get Prediction Market Orderbook",
               "options": {
                 "market-id": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Market ID"
-                },
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
+                  "required": true
                 }
-              },
-              "returns": [
-                "market_id",
-                "event_id",
-                "outcome",
-                "outcome_index",
-                "asset_id",
-                "side",
-                "price",
-                "size",
-                "cumulative_size",
-                "snapshot_timestamp"
-              ]
+              }
             },
             "top-holders": {
-              "description": "Top holders for a market",
+              "description": "Get Prediction Market Top Holders",
               "options": {
                 "market-id": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Market ID"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction"
-                },
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
+                  "required": true
                 }
-              },
-              "returns": [
-                "market_id",
-                "outcome_index",
-                "address",
-                "owner_address",
-                "side",
-                "position_size",
-                "avg_entry_price",
-                "current_price",
-                "unrealized_pnl_usd"
-              ]
+              }
             },
             "trades-by-market": {
-              "description": "Recent trades for a market",
+              "description": "Get Prediction Market Trades by Market",
               "options": {
                 "market-id": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Market ID"
-                },
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
+                  "required": true
                 }
-              },
-              "returns": [
-                "timestamp",
-                "seller",
-                "buyer",
-                "taker_action",
-                "side",
-                "outcome_index",
-                "size",
-                "price",
-                "usdc_value",
-                "tx_hash",
-                "market_id"
-              ]
-            },
-            "trades-by-address": {
-              "description": "Trades for a specific address",
-              "options": {
-                "address": {
-                  "type": "string",
-                  "required": true,
-                  "description": "EVM address (Polygon)"
-                },
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
-                }
-              },
-              "returns": [
-                "timestamp",
-                "seller",
-                "buyer",
-                "taker_action",
-                "side",
-                "outcome_index",
-                "size",
-                "price",
-                "usdc_value",
-                "tx_hash",
-                "market_id",
-                "market_question",
-                "event_id",
-                "event_title"
-              ]
+              }
             },
             "market-screener": {
-              "description": "Screen and discover markets",
+              "description": "Get Prediction Market Screener",
               "options": {
-                "sort-by": {
-                  "type": "string",
-                  "default": "volume_24hr",
-                  "enum": [
-                    "volume_24hr",
-                    "volume",
-                    "volume_1wk",
-                    "volume_1mo",
-                    "liquidity",
-                    "open_interest",
-                    "unique_traders_24h",
-                    "age_hours"
-                  ],
-                  "description": "Sort field"
-                },
                 "query": {
-                  "type": "string",
-                  "description": "Search text"
-                },
-                "status": {
-                  "type": "string",
-                  "enum": [
-                    "active",
-                    "closed"
-                  ],
-                  "description": "Market status filter (default: active)"
-                },
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
+                  "default": ""
                 }
-              },
-              "returns": [
-                "market_id",
-                "question",
-                "slug",
-                "event_id",
-                "event_title",
-                "active",
-                "closed",
-                "end_date",
-                "neg_risk",
-                "tags",
-                "volume",
-                "volume_24hr",
-                "volume_1wk",
-                "volume_1mo",
-                "volume_change_pct",
-                "liquidity",
-                "open_interest",
-                "best_bid",
-                "best_ask",
-                "last_trade_price",
-                "one_day_price_change",
-                "unique_traders_24h",
-                "created_at",
-                "age_hours"
-              ]
+              }
             },
             "event-screener": {
-              "description": "Screen and discover events",
+              "description": "Get Prediction Market Event Screener",
               "options": {
-                "sort-by": {
-                  "type": "string",
-                  "default": "volume_24hr",
-                  "enum": [
-                    "volume_24hr",
-                    "volume",
-                    "volume_1wk",
-                    "volume_1mo",
-                    "liquidity",
-                    "open_interest",
-                    "unique_traders_24h",
-                    "age_hours"
-                  ],
-                  "description": "Sort field"
-                },
                 "query": {
-                  "type": "string",
-                  "description": "Search text"
-                },
-                "status": {
-                  "type": "string",
-                  "enum": [
-                    "active",
-                    "closed"
-                  ],
-                  "description": "Event status filter (default: active)"
-                },
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
+                  "default": ""
                 }
-              },
-              "returns": [
-                "event_id",
-                "event_title",
-                "tags",
-                "neg_risk",
-                "market_count",
-                "markets",
-                "total_volume",
-                "total_volume_24hr",
-                "total_volume_1wk",
-                "total_volume_1mo",
-                "total_volume_change_pct",
-                "total_liquidity",
-                "total_open_interest",
-                "total_traders_24h",
-                "max_age_hours",
-                "top_market_id",
-                "top_market_question",
-                "top_market_volume_24hr"
-              ]
+              }
             },
             "pnl-by-market": {
-              "description": "PnL leaderboard for a market",
+              "description": "Get Prediction Market PnL by Market",
               "options": {
                 "market-id": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Market ID"
-                },
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
+                  "required": true
                 }
-              },
-              "returns": [
-                "address",
-                "owner_address",
-                "side_held",
-                "net_buy_cost_usd",
-                "net_sell_proceeds_usd",
-                "redemption_value_usd",
-                "unrealized_value_usd",
-                "total_pnl_usd",
-                "question",
-                "event_id",
-                "event_title",
-                "market_resolved",
-                "market_id"
-              ]
+              }
             },
             "pnl-by-address": {
-              "description": "PnL breakdown for an address",
+              "description": "Get Prediction Market PnL by Address",
               "options": {
                 "address": {
-                  "type": "string",
-                  "required": true,
-                  "description": "EVM address (Polygon)"
-                },
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
+                  "required": true
                 }
-              },
-              "returns": [
-                "address",
-                "market_id",
-                "question",
-                "event_id",
-                "event_title",
-                "side_held",
-                "net_buy_cost_usd",
-                "net_sell_proceeds_usd",
-                "redemption_value_usd",
-                "unrealized_value_usd",
-                "total_pnl_usd",
-                "market_resolved"
-              ]
+              }
             },
             "position-detail": {
-              "description": "Detailed position data",
+              "description": "Get Prediction Market Position Detail",
               "options": {
                 "market-id": {
-                  "type": "string",
-                  "required": true,
-                  "description": "Market ID"
-                },
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
+                  "required": true
                 }
-              },
-              "returns": [
-                "address",
-                "owner_address",
-                "outcome",
-                "outcome_index",
-                "token_id",
-                "balance",
-                "buy_cost_usd",
-                "buy_tokens",
-                "sell_proceeds_usd",
-                "sell_tokens",
-                "avg_entry_price",
-                "current_price",
-                "unrealized_value_usd",
-                "redemption_value_usd",
-                "token_pnl_usd",
-                "event_id",
-                "event_title",
-                "market_resolved",
-                "market_id"
-              ]
+              }
+            },
+            "trades-by-address": {
+              "description": "Get Prediction Market Trades by Address",
+              "options": {
+                "address": {
+                  "required": true
+                }
+              }
             },
             "categories": {
-              "description": "List market categories",
-              "options": {
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
-                }
-              },
-              "returns": [
-                "category",
-                "active_markets",
-                "total_open_interest",
-                "total_volume",
-                "total_volume_24hr",
-                "total_volume_1wk",
-                "total_traders_24h",
-                "top_market_id",
-                "top_market_question",
-                "top_market_volume_24hr"
-              ]
+              "description": "Get Prediction Market Categories"
             }
-          }
+          },
+          "description": "Polymarket prediction market analytics"
         },
         "points": {
-          "description": "Nansen Points analytics",
           "subcommands": {
             "leaderboard": {
-              "description": "Points leaderboard",
-              "options": {
-                "tier": {
-                  "type": "string",
-                  "description": "Filter by tier"
-                },
-                "limit": {
-                  "type": "number"
-                }
-              },
-              "returns": [
-                "rank",
-                "address",
-                "address_label",
-                "points",
-                "tier"
-              ]
+              "description": "Points leaderboard"
             }
           }
         }
@@ -1833,45 +620,45 @@
       }
     },
     "wallet": {
-      "description": "Wallet management (local or Privy server wallets)",
-      "options": {
-        "provider": {
-          "type": "string",
-          "enum": ["local", "privy"],
-          "description": "Wallet provider (default: local). Use 'privy' for server-managed wallets."
-        }
-      },
+      "description": "Wallet management",
       "subcommands": {
         "create": {
-          "description": "Create a new wallet",
-          "options": {
-            "name": { "type": "string", "description": "Wallet name (default: 'default')" }
-          }
+          "description": "Create a new wallet"
         },
-        "list": { "description": "List all wallets" },
+        "list": {
+          "description": "List all wallets"
+        },
         "show": {
           "description": "Show wallet details",
           "options": {
-            "name": { "type": "string", "description": "Wallet name" }
-          }
-        },
-        "delete": {
-          "description": "Delete a wallet",
-          "options": {
-            "name": { "type": "string", "description": "Wallet name" }
+            "name": {
+              "description": "Wallet name"
+            }
           }
         },
         "send": {
           "description": "Send tokens or native currency",
           "options": {
-            "to": { "type": "string", "required": true, "description": "Recipient address" },
-            "amount": { "type": "string", "description": "Amount to send" },
-            "chain": { "type": "string", "required": true, "description": "Blockchain to use" }
+            "to": {
+              "required": true
+            },
+            "chain": {
+              "required": true
+            },
+            "amount": {
+              "required": true
+            }
           }
         },
-        "export": { "description": "Export private keys (local only, requires password)" },
-        "default": { "description": "Set default wallet (local only)" },
-        "help": { "description": "Show wallet help" }
+        "export": {
+          "description": "Export private keys"
+        },
+        "delete": {
+          "description": "Delete a wallet"
+        },
+        "default": {
+          "description": "Set default wallet"
+        }
       }
     }
   },

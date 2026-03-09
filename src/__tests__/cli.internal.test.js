@@ -1221,7 +1221,7 @@ describe('SCHEMA', () => {
   it('should have required market-id option for pm market endpoints', () => {
     const ohlcv = SCHEMA.commands.research.subcommands['prediction-market'].subcommands['ohlcv'];
     expect(ohlcv.options['market-id'].required).toBe(true);
-    expect(ohlcv.options['market-id'].type).toBe('string');
+    // Note: type removed in minimal schema (skills document types)
   });
 
   it('should have required address option for pm address endpoints', () => {
@@ -1229,18 +1229,12 @@ describe('SCHEMA', () => {
     expect(trades.options.address.required).toBe(true);
   });
 
-  it('should have return fields for pm endpoints', () => {
-    const screener = SCHEMA.commands.research.subcommands['prediction-market'].subcommands['market-screener'];
-    expect(screener.returns).toContain('market_id');
-    expect(screener.returns).toContain('volume_24hr');
-    expect(screener.returns).toContain('liquidity');
-  });
+  // Note: returns removed in minimal schema (skills document output fields)
 
-  it('should include option definitions with types', () => {
+  it('should include option defaults', () => {
     const netflow = SCHEMA.commands.research.subcommands['smart-money'].subcommands['netflow'];
-    expect(netflow.options.chain.type).toBe('string');
+    // Note: type removed in minimal schema (skills document types)
     expect(netflow.options.chain.default).toBe('solana');
-    expect(netflow.options.limit.type).toBe('number');
   });
 
   it('should include required flag for required options', () => {
@@ -1248,11 +1242,7 @@ describe('SCHEMA', () => {
     expect(balance.options.address.required).toBe(true);
   });
 
-  it('should include return field definitions', () => {
-    const netflow = SCHEMA.commands.research.subcommands['smart-money'].subcommands['netflow'];
-    expect(netflow.returns).toContain('token_symbol');
-    expect(netflow.returns).toContain('net_flow_1h_usd');
-  });
+  // Note: returns removed in minimal schema (skills document output fields)
 
   it('should define global options', () => {
     expect(SCHEMA.globalOptions.pretty).toBeDefined();
@@ -1906,8 +1896,9 @@ describe('--from/--to filters on token transfers', () => {
 
   it('should appear in SCHEMA for token.transfers', () => {
     const transfers = SCHEMA.commands.research.subcommands['token'].subcommands['transfers'];
-    expect(transfers.options.from).toBeDefined();
-    expect(transfers.options.to).toBeDefined();
+    expect(transfers).toBeDefined();
+    // Note: from/to options removed from minimal schema (no required/default)
+    // but still work at runtime via extraParams
   });
 });
 
@@ -1917,9 +1908,8 @@ describe('profiler batch command', () => {
   it('should appear in SCHEMA', () => {
     const batch = SCHEMA.commands.research.subcommands['profiler'].subcommands['batch'];
     expect(batch).toBeDefined();
-    expect(batch.options.addresses).toBeDefined();
-    expect(batch.options.file).toBeDefined();
-    expect(batch.options.include).toBeDefined();
+    // Note: option details removed from minimal schema (skills document these)
+    // but addresses/file/include still work at runtime
   });
 
   it('should parse comma-separated addresses', async () => {
@@ -2203,8 +2193,9 @@ describe('profiler compare address parsing', () => {
 describe('--enrich flag on token transfers', () => {
   it('should appear in SCHEMA for token.transfers', () => {
     const transfers = SCHEMA.commands.research.subcommands['token'].subcommands['transfers'];
-    expect(transfers.options.enrich).toBeDefined();
-    expect(transfers.options.enrich.type).toBe('boolean');
+    expect(transfers).toBeDefined();
+    // Note: enrich option removed from minimal schema (no required/default)
+    // but still works at runtime via extraParams
   });
 
   it('should enrich transfers with labels when --enrich flag is set', async () => {

@@ -81,6 +81,7 @@ If you are contributing changes, read [CONTRIBUTING.md](CONTRIBUTING.md) for the
 5. **Token-2022:** use `TOKEN_2022_PROGRAM_ID` + `TransferCheckedInstruction`
 6. **CreateATA path** (transfer.js) has limited test coverage — add tests if modifying
 7. **`CHAIN_RPCS`** in `src/rpc-urls.js` is the single source of truth for chain RPC endpoints — both `transfer.js` and `trading.js` import from it. Adding a new chain only requires one edit here. Override via `NANSEN_BASE_RPC`, `NANSEN_EVM_RPC`, `NANSEN_SOLANA_RPC`.
+8. **`src/schema.json` is manually maintained** — no codegen. When adding a new CLI command or option, update schema.json by hand. Key fields: `description`, `required`, `default`, `chains`. Omit `type`, `enum`, `returns` (those live in skills). AI editors: do not skip this step.
 
 ## Networks
 

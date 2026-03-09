@@ -55,3 +55,4 @@ Prefix intentionally unused variables with `_` (e.g. `_err`, `_args`).
 - [ ] No `console.log` in core, no hardcoded secrets
 - [ ] Error messages are actionable
 - [ ] Changeset added (if user-facing)
+- [ ] `src/schema.json` updated if new commands or options were added (file is maintained manually — no codegen)
