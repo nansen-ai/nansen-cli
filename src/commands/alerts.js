@@ -323,7 +323,7 @@ USAGE:
 
 OPTIONS:
   --table                      Human-readable table output (columns: ID, NAME, TYPE, ENABLED, CHANNELS)
-  --pretty                     Indented JSON output (consistent with other nansen commands)
+  --pretty                     Indented JSON output
   --type <type>                Filter by alert type (sm-token-flows, common-token-transfer, smart-contract-call)
   --enabled / --disabled       Filter by enabled state
   --token-address <addr>       Filter by token address
@@ -391,7 +391,6 @@ USAGE:
   nansen alerts update <id> [--name <name>] [--type <type>] [--chains <chains>] [--enabled|--disabled] ...
 
 All create options are accepted. Only provided fields are updated.
---type auto-inferred from existing alert when possible (no need to pass --type when using type-specific flags).
 
 NOTE: Use single quotes for names with $ or special chars: --name 'SM >$1M'
 
