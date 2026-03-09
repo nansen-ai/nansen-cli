@@ -612,25 +612,27 @@ describe('alerts update — type inference', () => {
     }));
   });
 
-  it('should not call alertsGet when --type is explicitly provided', async () => {
+  it('should always call alertsGet (read-before-write), using explicit --type over fetched type', async () => {
     const mockApi = {
-      alertsGet: vi.fn(),
+      alertsGet: vi.fn().mockResolvedValue({ type: 'common-token-transfer' }),
       alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
     };
     const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
     await cmd(['update', 'abc123'], mockApi, {}, { type: 'sm-token-flows', 'inflow-1h-min': 500000 });
-    expect(mockApi.alertsGet).not.toHaveBeenCalled();
+    expect(mockApi.alertsGet).toHaveBeenCalledWith('abc123');
+    // explicit --type takes precedence over fetched type
     expect(mockApi.alertsUpdate).toHaveBeenCalledWith(expect.objectContaining({ type: 'sm-token-flows' }));
   });
 
-  it('should not call alertsGet when no type-specific flags are used', async () => {
+  it('should always call alertsGet even for simple field updates like rename', async () => {
     const mockApi = {
-      alertsGet: vi.fn(),
+      alertsGet: vi.fn().mockResolvedValue({ type: 'sm-token-flows' }),
       alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
     };
     const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
     await cmd(['update', 'abc123'], mockApi, {}, { name: 'New Name' });
-    expect(mockApi.alertsGet).not.toHaveBeenCalled();
+    expect(mockApi.alertsGet).toHaveBeenCalledWith('abc123');
+    expect(mockApi.alertsUpdate).toHaveBeenCalledWith(expect.objectContaining({ name: 'New Name' }));
   });
 
   it('should infer type from nested data field if top-level type is absent', async () => {

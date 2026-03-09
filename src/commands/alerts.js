@@ -468,37 +468,19 @@ USAGE:
         'update': async () => {
           const id = args[1];
           if (!id) throw new NansenError('Required: <id>', ErrorCode.MISSING_PARAM);
+
+          const existing = await apiInstance.alertsGet(id);
+          const type = options.type ?? existing?.type ?? existing?.data?.type;
+
           const params = { id };
           if (options.name) params.name = options.name;
-
-          // Auto-infer type from existing alert when type-specific flags are used without --type
-          const typeSpecificFlagNames = [
-            'inflow-1h-min', 'inflow-1h-max', 'inflow-1d-min', 'inflow-1d-max', 'inflow-7d-min', 'inflow-7d-max',
-            'outflow-1h-min', 'outflow-1h-max', 'outflow-1d-min', 'outflow-1d-max', 'outflow-7d-min', 'outflow-7d-max',
-            'netflow-1h-min', 'netflow-1h-max', 'netflow-1d-min', 'netflow-1d-max', 'netflow-7d-min', 'netflow-7d-max',
-            'events', 'usd-min', 'usd-max', 'token-amount-min', 'token-amount-max',
-            'token', 'exclude-token',
-            'subject', 'counterparty', 'signature-hash', 'caller', 'contract',
-            'exclude-caller', 'exclude-contract', 'exclude-from', 'exclude-to',
-            'token-sector', 'exclude-token-sector', 'token-age-min', 'token-age-max',
-            'market-cap-min', 'market-cap-max', 'fdv-min', 'fdv-max',
-          ];
-          const hasTypeSpecificFlags = typeSpecificFlagNames.some(f => options[f] !== undefined);
-          let effectiveOptions = options;
-          if (hasTypeSpecificFlags && !options.type) {
-            const existing = await apiInstance.alertsGet(id);
-            const inferredType = existing?.type ?? existing?.data?.type;
-            if (inferredType) {
-              effectiveOptions = { ...options, type: inferredType };
-            }
-          }
-
-          if (effectiveOptions.type) {
-            params.type = effectiveOptions.type;
-            params.timeWindow = TIME_WINDOW_BY_TYPE[effectiveOptions.type] ?? 'realtime';
+          if (type) {
+            params.type = type;
+            params.timeWindow = TIME_WINDOW_BY_TYPE[type] ?? 'realtime';
           }
           const channels = buildChannels();
           if (channels) params.channels = channels;
+          const effectiveOptions = type ? { ...options, type } : options;
           const data = buildAlertData(effectiveOptions);
           if (Object.keys(data).length > 0) params.data = data;
           if (options.description) params.description = options.description;
