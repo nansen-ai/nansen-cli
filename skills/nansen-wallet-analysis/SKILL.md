@@ -1,6 +1,6 @@
 ---
 name: nansen-wallet-analysis
-description: "Who is this wallet and what have they been doing? Identity labels, balance, PnL summary, recent transactions, and counterparties."
+description: "Who is this wallet and what have they been doing? Identity labels, balance, PnL summary, recent transactions, perp positions, and counterparties."
 ---
 
 # Wallet Analysis
@@ -22,6 +22,11 @@ nansen research profiler pnl-summary --address $ADDR --chain $CHAIN --days 30
 nansen research profiler transactions --address $ADDR --chain $CHAIN --limit 20
 # → block_timestamp, method, tokens_sent, tokens_received, volume_usd, source_type
 
+nansen research profiler perp-positions --address $ADDR
+# → asset_positions, margin_summary_account_value_usd, margin_summary_total_margin_used_usd
+
 nansen research profiler counterparties --address $ADDR --chain $CHAIN --days 30
 # → counterparty_address, counterparty_address_label, interaction_count, total_volume_usd, volume_in/out_usd
 ```
+
+perp-positions returns Hyperliquid data — returns empty if the wallet has no open perps.

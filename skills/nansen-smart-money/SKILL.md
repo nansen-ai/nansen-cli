@@ -1,6 +1,6 @@
 ---
 name: nansen-smart-money
-description: Smart money tracking — netflow, trades, holdings, DCAs, perp trades. Use when finding what smart money wallets are buying/selling or tracking whale activity.
+description: Smart money tracking — netflow, trades, holdings, perp trades. Use when finding what smart money wallets are buying/selling or tracking whale activity.
 metadata:
   openclaw:
     requires:
@@ -32,14 +32,8 @@ nansen research smart-money dex-trades --chain solana --labels "Smart Trader" --
 # Holdings — aggregated SM portfolio
 nansen research smart-money holdings --chain solana --limit 10
 
-# DCAs — Jupiter DCA strategies (Solana only, no --chain needed)
-nansen research smart-money dcas --limit 10
-
 # Perp trades — Hyperliquid only (no --chain needed)
 nansen research smart-money perp-trades --limit 10
-
-# Historical holdings — time series of SM positions
-nansen research smart-money historical-holdings --chain solana --days 30
 ```
 
 ## Labels
@@ -63,10 +57,9 @@ nansen research smart-money netflow --chain solana --labels "Fund" --limit 10
 
 | Flag | Purpose |
 |------|---------|
-| `--chain` | Required for netflow/dex-trades/holdings/historical-holdings |
+| `--chain` | Required for netflow/dex-trades/holdings |
 | `--labels` | Filter by SM label (quote multi-word values) |
 | `--limit` | Number of results |
-| `--days` | Lookback for historical-holdings (default 30) |
 | `--sort` | Sort field:direction (e.g. `value_usd:desc`) |
 | `--fields` | Select specific fields |
 | `--table` | Human-readable table output |
@@ -74,6 +67,5 @@ nansen research smart-money netflow --chain solana --labels "Fund" --limit 10
 
 ## Notes
 
-- `dcas` is Solana-only (Jupiter). No `--chain` flag.
 - `perp-trades` is Hyperliquid-only. No `--chain` flag.
-- `historical-holdings` requires `--chain` and optionally `--token-address`.
+- For a time-series view of SM positions: `nansen research smart-money historical-holdings --chain <chain> --days 30`

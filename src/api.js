@@ -418,6 +418,52 @@ export class NansenAPI {
     );
   }
 
+  /**
+   * Retry a POST request with a payment signature.
+   * Returns parsed JSON if the paid request succeeds, or null if still rejected.
+   * Logs the payment and warns about low balance when walletLabel and network are given.
+   *
+   * @param {string} signature - Payment-Signature header value
+   * @param {string|null} walletLabel - Display label for logging, e.g. "local wallet alice"
+   * @param {string|null} network - x402 network string for balance check, e.g. "eip155:8453"
+   * @param {string} url - Request URL
+   * @param {object} body - Request body (will be cleaned)
+   * @param {object} [options={}] - Request options (may include .headers)
+   * @returns {Promise<object|null>} Parsed JSON on success, null if rejected
+   *
+   * TODO: full fix — extract the entire x402 provider dispatch from request() into
+   * an attemptX402Payment() method so adding a new payment provider only requires
+   * touching that one method, not hunting inside the retry loop.
+   */
+  async _x402Retry(signature, walletLabel, network, url, body, options = {}) {
+    const paidResponse = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Client-Type': 'nansen-cli',
+        'X-Client-Version': packageVersion,
+        'Payment-Signature': signature,
+        ...this.defaultHeaders,
+        ...options.headers,
+      },
+      body: JSON.stringify(NansenAPI.cleanBody(body)),
+    });
+    if (!paidResponse.ok) return null;
+    if (walletLabel) {
+      console.error(`[x402] Paid via ${walletLabel}${network ? ` (${network})` : ''}`);
+    }
+    if (network) {
+      try {
+        const { checkX402Balance } = await import('./x402.js');
+        const balance = await checkX402Balance(network);
+        if (balance !== null && balance < 0.25) {
+          console.error(`[x402] Warning: USDC balance low ($${balance.toFixed(2)}). Fund your wallet to avoid interruptions.`);
+        }
+      } catch { /* balance check is best-effort */ }
+    }
+    return await paidResponse.json();
+  }
+
   async request(endpoint, body = {}, options = {}) {
     const url = `${this.baseUrl}${endpoint}`;
     const { maxRetries, baseDelayMs, maxDelayMs, retryOnStatus } = this.retryOptions;
@@ -524,29 +570,8 @@ export class NansenAPI {
               try {
                 const { createPrivyPaymentSignatures } = await import('./privy.js');
                 for await (const { signature, network } of createPrivyPaymentSignatures(response, url)) {
-                  const paidResponse = await fetch(url, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'X-Client-Type': 'nansen-cli',
-                      'X-Client-Version': packageVersion,
-                      'Payment-Signature': signature,
-                      ...this.defaultHeaders,
-                      ...options.headers,
-                    },
-                    body: JSON.stringify(NansenAPI.cleanBody(body)),
-                  });
-                  if (paidResponse.ok) {
-                    console.error(`[x402] Paid via Privy wallet ${defaultWalletName} (${network})`);
-                    try {
-                      const { checkX402Balance } = await import('./x402.js');
-                      const balance = await checkX402Balance(network);
-                      if (balance !== null && balance < 0.25) {
-                        console.error(`[x402] Warning: USDC balance low ($${balance.toFixed(2)}). Fund your wallet to avoid interruptions.`);
-                      }
-                    } catch { /* balance check is best-effort */ }
-                    return await paidResponse.json();
-                  }
+                  const result = await this._x402Retry(signature, `Privy wallet ${defaultWalletName}`, network, url, body, options);
+                  if (result !== null) return result;
                 }
               } catch (privyErr) {
                 message = `x402 Privy payment failed: ${privyErr.message}`;
@@ -557,30 +582,8 @@ export class NansenAPI {
               try {
                 const { createPaymentSignatures } = await import('./x402.js');
                 for await (const { signature, network } of createPaymentSignatures(response, url)) {
-                  const paidResponse = await fetch(url, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'X-Client-Type': 'nansen-cli',
-                      'X-Client-Version': packageVersion,
-                      'Payment-Signature': signature,
-                      ...this.defaultHeaders,
-                      ...options.headers,
-                    },
-                    body: JSON.stringify(NansenAPI.cleanBody(body)),
-                  });
-                  if (paidResponse.ok) {
-                    console.error(`[x402] Paid via local wallet ${defaultWalletName} (${network})`);
-                    // Check remaining balance and warn if low
-                    try {
-                      const { checkX402Balance } = await import('./x402.js');
-                      const balance = await checkX402Balance(network);
-                      if (balance !== null && balance < 0.25) {
-                        console.error(`[x402] Warning: USDC balance low ($${balance.toFixed(2)}). Fund your wallet to avoid interruptions.`);
-                      }
-                    } catch { /* balance check is best-effort */ }
-                    return await paidResponse.json();
-                  }
+                  const result = await this._x402Retry(signature, `local wallet ${defaultWalletName}`, network, url, body, options);
+                  if (result !== null) return result;
                   // This payment option was rejected, try next
                 }
               } catch { /* local wallet unavailable, try WalletConnect */ }
@@ -604,21 +607,8 @@ export class NansenAPI {
                   try {
                     const { handleX402Payment } = await import('./walletconnect-x402.js');
                     const paymentSignature = await handleX402Payment(paymentRequirements);
-                    const paidResponse = await fetch(url, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'X-Client-Type': 'nansen-cli',
-                        'X-Client-Version': packageVersion,
-                        'Payment-Signature': paymentSignature,
-                        ...this.defaultHeaders,
-                        ...options.headers,
-                      },
-                      body: JSON.stringify(NansenAPI.cleanBody(body)),
-                    });
-                    if (paidResponse.ok) {
-                      return await paidResponse.json();
-                    }
+                    const result = await this._x402Retry(paymentSignature, 'WalletConnect', null, url, body, options);
+                    if (result !== null) return result;
                   } catch (x402Err) {
                     if (!this.apiKey) {
                       message = 'No API key configured. Two ways to authenticate:\n' +
@@ -1145,7 +1135,7 @@ export class NansenAPI {
 
   async pmOhlcv(params = {}) {
     const { marketId, sort, pagination } = params;
-    if (!marketId) throw new NansenError('market_id is required', ErrorCode.MISSING_PARAM);
+    if (!marketId) throw new NansenError('market_id is required. Run: nansen research pm market-screener --query "your search"', ErrorCode.MISSING_PARAM);
     return this.request('/api/v1/prediction-market/ohlcv', {
       market_id: marketId,
       sort,
@@ -1155,7 +1145,7 @@ export class NansenAPI {
 
   async pmOrderbook(params = {}) {
     const { marketId, pagination } = params;
-    if (!marketId) throw new NansenError('market_id is required', ErrorCode.MISSING_PARAM);
+    if (!marketId) throw new NansenError('market_id is required. Run: nansen research pm market-screener --query "your search"', ErrorCode.MISSING_PARAM);
     return this.request('/api/v1/prediction-market/orderbook', {
       market_id: marketId,
       pagination
@@ -1164,7 +1154,7 @@ export class NansenAPI {
 
   async pmTopHolders(params = {}) {
     const { marketId, sort, pagination } = params;
-    if (!marketId) throw new NansenError('market_id is required', ErrorCode.MISSING_PARAM);
+    if (!marketId) throw new NansenError('market_id is required. Run: nansen research pm market-screener --query "your search"', ErrorCode.MISSING_PARAM);
     return this.request('/api/v1/prediction-market/top-holders', {
       market_id: marketId,
       sort,
@@ -1174,7 +1164,7 @@ export class NansenAPI {
 
   async pmTradesByMarket(params = {}) {
     const { marketId, pagination } = params;
-    if (!marketId) throw new NansenError('market_id is required', ErrorCode.MISSING_PARAM);
+    if (!marketId) throw new NansenError('market_id is required. Run: nansen research pm market-screener --query "your search"', ErrorCode.MISSING_PARAM);
     return this.request('/api/v1/prediction-market/trades-by-market', {
       market_id: marketId,
       pagination
@@ -1214,7 +1204,7 @@ export class NansenAPI {
 
   async pmPnlByMarket(params = {}) {
     const { marketId, pagination } = params;
-    if (!marketId) throw new NansenError('market_id is required', ErrorCode.MISSING_PARAM);
+    if (!marketId) throw new NansenError('market_id is required. Run: nansen research pm market-screener --query "your search"', ErrorCode.MISSING_PARAM);
     return this.request('/api/v1/prediction-market/pnl-by-market', {
       market_id: marketId,
       pagination
@@ -1234,7 +1224,7 @@ export class NansenAPI {
 
   async pmPositionDetail(params = {}) {
     const { marketId, pagination } = params;
-    if (!marketId) throw new NansenError('market_id is required', ErrorCode.MISSING_PARAM);
+    if (!marketId) throw new NansenError('market_id is required. Run: nansen research pm market-screener --query "your search"', ErrorCode.MISSING_PARAM);
     return this.request('/api/v1/prediction-market/position-detail', {
       market_id: marketId,
       pagination

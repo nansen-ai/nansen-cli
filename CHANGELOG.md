@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.16.1
+
+### Patch Changes
+
+- [#249](https://github.com/nansen-ai/nansen-cli/pull/249) [`0c17437`](https://github.com/nansen-ai/nansen-cli/commit/0c17437cf65d8b4f0516ede386adefec57d8ab3d) Thanks [@0xlaveen](https://github.com/0xlaveen)! - Add `pm` to top-level COMMAND_ALIASES so `nansen pm <subcommand>` works (previously only `nansen research pm <subcommand>` resolved the alias)
+
+- [#244](https://github.com/nansen-ai/nansen-cli/pull/244) [`6427a9f`](https://github.com/nansen-ai/nansen-cli/commit/6427a9fdb7295dee94d7aed10cdb0164c46c7d73) Thanks [@Nicolai1205](https://github.com/Nicolai1205)! - Add 7 new agent skills: nansen-token-search, nansen-sm-trend, nansen-wallet-cluster, nansen-wallet-compare, nansen-token-indicators, nansen-cross-chain-flow, nansen-batch-wallet. All validated against live API.
+
 ## 1.16.0
 
 ### Minor Changes

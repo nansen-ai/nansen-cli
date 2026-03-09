@@ -9,25 +9,15 @@ import { base58Encode, exportWallet, getWalletConfig, verifyPassword, showWallet
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect } from './walletconnect-trading.js';
 import { EVM_CHAIN_IDS } from './chain-ids.js';
+import { CHAIN_RPCS } from './rpc-urls.js';
 
 // ============= Constants =============
-
-const DEFAULT_EVM_RPC = 'https://eth.public-rpc.com';
-const DEFAULT_SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
 
 const PRIORITY_FEE_DEFAULTS = { base: 100000000n, ethereum: 1500000000n, evm: 1500000000n };
 
 const ERC20_TRANSFER_SELECTOR = 'a9059cbb'; // transfer(address,uint256)
 const SYSTEM_PROGRAM = '11111111111111111111111111111111'; // 32 zero bytes in base58
 const ATA_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
-
-// Chain-specific RPC endpoints
-const CHAIN_RPCS = {
-  'ethereum': process.env.NANSEN_EVM_RPC || DEFAULT_EVM_RPC,
-  'evm': process.env.NANSEN_EVM_RPC || DEFAULT_EVM_RPC,
-  'base': process.env.NANSEN_BASE_RPC || 'https://mainnet.base.org',
-  'solana': process.env.NANSEN_SOLANA_RPC || DEFAULT_SOLANA_RPC,
-};
 
 // Alias: buildEvmTransaction uses 'evm' as a generic fallback
 const CHAIN_IDS = { ...EVM_CHAIN_IDS, evm: 1 };

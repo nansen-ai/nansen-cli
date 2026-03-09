@@ -1067,7 +1067,8 @@ ENVIRONMENT:
   PRIVY_APP_ID               Privy application ID (required for --provider privy)
   PRIVY_APP_SECRET           Privy application secret (required for --provider privy)
   NANSEN_WALLET_PROVIDER     Default provider for wallet create ("local" or "privy")
-  NANSEN_EVM_RPC            Custom EVM RPC endpoint
+  NANSEN_EVM_RPC            Custom Ethereum RPC endpoint (also generic EVM fallback)
+  NANSEN_BASE_RPC           Custom Base RPC endpoint
   NANSEN_SOLANA_RPC         Custom Solana RPC endpoint
 
 EXAMPLES:

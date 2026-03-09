@@ -13,6 +13,7 @@ import { base58Decode } from './transfer.js';
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendSolanaTransactionViaWalletConnect, sendApprovalViaWalletConnect } from './walletconnect-trading.js';
 import { retrievePassword } from './keychain.js';
+import { CHAIN_RPCS } from './rpc-urls.js';
 
 // ============= Constants =============
 
@@ -63,21 +64,17 @@ export function resolveTokenAddress(symbolOrAddress, chainName) {
   return resolved || symbolOrAddress;
 }
 
-// Default public RPC endpoints (used for nonce fetching)
-const EVM_RPC_URLS = {
-  base:     process.env.NANSEN_RPC_BASE     || 'https://mainnet.base.org',
-};
-
 /**
  * Make a JSON-RPC call to an EVM RPC endpoint.
- * @param {string} chain - Chain name (key into EVM_RPC_URLS)
+ * RPC URLs come from the shared CHAIN_RPCS registry in rpc-urls.js.
+ * @param {string} chain - Chain name (key into CHAIN_RPCS)
  * @param {string} method - JSON-RPC method name
  * @param {Array} params - Method parameters
  * @returns {Promise<*>} Parsed result value
  * @throws {Error} If chain has no configured RPC or the RPC returns an error
  */
 async function evmRpcCall(chain, method, params = []) {
-  const rpcUrl = EVM_RPC_URLS[chain];
+  const rpcUrl = CHAIN_RPCS[chain];
   if (!rpcUrl) throw new Error(`No RPC URL configured for chain: ${chain}`);
   const res = await fetch(rpcUrl, {
     method: 'POST',
@@ -406,7 +403,7 @@ export async function waitForReceipt(chain, txHash, timeoutMs = 30000, pollMs = 
  * Returns { success: true } or { success: false, reason: string }.
  */
 export async function simulateEvmCall(chain, { from, to, data, value, gas }) {
-  if (!EVM_RPC_URLS[chain]) return { success: true }; // Can't simulate, skip
+  if (!CHAIN_RPCS[chain]) return { success: true }; // Can't simulate, skip
 
   try {
     const callObj = { from, to, data, value: value || '0x0' };
@@ -429,7 +426,7 @@ export async function simulateEvmCall(chain, { from, to, data, value, gas }) {
  * Used to fix under-gassed quotes from aggregators.
  */
 export async function estimateEvmGas(chain, { from, to, data, value }) {
-  if (!EVM_RPC_URLS[chain]) return null;
+  if (!CHAIN_RPCS[chain]) return null;
 
   try {
     const result = await evmRpcCall(chain, 'eth_estimateGas', [{ from, to, data, value: value || '0x0' }]);
@@ -444,7 +441,7 @@ export async function estimateEvmGas(chain, { from, to, data, value }) {
  * Returns the allowance as a BigInt, or 0n on failure.
  */
 export async function checkErc20Allowance(chain, tokenAddress, ownerAddress, spenderAddress) {
-  if (!EVM_RPC_URLS[chain]) return 0n;
+  if (!CHAIN_RPCS[chain]) return 0n;
 
   try {
     // allowance(address,address) selector = 0xdd62ed3e
@@ -1123,7 +1120,7 @@ EXAMPLES:
               let finalGas = apiGas > 0 ? apiGas : txGas;
               if (finalGas === 0) {
                 try {
-                  const rpcUrl = EVM_RPC_URLS[chain];
+                  const rpcUrl = CHAIN_RPCS[chain];
                   const estRes = await fetch(rpcUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

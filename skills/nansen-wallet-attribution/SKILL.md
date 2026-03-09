@@ -1,6 +1,6 @@
 ---
 name: nansen-wallet-attribution
-description: "Cluster and attribute related wallets — funding chains, shared signers, CEX deposit patterns."
+description: "Cluster and attribute related wallets — funding chains, shared signers, CEX deposit patterns. Use when tracing wallet ownership, comparing two wallets, finding wallet relationships, governance voters, or related address clusters."
 ---
 
 # Wallet Attribution

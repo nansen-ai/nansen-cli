@@ -1240,6 +1240,9 @@ export function buildCommands(deps = {}) {
     },
 
     'prediction-market': async (args, apiInstance, flags, options) => {
+      if (Date.now() < new Date('2026-03-16T00:00:00Z').getTime()) {
+        process.stderr.write('⚠️  PnL data for prediction markets is temporarily unavailable while we improve accuracy. We\'ll update once resolved.\n');
+      }
       const subcommand = args[0] || 'help';
       const marketId = options['market-id'];
       const address = options.address;

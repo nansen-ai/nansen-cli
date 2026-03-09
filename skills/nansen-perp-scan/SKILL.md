@@ -1,6 +1,6 @@
 ---
 name: nansen-perp-scan
-description: "What is the state of the Hyperliquid perp market? Top contracts by volume/OI, trader leaderboard, SM perp activity, and positions by symbol."
+description: "What is the state of the Hyperliquid perp market? Top contracts by volume/OI, trader leaderboard, and SM perp activity."
 ---
 
 # Perp Market Scan
@@ -16,8 +16,4 @@ nansen research perp leaderboard --days 7 --limit 20
 
 nansen research smart-money perp-trades --limit 20
 # → token_symbol, side, action (Open/Close), value_usd, price_usd, trader_address_label
-
-# Deep-dive on a specific symbol
-nansen research token perp-positions --symbol ETH --limit 10
-# → address, address_label, side, position_value_usd, leverage, entry_price, mark_price, upnl_usd
 ```
