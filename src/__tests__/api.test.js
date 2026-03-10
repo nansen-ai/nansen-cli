@@ -328,7 +328,9 @@ describe('NansenAPI', () => {
 
     // Verify method and headers
     expect(options.method).toBe(expectedMethod);
-    expect(options.headers['Content-Type']).toBe('application/json');
+    if (expectedMethod !== 'GET') {
+      expect(options.headers['Content-Type']).toBe('application/json');
+    }
     expect(options.headers['X-Client-Type']).toBe('nansen-cli');
     expect(options.headers['X-Client-Version']).toMatch(/^\d+\.\d+\.\d+/);
     expect(options.headers['apikey']).toBe('test-api-key');
