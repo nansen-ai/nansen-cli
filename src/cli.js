@@ -670,6 +670,7 @@ COMMANDS:
   research    smart-money, profiler, token, search, perp, portfolio, points, x
   trade       quote, execute
   wallet      create, list, show, export, default, delete, forget-password
+  account     Show API key status, plan, and remaining credits
   login       Save API key (--api-key <key> or NANSEN_API_KEY env var)
   logout      Remove saved API key
   schema      JSON schema for all commands (use "nansen schema <cmd>" for one)
@@ -757,6 +758,22 @@ export function buildCommands(deps = {}) {
   } = deps;
 
   const cmds = {
+    'account': async (_args, apiInstance, flags, _options) => {
+      if (flags.help || flags.h) {
+        log('nansen account — Show API key status, plan, and remaining credits\n');
+        log('USAGE:');
+        log('  nansen account\n');
+        log('Calls GET /api/v1/account. Does not consume any credits.\n');
+        log('EXAMPLES:');
+        log('  nansen account');
+        log('  nansen account --pretty');
+        return;
+      }
+
+      const result = await apiInstance.getAccount();
+      log(JSON.stringify(result));
+    },
+
     'login': async (args, apiInstance, flags, options) => {
       if (flags.help || flags.h) {
         log('nansen login - Save your Nansen API key\n');

@@ -746,6 +746,9 @@
           "description": "Set default wallet"
         }
       }
+    },
+    "account": {
+      "description": "Show API key status, plan, and remaining credits. Does not consume credits."
     }
   },
   "globalOptions": {
