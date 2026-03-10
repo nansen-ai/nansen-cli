@@ -28,6 +28,10 @@ const TEST_DATA = {
 
 // Mock responses for unit tests
 const MOCK_RESPONSES = {
+  account: {
+    plan: 'pro',
+    credits_remaining: 9800
+  },
   smartMoneyNetflow: {
     netflows: [
       { token_address: 'abc', token_symbol: 'TEST', inflow_usd: 1000, outflow_usd: 500 }
@@ -356,6 +360,34 @@ describe('NansenAPI', () => {
     it('should accept custom base URL', () => {
       const customApi = new NansenAPI('test-key', 'https://custom.api.com');
       expect(customApi.baseUrl).toBe('https://custom.api.com');
+    });
+  });
+
+  // =================== Account Endpoint ===================
+
+  describe('Account', () => {
+    describe('getAccount', () => {
+      it('should call GET /api/v1/account with no body', async () => {
+        setupMock(MOCK_RESPONSES.account);
+
+        const result = await api.getAccount();
+
+        // Verify correct API call
+        if (!LIVE_TEST) {
+          expect(mockFetch).toHaveBeenCalled();
+          const [url, options] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+
+          expect(url).toBe('https://api.nansen.ai/api/v1/account');
+          expect(options.method).toBe('GET');
+          expect(options.headers['Content-Type']).toBeUndefined();
+          expect(options.headers['apikey']).toBe('test-api-key');
+          expect(options.body).toBeUndefined();
+        }
+
+        // Verify response structure
+        expect(result).toHaveProperty('plan');
+        expect(result).toHaveProperty('credits_remaining');
+      });
     });
   });
 

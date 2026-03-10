@@ -406,13 +406,6 @@ describe('buildCommands', () => {
       expect(mockApi.getAccount).toHaveBeenCalledOnce();
       expect(result).toEqual({ plan: 'pro', credits_remaining: 9800 });
     });
-
-    it('should show help when --help flag is set', async () => {
-      const mockApi = { getAccount: vi.fn() };
-      await commands.account([], mockApi, { help: true }, {});
-      expect(mockApi.getAccount).not.toHaveBeenCalled();
-      expect(logs.some(l => l.includes('nansen account'))).toBe(true);
-    });
   });
 
   describe('smart-money command', () => {

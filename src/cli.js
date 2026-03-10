@@ -758,18 +758,7 @@ export function buildCommands(deps = {}) {
   } = deps;
 
   const cmds = {
-    'account': async (_args, apiInstance, flags, _options) => {
-      if (flags.help || flags.h) {
-        log('nansen account — Show API key status, plan, and remaining credits. Does not consume credits.\n');
-        log('USAGE:');
-        log('  nansen account\n');
-        log('Calls GET /api/v1/account. Does not consume any credits.\n');
-        log('EXAMPLES:');
-        log('  nansen account');
-        log('  nansen account --pretty');
-        return;
-      }
-
+    'account': async (_args, apiInstance, _flags, _options) => {
       return apiInstance.getAccount();
     },
 
