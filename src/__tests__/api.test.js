@@ -192,19 +192,6 @@ const MOCK_RESPONSES = {
       { address: '0x123', pnl_usd: 500000 }
     ]
   },
-  // X (Twitter) endpoints
-  xPostsByToken: {
-    data: [
-      { username: 'coinbureau', timestamp: '2026-03-07T06:10:00', text: 'BTC is pumping', likes: 227, views: 16125, tweet_id: '2030164039343505563' }
-    ],
-    pagination: { page: 1, per_page: 100, is_last_page: false }
-  },
-  xPostsByUser: {
-    data: [
-      { username: 'coinbureau', timestamp: '2026-03-07T06:10:00', text: 'BTC is pumping', likes: 227, views: 16125, tweet_id: '2030164039343505563' }
-    ],
-    pagination: { page: 1, per_page: 100, is_last_page: false }
-  },
   // Prediction Market endpoints
   pmOhlcv: {
     data: [
@@ -1732,59 +1719,6 @@ describe('NansenAPI', () => {
         await api.pmCategories({ pagination: { page: 1, per_page: 10 } });
         const body = expectFetchCalledWith('/api/v1/prediction-market/categories');
         expect(body.pagination).toEqual({ page: 1, per_page: 10 });
-      });
-    });
-  });
-
-  // =================== X (Twitter) Endpoints ===================
-
-  describe('X (Twitter)', () => {
-    describe('xPostsByToken', () => {
-      it('should fetch posts by token with correct endpoint and body', async () => {
-        setupMock(MOCK_RESPONSES.xPostsByToken);
-        const result = await api.xPostsByToken({ date: { from: '2026-03-01', to: '2026-03-08' }, tokenSymbol: 'BTC' });
-        expectFetchCalledWith('/api/v1/ra-agent/posts-by-token', { token_symbol: 'BTC', date: { from: '2026-03-01', to: '2026-03-08' } });
-        expect(result.data).toBeInstanceOf(Array);
-        expect(result.data[0]).toHaveProperty('username', 'coinbureau');
-        expect(result.data[0]).toHaveProperty('tweet_id');
-      });
-
-      it('should pass min_likes and min_views', async () => {
-        setupMock(MOCK_RESPONSES.xPostsByToken);
-        await api.xPostsByToken({ date: { from: '2026-03-01', to: '2026-03-08' }, tokenSymbol: 'BTC', minLikes: 100, minViews: 1000 });
-        const body = expectFetchCalledWith('/api/v1/ra-agent/posts-by-token');
-        expect(body.min_likes).toBe(100);
-        expect(body.min_views).toBe(1000);
-      });
-
-      it('should sanitize token_name and token_symbol to longest ASCII alnum segment', async () => {
-        setupMock(MOCK_RESPONSES.xPostsByToken);
-        await api.xPostsByToken({ date: { from: '2026-03-01', to: '2026-03-08' }, tokenSymbol: 'pump.fun', tokenName: 'Pudgy Penguins' });
-        const body = expectFetchCalledWith('/api/v1/ra-agent/posts-by-token');
-        expect(body.token_symbol).toBe('pump');
-        expect(body.token_name).toBe('Penguins');
-      });
-
-      it('should omit token fields (not send empty strings) when input is falsy or all punctuation', async () => {
-        setupMock(MOCK_RESPONSES.xPostsByToken);
-        await api.xPostsByToken({ date: { from: '2026-03-01', to: '2026-03-08' }, tokenSymbol: '!!!', tokenName: undefined });
-        const body = expectFetchCalledWith('/api/v1/ra-agent/posts-by-token');
-        expect(body.token_symbol).toBeUndefined();
-        expect(body.token_name).toBeUndefined();
-      });
-    });
-
-    describe('xPostsByUser', () => {
-      it('should fetch posts by user with correct endpoint and body', async () => {
-        setupMock(MOCK_RESPONSES.xPostsByUser);
-        const result = await api.xPostsByUser({ date: { from: '2026-03-01', to: '2026-03-08' }, username: 'coinbureau' });
-        expectFetchCalledWith('/api/v1/ra-agent/posts-by-user', { username: 'coinbureau', date: { from: '2026-03-01', to: '2026-03-08' } });
-        expect(result.data).toBeInstanceOf(Array);
-        expect(result.data[0]).toHaveProperty('username', 'coinbureau');
-      });
-
-      it('should require username', async () => {
-        await expect(api.xPostsByUser({})).rejects.toThrow('--username is required');
       });
     });
   });

@@ -559,92 +559,6 @@
           },
           "description": "Polymarket prediction market analytics"
         },
-        "x": {
-          "description": "X (Twitter) post analytics",
-          "subcommands": {
-            "posts-by-token": {
-              "description": "Get posts mentioning a token",
-              "options": {
-                "token-name": {
-                  "type": "string",
-                  "description": "Token name filter"
-                },
-                "token-symbol": {
-                  "type": "string",
-                  "description": "Token symbol filter"
-                },
-                "min-likes": {
-                  "type": "number",
-                  "description": "Minimum likes"
-                },
-                "min-views": {
-                  "type": "number",
-                  "description": "Minimum views"
-                },
-                "days": {
-                  "type": "number",
-                  "description": "Date range in days (default: 7)"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., likes:desc)"
-                },
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
-                }
-              },
-              "returns": [
-                "username",
-                "timestamp",
-                "text",
-                "likes",
-                "views",
-                "tweet_id"
-              ],
-              "example": "nansen research x posts-by-token --token-symbol BTC --days 7 --sort likes:desc --limit 20"
-            },
-            "posts-by-user": {
-              "description": "Get posts by a specific X user",
-              "options": {
-                "username": {
-                  "type": "string",
-                  "required": true,
-                  "description": "X username"
-                },
-                "min-likes": {
-                  "type": "number",
-                  "description": "Minimum likes"
-                },
-                "min-views": {
-                  "type": "number",
-                  "description": "Minimum views"
-                },
-                "days": {
-                  "type": "number",
-                  "description": "Date range in days (default: 7)"
-                },
-                "sort": {
-                  "type": "string",
-                  "description": "Sort field:direction (e.g., likes:desc)"
-                },
-                "limit": {
-                  "type": "number",
-                  "description": "Number of results"
-                }
-              },
-              "returns": [
-                "username",
-                "timestamp",
-                "text",
-                "likes",
-                "views",
-                "tweet_id"
-              ],
-              "example": "nansen research x posts-by-user --username vitalikbuterin --days 7 --min-likes 10"
-            }
-          }
-        },
         "points": {
           "subcommands": {
             "leaderboard": {
@@ -682,7 +596,7 @@
             },
             "wallet": {
               "type": "string",
-              "description": "Wallet name (or \"walletconnect\"/\"wc\" for WalletConnect, EVM only). A configured wallet is required \u2014 run `nansen wallet create` if you haven't set one up yet."
+              "description": "Wallet name (or \"walletconnect\"/\"wc\" for WalletConnect, EVM only). A configured wallet is required — run `nansen wallet create` if you haven't set one up yet."
             }
           },
           "prerequisites": [

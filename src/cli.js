@@ -667,7 +667,7 @@ export const HELP = `Nansen CLI v${VERSION} — designed for AI agents.
 USAGE: nansen <command> [subcommand] [options]
 
 COMMANDS:
-  research    smart-money, profiler, token, search, perp, portfolio, points, x
+  research    smart-money, profiler, token, search, perp, portfolio, points
   trade       quote, execute
   wallet      create, list, show, export, default, delete, forget-password
   login       Save API key (--api-key <key> or NANSEN_API_KEY env var)
@@ -1276,43 +1276,11 @@ export function buildCommands(deps = {}) {
       }
 
       return handlers[subcommand]();
-    },
-
-    'x': async (args, apiInstance, flags, options) => {
-      const subcommand = args[0] || 'help';
-      const orderBy = parseSort(options.sort, options['order-by']);
-      const pagination = buildPagination(options);
-      const days = options.days ? parseInt(options.days) : 7;
-      const date = parseDateOption(options.date, days);
-      const minLikes = options['min-likes'] ? parseInt(options['min-likes']) : undefined;
-      const minViews = options['min-views'] ? parseInt(options['min-views']) : undefined;
-
-      const handlers = {
-        'posts-by-token': () => apiInstance.xPostsByToken({
-          date, tokenName: options['token-name'], tokenSymbol: options['token-symbol'],
-          minLikes, minViews, orderBy, pagination
-        }),
-        'posts-by-user': () => apiInstance.xPostsByUser({
-          date, username: options.username,
-          minLikes, minViews, orderBy, pagination
-        }),
-        'help': () => ({
-          commands: ['posts-by-token', 'posts-by-user'],
-          description: 'X (Twitter) post analytics',
-          example: 'nansen research x posts-by-token --token-symbol BTC --days 7'
-        })
-      };
-
-      if (!handlers[subcommand]) {
-        throw new NansenError(`Unknown subcommand: ${subcommand}. Available: ${Object.keys(handlers).filter(k => k !== 'help').join(', ')}`, ErrorCode.UNKNOWN);
-      }
-
-      return handlers[subcommand]();
     }
   };
 
   // 'research' delegates to the category handlers defined above
-  const RESEARCH_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points', 'prediction-market', 'x']);
+  const RESEARCH_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points', 'prediction-market']);
 
   cmds['research'] = async (args, apiInstance, flags, options) => {
     const rawCategory = args[0];
@@ -1371,7 +1339,7 @@ SYMBOLS:
 }
 
 // Categories that moved under 'research'
-export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points', 'x']);
+export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points']);
 // Subcommands that moved under 'trade'
 export const DEPRECATED_TO_TRADE = new Set(['quote', 'execute']);
 
@@ -1419,22 +1387,17 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
     lines.push(`Returns: ${subSchema.returns.join(', ')}`);
   }
 
-  let example;
-  if (subSchema.example) {
-    example = subSchema.example;
-  } else {
-    const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
-    const chain = subSchema.options?.chain?.default || 'solana';
-    const cmdPrefix = prefix || (DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command);
-    example = `nansen ${cmdPrefix} ${subcommand}`;
-    if (subSchema.options) {
-      for (const [name, opt] of Object.entries(subSchema.options)) {
-        if (opt.required) example += ` --${name} ${exampleValues[name] || '<val>'}`;
-      }
+  const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
+  const chain = subSchema.options?.chain?.default || 'solana';
+  const cmdPrefix = prefix || (DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command);
+  let example = `nansen ${cmdPrefix} ${subcommand}`;
+  if (subSchema.options) {
+    for (const [name, opt] of Object.entries(subSchema.options)) {
+      if (opt.required) example += ` --${name} ${exampleValues[name] || '<val>'}`;
     }
-    if (subSchema.options?.chain && !subSchema.options.chain.required) {
-      example += ` --chain ${chain}`;
-    }
+  }
+  if (subSchema.options?.chain && !subSchema.options.chain.required) {
+    example += ` --chain ${chain}`;
   }
   lines.push(`Example: ${example}`);
 

@@ -1238,46 +1238,6 @@ export class NansenAPI {
     });
   }
 
-  // ============= X (Twitter) Endpoints =============
-
-  /**
-   * Strip the input to its longest contiguous ASCII alphanumeric segment.
-   * The Nansen API hasTokenCaseInsensitive constraint rejects spaces and punctuation,
-   * so "pump.fun" → "pump", "Pudgy Penguins" → "Penguins", "T-2049" → "2049".
-   */
-  _longestAsciiAlnumSegment(text) {
-    if (!text) return undefined;
-    const segments = text.match(/[A-Za-z0-9]+/g) || [];
-    const longest = segments.reduce((a, b) => (b.length > a.length ? b : a), '');
-    return longest || undefined;
-  }
-
-  async xPostsByToken(params = {}) {
-    const { date, tokenName, tokenSymbol, minLikes, minViews, orderBy, pagination } = params;
-    return this.request('/api/v1/ra-agent/posts-by-token', {
-      date,
-      token_name: this._longestAsciiAlnumSegment(tokenName),
-      token_symbol: this._longestAsciiAlnumSegment(tokenSymbol),
-      min_likes: minLikes,
-      min_views: minViews,
-      order_by: orderBy,
-      pagination
-    });
-  }
-
-  async xPostsByUser(params = {}) {
-    const { date, username, minLikes, minViews, orderBy, pagination } = params;
-    if (!username) throw new NansenError('--username is required', ErrorCode.MISSING_PARAM);
-    return this.request('/api/v1/ra-agent/posts-by-user', {
-      date,
-      username,
-      min_likes: minLikes,
-      min_views: minViews,
-      order_by: orderBy,
-      pagination
-    });
-  }
-
   // ============= Points Endpoints =============
 
   async pointsLeaderboard(params = {}) {

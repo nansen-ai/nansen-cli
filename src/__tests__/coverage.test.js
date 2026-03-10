@@ -71,10 +71,6 @@ const DOCUMENTED_ENDPOINTS = {
     { name: 'position-detail', method: 'pmPositionDetail', endpoint: '/api/v1/prediction-market/position-detail' },
     { name: 'categories', method: 'pmCategories', endpoint: '/api/v1/prediction-market/categories' },
   ],
-  x: [
-    { name: 'posts-by-token', method: 'xPostsByToken', endpoint: '/api/v1/ra-agent/posts-by-token' },
-    { name: 'posts-by-user', method: 'xPostsByUser', endpoint: '/api/v1/ra-agent/posts-by-user' },
-  ],
 };
 
 // Endpoints that are documented but return 404 (confirmed non-existent)

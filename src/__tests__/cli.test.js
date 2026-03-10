@@ -132,35 +132,6 @@ describe('CLI Smoke Tests', () => {
     expect(stdout).toContain('categories');
   });
 
-  it('should route research x commands', () => {
-    const { stdout } = runCLI('research x help');
-    expect(stdout).toContain('posts-by-token');
-    expect(stdout).toContain('posts-by-user');
-  });
-
-  it('should route top-level x alias', () => {
-    const { stdout } = runCLI('x help');
-    expect(stdout).toContain('posts-by-token');
-    expect(stdout).toContain('posts-by-user');
-  });
-
-  it('should error on x posts-by-user without --username', () => {
-    const { stdout, stderr, exitCode } = runCLI('research x posts-by-user');
-    expect(exitCode).not.toBe(0);
-    const output = stdout || stderr;
-    const json = JSON.parse(output.split('\n').find(l => l.startsWith('{')));
-    expect(json.code).toBe('MISSING_PARAM');
-  });
-
-  it('should throw on unknown x subcommand with non-zero exit', () => {
-    const { stdout, stderr, exitCode } = runCLI('research x bogus-subcommand');
-    expect(exitCode).not.toBe(0);
-    const output = stdout || stderr;
-    const json = JSON.parse(output.split('\n').find(l => l.startsWith('{')));
-    expect(json.code).toBe('UNKNOWN');
-    expect(json.error).toContain('bogus-subcommand');
-  });
-
   it('should error on pm ohlcv without --market-id', () => {
     const { stdout, stderr, exitCode } = runCLI('research pm ohlcv');
     expect(exitCode).not.toBe(0);
