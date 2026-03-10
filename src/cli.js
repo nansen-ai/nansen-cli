@@ -770,8 +770,7 @@ export function buildCommands(deps = {}) {
         return;
       }
 
-      const result = await apiInstance.getAccount();
-      log(JSON.stringify(result));
+      return apiInstance.getAccount();
     },
 
     'login': async (args, apiInstance, flags, options) => {
