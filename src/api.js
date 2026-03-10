@@ -485,17 +485,19 @@ export class NansenAPI {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       let response;
       try {
+        const method = options.method || 'POST';
+        const isGet = method === 'GET';
         response = await fetch(url, {
-          method: 'POST',
+          method,
           headers: {
-            'Content-Type': 'application/json',
+            ...(!isGet && { 'Content-Type': 'application/json' }),
             'X-Client-Type': 'nansen-cli',
             'X-Client-Version': packageVersion,
             ...(this.apiKey ? { 'apikey': this.apiKey } : {}),
             ...this.defaultHeaders,
             ...options.headers
           },
-          body: JSON.stringify(NansenAPI.cleanBody(body))
+          ...(!isGet && { body: JSON.stringify(NansenAPI.cleanBody(body)) })
         });
       } catch (err) {
         // Network-level errors - retry these too
@@ -667,39 +669,7 @@ export class NansenAPI {
   // ============= Account Endpoint =============
 
   async getAccount() {
-    const url = `${this.baseUrl}/api/v1/account`;
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'X-Client-Type': 'nansen-cli',
-        'X-Client-Version': packageVersion,
-        ...(this.apiKey ? { 'apikey': this.apiKey } : {}),
-        ...this.defaultHeaders,
-      },
-    });
-
-    if (!response.ok) {
-      let errorDetail = response.statusText;
-      try {
-        const errData = await response.json();
-        errorDetail = errData.detail || errData.message || errorDetail;
-      } catch (_) { /* ignore parse errors */ }
-
-      if (response.status === 401) {
-        throw new NansenError(
-          'Invalid or missing API key. Run: nansen login --api-key <key>',
-          ErrorCode.UNAUTHORIZED,
-          response.status
-        );
-      }
-      throw new NansenError(
-        `Account lookup failed: ${errorDetail}`,
-        ErrorCode.UNKNOWN,
-        response.status
-      );
-    }
-
-    return response.json();
+    return this.request('/api/v1/account', {}, { method: 'GET', cache: false });
   }
 
   // ============= Smart Money Endpoints =============
