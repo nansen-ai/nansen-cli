@@ -608,8 +608,11 @@ export function buildWalletCommands(deps = {}) {
             // Step 1: Check env var and keychain
             password = resolveWalletPassword();
 
-            // Step 2: If --human flag, allow interactive prompt (requires TTY)
-            if (!password && flags.human && !process.stdin.isTTY && !deps.promptFn) {
+            // Step 2: Prompt interactively when in a TTY, or when --human is explicitly requested.
+            // Agent/CI contexts have no TTY (piped stdin), so they always fall through to the
+            // structured JSON error in Step 3 — preserving machine-readable output for agents.
+            const canPrompt = process.stdin.isTTY || !!deps.promptFn;
+            if (!password && flags.human && !canPrompt) {
               log(JSON.stringify({
                 error: 'NOT_A_TTY',
                 message: '--human requires an interactive terminal. Set NANSEN_WALLET_PASSWORD env var instead.',
@@ -617,7 +620,7 @@ export function buildWalletCommands(deps = {}) {
               exit(1);
               return;
             }
-            if (!password && flags.human && (process.stdin.isTTY || deps.promptFn)) {
+            if (!password && canPrompt) {
               password = await promptPassword('Enter wallet password: ', deps);
               if (password && password.length < 12) {
                 log('❌ Password must be at least 12 characters');
@@ -643,7 +646,7 @@ export function buildWalletCommands(deps = {}) {
                 error: 'PASSWORD_REQUIRED',
                 message: 'A wallet password is required. Ask the user to provide one.',
                 instructions: 'Re-run with: NANSEN_WALLET_PASSWORD=<password> nansen wallet create',
-                note: 'Password must be at least 12 characters. After creation, the password is saved to the OS keychain automatically — future operations will not require it.',
+                note: 'Password must be at least 12 characters. After creation, the password is saved to the OS keychain automatically — future operations will not require it. When running in a terminal, the password will be prompted interactively.',
               }));
               exit(1);
               return;
@@ -1060,7 +1063,7 @@ OPTIONS:
 PASSWORD RESOLUTION (automatic, in order):
   1. NANSEN_WALLET_PASSWORD env var
   2. OS keychain (saved automatically on wallet create)
-  3. Interactive prompt (only with --human flag)
+  3. Interactive prompt (automatically when running in a terminal; --human flag is no longer required)
 
 ENVIRONMENT:
   NANSEN_WALLET_PASSWORD     Wallet encryption password
@@ -1072,6 +1075,7 @@ ENVIRONMENT:
   NANSEN_SOLANA_RPC         Custom Solana RPC endpoint
 
 EXAMPLES:
+  nansen wallet create                                    # prompts for password in terminal
   NANSEN_WALLET_PASSWORD=mypass nansen wallet create --name trading
   nansen wallet create --name agent-wallet --provider privy
   nansen wallet list
