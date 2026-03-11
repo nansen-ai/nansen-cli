@@ -355,6 +355,7 @@ OPTIONS (all types):
   --data '<json>'              Raw JSON merged on top of named flags (escape hatch)
 
 OPTIONS (sm-token-flows):
+  At least one flow threshold required (inflow, outflow, or netflow):
   --inflow-1h-min/max <usd>   --outflow-1h-min/max <usd>   --netflow-1h-min/max <usd>
   --inflow-1d-min/max <usd>   --outflow-1d-min/max <usd>   --netflow-1d-min/max <usd>
   --inflow-7d-min/max <usd>   --outflow-7d-min/max <usd>   --netflow-7d-min/max <usd>
@@ -388,16 +389,18 @@ EXAMPLES:
         update: `nansen alerts update — Update an existing alert
 
 USAGE:
-  nansen alerts update <id> [--name <name>] [--type <type>] [--chains <chains>] [--enabled|--disabled] ...
+  nansen alerts update <id> [--name <name>] [--chains <chains>] [--enabled|--disabled] [type-specific flags...]
 
 All create options are accepted. Only provided fields are updated.
+See: nansen alerts create --help for type-specific flags.
 
-NOTE: Use single quotes for names with $ or special chars: --name 'SM >$1M'
+NOTE: --type cannot change an existing alert's type (use delete + create instead).
+      Use single quotes for names with $ or special chars: --name 'SM >$1M'
 
 EXAMPLES:
   nansen alerts update abc123 --name 'New Name'
   nansen alerts update abc123 --inflow-1h-min 2000000
-  nansen alerts update abc123 --type sm-token-flows --chains ethereum,base --inflow-1h-min 2000000`,
+  nansen alerts update abc123 --chains ethereum,base --inflow-1h-min 2000000`,
 
         toggle: `nansen alerts toggle — Enable or disable an alert
 
