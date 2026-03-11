@@ -7,7 +7,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { spawn } from 'child_process';
+import childProcess from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -119,7 +119,7 @@ export function scheduleUpdateCheck() {
       req.setTimeout(5000, () => req.destroy());
     `;
 
-    const child = spawn(process.execPath, ['-e', script], {
+    const child = childProcess.spawn(process.execPath, ['-e', script], {
       detached: true,
       stdio: 'ignore'
     });
