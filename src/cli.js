@@ -1498,7 +1498,8 @@ export async function runCLI(rawArgs, deps = {}) {
     if (updateNotification) errorOutput(updateNotification);
   };
 
-  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...buildAlertsCommands(deps), ...commandOverrides };
+  const walletDeps = { ...deps, log: deps.output, ttyOutput: deps.errorOutput };
+  const commands = { ...buildCommands(deps), ...buildWalletCommands(walletDeps), ...buildTradingCommands(deps), ...buildAlertsCommands(deps), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);
