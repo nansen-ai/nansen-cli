@@ -7,8 +7,14 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { EVM_CHAINS } from './chain-ids.js';
+import { getAnonymousId, TELEMETRY_DISABLED } from './telemetry.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function telemetryHeaders() {
+  if (TELEMETRY_DISABLED) return {};
+  return { 'X-Anonymous-Id': getAnonymousId() };
+}
 
 const { version: packageVersion } = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')
@@ -442,6 +448,7 @@ export class NansenAPI {
         'Content-Type': 'application/json',
         'X-Client-Type': 'nansen-cli',
         'X-Client-Version': packageVersion,
+        ...telemetryHeaders(),
         'Payment-Signature': signature,
         ...this.defaultHeaders,
         ...options.headers,
@@ -493,6 +500,7 @@ export class NansenAPI {
             ...(!isGet && { 'Content-Type': 'application/json' }),
             'X-Client-Type': 'nansen-cli',
             'X-Client-Version': packageVersion,
+            ...telemetryHeaders(),
             ...(this.apiKey ? { 'apikey': this.apiKey } : {}),
             ...this.defaultHeaders,
             ...options.headers

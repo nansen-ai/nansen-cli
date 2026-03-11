@@ -9,6 +9,7 @@ import { buildTradingCommands } from './trading.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
+import { trackCommandSucceeded, trackCommandFailed } from './telemetry.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
 
@@ -693,6 +694,8 @@ Labels: Fund, Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader
 
 Docs: https://docs.nansen.ai
 Skills: npx skills add nansen-ai/nansen-cli (agent-optimised docs per command group)
+
+Telemetry: anonymous usage stats collected. Disable: DO_NOT_TRACK=1
 `;
 
 // Helper to prompt for input (exported for mocking)
@@ -1531,13 +1534,22 @@ export async function runCLI(rawArgs, deps = {}) {
     }
   }
 
+  // ── Telemetry setup ──
+  const startTime = Date.now();
+  const fullCommand = subcommand ? `${command} ${subcommand}` : command;
+  const flagNames = Object.keys(flags).filter(k => flags[k]).map(k => `--${k}`);
+  const optionNames = Object.keys(options).map(k => `--${k}`);
+  const usedFlags = [...flagNames, ...optionNames];
+  const chain = options.chain || null;
+
   if (!commands[command]) {
-    const errorData = { 
+    const errorData = {
       error: `Unknown command: ${command}`,
       available: Object.keys(commands)
     };
     const formatted = formatOutput(errorData, { pretty, table });
     output(formatted.text);
+    trackCommandFailed({ command: fullCommand, duration_ms: Date.now() - startTime, error_code: 'UNKNOWN_COMMAND', flags: usedFlags, chain });
     notify();
     exit(1);
     return { type: 'error', data: errorData };
@@ -1565,6 +1577,7 @@ export async function runCLI(rawArgs, deps = {}) {
 
     // Commands that handle their own output return undefined
     if (result === undefined) {
+      trackCommandSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, flags: usedFlags, chain });
       notify();
       return { type: 'no-output', command };
     }
@@ -1573,6 +1586,7 @@ export async function runCLI(rawArgs, deps = {}) {
     if (command === 'schema') {
       const formatted = formatOutput(result, { pretty, table: false });
       output(formatted.text);
+      trackCommandSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, flags: usedFlags, chain });
       notify();
       return { type: 'schema', data: result };
     }
@@ -1590,6 +1604,7 @@ export async function runCLI(rawArgs, deps = {}) {
       if (streamOutput) {
         output(streamOutput);
       }
+      trackCommandSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: !!result?.fromCache, flags: usedFlags, chain });
       notify();
       return { type: 'stream', data: result };
     }
@@ -1597,12 +1612,21 @@ export async function runCLI(rawArgs, deps = {}) {
     const successData = { success: true, data: result };
     const formatted = formatOutput(successData, { pretty, table, csv });
     output(formatted.text);
+    trackCommandSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: !!result?.fromCache, flags: usedFlags, chain });
     notify();
     return { type: csv ? 'csv' : 'success', data: result };
   } catch (error) {
     const errorData = formatError(error);
     const formatted = formatOutput(errorData, { pretty, table, csv });
     output(formatted.text);
+    trackCommandFailed({
+      command: fullCommand,
+      duration_ms: Date.now() - startTime,
+      error_code: error.code || 'UNKNOWN',
+      status: error.status || null,
+      flags: usedFlags,
+      chain,
+    });
     notify();
     exit(1);
     return { type: 'error', data: errorData };
