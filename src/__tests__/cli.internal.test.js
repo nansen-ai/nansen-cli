@@ -375,9 +375,13 @@ describe('buildCommands', () => {
       expect(mockDeps.exit).toHaveBeenCalledWith(1);
     });
 
-    it('should save config with --api-key option', async () => {
+    it('should save config with --api-key option after verification', async () => {
+      const mockApi = { getAccount: vi.fn().mockResolvedValue({ plan: 'pro', credits_remaining: 9800 }) };
+      mockDeps.NansenAPIClass.mockImplementation(function() { return mockApi; });
+
       await commands.login([], null, {}, { 'api-key': 'valid-api-key' });
 
+      expect(mockApi.getAccount).toHaveBeenCalledOnce();
       expect(mockDeps.saveConfigFn).toHaveBeenCalledWith({
         apiKey: 'valid-api-key',
         baseUrl: 'https://api.nansen.ai'
@@ -393,6 +397,38 @@ describe('buildCommands', () => {
       if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
       expect(mockDeps.exit).toHaveBeenCalledWith(1);
       expect(logs.some(l => l.includes('API_KEY_REQUIRED'))).toBe(true);
+    });
+
+    it('should reject invalid API key (401)', async () => {
+      const mockApi = { getAccount: vi.fn().mockRejectedValue({ code: 'UNAUTHORIZED', message: 'Unauthorized' }) };
+      mockDeps.NansenAPIClass.mockImplementation(function() { return mockApi; });
+
+      await commands.login([], null, {}, { 'api-key': 'invalid-key' });
+
+      expect(mockDeps.exit).toHaveBeenCalledWith(1);
+      expect(mockDeps.saveConfigFn).not.toHaveBeenCalled();
+      expect(logs.some(l => l.includes('INVALID_API_KEY'))).toBe(true);
+    });
+
+    it('should handle network errors during verification', async () => {
+      const mockApi = { getAccount: vi.fn().mockRejectedValue({ code: 'NETWORK_ERROR', message: 'Network error' }) };
+      mockDeps.NansenAPIClass.mockImplementation(function() { return mockApi; });
+
+      await commands.login([], null, {}, { 'api-key': 'some-key' });
+
+      expect(mockDeps.exit).toHaveBeenCalledWith(1);
+      expect(mockDeps.saveConfigFn).not.toHaveBeenCalled();
+      expect(logs.some(l => l.includes('VERIFICATION_FAILED'))).toBe(true);
+    });
+
+    it('should display account info on successful login', async () => {
+      const mockApi = { getAccount: vi.fn().mockResolvedValue({ plan: 'enterprise', credits_remaining: 50000 }) };
+      mockDeps.NansenAPIClass.mockImplementation(function() { return mockApi; });
+
+      await commands.login([], null, {}, { 'api-key': 'valid-key' });
+
+      expect(logs.some(l => l.includes('Plan: enterprise'))).toBe(true);
+      expect(logs.some(l => l.includes('Credits remaining: 50000'))).toBe(true);
     });
 
   });
@@ -1092,6 +1128,8 @@ describe('login/logout flow', () => {
 
   describe('login command', () => {
     it('should prompt for API key with --human flag in TTY mode', async () => {
+      const mockApi = { getAccount: vi.fn().mockResolvedValue({ plan: 'pro', credits_remaining: 100 }) };
+      mockDeps.NansenAPIClass.mockImplementation(function() { return mockApi; });
       mockDeps.promptFn.mockResolvedValue('test-key');
       const savedEnv = process.env.NANSEN_API_KEY;
       delete process.env.NANSEN_API_KEY;
@@ -1103,8 +1141,11 @@ describe('login/logout flow', () => {
     });
 
     it('should trim whitespace from API key', async () => {
+      const mockApi = { getAccount: vi.fn().mockResolvedValue({ plan: 'pro', credits_remaining: 100 }) };
+      mockDeps.NansenAPIClass.mockImplementation(function() { return mockApi; });
+
       await commands.login([], null, {}, { 'api-key': '  api-key-with-spaces  ' });
-      
+
       expect(mockDeps.saveConfigFn).toHaveBeenCalledWith({
         apiKey: 'api-key-with-spaces',
         baseUrl: 'https://api.nansen.ai'
@@ -1112,6 +1153,8 @@ describe('login/logout flow', () => {
     });
 
     it('should display login instructions with --human flag', async () => {
+      const mockApi = { getAccount: vi.fn().mockResolvedValue({ plan: 'pro', credits_remaining: 100 }) };
+      mockDeps.NansenAPIClass.mockImplementation(function() { return mockApi; });
       mockDeps.promptFn.mockResolvedValue('some-key');
       const savedEnv = process.env.NANSEN_API_KEY;
       delete process.env.NANSEN_API_KEY;
@@ -1124,8 +1167,11 @@ describe('login/logout flow', () => {
     });
 
     it('should save config with --api-key option', async () => {
+      const mockApi = { getAccount: vi.fn().mockResolvedValue({ plan: 'pro', credits_remaining: 100 }) };
+      mockDeps.NansenAPIClass.mockImplementation(function() { return mockApi; });
+
       await commands.login([], null, {}, { 'api-key': 'test-key' });
-      
+
       expect(mockDeps.saveConfigFn).toHaveBeenCalledWith({
         apiKey: 'test-key',
         baseUrl: 'https://api.nansen.ai'

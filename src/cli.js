@@ -811,13 +811,48 @@ export function buildCommands(deps = {}) {
         return;
       }
 
+      // Verify API key before saving
+      const NansenAPIClass = _NansenAPIClass;
+      const testApi = new NansenAPIClass(apiKey.trim(), 'https://api.nansen.ai', {
+        retry: { maxRetries: 2 },
+        cache: { enabled: false }
+      });
+
+      let accountInfo;
+      try {
+        accountInfo = await testApi.getAccount();
+      } catch (error) {
+        if (error.code === ErrorCode.UNAUTHORIZED) {
+          log(JSON.stringify({
+            error: 'INVALID_API_KEY',
+            message: 'The API key is not valid.',
+            resolution: ['Check your key at https://app.nansen.ai/api']
+          }));
+        } else {
+          log(JSON.stringify({
+            error: 'VERIFICATION_FAILED',
+            message: `Could not verify API key: ${error.message}`,
+            resolution: ['Check your internet connection', 'Try again']
+          }));
+        }
+        exit(1);
+        return;
+      }
+
+      // Key is valid - now save
       saveConfigFn({
         apiKey: apiKey.trim(),
         baseUrl: 'https://api.nansen.ai'
       });
 
       log(`✓ Saved to ${getConfigFileFn()}\n`);
-      log('You can now use the Nansen CLI. Try:');
+      if (accountInfo?.plan) {
+        log(`Plan: ${accountInfo.plan}`);
+      }
+      if (accountInfo?.credits_remaining !== undefined) {
+        log(`Credits remaining: ${accountInfo.credits_remaining}`);
+      }
+      log('\nYou can now use the Nansen CLI. Try:');
       log('  nansen research token screener --chain solana --pretty');
     },
 
