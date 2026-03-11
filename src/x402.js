@@ -12,6 +12,7 @@ import {
   getSolanaRpcUrl,
 } from './x402-svm.js';
 import { resolvePassword } from './keychain.js';
+import { CHAIN_RPCS } from './rpc-urls.js';
 
 /**
  * Parse PaymentRequirements from a 402 response.
@@ -187,10 +188,10 @@ export async function checkX402Balance(network) {
     }
 
     if (network.startsWith('eip155:')) {
-      // Base USDC balance check
+      // Base USDC balance check — RPC URL from shared registry so NANSEN_BASE_RPC override applies
       const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
       const addr = walletInfo.evm.replace('0x', '').toLowerCase().padStart(64, '0');
-      const resp = await fetch('https://mainnet.base.org', {
+      const resp = await fetch(CHAIN_RPCS.base, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
