@@ -813,7 +813,7 @@ export function buildCommands(deps = {}) {
 
       // Verify API key before saving
       const NansenAPIClass = _NansenAPIClass;
-      const testApi = new NansenAPIClass(apiKey.trim(), 'https://api.nansen.ai', {
+      const testApi = new NansenAPIClass(apiKey.trim(), undefined, {
         retry: { maxRetries: 2 },
         cache: { enabled: false }
       });
