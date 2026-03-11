@@ -563,6 +563,104 @@ describe('buildCommonTokenTransferData new inclusion/exclusion flags', () => {
   });
 });
 
+describe('alerts list — client-side filtering', () => {
+  const ALERTS = [
+    { id: '1', name: 'A', type: 'sm-token-flows', isEnabled: true, data: { chains: ['ethereum'], inclusion: { tokens: [{ address: '0xabc', chain: 'ethereum' }] } } },
+    { id: '2', name: 'B', type: 'common-token-transfer', isEnabled: false, data: { chains: ['solana'] } },
+    { id: '3', name: 'C', type: 'sm-token-flows', isEnabled: true, data: { chains: ['ethereum', 'base'] } },
+    { id: '4', name: 'D', type: 'smart-contract-call', isEnabled: true, data: { chains: ['all'] } },
+  ];
+
+  function setup() {
+    const mockApi = { alertsList: vi.fn().mockResolvedValue(ALERTS) };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    return { mockApi, cmd };
+  }
+
+  it('should return all alerts with no filters', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, {});
+    expect(result).toHaveLength(4);
+  });
+
+  it('should filter by --type', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { type: 'sm-token-flows' });
+    expect(result).toHaveLength(2);
+    expect(result.every(a => a.type === 'sm-token-flows')).toBe(true);
+  });
+
+  it('should filter by --enabled', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, { enabled: true }, {});
+    expect(result).toHaveLength(3);
+    expect(result.every(a => a.isEnabled)).toBe(true);
+  });
+
+  it('should filter by --disabled', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, { disabled: true }, {});
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('2');
+  });
+
+  it('should reject --enabled and --disabled together', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, { enabled: true, disabled: true }, {}))
+      .rejects.toThrow('Cannot specify both --enabled and --disabled');
+  });
+
+  it('should filter by --token-address (case-insensitive)', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { 'token-address': '0xABC' });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('1');
+  });
+
+  it('should filter by --chain (includes "all" matches)', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { chain: 'solana' });
+    expect(result).toHaveLength(2);
+    expect(result.map(a => a.id)).toEqual(['2', '4']);
+  });
+
+  it('should match --chain against "all" even when no explicit match', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { chain: 'arbitrum' });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('4');
+  });
+
+  it('should apply --limit', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { limit: 2 });
+    expect(result).toHaveLength(2);
+    expect(result[0].id).toBe('1');
+  });
+
+  it('should apply --offset', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { offset: 2 });
+    expect(result).toHaveLength(2);
+    expect(result[0].id).toBe('3');
+  });
+
+  it('should apply --offset and --limit together', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { offset: 1, limit: 2 });
+    expect(result).toHaveLength(2);
+    expect(result[0].id).toBe('2');
+    expect(result[1].id).toBe('3');
+  });
+
+  it('should combine type + chain filters', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { type: 'sm-token-flows', chain: 'base' });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('3');
+  });
+});
+
 describe('alerts create does not require --time-window', () => {
   it('should throw only for missing --name, --type, and channel (not --time-window)', async () => {
     const logs = [];

@@ -427,20 +427,32 @@ USAGE:
 
       const handlers = {
         'list': async () => {
-          const params = {};
-          if (options.type) params.type = options.type;
-          if (options['token-address']) params.tokenAddress = options['token-address'];
-          if (options.chain) params.chain = options.chain;
-          if (options.limit) params.limit = Number(options.limit);
-          if (options.offset) params.offset = Number(options.offset);
           if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAMS);
-          if (flags.enabled) params.isEnabled = true;
-          if (flags.disabled) params.isEnabled = false;
 
-          const results = await apiInstance.alertsList(params);
-          // Normalise to array
-          if (!Array.isArray(results)) return results?.alerts ?? results?.data ?? [];
-          return results;
+          const results = await apiInstance.alertsList();
+          let alerts = Array.isArray(results) ? results : results?.alerts ?? results?.data ?? [];
+
+          // Client-side filtering (server returns all alerts unfiltered)
+          if (options.type) alerts = alerts.filter(a => a.type === options.type);
+          if (flags.enabled) alerts = alerts.filter(a => a.isEnabled === true);
+          if (flags.disabled) alerts = alerts.filter(a => a.isEnabled === false);
+          if (options['token-address']) {
+            const addr = options['token-address'].toLowerCase();
+            alerts = alerts.filter(a => JSON.stringify(a.data ?? {}).toLowerCase().includes(addr));
+          }
+          if (options.chain) {
+            const ch = options.chain;
+            alerts = alerts.filter(a => {
+              const chains = a.data?.chains;
+              return Array.isArray(chains) && (chains.includes(ch) || chains.includes('all'));
+            });
+          }
+
+          // Pagination (applied after filtering)
+          if (options.offset) alerts = alerts.slice(Number(options.offset));
+          if (options.limit) alerts = alerts.slice(0, Number(options.limit));
+
+          return alerts;
         },
         'create': () => {
           const name = options.name;
