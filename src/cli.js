@@ -3,7 +3,7 @@
  * Extracted from index.js for coverage
  */
 
-import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
+import { NansenAPI, NansenError, ErrorCode, loadConfig, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep, getAuthBaseUrl } from './api.js';
 import { buildWalletCommands } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
 import { resolveAddress, isEnsName } from './ens.js';
@@ -671,7 +671,7 @@ COMMANDS:
   trade       quote, execute
   wallet      create, list, show, export, default, delete, forget-password
   account     Show API key status, plan, and remaining credits
-  login       Save API key (--api-key <key> or NANSEN_API_KEY env var)
+  login       Authenticate via browser (OAuth) or --api-key for legacy key
   logout      Remove saved API key
   schema      JSON schema for all commands (use "nansen schema <cmd>" for one)
   cache       clear
@@ -750,6 +750,7 @@ export function buildCommands(deps = {}) {
     log = console.log,
     errorOutput: _errorOutput = console.error,
     NansenAPIClass: _NansenAPIClass = NansenAPI,
+    loadConfigFn = loadConfig,
     saveConfigFn = saveConfig,
     deleteConfigFn = deleteConfig,
     getConfigFileFn = getConfigFile,
@@ -764,14 +765,15 @@ export function buildCommands(deps = {}) {
 
     'login': async (args, apiInstance, flags, options) => {
       if (flags.help || flags.h) {
-        log('nansen login - Save your Nansen API key\n');
+        log('nansen login - Authenticate with Nansen\n');
         log('USAGE:');
-        log('  nansen login --api-key <key>');
-        log('  NANSEN_API_KEY=<key> nansen login');
-        log('  nansen login --human              (interactive prompt)\n');
+        log('  nansen login                      (OAuth device flow — opens browser)');
+        log('  nansen login --api-key <key>      (legacy API key)');
+        log('  NANSEN_API_KEY=<key> nansen login (legacy API key via env)');
+        log('  nansen login --human              (interactive prompt for API key)\n');
         log('OPTIONS:');
-        log('  --api-key <key>   Your Nansen API key');
-        log('  --human           Enable interactive prompt');
+        log('  --api-key <key>   Your Nansen API key (legacy)');
+        log('  --human           Enable interactive prompt for API key');
         log('  --help            Show this help\n');
         log('Get your API key at: https://app.nansen.ai/api');
         return;
@@ -797,34 +799,132 @@ export function buildCommands(deps = {}) {
         apiKey = await promptFn('Enter your API key: ', true);
       }
 
-      if (!apiKey || apiKey.trim().length === 0) {
-        log(JSON.stringify({
-          error: 'API_KEY_REQUIRED',
-          message: 'No API key provided.',
-          resolution: [
-            'Run: nansen login --api-key <key>',
-            'Or set NANSEN_API_KEY environment variable',
-            'Get your API key at: https://app.nansen.ai/api',
-          ],
-        }));
+      if (apiKey && apiKey.trim().length > 0) {
+        saveConfigFn({
+          apiKey: apiKey.trim(),
+          baseUrl: 'https://api.nansen.ai'
+        });
+
+        log(`✓ Saved to ${getConfigFileFn()}\n`);
+        log('You can now use the Nansen CLI. Try:');
+        log('  nansen research token screener --chain solana --pretty');
+        return;
+      }
+
+      // Default: OAuth device flow
+      const currentConfig = loadConfigFn();
+      const authBase = getAuthBaseUrl(currentConfig.baseUrl || 'https://api.nansen.ai');
+
+      // Step 1: initiate
+      let authorizeData;
+      try {
+        const authorizeRes = await fetch(`${authBase}/auth/device/authorize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        if (!authorizeRes.ok) throw new Error(`HTTP ${authorizeRes.status}`);
+        authorizeData = await authorizeRes.json();
+      } catch (err) {
+        log(JSON.stringify({ error: 'DEVICE_AUTHORIZE_FAILED', message: `Failed to start device authorization: ${err.message}` }));
+        exit(1);
+        return;
+      }
+
+      const { device_code, user_code, verification_uri, interval = 5, expires_in = 300 } = authorizeData;
+
+      log('\nNansen CLI Login\n');
+      log(`1. Open: ${verification_uri}`);
+      log(`2. Enter code: ${user_code}\n`);
+
+      // Try to open browser (best effort, silent on failure)
+      try {
+        const { exec: execChild } = await import('child_process');
+        const opener = process.platform === 'darwin' ? 'open'
+          : process.platform === 'win32' ? 'start'
+          : 'xdg-open';
+        execChild(`${opener} "${verification_uri}"`);
+      } catch (_) {}
+
+      // Step 2: poll
+      let pollInterval = interval * 1000;
+      const deadline = Date.now() + expires_in * 1000;
+      let accessToken = null, refreshToken = null, tokenExpiry = null;
+
+      if (isTTY) process.stdout.write('Waiting for authorization');
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, pollInterval));
+        if (isTTY) process.stdout.write('.');
+
+        let pollData;
+        try {
+          const pollRes = await fetch(`${authBase}/auth/device/token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_code })
+          });
+          pollData = await pollRes.json();
+
+          if (pollRes.ok) {
+            accessToken = pollData.access_token;
+            refreshToken = pollData.refresh_token;
+            tokenExpiry = Date.now() + (pollData.expires_in * 1000);
+            break;
+          }
+        } catch (err) {
+          // network error — keep polling
+          continue;
+        }
+
+        const errCode = pollData?.error;
+        if (errCode === 'slow_down') {
+          pollInterval += 5000;
+        } else if (errCode === 'access_denied') {
+          if (isTTY) process.stdout.write('\n');
+          log(JSON.stringify({ error: 'ACCESS_DENIED', message: 'Authorization was denied.' }));
+          exit(1);
+          return;
+        } else if (errCode === 'expired_token') {
+          if (isTTY) process.stdout.write('\n');
+          log(JSON.stringify({ error: 'EXPIRED', message: 'Code expired. Run `nansen login` again.' }));
+          exit(1);
+          return;
+        }
+      }
+
+      if (isTTY) process.stdout.write('\n');
+
+      if (!accessToken) {
+        log(JSON.stringify({ error: 'TIMEOUT', message: 'Authorization timed out. Run `nansen login` again.' }));
         exit(1);
         return;
       }
 
       saveConfigFn({
-        apiKey: apiKey.trim(),
-        baseUrl: 'https://api.nansen.ai'
+        ...currentConfig,
+        accessToken,
+        refreshToken,
+        tokenExpiry,
+        apiKey: undefined
       });
 
-      log(`✓ Saved to ${getConfigFileFn()}\n`);
+      // Decode email from JWT payload (no verification needed here)
+      let email = 'your account';
+      try {
+        const payload = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64url').toString());
+        email = payload.email || payload.sub || email;
+      } catch (_) {}
+
+      log(`\n✓ Logged in as ${email}`);
+      log(`Saved to ${getConfigFileFn()}\n`);
       log('You can now use the Nansen CLI. Try:');
       log('  nansen research token screener --chain solana --pretty');
+      return;
     },
 
     'logout': async (_args, _apiInstance, _flags, _options) => {
       const deleted = deleteConfigFn();
       if (deleted) {
-        log(`✓ Removed ${getConfigFileFn()}`);
+        log(`✓ Removed ${getConfigFileFn()} (API key and OAuth tokens cleared)`);
       } else {
         log('No saved credentials found');
       }

@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.17.0
+
+### Minor Changes
+
+- Add RFC 8628 OAuth Device Authorization Grant as the new default login flow.
+
+  - `nansen login` opens a browser, displays a user code, and polls until approved — no manual key copy-paste.
+  - `nansen login --api-key <key>` continues to work unchanged for CI and scripting.
+  - API calls transparently refresh OAuth tokens 60 s before expiry via `_ensureFreshToken()`.
+  - `nansen logout` clears OAuth tokens as well as legacy API keys.
+  - `getAuthBaseUrl()` helper exported from `api.js` derives the superapp URL from the API base URL.
+  - `Authorization: Bearer` header used for OAuth sessions; `apikey` header used for legacy API key sessions (both coexist cleanly).
+
 ## 1.16.1
 
 ### Patch Changes
