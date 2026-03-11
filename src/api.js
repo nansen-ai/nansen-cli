@@ -505,7 +505,7 @@ export class NansenAPI {
             ...this.defaultHeaders,
             ...options.headers
           },
-          ...(!isGet && { body: JSON.stringify(NansenAPI.cleanBody(body)) })
+          ...(!isGet && method !== 'DELETE' && { body: JSON.stringify(NansenAPI.cleanBody(body)) })
         });
       } catch (err) {
         // Network-level errors - retry these too
@@ -546,12 +546,20 @@ export class NansenAPI {
       }
 
       if (!response.ok) {
-        let message = data.message || data.error || `API error: ${response.status}`;
+        let message = data.message || data.error
+          || (typeof data.detail === 'string' ? data.detail : data.detail?.message)
+          || `API error: ${response.status}`;
+        // nansen-api proxy stringifies nested error dicts via Python str(), producing
+        // "{'message': 'actual error', ...}". Extract the inner message if present.
+        const nestedMatch = typeof message === 'string' && message.match(/['"]message['"]\s*:\s*['"](.*?)['"]/);
+        if (nestedMatch) message = nestedMatch[1];
         const code = statusToErrorCode(response.status, data);
         const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'));
 
         // Enhance messages for specific error codes
-        if (code === ErrorCode.UNSUPPORTED_FILTER) {
+        if (code === ErrorCode.UNAUTHORIZED) {
+          message = this.apiKey ? message : 'Not logged in. Run: nansen login';
+        } else if (code === ErrorCode.UNSUPPORTED_FILTER) {
           message = message.replace(/\.+$/, '') + '. This filter is not supported for this token/chain combination. Do not retry.';
         } else if (code === ErrorCode.CREDITS_EXHAUSTED) {
           message = message.replace(/\.+$/, '') + '. No retry will help. Check your Nansen dashboard for credit balance.';
@@ -1271,6 +1279,38 @@ export class NansenAPI {
     return this.request('/api/v1/portfolio/defi-holdings', {
       wallet_address: walletAddress
     });
+  }
+
+  // ============= Smart Alert Endpoints =============
+
+  async alertsList(params = {}) {
+    const defined = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined));
+    const qs = Object.keys(defined).length > 0 ? '?' + new URLSearchParams(defined).toString() : '';
+    return this.request(`/api/v1/smart-alert/list${qs}`, {}, { method: 'GET' });
+  }
+
+  async alertsCreate(params = {}) {
+    return this.request('/api/v1/smart-alert', params);
+  }
+
+  async alertsUpdate(params = {}) {
+    return this.request('/api/v1/smart-alert', params, { method: 'PATCH' });
+  }
+
+  async alertsToggle(params = {}) {
+    return this.request('/api/v1/smart-alert/toggle', params, { method: 'PATCH' });
+  }
+
+  async alertsGet(id) {
+    // TODO: replace with GET /api/v1/smart-alert/{id} once a get-by-id endpoint exists.
+    // Fetching the full list does not scale for users with many alerts.
+    const result = await this.alertsList();
+    const alerts = Array.isArray(result) ? result : result?.alerts ?? result?.data ?? [];
+    return alerts.find(a => a.id === id) ?? null;
+  }
+
+  async alertsDelete(alertId) {
+    return this.request(`/api/v1/smart-alert/${encodeURIComponent(alertId)}`, {}, { method: 'DELETE' });
   }
 }
 

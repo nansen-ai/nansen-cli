@@ -6,6 +6,7 @@
 import { NansenAPI, NansenError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep } from './api.js';
 import { buildWalletCommands } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
+import { formatAlertsTable, buildAlertsCommands } from './commands/alerts.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
@@ -164,19 +165,29 @@ export function parseArgs(args) {
       const key = arg.slice(2);
       const next = args[i + 1];
       
-      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full' || key === 'human') {
+      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full' || key === 'human' || key === 'enabled' || key === 'disabled') {
         result.flags[key] = true;
-      } else if (next && !next.startsWith('-')) {
+      } else if (next && (!next.startsWith('-') || /^-\d/.test(next))) {
         // Try to parse as JSON first (for objects/arrays/booleans),
         // but keep numeric strings as strings to avoid precision loss
         // and scientific notation for large integers (e.g. 1e+21).
+        let parsedValue;
         try {
           const parsed = JSON.parse(next);
-          result.options[key] = typeof parsed === 'number' ? next : parsed;
+          parsedValue = typeof parsed === 'number' ? next : parsed;
         } catch {
-          result.options[key] = next;
+          parsedValue = next;
         }
         i++;
+        // Accumulate repeated options into arrays (supports repeatable flags like --token, --subject)
+        if (key in result.options) {
+          if (!Array.isArray(result.options[key])) {
+            result.options[key] = [result.options[key]];
+          }
+          result.options[key].push(parsedValue);
+        } else {
+          result.options[key] = parsedValue;
+        }
       } else {
         result.flags[key] = true;
       }
@@ -227,7 +238,7 @@ export function formatTable(data) {
   // Get columns from first record, prioritize common useful fields
   const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
   const allKeys = [...new Set(records.flatMap(r => Object.keys(r)))];
-  
+
   // Sort: priority fields first, then alphabetically
   const columns = allKeys.sort((a, b) => {
     const aIdx = priorityFields.indexOf(a);
@@ -251,12 +262,12 @@ export function formatTable(data) {
   // Build table
   const separator = '─';
   const lines = [];
-  
+
   // Header
   const header = columns.map((col, i) => col.padEnd(widths[i])).join(' │ ');
   lines.push(header);
   lines.push(widths.map(w => separator.repeat(w)).join('─┼─'));
-  
+
   // Rows
   for (const record of records.slice(0, 50)) { // Limit to 50 rows
     const row = columns.map((col, i) => {
@@ -671,6 +682,7 @@ COMMANDS:
   research    smart-money, profiler, token, search, perp, portfolio, points
   trade       quote, execute
   wallet      create, list, show, export, default, delete, forget-password
+  alerts      list, create, update, toggle, delete
   account     Show API key status, plan, and remaining credits
   login       Save API key (--api-key <key> or NANSEN_API_KEY env var)
   logout      Remove saved API key
@@ -1486,7 +1498,7 @@ export async function runCLI(rawArgs, deps = {}) {
     if (updateNotification) errorOutput(updateNotification);
   };
 
-  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...commandOverrides };
+  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...buildAlertsCommands(deps), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);
@@ -1523,8 +1535,8 @@ export async function runCLI(rawArgs, deps = {}) {
         }
       }
       // First try subcommand help
-      // Skip for 'trade' — its handlers show their own rich usage when required args are missing
-      if (command && subcommand && command !== 'trade') {
+      // Skip for 'trade'/'alerts' — their handlers show their own rich usage
+      if (command && subcommand && command !== 'trade' && command !== 'alerts') {
         const subHelp = generateSubcommandHelp(command, subcommand);
         if (subHelp) {
           output(subHelp);
@@ -1533,8 +1545,8 @@ export async function runCLI(rawArgs, deps = {}) {
         }
       }
       // Then try command-level help (list subcommands)
-      // Skip for 'trade' — let the handler show its own usage
-      const cmdSchemaLookup = command !== 'trade' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
+      // Skip for 'trade'/'alerts' — let the handler show its own usage
+      const cmdSchemaLookup = command !== 'trade' && command !== 'alerts' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
       if (command && cmdSchemaLookup) {
         const cmdSchema = cmdSchemaLookup;
         const lines = [`${command} — ${cmdSchema.description}`];
@@ -1630,6 +1642,13 @@ export async function runCLI(rawArgs, deps = {}) {
     const fields = parseFields(options.fields);
     if (fields) {
       result = filterFields(result, fields);
+    }
+
+    // Alerts list with --table uses custom table format
+    if (command === 'alerts' && subcommand === 'list' && table) {
+      output(formatAlertsTable(result));
+      notify();
+      return { type: 'success', data: result };
     }
 
     // Output in requested format

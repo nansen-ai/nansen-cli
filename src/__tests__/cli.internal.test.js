@@ -28,6 +28,14 @@ import {
   buildPagination,
   parseAddressList
 } from '../cli.js';
+import {
+  formatAlertsTable,
+  buildAlertData,
+  buildSmTokenFlowsData,
+  buildCommonTokenTransferData,
+  buildSmartContractCallData,
+  buildAlertsCommands,
+} from '../commands/alerts.js';
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode } from '../api.js';
 import { EVM_CHAINS } from '../chain-ids.js';
 import * as fs from 'fs';
@@ -176,6 +184,636 @@ describe('formatTable', () => {
     const header = lines[0];
     // token_symbol should come before zebra (priority field)
     expect(header.indexOf('token_symbol')).toBeLessThan(header.indexOf('zebra'));
+  });
+});
+
+describe('formatAlertsTable', () => {
+  it('should return "No alerts" for empty array', () => {
+    expect(formatAlertsTable([])).toBe('No alerts');
+  });
+
+  it('should format alerts as table with ID, NAME, TYPE, ENABLED, CHANNELS columns', () => {
+    const alerts = [
+      { id: 'a1', name: 'ETH Whale Alert', type: 'sm-token-flows', isEnabled: true, channels: [{ type: 'telegram' }] },
+      { id: 'a2', name: 'USDC Transfer Alert', type: 'common-token-transfer', isEnabled: false, channels: [{ type: 'slack' }, { type: 'discord' }] }
+    ];
+    const result = formatAlertsTable(alerts);
+    expect(result).toContain('ID');
+    expect(result).toContain('NAME');
+    expect(result).toContain('TYPE');
+    expect(result).toContain('ENABLED');
+    expect(result).toContain('CHANNELS');
+    expect(result).toContain('a1');
+    expect(result).toContain('a2');
+    expect(result).toContain('ETH Whale Alert');
+    expect(result).toContain('sm-token-flows');
+    expect(result).toContain('✓');
+    expect(result).toContain('✗');
+    expect(result).toContain('telegram');
+    expect(result).toContain('slack, discord');
+  });
+
+  it('should handle alerts with no channels', () => {
+    const alerts = [
+      { id: 'a1', name: 'Test Alert', type: 'sm-token-flows', isEnabled: true, channels: [] }
+    ];
+    const result = formatAlertsTable(alerts);
+    expect(result).toContain('Test Alert');
+    expect(result).not.toContain('undefined');
+  });
+
+  it('should truncate long names', () => {
+    const alerts = [
+      { id: 'a1', name: 'A very long alert name that exceeds the column width and should be truncated', type: 'sm-token-flows', isEnabled: true, channels: [] }
+    ];
+    const result = formatAlertsTable(alerts);
+    expect(result).toContain('…');
+  });
+
+  it('should show full ID without truncation', () => {
+    const alerts = [
+      { id: 'very-long-alert-id-that-should-not-be-truncated', name: 'Test', type: 'sm-token-flows', isEnabled: true, channels: [] }
+    ];
+    const result = formatAlertsTable(alerts);
+    expect(result).toContain('very-long-alert-id-that-should-not-be-truncated');
+  });
+});
+
+describe('buildSmTokenFlowsData', () => {
+  it('should build data with inflow range flags', () => {
+    const result = buildSmTokenFlowsData({
+      chains: 'ethereum',
+      'inflow-1h-min': '5000000',
+    });
+    expect(result.chains).toEqual(['ethereum']);
+    expect(result.inflow_1h).toEqual({ min: 5000000, max: null });
+  });
+
+  it('should build data with multiple flow ranges', () => {
+    const result = buildSmTokenFlowsData({
+      'inflow-1h-min': '1000000',
+      'outflow-7d-max': '500000',
+    });
+    expect(result.inflow_1h).toEqual({ min: 1000000, max: null });
+    expect(result.outflow_7d).toEqual({ min: null, max: 500000 });
+  });
+
+  it('should parse --token into inclusion.tokens', () => {
+    const result = buildSmTokenFlowsData({
+      token: '0xabc123:ethereum',
+    });
+    expect(result.inclusion).toEqual({ tokens: [{ address: '0xabc123', chain: 'ethereum' }] });
+  });
+
+  it('should parse repeated --token into inclusion.tokens array', () => {
+    const result = buildSmTokenFlowsData({
+      token: ['0xabc:ethereum', '0xdef:base'],
+    });
+    expect(result.inclusion).toEqual({
+      tokens: [
+        { address: '0xabc', chain: 'ethereum' },
+        { address: '0xdef', chain: 'base' },
+      ],
+    });
+  });
+
+  it('should parse --exclude-token into exclusion.tokens', () => {
+    const result = buildSmTokenFlowsData({
+      'exclude-token': '0xbad:ethereum',
+    });
+    expect(result.exclusion).toEqual({ tokens: [{ address: '0xbad', chain: 'ethereum' }] });
+  });
+
+  it('should return empty object when no flags provided', () => {
+    const result = buildSmTokenFlowsData({});
+    expect(result).toEqual({});
+  });
+});
+
+describe('buildCommonTokenTransferData', () => {
+  it('should build data with events and USD range', () => {
+    const result = buildCommonTokenTransferData({
+      chains: 'ethereum',
+      events: 'send,receive',
+      'usd-min': '1000000',
+    });
+    expect(result.chains).toEqual(['ethereum']);
+    expect(result.events).toEqual(['send', 'receive']);
+    expect(result.usdValue).toEqual({ min: 1000000, max: null });
+  });
+
+  it('should build data with token amount range', () => {
+    const result = buildCommonTokenTransferData({
+      'token-amount-min': '100',
+      'token-amount-max': '5000',
+    });
+    expect(result.tokenAmount).toEqual({ min: 100, max: 5000 });
+  });
+
+  it('should parse --subject into subjects array', () => {
+    const result = buildCommonTokenTransferData({
+      subject: 'label:Centralized Exchange',
+    });
+    expect(result.subjects).toEqual([{ type: 'label', value: 'Centralized Exchange' }]);
+  });
+
+  it('should parse repeated --subject values', () => {
+    const result = buildCommonTokenTransferData({
+      subject: ['label:CEX', 'label:DEX'],
+    });
+    expect(result.subjects).toEqual([
+      { type: 'label', value: 'CEX' },
+      { type: 'label', value: 'DEX' },
+    ]);
+  });
+
+  it('should parse --token into inclusion.tokens', () => {
+    const result = buildCommonTokenTransferData({
+      token: '0xusdc:ethereum',
+    });
+    expect(result.inclusion).toEqual({ tokens: [{ address: '0xusdc', chain: 'ethereum' }] });
+  });
+});
+
+describe('buildAlertData', () => {
+  it('should dispatch to buildSmTokenFlowsData for sm-token-flows type', () => {
+    const result = buildAlertData({
+      type: 'sm-token-flows',
+      chains: 'ethereum',
+      'inflow-1h-min': '5000000',
+    });
+    expect(result.chains).toEqual(['ethereum']);
+    expect(result.inflow_1h).toEqual({ min: 5000000, max: null });
+  });
+
+  it('should dispatch to buildCommonTokenTransferData for common-token-transfer type', () => {
+    const result = buildAlertData({
+      type: 'common-token-transfer',
+      chains: 'ethereum',
+      events: 'send,receive',
+      'usd-min': '1000000',
+    });
+    expect(result.chains).toEqual(['ethereum']);
+    expect(result.events).toEqual(['send', 'receive']);
+    expect(result.usdValue).toEqual({ min: 1000000, max: null });
+  });
+
+  it('should fall back to chains-only for unknown type', () => {
+    const result = buildAlertData({
+      type: 'unknown-type',
+      chains: 'solana',
+    });
+    expect(result).toEqual({ chains: ['solana'] });
+  });
+
+  it('should merge --data JSON on top of named flags (override)', () => {
+    const result = buildAlertData({
+      type: 'sm-token-flows',
+      chains: 'ethereum',
+      'inflow-1h-min': '100000',
+      data: '{"inflow_1h":{"min":999999},"chains":["base"]}',
+    });
+    // --data overrides named flags
+    expect(result.chains).toEqual(['base']);
+    expect(result.inflow_1h).toEqual({ min: 999999 });
+  });
+
+  it('should accept --data as object (not string)', () => {
+    const result = buildAlertData({
+      type: 'sm-token-flows',
+      data: { chains: ['solana'] },
+    });
+    expect(result.chains).toEqual(['solana']);
+  });
+
+  it('should throw on invalid --data JSON', () => {
+    expect(() => buildAlertData({ type: 'sm-token-flows', data: 'not-json' })).toThrow();
+  });
+
+  it('should work with no type (no flags)', () => {
+    const result = buildAlertData({});
+    expect(result).toEqual({});
+  });
+});
+
+describe('buildSmTokenFlowsData netflow fields', () => {
+  it('should include netflow-1h range', () => {
+    const result = buildSmTokenFlowsData({ 'netflow-1h-min': '100000' });
+    expect(result.netflow_1h).toEqual({ min: 100000, max: null });
+  });
+
+  it('should include netflow-1d and netflow-7d ranges', () => {
+    const result = buildSmTokenFlowsData({ 'netflow-1d-min': '500000', 'netflow-7d-max': '2000000' });
+    expect(result.netflow_1d).toEqual({ min: 500000, max: null });
+    expect(result.netflow_7d).toEqual({ min: null, max: 2000000 });
+  });
+});
+
+describe('buildCommonTokenTransferData counterparty', () => {
+  it('should add counterparties when --counterparty is provided', () => {
+    const result = buildCommonTokenTransferData({ counterparty: 'address:0xabc' });
+    expect(result.counterparties).toEqual([{ type: 'address', value: '0xabc' }]);
+  });
+
+  it('should handle repeated --counterparty flags as array', () => {
+    const result = buildCommonTokenTransferData({ counterparty: ['address:0xabc', 'label:Whale'] });
+    expect(result.counterparties).toEqual([
+      { type: 'address', value: '0xabc' },
+      { type: 'label', value: 'Whale' },
+    ]);
+  });
+
+  it('should not add counterparties when flag is absent', () => {
+    const result = buildCommonTokenTransferData({ chains: 'ethereum' });
+    expect(result.counterparties).toBeUndefined();
+  });
+});
+
+describe('buildSmartContractCallData', () => {
+  it('should build data with chains and usd range', () => {
+    const result = buildSmartContractCallData({ chains: 'ethereum,base', 'usd-min': '1000', 'usd-max': '9999' });
+    expect(result.chains).toEqual(['ethereum', 'base']);
+    expect(result.usdValue).toEqual({ min: 1000, max: 9999 });
+  });
+
+  it('should build signatureHash as array from single value', () => {
+    const result = buildSmartContractCallData({ 'signature-hash': '0xa9059cbb' });
+    expect(result.signatureHash).toEqual(['0xa9059cbb']);
+  });
+
+  it('should build signatureHash as array from repeated flags', () => {
+    const result = buildSmartContractCallData({ 'signature-hash': ['0xa9059cbb', '0x23b872dd'] });
+    expect(result.signatureHash).toEqual(['0xa9059cbb', '0x23b872dd']);
+  });
+
+  it('should build inclusion.caller from --caller', () => {
+    const result = buildSmartContractCallData({ caller: 'address:0xabc' });
+    expect(result.inclusion.caller).toEqual([{ type: 'address', value: '0xabc' }]);
+  });
+
+  it('should build inclusion.smartContract from --contract', () => {
+    const result = buildSmartContractCallData({ contract: 'address:0xdef' });
+    expect(result.inclusion.smartContract).toEqual([{ type: 'address', value: '0xdef' }]);
+  });
+
+  it('should build exclusion.caller from --exclude-caller', () => {
+    const result = buildSmartContractCallData({ 'exclude-caller': 'label:Bot' });
+    expect(result.exclusion.caller).toEqual([{ type: 'label', value: 'Bot' }]);
+  });
+
+  it('should build exclusion.smartContract from --exclude-contract', () => {
+    const result = buildSmartContractCallData({ 'exclude-contract': 'address:0x999' });
+    expect(result.exclusion.smartContract).toEqual([{ type: 'address', value: '0x999' }]);
+  });
+
+  it('should dispatch to buildSmartContractCallData for smart-contract-call type', () => {
+    const result = buildAlertData({ type: 'smart-contract-call', chains: 'ethereum', 'signature-hash': '0xa9059cbb' });
+    expect(result.chains).toEqual(['ethereum']);
+    expect(result.signatureHash).toEqual(['0xa9059cbb']);
+  });
+});
+
+describe('buildSmTokenFlowsData new inclusion/exclusion flags', () => {
+  it('should add token-sector to inclusion.tokenSectors', () => {
+    const result = buildSmTokenFlowsData({ 'token-sector': 'DeFi' });
+    expect(result.inclusion.tokenSectors).toEqual(['DeFi']);
+  });
+
+  it('should handle repeated --token-sector', () => {
+    const result = buildSmTokenFlowsData({ 'token-sector': ['DeFi', 'NFT'] });
+    expect(result.inclusion.tokenSectors).toEqual(['DeFi', 'NFT']);
+  });
+
+  it('should add exclude-token-sector to exclusion.tokenSectors', () => {
+    const result = buildSmTokenFlowsData({ 'exclude-token-sector': 'Meme' });
+    expect(result.exclusion.tokenSectors).toEqual(['Meme']);
+  });
+
+  it('should add token-age-max to inclusion.tokenAge', () => {
+    const result = buildSmTokenFlowsData({ 'token-age-max': '30' });
+    expect(result.inclusion.tokenAge).toEqual({ max: 30 });
+  });
+
+  it('should add market-cap range to inclusion.marketCap', () => {
+    const result = buildSmTokenFlowsData({ 'market-cap-min': '1000000', 'market-cap-max': '9000000' });
+    expect(result.inclusion.marketCap).toEqual({ min: 1000000, max: 9000000 });
+  });
+
+  it('should add fdv range to inclusion.fdvUsd', () => {
+    const result = buildSmTokenFlowsData({ 'fdv-min': '500000' });
+    expect(result.inclusion.fdvUsd).toEqual({ min: 500000, max: null });
+  });
+
+  it('should merge token-sector with existing inclusion.tokens', () => {
+    const result = buildSmTokenFlowsData({ token: '0xabc:ethereum', 'token-sector': 'DeFi' });
+    expect(result.inclusion.tokens).toEqual([{ address: '0xabc', chain: 'ethereum' }]);
+    expect(result.inclusion.tokenSectors).toEqual(['DeFi']);
+  });
+});
+
+describe('buildCommonTokenTransferData new inclusion/exclusion flags', () => {
+  it('should add token-sector to inclusion.tokenSectors', () => {
+    const result = buildCommonTokenTransferData({ 'token-sector': 'DeFi' });
+    expect(result.inclusion.tokenSectors).toEqual(['DeFi']);
+  });
+
+  it('should add exclude-token-sector to exclusion.tokenSectors', () => {
+    const result = buildCommonTokenTransferData({ 'exclude-token-sector': ['Meme', 'GameFi'] });
+    expect(result.exclusion.tokenSectors).toEqual(['Meme', 'GameFi']);
+  });
+
+  it('should add token-age-min and token-age-max to inclusion.tokenAge', () => {
+    const result = buildCommonTokenTransferData({ 'token-age-min': '7', 'token-age-max': '90' });
+    expect(result.inclusion.tokenAge).toEqual({ min: 7, max: 90 });
+  });
+
+  it('should add token-age-max only', () => {
+    const result = buildCommonTokenTransferData({ 'token-age-max': '30' });
+    expect(result.inclusion.tokenAge).toEqual({ max: 30 });
+  });
+
+  it('should add market-cap range to inclusion.marketCap', () => {
+    const result = buildCommonTokenTransferData({ 'market-cap-min': '1000000' });
+    expect(result.inclusion.marketCap).toEqual({ min: 1000000, max: null });
+  });
+
+  it('should add exclude-from to exclusion.fromTargets', () => {
+    const result = buildCommonTokenTransferData({ 'exclude-from': 'address:0xbad' });
+    expect(result.exclusion.fromTargets).toEqual([{ type: 'address', value: '0xbad' }]);
+  });
+
+  it('should add exclude-to to exclusion.toTargets', () => {
+    const result = buildCommonTokenTransferData({ 'exclude-to': ['label:Bot', 'label:Scammer'] });
+    expect(result.exclusion.toTargets).toEqual([
+      { type: 'label', value: 'Bot' },
+      { type: 'label', value: 'Scammer' },
+    ]);
+  });
+
+  it('should merge token-sector with existing inclusion.tokens', () => {
+    const result = buildCommonTokenTransferData({ token: '0xabc:base', 'token-sector': 'DeFi' });
+    expect(result.inclusion.tokens).toEqual([{ address: '0xabc', chain: 'base' }]);
+    expect(result.inclusion.tokenSectors).toEqual(['DeFi']);
+  });
+
+  it('should merge exclude-from with existing exclusion.tokens', () => {
+    const result = buildCommonTokenTransferData({ 'exclude-token': '0xbad:ethereum', 'exclude-from': 'label:Bot' });
+    expect(result.exclusion.tokens).toEqual([{ address: '0xbad', chain: 'ethereum' }]);
+    expect(result.exclusion.fromTargets).toEqual([{ type: 'label', value: 'Bot' }]);
+  });
+});
+
+describe('alerts list — client-side filtering', () => {
+  const ALERTS = [
+    { id: '1', name: 'A', type: 'sm-token-flows', isEnabled: true, data: { chains: ['ethereum'], inclusion: { tokens: [{ address: '0xabc', chain: 'ethereum' }] } } },
+    { id: '2', name: 'B', type: 'common-token-transfer', isEnabled: false, data: { chains: ['solana'] } },
+    { id: '3', name: 'C', type: 'sm-token-flows', isEnabled: true, data: { chains: ['ethereum', 'base'] } },
+    { id: '4', name: 'D', type: 'smart-contract-call', isEnabled: true, data: { chains: ['all'] } },
+  ];
+
+  function setup() {
+    const mockApi = { alertsList: vi.fn().mockResolvedValue(ALERTS) };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    return { mockApi, cmd };
+  }
+
+  it('should return all alerts with no filters', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, {});
+    expect(result).toHaveLength(4);
+  });
+
+  it('should filter by --type', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { type: 'sm-token-flows' });
+    expect(result).toHaveLength(2);
+    expect(result.every(a => a.type === 'sm-token-flows')).toBe(true);
+  });
+
+  it('should filter by --enabled', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, { enabled: true }, {});
+    expect(result).toHaveLength(3);
+    expect(result.every(a => a.isEnabled)).toBe(true);
+  });
+
+  it('should filter by --disabled', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, { disabled: true }, {});
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('2');
+  });
+
+  it('should reject --enabled and --disabled together', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, { enabled: true, disabled: true }, {}))
+      .rejects.toThrow('Cannot specify both --enabled and --disabled');
+  });
+
+  it('should filter by --token-address (case-insensitive)', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { 'token-address': '0xABC' });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('1');
+  });
+
+  it('should filter by --chain (includes "all" matches)', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { chain: 'solana' });
+    expect(result).toHaveLength(2);
+    expect(result.map(a => a.id)).toEqual(['2', '4']);
+  });
+
+  it('should match --chain against "all" even when no explicit match', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { chain: 'arbitrum' });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('4');
+  });
+
+  it('should apply --limit', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { limit: 2 });
+    expect(result).toHaveLength(2);
+    expect(result[0].id).toBe('1');
+  });
+
+  it('should apply --offset', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { offset: 2 });
+    expect(result).toHaveLength(2);
+    expect(result[0].id).toBe('3');
+  });
+
+  it('should apply --offset and --limit together', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { offset: 1, limit: 2 });
+    expect(result).toHaveLength(2);
+    expect(result[0].id).toBe('2');
+    expect(result[1].id).toBe('3');
+  });
+
+  it('should combine type + chain filters', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { type: 'sm-token-flows', chain: 'base' });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('3');
+  });
+});
+
+describe('alerts create does not require --time-window', () => {
+  it('should throw only for missing --name, --type, and channel (not --time-window)', async () => {
+    const logs = [];
+    const mockApi = { alertsCreate: vi.fn().mockResolvedValue({ id: 'new' }) };
+    const cmd = buildAlertsCommands({ log: (...a) => logs.push(a) })['alerts'];
+    // Missing --name and --type but has channel — should complain about name and type, not time-window
+    let err;
+    try {
+      await cmd(['create'], mockApi, {}, { telegram: '123' });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err.message).toContain('--name');
+    expect(err.message).toContain('--type');
+    expect(err.message).not.toContain('--time-window');
+  });
+
+  it('should use TIME_WINDOW_BY_TYPE for sm-token-flows', async () => {
+    const mockApi = { alertsCreate: vi.fn().mockResolvedValue({ id: 'new' }) };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['create'], mockApi, {}, { name: 'Test', type: 'sm-token-flows', chains: 'ethereum', telegram: '123' });
+    expect(mockApi.alertsCreate).toHaveBeenCalledWith(expect.objectContaining({ timeWindow: '1h' }));
+  });
+
+  it('should use realtime for common-token-transfer', async () => {
+    const mockApi = { alertsCreate: vi.fn().mockResolvedValue({ id: 'new' }) };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['create'], mockApi, {}, { name: 'Test', type: 'common-token-transfer', chains: 'ethereum', telegram: '123' });
+    expect(mockApi.alertsCreate).toHaveBeenCalledWith(expect.objectContaining({ timeWindow: 'realtime' }));
+  });
+});
+
+describe('alerts update — type inference', () => {
+  it('should call alertsGet to infer type when type-specific flags used without --type', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({ type: 'sm-token-flows' }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { 'inflow-1h-min': 500000 });
+    expect(mockApi.alertsGet).toHaveBeenCalledWith('abc123');
+    expect(mockApi.alertsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'abc123',
+      type: 'sm-token-flows',
+      timeWindow: '1h',
+    }));
+  });
+
+  it('should reject --type that differs from existing alert type', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({ type: 'common-token-transfer' }),
+      alertsUpdate: vi.fn(),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await expect(cmd(['update', 'abc123'], mockApi, {}, { type: 'sm-token-flows', 'inflow-1h-min': 500000 }))
+      .rejects.toThrow('Cannot change alert type');
+    expect(mockApi.alertsUpdate).not.toHaveBeenCalled();
+  });
+
+  it('should allow --type that matches existing alert type', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({ type: 'sm-token-flows', data: { chains: ['ethereum'] } }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { type: 'sm-token-flows', 'inflow-1h-min': 500000 });
+    expect(mockApi.alertsUpdate).toHaveBeenCalledWith(expect.objectContaining({ type: 'sm-token-flows' }));
+  });
+
+  it('should always call alertsGet even for simple field updates like rename', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({ type: 'sm-token-flows' }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { name: 'New Name' });
+    expect(mockApi.alertsGet).toHaveBeenCalledWith('abc123');
+    expect(mockApi.alertsUpdate).toHaveBeenCalledWith(expect.objectContaining({ name: 'New Name' }));
+  });
+
+  it('should infer type from nested data field if top-level type is absent', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({ data: { type: 'common-token-transfer' } }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { 'usd-min': 1000 });
+    expect(mockApi.alertsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'common-token-transfer',
+      timeWindow: 'realtime',
+    }));
+  });
+
+  it('should throw if --id is missing', async () => {
+    const mockApi = { alertsGet: vi.fn(), alertsUpdate: vi.fn() };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await expect(cmd(['update'], mockApi, {}, {})).rejects.toThrow('Required: <id>');
+  });
+
+  it('should throw if alert is not found', async () => {
+    const mockApi = { alertsGet: vi.fn().mockResolvedValue(null), alertsUpdate: vi.fn() };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await expect(cmd(['update', 'nonexistent'], mockApi, {}, { name: 'X' })).rejects.toThrow('Alert not found');
+    expect(mockApi.alertsUpdate).not.toHaveBeenCalled();
+  });
+
+  it('should merge inclusion/exclusion so adding --token does not drop tokenSectors', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({
+        type: 'sm-token-flows',
+        data: {
+          chains: ['ethereum'],
+          inclusion: { tokens: [{ address: '0xA', chain: 'ethereum' }], tokenSectors: ['DeFi'] },
+        },
+      }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { token: '0xB:ethereum' });
+    const sentData = mockApi.alertsUpdate.mock.calls[0][0].data;
+    // New token replaces the tokens array
+    expect(sentData.inclusion.tokens).toEqual([{ address: '0xB', chain: 'ethereum' }]);
+    // But tokenSectors from existing data is preserved
+    expect(sentData.inclusion.tokenSectors).toEqual(['DeFi']);
+    // Top-level fields also preserved
+    expect(sentData.chains).toEqual(['ethereum']);
+  });
+});
+
+describe('parseArgs repeatable flags', () => {
+  it('should accumulate repeated options into arrays', () => {
+    const result = parseArgs(['--token', '0xabc:ethereum', '--token', '0xdef:base']);
+    expect(result.options.token).toEqual(['0xabc:ethereum', '0xdef:base']);
+  });
+
+  it('should keep single option as string', () => {
+    const result = parseArgs(['--token', '0xabc:ethereum']);
+    expect(result.options.token).toBe('0xabc:ethereum');
+  });
+});
+
+describe('parseArgs negative numbers', () => {
+  it('should treat negative numbers as option values, not flags', () => {
+    const result = parseArgs(['--telegram', '-4583755198']);
+    expect(result.options.telegram).toBe('-4583755198');
+    expect(result.flags).toEqual({});
+  });
+
+  it('should still treat non-numeric dashes as flags', () => {
+    const result = parseArgs(['--verbose', '-v']);
+    expect(result.flags.verbose).toBe(true);
+    expect(result.flags.v).toBe(true);
   });
 });
 
