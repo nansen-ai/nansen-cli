@@ -705,6 +705,20 @@ describe('parseArgs repeatable flags', () => {
   });
 });
 
+describe('parseArgs negative numbers', () => {
+  it('should treat negative numbers as option values, not flags', () => {
+    const result = parseArgs(['--telegram', '-4583755198']);
+    expect(result.options.telegram).toBe('-4583755198');
+    expect(result.flags).toEqual({});
+  });
+
+  it('should still treat non-numeric dashes as flags', () => {
+    const result = parseArgs(['--verbose', '-v']);
+    expect(result.flags.verbose).toBe(true);
+    expect(result.flags.v).toBe(true);
+  });
+});
+
 describe('formatOutput', () => {
   it('should return compact JSON by default', () => {
     const result = formatOutput({ a: 1 });

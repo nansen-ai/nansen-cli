@@ -166,7 +166,7 @@ export function parseArgs(args) {
       
       if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full' || key === 'human' || key === 'enabled' || key === 'disabled') {
         result.flags[key] = true;
-      } else if (next && !next.startsWith('-')) {
+      } else if (next && (!next.startsWith('-') || /^-\d/.test(next))) {
         // Try to parse as JSON first (for objects/arrays/booleans),
         // but keep numeric strings as strings to avoid precision loss
         // and scientific notation for large integers (e.g. 1e+21).
@@ -681,6 +681,7 @@ COMMANDS:
   research    smart-money, profiler, token, search, perp, portfolio, points
   trade       quote, execute
   wallet      create, list, show, export, default, delete, forget-password
+  alerts      list, create, update, toggle, delete
   account     Show API key status, plan, and remaining credits
   login       Save API key (--api-key <key> or NANSEN_API_KEY env var)
   logout      Remove saved API key
