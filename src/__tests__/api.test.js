@@ -1941,6 +1941,81 @@ describe('NansenAPI', () => {
       expect(thrownError.details.details).toEqual(errorData.details);
     });
 
+    it('should extract message from nested detail object (FastAPI proxy errors)', async () => {
+      if (LIVE_TEST) return;
+
+      const errorData = { detail: { message: 'Common Token Transfer Alert must specify subject or tokens', error: 'Bad Request', statusCode: 400 } };
+      const errorResponse = {
+        ok: false,
+        status: 400,
+        headers: new Map(),
+        json: async () => errorData
+      };
+      errorResponse.headers.get = () => null;
+
+      mockFetch.mockResolvedValueOnce(errorResponse);
+
+      let thrownError;
+      try {
+        await api.smartMoneyNetflow({});
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError.message).toBe('Common Token Transfer Alert must specify subject or tokens');
+    });
+
+    it('should extract string detail (FastAPI simple errors)', async () => {
+      if (LIVE_TEST) return;
+
+      const errorData = { detail: 'Not Found' };
+      const errorResponse = {
+        ok: false,
+        status: 404,
+        headers: new Map(),
+        json: async () => errorData
+      };
+      errorResponse.headers.get = () => null;
+
+      mockFetch.mockResolvedValueOnce(errorResponse);
+
+      let thrownError;
+      try {
+        await api.smartMoneyNetflow({});
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError.message).toBe('Not Found');
+    });
+
+    it('should extract inner message from Python-stringified error dicts', async () => {
+      if (LIVE_TEST) return;
+
+      const errorData = {
+        error: 'Bad Request',
+        message: "{'message': 'Common Token Transfer Alert must specify subject or tokens', 'error': 'Bad Request', 'statusCode': 400}"
+      };
+      const errorResponse = {
+        ok: false,
+        status: 400,
+        headers: new Map(),
+        json: async () => errorData
+      };
+      errorResponse.headers.get = () => null;
+
+      mockFetch.mockResolvedValueOnce(errorResponse);
+
+      let thrownError;
+      try {
+        await api.smartMoneyNetflow({});
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError.message).toBe('Common Token Transfer Alert must specify subject or tokens');
+    });
+
     it('should map "Field not recognized" to UNSUPPORTED_FILTER error code', async () => {
       if (LIVE_TEST) return;
 

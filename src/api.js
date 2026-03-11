@@ -538,7 +538,13 @@ export class NansenAPI {
       }
 
       if (!response.ok) {
-        let message = data.message || data.error || `API error: ${response.status}`;
+        let message = data.message || data.error
+          || (typeof data.detail === 'string' ? data.detail : data.detail?.message)
+          || `API error: ${response.status}`;
+        // nansen-api proxy stringifies nested error dicts via Python str(), producing
+        // "{'message': 'actual error', ...}". Extract the inner message if present.
+        const nestedMatch = typeof message === 'string' && message.match(/['"]message['"]\s*:\s*['"](.*?)['"]/);
+        if (nestedMatch) message = nestedMatch[1];
         const code = statusToErrorCode(response.status, data);
         const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'));
 
