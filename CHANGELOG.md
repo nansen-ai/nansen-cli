@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.17.0
+
+### Minor Changes
+
+- [#279](https://github.com/nansen-ai/nansen-cli/pull/279) [`174a3d6`](https://github.com/nansen-ai/nansen-cli/commit/174a3d612b3f198c5e5b979c269d896f9d906704) Thanks [@kome12](https://github.com/kome12)! - Add `nansen account` command to verify API key and check credit balance
+
+  Users can now run `nansen account` to confirm their API key is valid and see
+  their current plan and remaining credits — without consuming any credits.
+
+  This calls the new `GET /api/v1/account` endpoint (ECINT-6365).
+
+- [#234](https://github.com/nansen-ai/nansen-cli/pull/234) [`10a5ced`](https://github.com/nansen-ai/nansen-cli/commit/10a5ced9f1f751666d034cecfc431e335183741c) Thanks [@kome12](https://github.com/kome12)! - Reduced schema.json to a minimal format (~66% smaller).
+
+### Patch Changes
+
+- [#272](https://github.com/nansen-ai/nansen-cli/pull/272) [`50213c1`](https://github.com/nansen-ai/nansen-cli/commit/50213c1d82375a153aa1bad3a53bbd7059cd9f5b) Thanks [@TimNooren](https://github.com/TimNooren)! - fix: show human-readable error when trade fails due to insufficient ETH
+
+  When a wallet has no ETH and a trade is attempted, the raw Ethereum RPC
+  error ("insufficient funds for gas \* price + value: ... have 0 want
+  400000000000000 (supplied gas 600000000)") is now translated into a
+  user-friendly message showing amounts in ETH with a funding hint, e.g.
+  "Insufficient ETH: wallet has 0.000000 ETH but this trade needs ~0.000400
+  ETH (amount + gas). Send ETH to 0x... before trading."
+
 ## 1.16.1
 
 ### Patch Changes
