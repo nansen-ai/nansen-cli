@@ -569,7 +569,7 @@ export async function deleteWallet(name, password) {
  * Build wallet command handlers for integration into CLI.
  */
 export function buildWalletCommands(deps = {}) {
-  const { log = console.log, promptFn: _promptFn, exit = process.exit } = deps;
+  const { log = console.log, ttyOutput = console.error, promptFn: _promptFn, exit = process.exit } = deps;
 
   return {
     'wallet': async (args, apiInstance, flags, options) => {
@@ -715,18 +715,19 @@ export function buildWalletCommands(deps = {}) {
         'list': async () => {
           const result = listWallets();
           if (result.wallets.length === 0) {
-            log('No wallets found. Create one with: nansen wallet create');
-            return;
+            ttyOutput('No wallets found. Create one with: nansen wallet create');
+            return result;
           }
-          log('');
+          ttyOutput('');
           for (const w of result.wallets) {
             const star = w.isDefault ? ' ★' : '';
             const providerTag = w.provider === 'privy' ? ' (privy)' : '';
-            log(`  ${w.name}${star}${providerTag}`);
-            log(`    EVM:    ${w.evm}`);
-            log(`    Solana: ${w.solana}`);
-            log('');
+            ttyOutput(`  ${w.name}${star}${providerTag}`);
+            ttyOutput(`    EVM:    ${w.evm}`);
+            ttyOutput(`    Solana: ${w.solana}`);
+            ttyOutput('');
           }
+          return result;
         },
 
         'show': async () => {
