@@ -234,10 +234,53 @@ export function buildSmartContractCallData(options) {
 }
 
 /**
+ * Type-specific defaults for required fields.
+ * Applied in buildAlertData so payloads always satisfy the backend schema.
+ */
+const TYPE_DEFAULTS = {
+  'sm-token-flows': {
+    chains: [],
+    events: ['sm-token-flows'],
+    inflow_1h: {},
+    inflow_1d: {},
+    inflow_7d: {},
+    outflow_1h: {},
+    outflow_1d: {},
+    outflow_7d: {},
+    netflow_1h: {},
+    netflow_1d: {},
+    netflow_7d: {},
+    inclusion: {},
+    exclusion: {},
+  },
+  'common-token-transfer': {
+    chains: [],
+    events: [],
+    subjects: [],
+    counterparties: [],
+    usdValue: {},
+    tokenAmount: {},
+    inclusion: {},
+    exclusion: {},
+  },
+  'smart-contract-call': {
+    chains: [],
+    events: ['smart-contract-call'],
+    usdValue: {},
+    signatureHash: [],
+    inclusion: { caller: [], smartContract: [] },
+    exclusion: { caller: [], smartContract: [] },
+  },
+};
+
+/**
  * Build the alert data payload from named flags, dispatching on type.
  * --data '<json>' is merged on top as an escape-hatch override.
+ * When applyDefaults is true (default), type-specific defaults are applied
+ * underneath so the payload always satisfies the backend schema.
+ * Set applyDefaults to false for sparse updates.
  */
-export function buildAlertData(options) {
+export function buildAlertData(options, { applyDefaults = true } = {}) {
   let data;
 
   if (options.type === 'sm-token-flows') {
@@ -269,6 +312,21 @@ export function buildAlertData(options) {
     data = {};
     const chains = parseChains(options.chains);
     if (chains) data.chains = chains;
+  }
+
+  // Apply type defaults underneath so all required fields are present.
+  // Use structuredClone to avoid shared mutable references, and deep-merge
+  // inclusion/exclusion so partial flags (e.g. --caller without --contract)
+  // don't drop sibling required sub-fields.
+  if (applyDefaults && TYPE_DEFAULTS[options.type]) {
+    const defaults = structuredClone(TYPE_DEFAULTS[options.type]);
+    data = { ...defaults, ...data };
+    if (defaults.inclusion) {
+      data.inclusion = { ...defaults.inclusion, ...data.inclusion };
+    }
+    if (defaults.exclusion) {
+      data.exclusion = { ...defaults.exclusion, ...data.exclusion };
+    }
   }
 
   // Merge --data on top (power-user escape hatch, overrides named flags)
@@ -505,7 +563,7 @@ USAGE:
           const channels = buildChannels();
           if (channels) params.channels = channels;
           const effectiveOptions = type ? { ...options, type } : options;
-          const builtData = buildAlertData(effectiveOptions);
+          const builtData = buildAlertData(effectiveOptions, { applyDefaults: false });
           if (Object.keys(builtData).length > 0) {
             const merged = existing.data ? { ...existing.data, ...builtData } : builtData;
             // Merge inclusion/exclusion so e.g. --token doesn't drop tokenSectors
