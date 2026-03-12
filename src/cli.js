@@ -814,6 +814,12 @@ export function buildCommands(deps = {}) {
         apiKey = await promptFn('Enter your API key: ', true);
       }
 
+      if (apiKey && apiKey.trim().length === 0) {
+        log(JSON.stringify({ error: 'INVALID_API_KEY', message: 'API key cannot be blank.' }));
+        exit(1);
+        return;
+      }
+
       if (apiKey && apiKey.trim().length > 0) {
         // Verify API key before saving
         const NansenAPIClass = _NansenAPIClass;

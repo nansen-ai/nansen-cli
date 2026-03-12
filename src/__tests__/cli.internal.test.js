@@ -5,6 +5,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Prevent the OAuth device flow from actually opening a browser window.
+// vi.mock is hoisted, so it intercepts the dynamic import('child_process') in cli.js.
+vi.mock('child_process', () => ({ exec: vi.fn(), default: { exec: vi.fn() } }));
 import {
   parseArgs,
   formatValue,
@@ -997,12 +1001,32 @@ describe('buildCommands', () => {
   });
 
   describe('login command', () => {
-    it('should exit when no API key provided', async () => {
+    it('should start OAuth device flow and save tokens when no API key', async () => {
       const savedEnv = process.env.NANSEN_API_KEY;
       delete process.env.NANSEN_API_KEY;
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((url) => {
+        if (url.includes('/authorize')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({
+            device_code: 'dc', user_code: 'AAAA-1111',
+            verification_uri: 'https://app.nansen.ai/device', interval: 0, expires_in: 300
+          })});
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({
+          access_token: 'test-access-token', refresh_token: 'test-refresh-token', expires_in: 3600
+        })});
+      }));
+      const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
       await commands.login([], null, {}, {});
+
+      stdoutSpy.mockRestore();
+      vi.unstubAllGlobals();
       if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
-      expect(mockDeps.exit).toHaveBeenCalledWith(1);
+      expect(mockDeps.saveConfigFn).toHaveBeenCalledWith(expect.objectContaining({
+        accessToken: 'test-access-token',
+        refreshToken: 'test-refresh-token',
+        apiKey: undefined,
+      }));
     });
 
     it('should exit when API key is whitespace', async () => {
@@ -1011,6 +1035,7 @@ describe('buildCommands', () => {
       await commands.login([], null, {}, { 'api-key': '   ' });
       if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
       expect(mockDeps.exit).toHaveBeenCalledWith(1);
+      expect(logs.some(l => l.includes('INVALID_API_KEY'))).toBe(true);
     });
 
     it('should save config with --api-key option after verification', async () => {
@@ -1026,15 +1051,17 @@ describe('buildCommands', () => {
       });
     });
 
-    it('should exit when no API key available', async () => {
+    it('should report DEVICE_AUTHORIZE_FAILED when auth endpoint returns 403', async () => {
       const savedEnv = process.env.NANSEN_API_KEY;
       delete process.env.NANSEN_API_KEY;
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403 }));
 
       await commands.login([], null, {}, {});
 
+      vi.unstubAllGlobals();
       if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
       expect(mockDeps.exit).toHaveBeenCalledWith(1);
-      expect(logs.some(l => l.includes('API_KEY_REQUIRED'))).toBe(true);
+      expect(logs.some(l => l.includes('DEVICE_AUTHORIZE_FAILED'))).toBe(true);
     });
 
     it('should reject invalid API key (401)', async () => {
@@ -1817,15 +1844,17 @@ describe('login/logout flow', () => {
       expect(logs.some(l => l.includes('Saved to'))).toBe(true);
     });
 
-    it('should exit when no API key available', async () => {
+    it('should report DEVICE_AUTHORIZE_FAILED when auth endpoint returns 403', async () => {
       const savedEnv = process.env.NANSEN_API_KEY;
       delete process.env.NANSEN_API_KEY;
-      
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403 }));
+
       await commands.login([], null, {}, {});
-      
+
+      vi.unstubAllGlobals();
       if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
-      expect(logs.some(l => l.includes('API_KEY_REQUIRED'))).toBe(true);
       expect(mockDeps.exit).toHaveBeenCalledWith(1);
+      expect(logs.some(l => l.includes('DEVICE_AUTHORIZE_FAILED'))).toBe(true);
     });
   });
 
@@ -3460,5 +3489,162 @@ describe('buildPagination', () => {
 
   it('handles --limit alone', () => {
     expect(buildPagination({ limit: 25 })).toEqual({ page: 1, per_page: 25 });
+  });
+});
+
+// =================== OAuth Device Flow ===================
+
+import * as childProcess from 'child_process';
+
+describe('OAuth device flow', () => {
+  let mockDeps;
+  let commands;
+  let logs;
+
+  beforeEach(() => {
+    logs = [];
+    mockDeps = {
+      log: (msg) => logs.push(msg),
+      exit: vi.fn(),
+      promptFn: vi.fn(),
+      saveConfigFn: vi.fn(),
+      deleteConfigFn: vi.fn(),
+      getConfigFileFn: vi.fn(() => '/home/user/.nansen/config.json'),
+      NansenAPIClass: vi.fn(),
+      isTTY: false,
+    };
+    commands = buildCommands(mockDeps);
+    vi.mocked(childProcess.exec).mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function makeFetchMock({ authFails = false, pendingCount = 0 } = {}) {
+    let pollCalls = 0;
+    return vi.fn().mockImplementation((url) => {
+      if (url.includes('/authorize')) {
+        if (authFails) return Promise.resolve({ ok: false, status: 403 });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({
+          device_code: 'dc', user_code: 'AAAA-1111',
+          verification_uri: 'https://app.nansen.ai/device', interval: 0, expires_in: 300,
+        })});
+      }
+      pollCalls++;
+      if (pollCalls <= pendingCount) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ error: 'authorization_pending' }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({
+        access_token: 'test-access-token', refresh_token: 'test-refresh-token', expires_in: 3600,
+      })});
+    });
+  }
+
+  it('should use DEFAULT_AUTH_BASE_URL when config has no authBaseUrl', async () => {
+    const savedEnv = process.env.NANSEN_API_KEY;
+    delete process.env.NANSEN_API_KEY;
+    const fetchMock = makeFetchMock();
+    vi.stubGlobal('fetch', fetchMock);
+    mockDeps.loadConfigFn = () => ({ baseUrl: 'https://api.nansen.ai' });
+    commands = buildCommands(mockDeps);
+
+    await commands.login([], null, {}, {});
+
+    if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
+    const authorizeCall = fetchMock.mock.calls.find(([url]) => url.includes('/authorize'));
+    expect(authorizeCall[0]).toContain('https://app.nansen.ai');
+  });
+
+  it('should use authBaseUrl from config for device flow', async () => {
+    const savedEnv = process.env.NANSEN_API_KEY;
+    delete process.env.NANSEN_API_KEY;
+    const fetchMock = makeFetchMock();
+    vi.stubGlobal('fetch', fetchMock);
+    mockDeps.loadConfigFn = () => ({ authBaseUrl: 'https://staging.app.nansen.ai', baseUrl: 'https://staging.api.nansen.ai' });
+    commands = buildCommands(mockDeps);
+
+    await commands.login([], null, {}, {});
+
+    if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
+    const authorizeCall = fetchMock.mock.calls.find(([url]) => url.includes('/authorize'));
+    expect(authorizeCall[0]).toContain('https://staging.app.nansen.ai');
+  });
+
+  it('should continue polling when HTTP 201 body contains authorization_pending', async () => {
+    const savedEnv = process.env.NANSEN_API_KEY;
+    delete process.env.NANSEN_API_KEY;
+    vi.stubGlobal('fetch', makeFetchMock({ pendingCount: 2 }));
+
+    await commands.login([], null, {}, {});
+
+    if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
+    expect(mockDeps.saveConfigFn).toHaveBeenCalledWith(expect.objectContaining({
+      accessToken: 'test-access-token',
+    }));
+  });
+
+  it('should print ! to stdout on network error during polling', async () => {
+    const savedEnv = process.env.NANSEN_API_KEY;
+    delete process.env.NANSEN_API_KEY;
+    let pollCalls = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url) => {
+      if (url.includes('/authorize')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({
+          device_code: 'dc', user_code: 'AAAA-1111',
+          verification_uri: 'https://app.nansen.ai/device', interval: 0, expires_in: 300,
+        })});
+      }
+      pollCalls++;
+      if (pollCalls === 1) throw new Error('Network error');
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({
+        access_token: 'test-access-token', refresh_token: 'test-refresh-token', expires_in: 3600,
+      })});
+    }));
+    mockDeps.isTTY = true;
+    commands = buildCommands(mockDeps);
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    await commands.login([], null, {}, {});
+
+    const wroteExclamation = stdoutSpy.mock.calls.some(([c]) => c === '!');
+    stdoutSpy.mockRestore();
+    if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
+    expect(wroteExclamation).toBe(true);
+  });
+
+  it('should attempt to open browser on authorize success', async () => {
+    const savedEnv = process.env.NANSEN_API_KEY;
+    delete process.env.NANSEN_API_KEY;
+    vi.stubGlobal('fetch', makeFetchMock());
+
+    await commands.login([], null, {}, {});
+
+    if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
+    expect(childProcess.exec).toHaveBeenCalledOnce();
+    expect(vi.mocked(childProcess.exec).mock.calls[0][0]).toContain('https://app.nansen.ai/device');
+  });
+
+  it('should log fallback message when browser launch throws', async () => {
+    const savedEnv = process.env.NANSEN_API_KEY;
+    delete process.env.NANSEN_API_KEY;
+    vi.stubGlobal('fetch', makeFetchMock());
+    vi.mocked(childProcess.exec).mockImplementation(() => { throw new Error('no browser'); });
+
+    await commands.login([], null, {}, {});
+
+    if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
+    expect(logs.some(l => l.includes('Could not open browser automatically'))).toBe(true);
+  });
+
+  it('should not attempt browser launch when authorize fails', async () => {
+    const savedEnv = process.env.NANSEN_API_KEY;
+    delete process.env.NANSEN_API_KEY;
+    vi.stubGlobal('fetch', makeFetchMock({ authFails: true }));
+
+    await commands.login([], null, {}, {});
+
+    if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
+    expect(childProcess.exec).not.toHaveBeenCalled();
   });
 });
