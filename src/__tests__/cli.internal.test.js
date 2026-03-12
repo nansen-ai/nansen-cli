@@ -394,6 +394,81 @@ describe('buildAlertData', () => {
     const result = buildAlertData({});
     expect(result).toEqual({});
   });
+
+  it('should apply sm-token-flows defaults for all required fields', () => {
+    const result = buildAlertData({ type: 'sm-token-flows' });
+    expect(result.chains).toEqual([]);
+    expect(result.events).toEqual(['sm-token-flows']);
+    expect(result.inflow_1h).toEqual({});
+    expect(result.inflow_1d).toEqual({});
+    expect(result.inflow_7d).toEqual({});
+    expect(result.outflow_1h).toEqual({});
+    expect(result.outflow_1d).toEqual({});
+    expect(result.outflow_7d).toEqual({});
+    expect(result.netflow_1h).toEqual({});
+    expect(result.netflow_1d).toEqual({});
+    expect(result.netflow_7d).toEqual({});
+    expect(result.inclusion).toEqual({});
+    expect(result.exclusion).toEqual({});
+  });
+
+  it('should apply common-token-transfer defaults for all required fields', () => {
+    const result = buildAlertData({ type: 'common-token-transfer' });
+    expect(result.chains).toEqual([]);
+    expect(result.events).toEqual([]);
+    expect(result.subjects).toEqual([]);
+    expect(result.counterparties).toEqual([]);
+    expect(result.usdValue).toEqual({});
+    expect(result.tokenAmount).toEqual({});
+    expect(result.inclusion).toEqual({});
+    expect(result.exclusion).toEqual({});
+  });
+
+  it('should apply smart-contract-call defaults for all required fields', () => {
+    const result = buildAlertData({ type: 'smart-contract-call' });
+    expect(result.chains).toEqual([]);
+    expect(result.events).toEqual(['smart-contract-call']);
+    expect(result.usdValue).toEqual({});
+    expect(result.signatureHash).toEqual([]);
+    expect(result.inclusion).toEqual({ caller: [], smartContract: [] });
+    expect(result.exclusion).toEqual({ caller: [], smartContract: [] });
+  });
+
+  it('should let user flags override defaults', () => {
+    const result = buildAlertData({
+      type: 'common-token-transfer',
+      chains: 'ethereum,base',
+      events: 'send',
+      'usd-min': '500',
+    });
+    expect(result.chains).toEqual(['ethereum', 'base']);
+    expect(result.events).toEqual(['send']);
+    expect(result.usdValue).toEqual({ min: 500, max: null });
+    // Defaults still present for unset fields
+    expect(result.counterparties).toEqual([]);
+    expect(result.tokenAmount).toEqual({});
+    expect(result.inclusion).toEqual({});
+    expect(result.exclusion).toEqual({});
+  });
+
+  it('should skip defaults when applyDefaults is false (update path)', () => {
+    const result = buildAlertData({ type: 'common-token-transfer', chains: 'ethereum' }, { applyDefaults: false });
+    expect(result.chains).toEqual(['ethereum']);
+    expect(result.counterparties).toBeUndefined();
+    expect(result.usdValue).toBeUndefined();
+    expect(result.tokenAmount).toBeUndefined();
+  });
+
+  it('should let --data override defaults', () => {
+    const result = buildAlertData({
+      type: 'sm-token-flows',
+      data: '{"events":["custom"],"chains":["solana"]}',
+    });
+    expect(result.events).toEqual(['custom']);
+    expect(result.chains).toEqual(['solana']);
+    // Defaults still present for unset fields
+    expect(result.inflow_1h).toEqual({});
+  });
 });
 
 describe('buildSmTokenFlowsData netflow fields', () => {
