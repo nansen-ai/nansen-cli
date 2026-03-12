@@ -262,7 +262,15 @@ const MOCK_RESPONSES = {
       { category: 'Politics', active_markets: 50, total_volume: 5000000, total_volume_24hr: 100000 }
     ],
     pagination: { page: 1, per_page: 100 }
-  }
+  },
+  // Smart Alert endpoints
+  alertsList: [
+    { id: 'alert-1', name: 'ETH SM Flows', type: 'sm-token-flows', isEnabled: true }
+  ],
+  alertsCreate: { id: 'alert-2', name: 'New Alert', type: 'sm-token-flows', isEnabled: true },
+  alertsUpdate: { id: 'alert-1', name: 'Updated Alert', isEnabled: true },
+  alertsToggle: { id: 'alert-1', isEnabled: false },
+  alertsDelete: { success: true }
 };
 
 describe('NansenAPI', () => {
@@ -309,28 +317,34 @@ describe('NansenAPI', () => {
    * @param {string} expectedEndpoint - Expected API endpoint path
    * @param {object} expectedBodyContains - Object with keys/values that must be in the body
    */
-  function expectFetchCalledWith(expectedEndpoint, expectedBodyContains = {}) {
+  function expectFetchCalledWith(expectedEndpoint, expectedBodyContains = {}, expectedMethod = 'POST') {
     if (LIVE_TEST) return;
-    
+
     expect(mockFetch).toHaveBeenCalled();
     const [url, options] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-    
+
     // Verify URL
     expect(url).toBe(`https://api.nansen.ai${expectedEndpoint}`);
-    
+
     // Verify method and headers
-    expect(options.method).toBe('POST');
-    expect(options.headers['Content-Type']).toBe('application/json');
+    expect(options.method).toBe(expectedMethod);
+    if (expectedMethod !== 'GET') {
+      expect(options.headers['Content-Type']).toBe('application/json');
+    }
     expect(options.headers['X-Client-Type']).toBe('nansen-cli');
     expect(options.headers['X-Client-Version']).toMatch(/^\d+\.\d+\.\d+/);
     expect(options.headers['apikey']).toBe('test-api-key');
-    
-    // Verify body contains expected fields
+
+    // Verify body contains expected fields (skip for GET/DELETE)
+    if (expectedMethod === 'GET' || expectedMethod === 'DELETE') {
+      expect(options.body).toBeUndefined();
+      return;
+    }
     const body = JSON.parse(options.body);
     for (const [key, value] of Object.entries(expectedBodyContains)) {
       expect(body[key]).toEqual(value);
     }
-    
+
     return body;
   }
 
@@ -1758,9 +1772,9 @@ describe('NansenAPI', () => {
   // =================== Error Handling ===================
 
   describe('Error Handling', () => {
-    it('should throw with message from API error response', async () => {
+    it('should throw with original message for 401 when API key exists', async () => {
       if (LIVE_TEST) return;
-      
+
       const errorResponse = {
         ok: false,
         status: 401,
@@ -1768,10 +1782,27 @@ describe('NansenAPI', () => {
         json: async () => ({ error: 'Unauthorized', message: 'Invalid API key' })
       };
       errorResponse.headers.get = () => null;
-      
+
       mockFetch.mockResolvedValueOnce(errorResponse);
 
       await expect(api.smartMoneyNetflow({})).rejects.toThrow('Invalid API key');
+    });
+
+    it('should show login guidance for 401 when no API key', async () => {
+      if (LIVE_TEST) return;
+
+      const apiNoKey = new NansenAPI(null, 'https://api.nansen.ai');
+      const errorResponse = {
+        ok: false,
+        status: 401,
+        headers: new Map(),
+        json: async () => ({ error: 'Unauthorized', message: 'Invalid API key' })
+      };
+      errorResponse.headers.get = () => null;
+
+      mockFetch.mockResolvedValueOnce(errorResponse);
+
+      await expect(apiNoKey.smartMoneyNetflow({})).rejects.toThrow('Not logged in. Run: nansen login');
     });
 
     it('should throw on network errors after retries', async () => {
@@ -1908,6 +1939,81 @@ describe('NansenAPI', () => {
       // Check that original error data is included (with retry metadata added)
       expect(thrownError.details.error).toEqual(errorData.error);
       expect(thrownError.details.details).toEqual(errorData.details);
+    });
+
+    it('should extract message from nested detail object (FastAPI proxy errors)', async () => {
+      if (LIVE_TEST) return;
+
+      const errorData = { detail: { message: 'Common Token Transfer Alert must specify subject or tokens', error: 'Bad Request', statusCode: 400 } };
+      const errorResponse = {
+        ok: false,
+        status: 400,
+        headers: new Map(),
+        json: async () => errorData
+      };
+      errorResponse.headers.get = () => null;
+
+      mockFetch.mockResolvedValueOnce(errorResponse);
+
+      let thrownError;
+      try {
+        await api.smartMoneyNetflow({});
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError.message).toBe('Common Token Transfer Alert must specify subject or tokens');
+    });
+
+    it('should extract string detail (FastAPI simple errors)', async () => {
+      if (LIVE_TEST) return;
+
+      const errorData = { detail: 'Not Found' };
+      const errorResponse = {
+        ok: false,
+        status: 404,
+        headers: new Map(),
+        json: async () => errorData
+      };
+      errorResponse.headers.get = () => null;
+
+      mockFetch.mockResolvedValueOnce(errorResponse);
+
+      let thrownError;
+      try {
+        await api.smartMoneyNetflow({});
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError.message).toBe('Not Found');
+    });
+
+    it('should extract inner message from Python-stringified error dicts', async () => {
+      if (LIVE_TEST) return;
+
+      const errorData = {
+        error: 'Bad Request',
+        message: "{'message': 'Common Token Transfer Alert must specify subject or tokens', 'error': 'Bad Request', 'statusCode': 400}"
+      };
+      const errorResponse = {
+        ok: false,
+        status: 400,
+        headers: new Map(),
+        json: async () => errorData
+      };
+      errorResponse.headers.get = () => null;
+
+      mockFetch.mockResolvedValueOnce(errorResponse);
+
+      let thrownError;
+      try {
+        await api.smartMoneyNetflow({});
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError.message).toBe('Common Token Transfer Alert must specify subject or tokens');
     });
 
     it('should map "Field not recognized" to UNSUPPORTED_FILTER error code', async () => {
@@ -2636,6 +2742,59 @@ describe('NansenAPI', () => {
       expect(thrownError.details?.paymentRequirements).toBeUndefined();
 
       vi.doUnmock('../walletconnect-x402.js');
+    });
+  });
+
+  // =================== Smart Alert Endpoints ===================
+
+  describe('Smart Alerts', () => {
+    it('alertsList should GET /api/v1/smart-alert/list', async () => {
+      setupMock(MOCK_RESPONSES.alertsList);
+      const result = await api.alertsList();
+      expectFetchCalledWith('/api/v1/smart-alert/list', {}, 'GET');
+      expect(result).toBeInstanceOf(Array);
+      expect(result[0]).toHaveProperty('id', 'alert-1');
+    });
+
+    it('alertsList should append filter params as query string', async () => {
+      setupMock(MOCK_RESPONSES.alertsList);
+      await api.alertsList({ type: 'sm-token-flows', isEnabled: true, limit: 10 });
+      expectFetchCalledWith('/api/v1/smart-alert/list?type=sm-token-flows&isEnabled=true&limit=10', {}, 'GET');
+    });
+
+    it('alertsCreate should POST /api/v1/smart-alert', async () => {
+      setupMock(MOCK_RESPONSES.alertsCreate);
+      const params = { name: 'Test', type: 'sm-token-flows', timeWindow: '1h', channels: [], data: {} };
+      const result = await api.alertsCreate(params);
+      expectFetchCalledWith('/api/v1/smart-alert', { name: 'Test', type: 'sm-token-flows' });
+      expect(result).toHaveProperty('id', 'alert-2');
+    });
+
+    it('alertsUpdate should PATCH /api/v1/smart-alert', async () => {
+      setupMock(MOCK_RESPONSES.alertsUpdate);
+      const result = await api.alertsUpdate({ id: 'alert-1', name: 'Updated Alert' });
+      expectFetchCalledWith('/api/v1/smart-alert', { id: 'alert-1', name: 'Updated Alert' }, 'PATCH');
+      expect(result).toHaveProperty('name', 'Updated Alert');
+    });
+
+    it('alertsToggle should PATCH /api/v1/smart-alert/toggle', async () => {
+      setupMock(MOCK_RESPONSES.alertsToggle);
+      const result = await api.alertsToggle({ id: 'alert-1', isEnabled: false });
+      expectFetchCalledWith('/api/v1/smart-alert/toggle', { id: 'alert-1', isEnabled: false }, 'PATCH');
+      expect(result).toHaveProperty('isEnabled', false);
+    });
+
+    it('alertsDelete should DELETE /api/v1/smart-alert/:id', async () => {
+      setupMock(MOCK_RESPONSES.alertsDelete);
+      const result = await api.alertsDelete('alert-1');
+      expectFetchCalledWith('/api/v1/smart-alert/alert-1', {}, 'DELETE');
+      expect(result).toHaveProperty('success', true);
+    });
+
+    it('alertsDelete should encode special characters in alert ID', async () => {
+      setupMock(MOCK_RESPONSES.alertsDelete);
+      await api.alertsDelete('alert/with/slashes');
+      expectFetchCalledWith('/api/v1/smart-alert/alert%2Fwith%2Fslashes', {}, 'DELETE');
     });
   });
 

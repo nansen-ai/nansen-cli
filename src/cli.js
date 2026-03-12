@@ -6,9 +6,11 @@
 import { NansenAPI, NansenError, ErrorCode, loadConfig, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep, getAuthBaseUrl } from './api.js';
 import { buildWalletCommands } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
+import { formatAlertsTable, buildAlertsCommands } from './commands/alerts.js';
 import { resolveAddress, isEnsName } from './ens.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
+import { trackCommandSucceeded, trackCommandFailed } from './telemetry.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
 
@@ -163,19 +165,29 @@ export function parseArgs(args) {
       const key = arg.slice(2);
       const next = args[i + 1];
       
-      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full' || key === 'human') {
+      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full' || key === 'human' || key === 'enabled' || key === 'disabled') {
         result.flags[key] = true;
-      } else if (next && !next.startsWith('-')) {
+      } else if (next && (!next.startsWith('-') || /^-\d/.test(next))) {
         // Try to parse as JSON first (for objects/arrays/booleans),
         // but keep numeric strings as strings to avoid precision loss
         // and scientific notation for large integers (e.g. 1e+21).
+        let parsedValue;
         try {
           const parsed = JSON.parse(next);
-          result.options[key] = typeof parsed === 'number' ? next : parsed;
+          parsedValue = typeof parsed === 'number' ? next : parsed;
         } catch {
-          result.options[key] = next;
+          parsedValue = next;
         }
         i++;
+        // Accumulate repeated options into arrays (supports repeatable flags like --token, --subject)
+        if (key in result.options) {
+          if (!Array.isArray(result.options[key])) {
+            result.options[key] = [result.options[key]];
+          }
+          result.options[key].push(parsedValue);
+        } else {
+          result.options[key] = parsedValue;
+        }
       } else {
         result.flags[key] = true;
       }
@@ -226,7 +238,7 @@ export function formatTable(data) {
   // Get columns from first record, prioritize common useful fields
   const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
   const allKeys = [...new Set(records.flatMap(r => Object.keys(r)))];
-  
+
   // Sort: priority fields first, then alphabetically
   const columns = allKeys.sort((a, b) => {
     const aIdx = priorityFields.indexOf(a);
@@ -250,12 +262,12 @@ export function formatTable(data) {
   // Build table
   const separator = '─';
   const lines = [];
-  
+
   // Header
   const header = columns.map((col, i) => col.padEnd(widths[i])).join(' │ ');
   lines.push(header);
   lines.push(widths.map(w => separator.repeat(w)).join('─┼─'));
-  
+
   // Rows
   for (const record of records.slice(0, 50)) { // Limit to 50 rows
     const row = columns.map((col, i) => {
@@ -670,6 +682,7 @@ COMMANDS:
   research    smart-money, profiler, token, search, perp, portfolio, points
   trade       quote, execute
   wallet      create, list, show, export, default, delete, forget-password
+  alerts      list, create, update, toggle, delete
   account     Show API key status, plan, and remaining credits
   login       Authenticate via browser (OAuth) or --api-key for legacy key
   logout      Remove saved API key
@@ -693,6 +706,8 @@ Labels: Fund, Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader
 
 Docs: https://docs.nansen.ai
 Skills: npx skills add nansen-ai/nansen-cli (agent-optimised docs per command group)
+
+Telemetry: anonymous usage stats collected. Disable: DO_NOT_TRACK=1
 `;
 
 // Helper to prompt for input (exported for mocking)
@@ -800,13 +815,47 @@ export function buildCommands(deps = {}) {
       }
 
       if (apiKey && apiKey.trim().length > 0) {
+        // Verify API key before saving
+        const NansenAPIClass = _NansenAPIClass;
+        const testApi = new NansenAPIClass(apiKey.trim(), undefined, {
+          retry: { maxRetries: 2 },
+          cache: { enabled: false }
+        });
+
+        let accountInfo;
+        try {
+          accountInfo = await testApi.getAccount();
+        } catch (error) {
+          if (error.code === ErrorCode.UNAUTHORIZED) {
+            log(JSON.stringify({
+              error: 'INVALID_API_KEY',
+              message: 'The API key is not valid.',
+              resolution: ['Check your key at https://app.nansen.ai/api']
+            }));
+          } else {
+            log(JSON.stringify({
+              error: 'VERIFICATION_FAILED',
+              message: `Could not verify API key: ${error.message}`,
+              resolution: ['Check your internet connection', 'Try again']
+            }));
+          }
+          exit(1);
+          return;
+        }
+
         saveConfigFn({
           apiKey: apiKey.trim(),
           baseUrl: 'https://api.nansen.ai'
         });
 
         log(`✓ Saved to ${getConfigFileFn()}\n`);
-        log('You can now use the Nansen CLI. Try:');
+        if (accountInfo?.plan) {
+          log(`Plan: ${accountInfo.plan}`);
+        }
+        if (accountInfo?.credits_remaining !== undefined) {
+          log(`Credits remaining: ${accountInfo.credits_remaining}`);
+        }
+        log('\nYou can now use the Nansen CLI. Try:');
         log('  nansen research token screener --chain solana --pretty');
         return;
       }
@@ -916,7 +965,7 @@ export function buildCommands(deps = {}) {
 
       log(`\n✓ Logged in as ${email}`);
       log(`Saved to ${getConfigFileFn()}\n`);
-      log('You can now use the Nansen CLI. Try:');
+      log('\nYou can now use the Nansen CLI. Try:');
       log('  nansen research token screener --chain solana --pretty');
       return;
     },
@@ -1548,7 +1597,7 @@ export async function runCLI(rawArgs, deps = {}) {
     if (updateNotification) errorOutput(updateNotification);
   };
 
-  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...commandOverrides };
+  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...buildAlertsCommands(deps), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);
@@ -1585,8 +1634,8 @@ export async function runCLI(rawArgs, deps = {}) {
         }
       }
       // First try subcommand help
-      // Skip for 'trade' — its handlers show their own rich usage when required args are missing
-      if (command && subcommand && command !== 'trade') {
+      // Skip for 'trade'/'alerts' — their handlers show their own rich usage
+      if (command && subcommand && command !== 'trade' && command !== 'alerts') {
         const subHelp = generateSubcommandHelp(command, subcommand);
         if (subHelp) {
           output(subHelp);
@@ -1595,8 +1644,8 @@ export async function runCLI(rawArgs, deps = {}) {
         }
       }
       // Then try command-level help (list subcommands)
-      // Skip for 'trade' — let the handler show its own usage
-      const cmdSchemaLookup = command !== 'trade' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
+      // Skip for 'trade'/'alerts' — let the handler show its own usage
+      const cmdSchemaLookup = command !== 'trade' && command !== 'alerts' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
       if (command && cmdSchemaLookup) {
         const cmdSchema = cmdSchemaLookup;
         const lines = [`${command} — ${cmdSchema.description}`];
@@ -1631,13 +1680,22 @@ export async function runCLI(rawArgs, deps = {}) {
     }
   }
 
+  // ── Telemetry setup ──
+  const startTime = Date.now();
+  const fullCommand = subcommand ? `${command} ${subcommand}` : command;
+  const flagNames = Object.keys(flags).filter(k => flags[k]).map(k => `--${k}`);
+  const optionNames = Object.keys(options).map(k => `--${k}`);
+  const usedFlags = [...flagNames, ...optionNames];
+  const chain = options.chain || null;
+
   if (!commands[command]) {
-    const errorData = { 
+    const errorData = {
       error: `Unknown command: ${command}`,
       available: Object.keys(commands)
     };
     const formatted = formatOutput(errorData, { pretty, table });
     output(formatted.text);
+    trackCommandFailed({ command: fullCommand, duration_ms: Date.now() - startTime, error_code: 'UNKNOWN_COMMAND', flags: usedFlags, chain });
     notify();
     exit(1);
     return { type: 'error', data: errorData };
@@ -1665,6 +1723,7 @@ export async function runCLI(rawArgs, deps = {}) {
 
     // Commands that handle their own output return undefined
     if (result === undefined) {
+      trackCommandSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, flags: usedFlags, chain });
       notify();
       return { type: 'no-output', command };
     }
@@ -1673,6 +1732,7 @@ export async function runCLI(rawArgs, deps = {}) {
     if (command === 'schema') {
       const formatted = formatOutput(result, { pretty, table: false });
       output(formatted.text);
+      trackCommandSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, flags: usedFlags, chain });
       notify();
       return { type: 'schema', data: result };
     }
@@ -1683,6 +1743,13 @@ export async function runCLI(rawArgs, deps = {}) {
       result = filterFields(result, fields);
     }
 
+    // Alerts list with --table uses custom table format
+    if (command === 'alerts' && subcommand === 'list' && table) {
+      output(formatAlertsTable(result));
+      notify();
+      return { type: 'success', data: result };
+    }
+
     // Output in requested format
     if (stream) {
       // Stream mode: output each record as a JSON line (NDJSON)
@@ -1690,6 +1757,7 @@ export async function runCLI(rawArgs, deps = {}) {
       if (streamOutput) {
         output(streamOutput);
       }
+      trackCommandSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: !!result?.fromCache, flags: usedFlags, chain });
       notify();
       return { type: 'stream', data: result };
     }
@@ -1697,12 +1765,21 @@ export async function runCLI(rawArgs, deps = {}) {
     const successData = { success: true, data: result };
     const formatted = formatOutput(successData, { pretty, table, csv });
     output(formatted.text);
+    trackCommandSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: !!result?.fromCache, flags: usedFlags, chain });
     notify();
     return { type: csv ? 'csv' : 'success', data: result };
   } catch (error) {
     const errorData = formatError(error);
     const formatted = formatOutput(errorData, { pretty, table, csv });
     output(formatted.text);
+    trackCommandFailed({
+      command: fullCommand,
+      duration_ms: Date.now() - startTime,
+      error_code: error.code || 'UNKNOWN',
+      status: error.status || null,
+      flags: usedFlags,
+      chain,
+    });
     notify();
     exit(1);
     return { type: 'error', data: errorData };
