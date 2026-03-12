@@ -700,12 +700,14 @@ EXAMPLES:
   nansen research profiler balance --address 0x... --chain ethereum
   nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000
 
+SKILLS: Install agent-optimised docs for each command group:
+  npx skills add nansen-ai/nansen-cli
+
 Research chains: ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, linea, scroll, mantle, ronin, sei, plasma, sonic, monad, hyperevm, iotaevm
 Trade chains: solana, base
 Labels: Fund, Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader
 
 Docs: https://docs.nansen.ai
-Skills: npx skills add nansen-ai/nansen-cli (agent-optimised docs per command group)
 
 Telemetry: anonymous usage stats collected. Disable: DO_NOT_TRACK=1
 `;
