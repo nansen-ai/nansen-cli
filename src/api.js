@@ -164,21 +164,7 @@ export function deleteConfig() {
   return false;
 }
 
-/**
- * Derive the superapp base URL from the API base URL.
- * e.g. https://api.nansen.ai → https://app.nansen.ai
- * @param {string} baseUrl - The API base URL
- * @returns {string} The auth base URL
- */
-export function getAuthBaseUrl(baseUrl) {
-  try {
-    const u = new URL(baseUrl);
-    u.hostname = u.hostname.replace(/^api\./, 'app.');
-    return u.origin;
-  } catch {
-    return 'https://app.nansen.ai';
-  }
-}
+export const DEFAULT_AUTH_BASE_URL = 'https://app.nansen.ai';
 
 // ============= Response Cache =============
 
@@ -334,12 +320,15 @@ export function loadConfig() {
   }
 
   if (!config) {
-    config = { apiKey: null, baseUrl: 'https://api.nansen.ai', accessToken: null, refreshToken: null, tokenExpiry: 0 };
+    config = { apiKey: null, baseUrl: 'https://api.nansen.ai', authBaseUrl: DEFAULT_AUTH_BASE_URL, accessToken: null, refreshToken: null, tokenExpiry: 0 };
   }
 
-  // Ensure baseUrl default (config file from older versions may omit it)
+  // Ensure defaults (config file from older versions may omit these)
   if (!config.baseUrl) {
     config.baseUrl = 'https://api.nansen.ai';
+  }
+  if (!config.authBaseUrl) {
+    config.authBaseUrl = DEFAULT_AUTH_BASE_URL;
   }
 
   // Env vars override individual fields
@@ -348,6 +337,9 @@ export function loadConfig() {
   }
   if (process.env.NANSEN_BASE_URL) {
     config.baseUrl = process.env.NANSEN_BASE_URL;
+  }
+  if (process.env.NANSEN_AUTH_URL) {
+    config.authBaseUrl = process.env.NANSEN_AUTH_URL;
   }
 
   return config;
@@ -423,6 +415,7 @@ export class NansenAPI {
   constructor(apiKey = config.apiKey, baseUrl = config.baseUrl, options = {}) {
     this.apiKey = apiKey || null;
     this.baseUrl = baseUrl;
+    this.authBaseUrl = config.authBaseUrl || DEFAULT_AUTH_BASE_URL;
     this.accessToken = config.accessToken || null;
     this.refreshToken = config.refreshToken || null;
     this.tokenExpiry = config.tokenExpiry || 0;
@@ -442,8 +435,7 @@ export class NansenAPI {
     if (!this.accessToken) return;
     if (this.tokenExpiry > Date.now() + 60_000) return;
 
-    const authBase = getAuthBaseUrl(this.baseUrl);
-    const res = await fetch(`${authBase}/auth/device/refresh`, {
+    const res = await fetch(`${this.authBaseUrl}/api/auth/device/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: this.refreshToken })

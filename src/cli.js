@@ -3,7 +3,7 @@
  * Extracted from index.js for coverage
  */
 
-import { NansenAPI, NansenError, ErrorCode, loadConfig, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep, getAuthBaseUrl } from './api.js';
+import { NansenAPI, NansenError, ErrorCode, loadConfig, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, sleep, DEFAULT_AUTH_BASE_URL } from './api.js';
 import { buildWalletCommands } from './wallet.js';
 import { buildTradingCommands } from './trading.js';
 import { formatAlertsTable, buildAlertsCommands } from './commands/alerts.js';
@@ -862,12 +862,12 @@ export function buildCommands(deps = {}) {
 
       // Default: OAuth device flow
       const currentConfig = loadConfigFn();
-      const authBase = getAuthBaseUrl(currentConfig.baseUrl || 'https://api.nansen.ai');
+      const authBase = currentConfig.authBaseUrl || DEFAULT_AUTH_BASE_URL;
 
       // Step 1: initiate
       let authorizeData;
       try {
-        const authorizeRes = await fetch(`${authBase}/auth/device/authorize`, {
+        const authorizeRes = await fetch(`${authBase}/api/auth/device/authorize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
@@ -906,7 +906,7 @@ export function buildCommands(deps = {}) {
 
         let pollData;
         try {
-          const pollRes = await fetch(`${authBase}/auth/device/token`, {
+          const pollRes = await fetch(`${authBase}/api/auth/device/token`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ device_code })
@@ -921,6 +921,7 @@ export function buildCommands(deps = {}) {
           }
         } catch (err) {
           // network error — keep polling
+          if (isTTY) process.stdout.write('!');
           continue;
         }
 
