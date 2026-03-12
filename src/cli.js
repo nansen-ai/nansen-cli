@@ -892,7 +892,9 @@ export function buildCommands(deps = {}) {
           : process.platform === 'win32' ? 'start'
           : 'xdg-open';
         execChild(`${opener} "${verification_uri}"`);
-      } catch (_) {}
+      } catch (_) {
+        log('Could not open browser automatically. Please open the URL above manually.\n');
+      }
 
       // Step 2: poll
       let pollInterval = interval * 1000;
@@ -962,7 +964,10 @@ export function buildCommands(deps = {}) {
       try {
         const payload = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64url').toString());
         email = payload.email || payload.sub || email;
-      } catch (_) {}
+      } catch (_) {
+        /* JWT decode is best-effort; fall back to generic label */
+        log('Could not decode user info')
+      }
 
       log(`\n✓ Logged in as ${email}`);
       log(`Saved to ${getConfigFileFn()}\n`);
