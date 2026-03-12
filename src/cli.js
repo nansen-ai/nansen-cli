@@ -913,13 +913,13 @@ export function buildCommands(deps = {}) {
           });
           pollData = await pollRes.json();
 
-          if (pollRes.ok) {
+          if (pollRes.ok && !pollData.error) {
             accessToken = pollData.access_token;
             refreshToken = pollData.refresh_token;
             tokenExpiry = Date.now() + (pollData.expires_in * 1000);
             break;
           }
-        } catch (err) {
+        } catch {
           // network error — keep polling
           if (isTTY) process.stdout.write('!');
           continue;
