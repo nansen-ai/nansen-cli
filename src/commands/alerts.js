@@ -314,9 +314,19 @@ export function buildAlertData(options, { applyDefaults = true } = {}) {
     if (chains) data.chains = chains;
   }
 
-  // Apply type defaults underneath so all required fields are present
+  // Apply type defaults underneath so all required fields are present.
+  // Use structuredClone to avoid shared mutable references, and deep-merge
+  // inclusion/exclusion so partial flags (e.g. --caller without --contract)
+  // don't drop sibling required sub-fields.
   if (applyDefaults && TYPE_DEFAULTS[options.type]) {
-    data = { ...TYPE_DEFAULTS[options.type], ...data };
+    const defaults = structuredClone(TYPE_DEFAULTS[options.type]);
+    data = { ...defaults, ...data };
+    if (defaults.inclusion) {
+      data.inclusion = { ...defaults.inclusion, ...data.inclusion };
+    }
+    if (defaults.exclusion) {
+      data.exclusion = { ...defaults.exclusion, ...data.exclusion };
+    }
   }
 
   // Merge --data on top (power-user escape hatch, overrides named flags)

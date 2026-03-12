@@ -434,6 +434,26 @@ describe('buildAlertData', () => {
     expect(result.exclusion).toEqual({ caller: [], smartContract: [] });
   });
 
+  it('should deep-merge inclusion/exclusion so partial flags keep sibling defaults (smart-contract-call)', () => {
+    const result = buildAlertData({
+      type: 'smart-contract-call',
+      chains: 'ethereum',
+      caller: 'address:0xabc',
+    });
+    // --caller sets inclusion.caller, but smartContract should still be present from defaults
+    expect(result.inclusion.caller).toEqual([{ type: 'address', value: '0xabc' }]);
+    expect(result.inclusion.smartContract).toEqual([]);
+    // exclusion untouched — both sub-fields from defaults
+    expect(result.exclusion).toEqual({ caller: [], smartContract: [] });
+  });
+
+  it('should not share mutable references between calls', () => {
+    const result1 = buildAlertData({ type: 'smart-contract-call' });
+    const result2 = buildAlertData({ type: 'smart-contract-call' });
+    result1.inclusion.caller.push({ type: 'address', value: '0x1' });
+    expect(result2.inclusion.caller).toEqual([]);
+  });
+
   it('should let user flags override defaults', () => {
     const result = buildAlertData({
       type: 'common-token-transfer',
