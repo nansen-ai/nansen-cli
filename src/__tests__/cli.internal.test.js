@@ -9,7 +9,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Prevent the OAuth device flow from actually opening a browser window.
 // vi.mock is hoisted, so it intercepts the dynamic import('child_process') in cli.js.
 vi.mock('child_process', () => ({ exec: vi.fn(), default: { exec: vi.fn() } }));
-import * as childProcess from 'child_process';
 import {
   parseArgs,
   formatValue,
@@ -974,7 +973,6 @@ describe('buildCommands', () => {
       saveConfigFn: vi.fn(),
       deleteConfigFn: vi.fn(),
       getConfigFileFn: vi.fn(() => '/home/user/.nansen/config.json'),
-      loadConfigFn: vi.fn(() => ({})),
       NansenAPIClass: vi.fn(),
       isTTY: true
     };
@@ -3496,6 +3494,8 @@ describe('buildPagination', () => {
 
 // =================== OAuth Device Flow ===================
 
+import * as childProcess from 'child_process';
+
 describe('OAuth device flow', () => {
   let mockDeps;
   let commands;
@@ -3510,7 +3510,6 @@ describe('OAuth device flow', () => {
       saveConfigFn: vi.fn(),
       deleteConfigFn: vi.fn(),
       getConfigFileFn: vi.fn(() => '/home/user/.nansen/config.json'),
-      loadConfigFn: vi.fn(() => ({})),
       NansenAPIClass: vi.fn(),
       isTTY: false,
     };
@@ -3572,7 +3571,7 @@ describe('OAuth device flow', () => {
     expect(authorizeCall[0]).toContain('https://staging.app.nansen.ai');
   });
 
-  it('should continue polling when response body contains authorization_pending', async () => {
+  it('should continue polling when HTTP 201 body contains authorization_pending', async () => {
     const savedEnv = process.env.NANSEN_API_KEY;
     delete process.env.NANSEN_API_KEY;
     vi.stubGlobal('fetch', makeFetchMock({ pendingCount: 2 }));
