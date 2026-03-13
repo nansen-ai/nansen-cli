@@ -683,20 +683,20 @@ describe('alerts list — client-side filtering', () => {
   it('should return all alerts with no filters', async () => {
     const { mockApi, cmd } = setup();
     const result = await cmd(['list'], mockApi, {}, {});
-    expect(result).toHaveLength(4);
+    expect(result).toHaveLength(5);
   });
 
   it('should filter by --type', async () => {
     const { mockApi, cmd } = setup();
     const result = await cmd(['list'], mockApi, {}, { type: 'sm-token-flows' });
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(3);
     expect(result.every(a => a.type === 'sm-token-flows')).toBe(true);
   });
 
   it('should filter by --enabled', async () => {
     const { mockApi, cmd } = setup();
     const result = await cmd(['list'], mockApi, { enabled: true }, {});
-    expect(result).toHaveLength(3);
+    expect(result).toHaveLength(4);
     expect(result.every(a => a.isEnabled)).toBe(true);
   });
 
@@ -718,6 +718,25 @@ describe('alerts list — client-side filtering', () => {
     const result = await cmd(['list'], mockApi, {}, { 'token-address': '0xABC' });
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('1');
+  });
+
+  it('should match --token-address in exclusion tokens', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { 'token-address': '0xdef' });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('5');
+  });
+
+  it('should not false-positive --token-address against chain names', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { 'token-address': 'ethereum' });
+    expect(result).toHaveLength(0);
+  });
+
+  it('should not false-positive --token-address against chains: ["all"]', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { 'token-address': 'all' });
+    expect(result).toHaveLength(0);
   });
 
   it('should filter by --chain (includes "all" matches)', async () => {
@@ -744,7 +763,7 @@ describe('alerts list — client-side filtering', () => {
   it('should apply --offset', async () => {
     const { mockApi, cmd } = setup();
     const result = await cmd(['list'], mockApi, {}, { offset: 2 });
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(3);
     expect(result[0].id).toBe('3');
   });
 
