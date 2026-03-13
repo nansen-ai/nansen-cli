@@ -884,6 +884,49 @@ describe('alerts update — type inference', () => {
     // Top-level fields also preserved
     expect(sentData.chains).toEqual(['ethereum']);
   });
+
+  it('should deep-merge range fields so updating only min preserves existing max', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({
+        type: 'sm-token-flows',
+        data: {
+          chains: ['ethereum'],
+          inflow_1h: { min: 1000000, max: 50000000 },
+          outflow_1d: { min: 500, max: 10000 },
+          inclusion: {},
+          exclusion: {},
+        },
+      }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { 'inflow-1h-min': '2000000' });
+    const sentData = mockApi.alertsUpdate.mock.calls[0][0].data;
+    expect(sentData.inflow_1h).toEqual({ min: 2000000, max: 50000000 });
+    expect(sentData.outflow_1d).toEqual({ min: 500, max: 10000 });
+  });
+
+  it('should deep-merge range fields for common-token-transfer usdValue', async () => {
+    const mockApi = {
+      alertsGet: vi.fn().mockResolvedValue({
+        type: 'common-token-transfer',
+        data: {
+          chains: ['ethereum'],
+          usdValue: { min: 100, max: 999999 },
+          tokenAmount: { min: 10, max: 500 },
+          subjects: [{ type: 'label', value: 'smart_money' }],
+          inclusion: {},
+          exclusion: {},
+        },
+      }),
+      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
+    };
+    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
+    await cmd(['update', 'abc123'], mockApi, {}, { 'usd-max': '5000000' });
+    const sentData = mockApi.alertsUpdate.mock.calls[0][0].data;
+    expect(sentData.usdValue).toEqual({ min: 100, max: 5000000 });
+    expect(sentData.tokenAmount).toEqual({ min: 10, max: 500 });
+  });
 });
 
 describe('parseArgs repeatable flags', () => {
