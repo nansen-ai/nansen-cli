@@ -479,6 +479,13 @@ describe('buildAlertData', () => {
     expect(result.tokenAmount).toBeUndefined();
   });
 
+  it('should not wipe subjects when updating common-token-transfer without --subject', () => {
+    // Simulates: user created alert with --subject label:CEX, then updates with only --usd-min 5000
+    const result = buildAlertData({ type: 'common-token-transfer', 'usd-min': '5000' }, { applyDefaults: false });
+    expect(result.subjects).toBeUndefined();
+    expect(result.usdValue).toEqual({ min: 5000, max: null });
+  });
+
   it('should let --data override defaults', () => {
     const result = buildAlertData({
       type: 'sm-token-flows',
