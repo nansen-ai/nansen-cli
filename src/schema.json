@@ -712,6 +712,39 @@
     },
     "account": {
       "description": "Show API key status, plan, and remaining credits. Does not consume credits."
+    },
+    "web-search": {
+      "description": "Search the web for one or more queries in parallel",
+      "options": {
+        "query": {
+          "description": "Search query (can be repeated for multiple queries)"
+        },
+        "num-results": {
+          "description": "Number of results per query (1-20, default 10)",
+          "default": 10
+        }
+      },
+      "examples": [
+        "nansen web-search \"bitcoin price\"",
+        "nansen web-search \"solana news\" --num-results 5",
+        "nansen web-search --query \"btc\" --query \"eth\""
+      ]
+    },
+    "web-fetch": {
+      "description": "Fetch and analyze content from one or more URLs using AI",
+      "options": {
+        "url": {
+          "description": "URL to fetch (can be repeated for multiple URLs)"
+        },
+        "question": {
+          "description": "Question to answer about the URL content",
+          "required": true
+        }
+      },
+      "examples": [
+        "nansen web-fetch https://nansen.ai --question \"What does Nansen do?\"",
+        "nansen web-fetch --url https://a.com --url https://b.com --question \"Compare these\""
+      ]
     }
   },
   "globalOptions": {
