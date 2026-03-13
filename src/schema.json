@@ -723,7 +723,12 @@
           "description": "Number of results per query (1-20, default 10)",
           "default": 10
         }
-      }
+      },
+      "examples": [
+        "nansen web-search \"bitcoin price\"",
+        "nansen web-search \"solana news\" --num-results 5",
+        "nansen web-search --query \"btc\" --query \"eth\""
+      ]
     },
     "web-fetch": {
       "description": "Fetch and analyze content from one or more URLs using AI",
@@ -735,7 +740,11 @@
           "description": "Question to answer about the URL content",
           "required": true
         }
-      }
+      },
+      "examples": [
+        "nansen web-fetch https://nansen.ai --question \"What does Nansen do?\"",
+        "nansen web-fetch --url https://a.com --url https://b.com --question \"Compare these\""
+      ]
     }
   },
   "globalOptions": {

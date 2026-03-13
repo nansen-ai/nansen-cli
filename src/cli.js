@@ -1589,6 +1589,19 @@ export async function runCLI(rawArgs, deps = {}) {
           lines.push('Subcommands: ' + Object.keys(cmdSchema.subcommands).join(', '));
           lines.push(`Use: nansen ${command} <subcommand> --help`);
         }
+        if (cmdSchema.options) {
+          const params = Object.entries(cmdSchema.options).map(([name, opt]) => {
+            const parts = [`--${name}`];
+            if (opt.required) parts[0] += '*';
+            if (opt.default !== undefined) parts.push(`(default: ${opt.default})`);
+            if (opt.description) parts.push(`— ${opt.description}`);
+            return parts.join(' ');
+          });
+          lines.push(`\nOptions (* required):\n  ${params.join('\n  ')}`);
+        }
+        if (cmdSchema.examples?.length) {
+          lines.push(`\nExamples:\n  ${cmdSchema.examples.join('\n  ')}`);
+        }
         output(lines.join('\n'));
         notify();
         return { type: 'command-help', command };
