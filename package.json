@@ -10,6 +10,7 @@
   "files": [
     "src/*.js",
     "src/*.json",
+    "skills/**",
     "CHANGELOG.md"
   ],
   "scripts": {
