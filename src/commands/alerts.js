@@ -167,7 +167,7 @@ export function buildCommonTokenTransferData(options) {
   if (amountRange) data.tokenAmount = amountRange;
 
   const subjects = parseSubjects(options.subject);
-  data.subjects = subjects ?? [];
+  if (subjects) data.subjects = subjects;
 
   const counterparties = parseSubjects(options.counterparty);
   if (counterparties) data.counterparties = counterparties;
