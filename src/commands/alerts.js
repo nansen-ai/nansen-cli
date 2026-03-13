@@ -566,12 +566,25 @@ USAGE:
           const builtData = buildAlertData(effectiveOptions, { applyDefaults: false });
           if (Object.keys(builtData).length > 0) {
             const merged = existing.data ? { ...existing.data, ...builtData } : builtData;
-            // Merge inclusion/exclusion so e.g. --token doesn't drop tokenSectors
-            if (existing.data?.inclusion && builtData.inclusion) {
-              merged.inclusion = { ...existing.data.inclusion, ...builtData.inclusion };
-            }
-            if (existing.data?.exclusion && builtData.exclusion) {
-              merged.exclusion = { ...existing.data.exclusion, ...builtData.exclusion };
+            // Deep-merge nested plain objects (range fields like inflow_1h,
+            // inclusion, exclusion) so partial updates don't drop siblings.
+            // For range sub-keys, keep the existing value when the new one is null
+            // (i.e. the user didn't supply that end of the range).
+            if (existing.data) {
+              for (const key of Object.keys(builtData)) {
+                const oldVal = existing.data[key];
+                const newVal = builtData[key];
+                if (oldVal && newVal && typeof oldVal === 'object' && typeof newVal === 'object'
+                    && !Array.isArray(oldVal) && !Array.isArray(newVal)) {
+                  const m = { ...oldVal, ...newVal };
+                  for (const subKey of Object.keys(m)) {
+                    if (m[subKey] === null && oldVal[subKey] != null) {
+                      m[subKey] = oldVal[subKey];
+                    }
+                  }
+                  merged[key] = m;
+                }
+              }
             }
             params.data = merged;
           }
