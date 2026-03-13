@@ -167,7 +167,7 @@ export function buildCommonTokenTransferData(options) {
   if (amountRange) data.tokenAmount = amountRange;
 
   const subjects = parseSubjects(options.subject);
-  data.subjects = subjects ?? [];
+  if (subjects) data.subjects = subjects;
 
   const counterparties = parseSubjects(options.counterparty);
   if (counterparties) data.counterparties = counterparties;
@@ -347,6 +347,68 @@ export function buildAlertData(options, { applyDefaults = true } = {}) {
   return data;
 }
 
+// ============= Type-Specific Validation =============
+
+/**
+ * Check whether a range object has at least one bound set.
+ */
+function isRangeSet(range) {
+  if (!range || typeof range !== 'object') return false;
+  return (range.min !== undefined && range.min !== null) ||
+         (range.max !== undefined && range.max !== null);
+}
+
+/**
+ * Validate that the data payload satisfies API-enforced required-field rules
+ * for the given alert type. Throws a clear NansenError if validation fails.
+ *
+ * Rules:
+ *  - sm-token-flows: at least one inflow/outflow/netflow threshold must be set
+ *  - common-token-transfer: at least one subject or inclusion token must be set
+ *  - smart-contract-call: at least one caller, contract, or signatureHash must be set
+ */
+export function validateAlertData(type, data) {
+  if (!type || !data) return;
+
+  if (type === 'sm-token-flows') {
+    const flowKeys = [
+      'inflow_1h', 'inflow_1d', 'inflow_7d',
+      'outflow_1h', 'outflow_1d', 'outflow_7d',
+      'netflow_1h', 'netflow_1d', 'netflow_7d',
+    ];
+    const hasThreshold = flowKeys.some(k => isRangeSet(data[k]));
+    if (!hasThreshold) {
+      throw new NansenError(
+        'sm-token-flows requires at least one inflow, outflow, or netflow threshold',
+        ErrorCode.INVALID_PARAMS,
+      );
+    }
+  }
+
+  if (type === 'common-token-transfer') {
+    const hasSubject = Array.isArray(data.subjects) && data.subjects.length > 0;
+    const hasToken = Array.isArray(data.inclusion?.tokens) && data.inclusion.tokens.length > 0;
+    if (!hasSubject && !hasToken) {
+      throw new NansenError(
+        'common-token-transfer requires at least one --subject or --token',
+        ErrorCode.INVALID_PARAMS,
+      );
+    }
+  }
+
+  if (type === 'smart-contract-call') {
+    const hasCaller = Array.isArray(data.inclusion?.caller) && data.inclusion.caller.length > 0;
+    const hasContract = Array.isArray(data.inclusion?.smartContract) && data.inclusion.smartContract.length > 0;
+    const hasSignature = Array.isArray(data.signatureHash) && data.signatureHash.length > 0;
+    if (!hasCaller && !hasContract && !hasSignature) {
+      throw new NansenError(
+        'smart-contract-call requires at least one --caller, --contract, or --signature-hash',
+        ErrorCode.INVALID_PARAMS,
+      );
+    }
+  }
+}
+
 // ============= Command Builder =============
 
 const TIME_WINDOW_BY_TYPE = {
@@ -499,7 +561,10 @@ USAGE:
           if (flags.disabled) alerts = alerts.filter(a => a.isEnabled === false);
           if (options['token-address']) {
             const addr = options['token-address'].toLowerCase();
-            alerts = alerts.filter(a => JSON.stringify(a.data ?? {}).toLowerCase().includes(addr));
+            alerts = alerts.filter(a => {
+              const allTokens = [...(a.data?.inclusion?.tokens ?? []), ...(a.data?.exclusion?.tokens ?? [])];
+              return allTokens.some(t => t.address?.toLowerCase().includes(addr));
+            });
           }
           if (options.chain) {
             const ch = options.chain;
@@ -529,6 +594,7 @@ USAGE:
           }
           const timeWindow = TIME_WINDOW_BY_TYPE[type] ?? 'realtime';
           const data = buildAlertData(options);
+          validateAlertData(type, data);
           return apiInstance.alertsCreate({
             name,
             type,
@@ -566,15 +632,25 @@ USAGE:
           const builtData = buildAlertData(effectiveOptions, { applyDefaults: false });
           if (Object.keys(builtData).length > 0) {
             const merged = existing.data ? { ...existing.data, ...builtData } : builtData;
-            // Merge inclusion/exclusion so e.g. --token doesn't drop tokenSectors
-            if (existing.data?.inclusion && builtData.inclusion) {
-              merged.inclusion = { ...existing.data.inclusion, ...builtData.inclusion };
-            }
-            if (existing.data?.exclusion && builtData.exclusion) {
-              merged.exclusion = { ...existing.data.exclusion, ...builtData.exclusion };
+            // Deep-merge nested plain objects (range fields like inflow_1h,
+            // inclusion, exclusion) so partial updates don't drop siblings.
+            if (existing.data) {
+              for (const key of Object.keys(builtData)) {
+                const oldVal = existing.data[key];
+                const newVal = builtData[key];
+                if (oldVal && newVal && typeof oldVal === 'object' && typeof newVal === 'object'
+                    && !Array.isArray(oldVal) && !Array.isArray(newVal)) {
+                  // Filter out null values from newVal so they don't overwrite existing values
+                  const filtered = Object.fromEntries(Object.entries(newVal).filter(([, v]) => v !== null));
+                  merged[key] = { ...oldVal, ...filtered };
+                }
+              }
             }
             params.data = merged;
           }
+          // Validate the final merged data against type-specific rules
+          const finalData = params.data ?? existing.data;
+          if (finalData) validateAlertData(type, finalData);
           if (options.description) params.description = options.description;
           if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAMS);
           if (flags.enabled) params.isEnabled = true;
