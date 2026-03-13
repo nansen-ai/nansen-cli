@@ -683,6 +683,8 @@ COMMANDS:
   trade       quote, execute
   wallet      create, list, show, export, default, delete, forget-password
   alerts      list, create, update, toggle, delete
+  web-search  Search the web for one or more queries
+  web-fetch   Fetch and analyze URL content using AI
   account     Show API key status, plan, and remaining credits
   login       Save API key (--api-key <key> or NANSEN_API_KEY env var)
   logout      Remove saved API key
@@ -775,6 +777,36 @@ export function buildCommands(deps = {}) {
   const cmds = {
     'account': async (_args, apiInstance, _flags, _options) => {
       return apiInstance.getAccount();
+    },
+
+    'web-search': async (args, apiInstance, flags, options) => {
+      // Accept queries as positional args or --query (comma-separated or repeated)
+      let queries = args.length > 0 ? args : [];
+      if (options.query) {
+        const fromOption = Array.isArray(options.query) ? options.query : [options.query];
+        queries = queries.concat(fromOption);
+      }
+      if (queries.length === 0) {
+        throw new NansenError('At least one query is required. Usage: nansen web-search "bitcoin price" --num-results 5', ErrorCode.MISSING_PARAM);
+      }
+      const numResults = options['num-results'] ? parseInt(options['num-results'], 10) : undefined;
+      return apiInstance.webSearch({ queries, numResults });
+    },
+
+    'web-fetch': async (args, apiInstance, flags, options) => {
+      // Accept URLs as positional args or --url (repeated)
+      let urls = args.length > 0 ? args : [];
+      if (options.url) {
+        const fromOption = Array.isArray(options.url) ? options.url : [options.url];
+        urls = urls.concat(fromOption);
+      }
+      if (urls.length === 0) {
+        throw new NansenError('At least one URL is required. Usage: nansen web-fetch https://example.com --question "What is this about?"', ErrorCode.MISSING_PARAM);
+      }
+      if (!options.question) {
+        throw new NansenError('--question is required. Usage: nansen web-fetch https://example.com --question "What is this about?"', ErrorCode.MISSING_PARAM);
+      }
+      return apiInstance.webFetch({ urls, question: options.question });
     },
 
     'login': async (args, apiInstance, flags, options) => {
