@@ -164,6 +164,8 @@ export function deleteConfig() {
   return false;
 }
 
+export const DEFAULT_AUTH_BASE_URL = 'https://app.nansen.ai';
+
 // ============= Response Cache =============
 
 const CACHE_DIR = path.join(CONFIG_DIR, 'cache');
@@ -300,7 +302,7 @@ export function validateTokenAddress(tokenAddress, chain = 'solana') {
   return validateAddress(tokenAddress, chain);
 }
 
-function loadConfig() {
+export function loadConfig() {
   // Base config from files, then env vars override individual fields
   let config = null;
 
@@ -318,12 +320,15 @@ function loadConfig() {
   }
 
   if (!config) {
-    config = { apiKey: null, baseUrl: 'https://api.nansen.ai' };
+    config = { apiKey: null, baseUrl: 'https://api.nansen.ai', authBaseUrl: DEFAULT_AUTH_BASE_URL, accessToken: null, refreshToken: null, tokenExpiry: 0 };
   }
 
-  // Ensure baseUrl default (config file from older versions may omit it)
+  // Ensure defaults (config file from older versions may omit these)
   if (!config.baseUrl) {
     config.baseUrl = 'https://api.nansen.ai';
+  }
+  if (!config.authBaseUrl) {
+    config.authBaseUrl = DEFAULT_AUTH_BASE_URL;
   }
 
   // Env vars override individual fields
@@ -332,6 +337,9 @@ function loadConfig() {
   }
   if (process.env.NANSEN_BASE_URL) {
     config.baseUrl = process.env.NANSEN_BASE_URL;
+  }
+  if (process.env.NANSEN_AUTH_URL) {
+    config.authBaseUrl = process.env.NANSEN_AUTH_URL;
   }
 
   return config;
@@ -407,12 +415,54 @@ export class NansenAPI {
   constructor(apiKey = config.apiKey, baseUrl = config.baseUrl, options = {}) {
     this.apiKey = apiKey || null;
     this.baseUrl = baseUrl;
+    this.authBaseUrl = config.authBaseUrl || DEFAULT_AUTH_BASE_URL;
+    this.accessToken = config.accessToken || null;
+    this.refreshToken = config.refreshToken || null;
+    this.tokenExpiry = config.tokenExpiry || 0;
     this.retryOptions = { ...DEFAULT_RETRY_OPTIONS, ...options.retry };
     this.cacheOptions = {
       enabled: options.cache?.enabled ?? false,
       ttl: options.cache?.ttl ?? DEFAULT_CACHE_TTL
     };
     this.defaultHeaders = options.defaultHeaders || {};
+  }
+
+  /**
+   * Refresh the OAuth access token if it is about to expire (within 60s).
+   * Clears credentials and throws NansenError if the refresh fails.
+   */
+  async _ensureFreshToken() {
+    if (!this.accessToken) return;
+    if (this.tokenExpiry > Date.now() + 60_000) return;
+
+    const res = await fetch(`${this.authBaseUrl}/api/auth/device/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: this.refreshToken })
+    });
+
+    if (!res.ok) {
+      this.accessToken = null;
+      this.refreshToken = null;
+      this.tokenExpiry = 0;
+      throw new NansenError(
+        'Session expired. Run `nansen login` to re-authenticate.',
+        ErrorCode.UNAUTHORIZED,
+        401
+      );
+    }
+
+    const data = await res.json();
+    this.accessToken = data.access_token;
+    this.refreshToken = data.refresh_token;
+    this.tokenExpiry = Date.now() + (data.expires_in * 1000);
+
+    saveConfig({
+      ...loadConfig(),
+      accessToken: this.accessToken,
+      refreshToken: this.refreshToken,
+      tokenExpiry: this.tokenExpiry
+    });
   }
 
   static cleanBody(body) {
@@ -472,10 +522,12 @@ export class NansenAPI {
   }
 
   async request(endpoint, body = {}, options = {}) {
+    await this._ensureFreshToken();
+
     const url = `${this.baseUrl}${endpoint}`;
     const { maxRetries, baseDelayMs, maxDelayMs, retryOnStatus } = this.retryOptions;
     const shouldRetry = options.retry !== false; // Allow disabling retry per-request
-    
+
     // Check cache first (if enabled and not bypassed)
     const useCache = options.cache !== false && this.cacheOptions.enabled;
     const cacheTtl = options.cacheTtl ?? this.cacheOptions.ttl;
@@ -501,7 +553,9 @@ export class NansenAPI {
             'X-Client-Type': 'nansen-cli',
             'X-Client-Version': packageVersion,
             ...telemetryHeaders(),
-            ...(this.apiKey ? { 'apikey': this.apiKey } : {}),
+            ...(this.accessToken
+              ? { 'Authorization': `Bearer ${this.accessToken}` }
+              : this.apiKey ? { 'apikey': this.apiKey } : {}),
             ...this.defaultHeaders,
             ...options.headers
           },
@@ -558,7 +612,9 @@ export class NansenAPI {
 
         // Enhance messages for specific error codes
         if (code === ErrorCode.UNAUTHORIZED) {
-          message = this.apiKey ? message : 'Not logged in. Run: nansen login';
+          message = (this.accessToken || this.apiKey)
+            ? 'Authentication failed. Run `nansen login` to re-authenticate.'
+            : 'Not logged in. Run `nansen login` (OAuth) or `nansen login --api-key <key>`.';
         } else if (code === ErrorCode.UNSUPPORTED_FILTER) {
           message = message.replace(/\.+$/, '') + '. This filter is not supported for this token/chain combination. Do not retry.';
         } else if (code === ErrorCode.CREDITS_EXHAUSTED) {

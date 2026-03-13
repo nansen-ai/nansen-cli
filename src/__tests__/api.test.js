@@ -1785,7 +1785,7 @@ describe('NansenAPI', () => {
 
       mockFetch.mockResolvedValueOnce(errorResponse);
 
-      await expect(api.smartMoneyNetflow({})).rejects.toThrow('Invalid API key');
+      await expect(api.smartMoneyNetflow({})).rejects.toThrow('Authentication failed. Run `nansen login` to re-authenticate.');
     });
 
     it('should show login guidance for 401 when no API key', async () => {
@@ -1802,7 +1802,7 @@ describe('NansenAPI', () => {
 
       mockFetch.mockResolvedValueOnce(errorResponse);
 
-      await expect(apiNoKey.smartMoneyNetflow({})).rejects.toThrow('Not logged in. Run: nansen login');
+      await expect(apiNoKey.smartMoneyNetflow({})).rejects.toThrow('Not logged in. Run `nansen login` (OAuth) or `nansen login --api-key <key>`.');
     });
 
     it('should throw on network errors after retries', async () => {

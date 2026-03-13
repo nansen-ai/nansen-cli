@@ -4,6 +4,16 @@
 
 ### Minor Changes
 
+- Add RFC 8628 OAuth Device Authorization Grant as the new default login flow.
+
+  - `nansen login` opens a browser, displays a user code, and polls until approved — no manual key copy-paste.
+  - `nansen login --api-key <key>` continues to work unchanged for CI and scripting.
+  - API calls transparently refresh OAuth tokens 60 s before expiry via `_ensureFreshToken()`.
+  - `nansen logout` clears OAuth tokens as well as legacy API keys.
+  - `DEFAULT_AUTH_BASE_URL` exported from `api.js` containing the superapp auth URL.
+  - new config `authBaseUrl` added, defaulting to `DEFAULT_AUTH_BASE_URL`.
+  - `Authorization: Bearer` header used for OAuth sessions; `apikey` header used for legacy API key sessions (both coexist cleanly).
+
 - [#279](https://github.com/nansen-ai/nansen-cli/pull/279) [`174a3d6`](https://github.com/nansen-ai/nansen-cli/commit/174a3d612b3f198c5e5b979c269d896f9d906704) Thanks [@kome12](https://github.com/kome12)! - Add `nansen account` command to verify API key and check credit balance
 
   Users can now run `nansen account` to confirm their API key is valid and see
