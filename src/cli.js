@@ -789,7 +789,10 @@ export function buildCommands(deps = {}) {
       if (queries.length === 0) {
         throw new NansenError('At least one query is required. Usage: nansen web-search "bitcoin price" --num-results 5', ErrorCode.MISSING_PARAM);
       }
-      const numResults = options['num-results'] ? parseInt(options['num-results'], 10) : undefined;
+      const numResultsRaw = parseInt(options['num-results'], 10);
+      const numResults = options['num-results'] !== undefined
+        ? (Number.isNaN(numResultsRaw) ? undefined : numResultsRaw)
+        : undefined;
       return apiInstance.webSearch({ queries, numResults });
     },
 

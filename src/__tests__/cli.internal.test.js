@@ -3602,6 +3602,11 @@ describe('web-search command', () => {
     expect(mockApi.webSearch).toHaveBeenCalledWith({ queries: ['bitcoin'], numResults: 5 });
   });
 
+  it('treats non-numeric --num-results as undefined (NaN guard)', async () => {
+    await commands['web-search'](['bitcoin'], mockApi, {}, { 'num-results': 'abc' });
+    expect(mockApi.webSearch).toHaveBeenCalledWith({ queries: ['bitcoin'], numResults: undefined });
+  });
+
   it('returns the API response', async () => {
     const stub = { results: [{ query: 'bitcoin', organic: [] }] };
     mockApi.webSearch.mockResolvedValue(stub);
