@@ -584,6 +584,7 @@
             "telegram": { "type": "string", "description": "Telegram chat ID for notifications" },
             "slack": { "type": "string", "description": "Slack webhook URL for notifications" },
             "discord": { "type": "string", "description": "Discord webhook URL for notifications" },
+            "openclaw": { "type": "string", "description": "OpenClaw webhook URL for notifications (e.g. http://localhost:18790/hooks/agent)" },
             "data": { "type": "string", "description": "Alert config JSON. --chains is merged on top." },
             "description": { "type": "string", "description": "Optional description" },
             "disabled": { "type": "boolean", "description": "Create alert in disabled state" }
@@ -598,6 +599,7 @@
             "telegram": { "type": "string", "description": "Telegram chat ID" },
             "slack": { "type": "string", "description": "Slack webhook URL" },
             "discord": { "type": "string", "description": "Discord webhook URL" },
+            "openclaw": { "type": "string", "description": "OpenClaw webhook URL" },
             "data": { "type": "string", "description": "Alert config JSON. --chains merged on top." },
             "description": { "type": "string", "description": "Description" },
             "enabled": { "type": "boolean", "description": "Enable alert" },
@@ -614,6 +616,22 @@
         "delete": {
           "description": "Delete an alert. Usage: nansen alerts delete <id>",
           "options": {}
+        },
+        "openclaw-relay": {
+          "description": "Poll alerts and relay to an OpenClaw webhook endpoint",
+          "options": {
+            "url": { "type": "string", "description": "OpenClaw webhook URL (e.g. http://localhost:18790/hooks/agent). Env: OPENCLAW_HOOKS_URL" },
+            "token": { "type": "string", "description": "OpenClaw hook token for auth. Env: OPENCLAW_HOOKS_TOKEN" },
+            "interval": { "type": "number", "default": 60, "description": "Polling interval in seconds" },
+            "type": { "type": "string", "description": "Only relay alerts of this type" },
+            "alert-id": { "type": "string", "description": "Only relay this specific alert" },
+            "agent-id": { "type": "string", "default": "hooks", "description": "OpenClaw agent ID" },
+            "channel": { "type": "string", "default": "last", "description": "OpenClaw delivery channel" },
+            "no-deliver": { "type": "boolean", "description": "Don't deliver to a chat channel" },
+            "model": { "type": "string", "description": "Model override for the OpenClaw agent turn" },
+            "max-retries": { "type": "number", "default": 3, "description": "Max delivery retry attempts" },
+            "once": { "type": "boolean", "description": "Run once and exit instead of polling" }
+          }
         }
       }
     },

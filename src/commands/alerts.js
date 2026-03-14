@@ -4,6 +4,7 @@
  */
 
 import { NansenError, ErrorCode } from '../api.js';
+import { formatAlertPayload, deliverWebhook, relayAlerts } from '../openclaw-webhook.js';
 
 // ============= Formatting =============
 
@@ -366,11 +367,12 @@ export function buildAlertsCommands(deps = {}) {
         _top: `nansen alerts — Smart alert management
 
 SUBCOMMANDS:
-  list        List all alerts
-  create      Create a new alert
-  update      Update an existing alert
-  toggle      Enable or disable an alert
-  delete      Delete an alert
+  list            List all alerts
+  create          Create a new alert
+  update          Update an existing alert
+  toggle          Enable or disable an alert
+  delete          Delete an alert
+  openclaw-relay  Poll alerts and relay to an OpenClaw webhook
 
 Run: nansen alerts <subcommand> --help`,
 
@@ -402,7 +404,7 @@ USAGE:
 REQUIRED:
   --name <name>                Alert name
   --type <type>                sm-token-flows | common-token-transfer | smart-contract-call
-  At least one channel:        --telegram <chatId> | --slack <url> | --discord <url>
+  At least one channel:        --telegram <chatId> | --slack <url> | --discord <url> | --openclaw <url>
 
 OPTIONS (all types):
   --chains <chains>            Comma-separated chains (e.g. ethereum,solana)
@@ -470,6 +472,35 @@ USAGE:
 
 USAGE:
   nansen alerts delete <id>`,
+
+        'openclaw-relay': `nansen alerts openclaw-relay — Relay alerts to an OpenClaw webhook
+
+USAGE:
+  nansen alerts openclaw-relay --url <url> --token <token> [options]
+
+REQUIRED:
+  --url <url>              OpenClaw webhook URL (e.g. http://localhost:18790/hooks/agent)
+  --token <token>          OpenClaw hook token (Bearer token for auth)
+
+OPTIONS:
+  --interval <seconds>     Polling interval in seconds (default: 60)
+  --type <type>            Only relay alerts of this type
+  --alert-id <id>          Only relay this specific alert
+  --agent-id <id>          OpenClaw agent ID (default: "hooks")
+  --channel <channel>      OpenClaw delivery channel (default: "last")
+  --no-deliver             Don't deliver to a chat channel
+  --model <model>          Model override for the OpenClaw agent turn
+  --max-retries <n>        Max delivery retry attempts (default: 3)
+  --once                   Run once and exit (don't poll)
+
+ENVIRONMENT VARIABLES:
+  OPENCLAW_HOOKS_TOKEN     Alternative to --token flag
+  OPENCLAW_HOOKS_URL       Alternative to --url flag
+
+EXAMPLES:
+  nansen alerts openclaw-relay --url http://localhost:18790/hooks/agent --token my-secret
+  nansen alerts openclaw-relay --url http://localhost:18790/hooks/agent --token my-secret --type sm-token-flows --interval 30
+  nansen alerts openclaw-relay --url http://localhost:18790/hooks/agent --token my-secret --once`,
       };
 
       if (!sub || sub === 'help') {
@@ -477,12 +508,13 @@ USAGE:
         return;
       }
 
-      // Build channels array from --telegram/--slack/--discord flags
+      // Build channels array from --telegram/--slack/--discord/--openclaw flags
       function buildChannels() {
         const channels = [];
         if (options.telegram) channels.push({ type: 'telegram', data: { chatId: String(options.telegram) } });
         if (options.slack) channels.push({ type: 'slack', data: { webhookUrl: options.slack } });
         if (options.discord) channels.push({ type: 'discord', data: { webhookUrl: options.discord } });
+        if (options.openclaw) channels.push({ type: 'openclaw', data: { webhookUrl: options.openclaw } });
         return channels.length > 0 ? channels : null;
       }
 
@@ -523,7 +555,7 @@ USAGE:
           if (!name) missing.push('--name');
           if (!type) missing.push('--type');
           if (!options.chains) missing.push('--chains');
-          if (!channels) missing.push('a channel (--telegram, --slack, or --discord)');
+          if (!channels) missing.push('a channel (--telegram, --slack, --discord, or --openclaw)');
           if (missing.length > 0) {
             throw new NansenError(`Required: ${missing.join(', ')}`, ErrorCode.MISSING_PARAM);
           }
@@ -593,6 +625,63 @@ USAGE:
           const id = args[1];
           if (!id) throw new NansenError('Required: <id>', ErrorCode.MISSING_PARAM);
           return apiInstance.alertsDelete(id);
+        },
+        'openclaw-relay': async () => {
+          const url = options.url || process.env.OPENCLAW_HOOKS_URL;
+          const token = options.token || process.env.OPENCLAW_HOOKS_TOKEN;
+          if (!url) throw new NansenError('Required: --url or OPENCLAW_HOOKS_URL', ErrorCode.MISSING_PARAM);
+          if (!token) throw new NansenError('Required: --token or OPENCLAW_HOOKS_TOKEN', ErrorCode.MISSING_PARAM);
+
+          const intervalMs = options.interval ? Number(options.interval) * 1000 : 60000;
+          const openclawOptions = {
+            agentId: options['agent-id'] || 'hooks',
+            channel: options.channel || 'last',
+            deliver: !flags['no-deliver'],
+            model: options.model,
+          };
+          const retryConfig = options['max-retries'] ? { maxAttempts: Number(options['max-retries']) } : {};
+
+          if (flags.once) {
+            // One-shot mode: fetch alerts and deliver each to OpenClaw
+            const result = await apiInstance.alertsList();
+            let alerts = Array.isArray(result) ? result : result?.alerts ?? result?.data ?? [];
+            if (options['alert-id']) alerts = alerts.filter(a => a.id === options['alert-id']);
+            if (options.type) alerts = alerts.filter(a => a.type === options.type);
+            alerts = alerts.filter(a => a.isEnabled !== false);
+
+            const results = [];
+            for (const alert of alerts) {
+              const payload = formatAlertPayload(alert, openclawOptions);
+              const delivery = await deliverWebhook(url, token, payload, retryConfig);
+              log(`[openclaw-relay] ${delivery.ok ? '✓' : '✗'} "${alert.name}" (${alert.id}) → ${delivery.status}`);
+              results.push({ alertId: alert.id, name: alert.name, ...delivery });
+            }
+            return results;
+          }
+
+          // Polling mode
+          const ac = new AbortController();
+          const onExit = () => ac.abort();
+          process.on('SIGINT', onExit);
+          process.on('SIGTERM', onExit);
+
+          log(`[openclaw-relay] Polling every ${intervalMs / 1000}s → ${url}`);
+          try {
+            await relayAlerts(apiInstance, {
+              url,
+              token,
+              intervalMs,
+              type: options.type,
+              alertId: options['alert-id'],
+              openclawOptions,
+              retryConfig,
+              log,
+              signal: ac.signal,
+            });
+          } finally {
+            process.off('SIGINT', onExit);
+            process.off('SIGTERM', onExit);
+          }
         },
       };
 
