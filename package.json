@@ -68,6 +68,7 @@
     "@ethereumjs/rlp": "^10.1.1",
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.0.1",
-    "@scure/base": "^2.0.0"
+    "@scure/base": "^2.0.0",
+    "@toon-format/toon": "^2.1.0"
   }
 }
