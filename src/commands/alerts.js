@@ -167,7 +167,7 @@ export function buildCommonTokenTransferData(options) {
   if (amountRange) data.tokenAmount = amountRange;
 
   const subjects = parseSubjects(options.subject);
-  data.subjects = subjects ?? [];
+  if (subjects) data.subjects = subjects;
 
   const counterparties = parseSubjects(options.counterparty);
   if (counterparties) data.counterparties = counterparties;
@@ -347,6 +347,67 @@ export function buildAlertData(options, { applyDefaults = true } = {}) {
   return data;
 }
 
+// ============= Type-Specific Validation =============
+
+/**
+ * Check whether a range object has at least one bound set.
+ */
+function isRangeSet(range) {
+  if (!range || typeof range !== 'object') return false;
+  return range.min != null || range.max != null;
+}
+
+/**
+ * Validate that the data payload satisfies API-enforced required-field rules
+ * for the given alert type. Throws a clear NansenError if validation fails.
+ *
+ * Rules:
+ *  - sm-token-flows: at least one inflow/outflow/netflow threshold must be set
+ *  - common-token-transfer: at least one subject or inclusion token must be set
+ *  - smart-contract-call: at least one caller, contract, or signatureHash must be set
+ */
+export function validateAlertData(type, data) {
+  if (!type || !data) return;
+
+  if (type === 'sm-token-flows') {
+    const flowKeys = [
+      'inflow_1h', 'inflow_1d', 'inflow_7d',
+      'outflow_1h', 'outflow_1d', 'outflow_7d',
+      'netflow_1h', 'netflow_1d', 'netflow_7d',
+    ];
+    const hasThreshold = flowKeys.some(k => isRangeSet(data[k]));
+    if (!hasThreshold) {
+      throw new NansenError(
+        'sm-token-flows requires at least one inflow, outflow, or netflow threshold',
+        ErrorCode.INVALID_PARAMS,
+      );
+    }
+  }
+
+  if (type === 'common-token-transfer') {
+    const hasSubject = Array.isArray(data.subjects) && data.subjects.length > 0;
+    const hasToken = Array.isArray(data.inclusion?.tokens) && data.inclusion.tokens.length > 0;
+    if (!hasSubject && !hasToken) {
+      throw new NansenError(
+        'common-token-transfer requires at least one --subject or --token',
+        ErrorCode.INVALID_PARAMS,
+      );
+    }
+  }
+
+  if (type === 'smart-contract-call') {
+    const hasCaller = Array.isArray(data.inclusion?.caller) && data.inclusion.caller.length > 0;
+    const hasContract = Array.isArray(data.inclusion?.smartContract) && data.inclusion.smartContract.length > 0;
+    const hasSignature = Array.isArray(data.signatureHash) && data.signatureHash.length > 0;
+    if (!hasCaller && !hasContract && !hasSignature) {
+      throw new NansenError(
+        'smart-contract-call requires at least one --caller, --contract, or --signature-hash',
+        ErrorCode.INVALID_PARAMS,
+      );
+    }
+  }
+}
+
 // ============= Command Builder =============
 
 const TIME_WINDOW_BY_TYPE = {
@@ -499,7 +560,10 @@ USAGE:
           if (flags.disabled) alerts = alerts.filter(a => a.isEnabled === false);
           if (options['token-address']) {
             const addr = options['token-address'].toLowerCase();
-            alerts = alerts.filter(a => JSON.stringify(a.data ?? {}).toLowerCase().includes(addr));
+            alerts = alerts.filter(a => {
+              const allTokens = [...(a.data?.inclusion?.tokens ?? []), ...(a.data?.exclusion?.tokens ?? [])];
+              return allTokens.some(t => t.address?.toLowerCase() === addr);
+            });
           }
           if (options.chain) {
             const ch = options.chain;
@@ -529,6 +593,7 @@ USAGE:
           }
           const timeWindow = TIME_WINDOW_BY_TYPE[type] ?? 'realtime';
           const data = buildAlertData(options);
+          validateAlertData(type, data);
           return apiInstance.alertsCreate({
             name,
             type,

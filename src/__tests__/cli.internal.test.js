@@ -35,6 +35,7 @@ import {
   buildCommonTokenTransferData,
   buildSmartContractCallData,
   buildAlertsCommands,
+  validateAlertData,
 } from '../commands/alerts.js';
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode } from '../api.js';
 import { EVM_CHAINS } from '../chain-ids.js';
@@ -479,6 +480,13 @@ describe('buildAlertData', () => {
     expect(result.tokenAmount).toBeUndefined();
   });
 
+  it('should not wipe subjects when updating common-token-transfer without --subject', () => {
+    // Simulates: user created alert with --subject label:CEX, then updates with only --usd-min 5000
+    const result = buildAlertData({ type: 'common-token-transfer', 'usd-min': '5000' }, { applyDefaults: false });
+    expect(result.subjects).toBeUndefined();
+    expect(result.usdValue).toEqual({ min: 5000, max: null });
+  });
+
   it('should let --data override defaults', () => {
     const result = buildAlertData({
       type: 'sm-token-flows',
@@ -664,6 +672,7 @@ describe('alerts list — client-side filtering', () => {
     { id: '2', name: 'B', type: 'common-token-transfer', isEnabled: false, data: { chains: ['solana'] } },
     { id: '3', name: 'C', type: 'sm-token-flows', isEnabled: true, data: { chains: ['ethereum', 'base'] } },
     { id: '4', name: 'D', type: 'smart-contract-call', isEnabled: true, data: { chains: ['all'] } },
+    { id: '5', name: 'E', type: 'sm-token-flows', isEnabled: true, data: { chains: ['ethereum'], exclusion: { tokens: [{ address: '0xdef', chain: 'ethereum' }] } } },
   ];
 
   function setup() {
@@ -675,20 +684,20 @@ describe('alerts list — client-side filtering', () => {
   it('should return all alerts with no filters', async () => {
     const { mockApi, cmd } = setup();
     const result = await cmd(['list'], mockApi, {}, {});
-    expect(result).toHaveLength(4);
+    expect(result).toHaveLength(5);
   });
 
   it('should filter by --type', async () => {
     const { mockApi, cmd } = setup();
     const result = await cmd(['list'], mockApi, {}, { type: 'sm-token-flows' });
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(3);
     expect(result.every(a => a.type === 'sm-token-flows')).toBe(true);
   });
 
   it('should filter by --enabled', async () => {
     const { mockApi, cmd } = setup();
     const result = await cmd(['list'], mockApi, { enabled: true }, {});
-    expect(result).toHaveLength(3);
+    expect(result).toHaveLength(4);
     expect(result.every(a => a.isEnabled)).toBe(true);
   });
 
@@ -710,6 +719,25 @@ describe('alerts list — client-side filtering', () => {
     const result = await cmd(['list'], mockApi, {}, { 'token-address': '0xABC' });
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('1');
+  });
+
+  it('should match --token-address in exclusion tokens', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { 'token-address': '0xdef' });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('5');
+  });
+
+  it('should not false-positive --token-address against chain names', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { 'token-address': 'ethereum' });
+    expect(result).toHaveLength(0);
+  });
+
+  it('should not false-positive --token-address against chains: ["all"]', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { 'token-address': 'all' });
+    expect(result).toHaveLength(0);
   });
 
   it('should filter by --chain (includes "all" matches)', async () => {
@@ -736,7 +764,7 @@ describe('alerts list — client-side filtering', () => {
   it('should apply --offset', async () => {
     const { mockApi, cmd } = setup();
     const result = await cmd(['list'], mockApi, {}, { offset: 2 });
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(3);
     expect(result[0].id).toBe('3');
   });
 
@@ -777,15 +805,61 @@ describe('alerts create does not require --time-window', () => {
   it('should use TIME_WINDOW_BY_TYPE for sm-token-flows', async () => {
     const mockApi = { alertsCreate: vi.fn().mockResolvedValue({ id: 'new' }) };
     const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
-    await cmd(['create'], mockApi, {}, { name: 'Test', type: 'sm-token-flows', chains: 'ethereum', telegram: '123' });
+    await cmd(['create'], mockApi, {}, { name: 'Test', type: 'sm-token-flows', chains: 'ethereum', telegram: '123', 'inflow-1h-min': 1000000 });
     expect(mockApi.alertsCreate).toHaveBeenCalledWith(expect.objectContaining({ timeWindow: '1h' }));
   });
 
   it('should use realtime for common-token-transfer', async () => {
     const mockApi = { alertsCreate: vi.fn().mockResolvedValue({ id: 'new' }) };
     const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
-    await cmd(['create'], mockApi, {}, { name: 'Test', type: 'common-token-transfer', chains: 'ethereum', telegram: '123' });
+    await cmd(['create'], mockApi, {}, { name: 'Test', type: 'common-token-transfer', chains: 'ethereum', telegram: '123', subject: 'label:CEX' });
     expect(mockApi.alertsCreate).toHaveBeenCalledWith(expect.objectContaining({ timeWindow: 'realtime' }));
+  });
+});
+
+describe('validateAlertData', () => {
+  it('should pass sm-token-flows with a threshold set', () => {
+    expect(() => validateAlertData('sm-token-flows', { inflow_1h: { min: 1000000, max: null } })).not.toThrow();
+  });
+
+  it('should throw sm-token-flows with no thresholds', () => {
+    expect(() => validateAlertData('sm-token-flows', { inflow_1h: {}, outflow_1d: {} }))
+      .toThrow('at least one inflow, outflow, or netflow threshold');
+  });
+
+  it('should pass common-token-transfer with a subject', () => {
+    expect(() => validateAlertData('common-token-transfer', { subjects: [{ type: 'label', value: 'CEX' }] })).not.toThrow();
+  });
+
+  it('should pass common-token-transfer with an inclusion token', () => {
+    expect(() => validateAlertData('common-token-transfer', { inclusion: { tokens: [{ address: '0xabc', chain: 'ethereum' }] } })).not.toThrow();
+  });
+
+  it('should throw common-token-transfer with no subject or token', () => {
+    expect(() => validateAlertData('common-token-transfer', { subjects: [], inclusion: {} }))
+      .toThrow('at least one --subject or --token');
+  });
+
+  it('should pass smart-contract-call with a caller', () => {
+    expect(() => validateAlertData('smart-contract-call', { inclusion: { caller: [{ type: 'address', value: '0x1' }] } })).not.toThrow();
+  });
+
+  it('should pass smart-contract-call with a signature hash', () => {
+    expect(() => validateAlertData('smart-contract-call', { signatureHash: ['0xa9059cbb'] })).not.toThrow();
+  });
+
+  it('should throw smart-contract-call with no caller, contract, or signature', () => {
+    expect(() => validateAlertData('smart-contract-call', { inclusion: { caller: [], smartContract: [] }, signatureHash: [] }))
+      .toThrow('at least one --caller, --contract, or --signature-hash');
+  });
+
+  it('should no-op for unknown types', () => {
+    expect(() => validateAlertData('unknown-type', {})).not.toThrow();
+  });
+
+  it('should no-op when type or data is falsy', () => {
+    expect(() => validateAlertData(null, {})).not.toThrow();
+    expect(() => validateAlertData('sm-token-flows', null)).not.toThrow();
   });
 });
 
