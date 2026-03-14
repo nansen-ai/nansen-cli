@@ -584,6 +584,9 @@
             "telegram": { "type": "string", "description": "Telegram chat ID for notifications" },
             "slack": { "type": "string", "description": "Slack webhook URL for notifications" },
             "discord": { "type": "string", "description": "Discord webhook URL for notifications" },
+            "openclaw": { "type": "string", "description": "OpenClaw webhook URL (backward compat alias for --webhook <url> --webhook-type openclaw)" },
+            "webhook": { "type": "string", "description": "Webhook URL for notifications" },
+            "webhook-type": { "type": "string", "default": "generic", "description": "Webhook provider type: openclaw, generic, slack, discord" },
             "data": { "type": "string", "description": "Alert config JSON. --chains is merged on top." },
             "description": { "type": "string", "description": "Optional description" },
             "disabled": { "type": "boolean", "description": "Create alert in disabled state" }
@@ -598,6 +601,9 @@
             "telegram": { "type": "string", "description": "Telegram chat ID" },
             "slack": { "type": "string", "description": "Slack webhook URL" },
             "discord": { "type": "string", "description": "Discord webhook URL" },
+            "openclaw": { "type": "string", "description": "OpenClaw webhook URL (backward compat)" },
+            "webhook": { "type": "string", "description": "Webhook URL" },
+            "webhook-type": { "type": "string", "default": "generic", "description": "Webhook provider type: openclaw, generic, slack, discord" },
             "data": { "type": "string", "description": "Alert config JSON. --chains merged on top." },
             "description": { "type": "string", "description": "Description" },
             "enabled": { "type": "boolean", "description": "Enable alert" },
@@ -614,6 +620,23 @@
         "delete": {
           "description": "Delete an alert. Usage: nansen alerts delete <id>",
           "options": {}
+        },
+        "webhook-relay": {
+          "description": "Poll alerts and relay to a webhook endpoint. Supports multiple providers: openclaw, generic, slack, discord. 'openclaw-relay' is a backward-compat alias.",
+          "options": {
+            "url": { "type": "string", "description": "Webhook URL. Env: WEBHOOK_RELAY_URL (or OPENCLAW_HOOKS_URL)" },
+            "token": { "type": "string", "description": "Auth token (Bearer). Env: WEBHOOK_RELAY_TOKEN (or OPENCLAW_HOOKS_TOKEN)" },
+            "webhook-type": { "type": "string", "default": "generic", "description": "Provider type: openclaw, generic, slack, discord" },
+            "interval": { "type": "number", "default": 60, "description": "Polling interval in seconds" },
+            "type": { "type": "string", "description": "Only relay alerts of this type" },
+            "alert-id": { "type": "string", "description": "Only relay this specific alert" },
+            "agent-id": { "type": "string", "default": "hooks", "description": "OpenClaw agent ID (openclaw provider only)" },
+            "channel": { "type": "string", "default": "last", "description": "OpenClaw delivery channel (openclaw provider only)" },
+            "no-deliver": { "type": "boolean", "description": "Don't deliver to a chat channel (openclaw provider only)" },
+            "model": { "type": "string", "description": "Model override (openclaw provider only)" },
+            "max-retries": { "type": "number", "default": 3, "description": "Max delivery retry attempts" },
+            "once": { "type": "boolean", "description": "Run once and exit instead of polling" }
+          }
         }
       }
     },
