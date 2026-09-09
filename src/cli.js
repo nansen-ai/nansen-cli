@@ -2101,6 +2101,12 @@ export async function runCLI(rawArgs, deps = {}) {
 
     let result = await commands[command](subArgs, api, flags, options);
 
+    // The cache marker is hung off the payload's `_meta` by getCachedResponse(),
+    // never as a top-level `fromCache`. Capture it here, before `--fields`
+    // filtering below drops `_meta` along with every other unrequested key —
+    // read any later and a cache hit with `--fields` reports as a live call.
+    const fromCache = !!result?._meta?.fromCache;
+
     // Credit balance warning, from the headers on the call just made. Goes to
     // stderr so it never contaminates the JSON on stdout that agents parse.
     // Placed before every return path below so it fires for operational
@@ -2152,14 +2158,14 @@ export async function runCLI(rawArgs, deps = {}) {
       if (streamOutput) {
         output(streamOutput);
       }
-      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: !!result?.fromCache, flags: usedFlags, chain });
+      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: fromCache, flags: usedFlags, chain });
       return { type: 'stream', data: result };
     }
 
     const successData = { success: true, data: result };
     const formatted = formatOutput(successData, { pretty, table, csv });
     output(formatted.text);
-    await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: !!result?.fromCache, flags: usedFlags, chain });
+    await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: fromCache, flags: usedFlags, chain });
     return { type: csv ? 'csv' : 'success', data: result };
   } catch (error) {
     // Unified error envelope across all command families (perp/bridge/trade):
