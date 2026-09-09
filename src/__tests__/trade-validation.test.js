@@ -2449,6 +2449,11 @@ describe('assertLimitOrderDepositDestination', () => {
     return Buffer.concat([idx, base58Decode(base), seedLen, seedBytes, lam, sp, base58Decode(owner)]);
   }
 
+  // SPL Token::InitializeAccount3 instruction data: [18, owner pubkey].
+  function initializeAccount3Data(owner) {
+    return Buffer.concat([Buffer.from([18]), base58Decode(owner)]);
+  }
+
   // System::Transfer(lamports) instruction data.
   function systemTransferData(lamports = 100000000) {
     const idx = Buffer.alloc(4); idx.writeUInt32LE(2);
@@ -2458,7 +2463,7 @@ describe('assertLimitOrderDepositDestination', () => {
 
   // Build a realistic SPL-input deposit: CreateAccountWithSeed(base=vault) then a
   // wallet-authorized transfer of `mint` into the seeded account.
-  function splDeposit({ wallet, vault, mint, seed = 'order-seed-abc', dest, transferKind = 'checked', createBase }) {
+  function splDeposit({ wallet, vault, mint, seed = 'order-seed-abc', dest, transferKind = 'checked', createBase, tokenOwner }) {
     const seededBase = createBase || vault;
     const seededAcct = seededAccount(seededBase, seed);
     const destination = dest || seededAcct;
@@ -2469,6 +2474,8 @@ describe('assertLimitOrderDepositDestination', () => {
     const instructions = [
       // CreateAccountWithSeed: [payer, created(=seededAcct), base]
       { programIdIndex: keys.indexOf(SYSTEM_PROGRAM), accountIndexes: [0, keys.indexOf(seededAcct), keys.indexOf(seededBase)], data: createWithSeedData(seededBase, seed) },
+      // InitializeAccount3: [account, mint], owner in data.
+      { programIdIndex: keys.indexOf(TOKEN_PROGRAM), accountIndexes: [keys.indexOf(seededAcct), 2], data: initializeAccount3Data(tokenOwner || vault) },
     ];
     if (transferKind === 'checked') {
       // TransferChecked: [source, mint, dest, authority]
@@ -2482,7 +2489,7 @@ describe('assertLimitOrderDepositDestination', () => {
 
   // Build a realistic native-SOL deposit: CreateAccountWithSeed(base=vault) then a
   // wallet System::Transfer of lamports into the seeded (wrapped-SOL) account.
-  function nativeDeposit({ wallet, vault, seed = 'order-seed-sol', dest, createBase }) {
+  function nativeDeposit({ wallet, vault, seed = 'order-seed-sol', dest, createBase, tokenOwner }) {
     const seededBase = createBase || vault;
     const seededAcct = seededAccount(seededBase, seed);
     const destination = dest || seededAcct;
@@ -2491,6 +2498,8 @@ describe('assertLimitOrderDepositDestination', () => {
     const destIdx = idxOf(destination);
     const instructions = [
       { programIdIndex: keys.indexOf(SYSTEM_PROGRAM), accountIndexes: [0, keys.indexOf(seededAcct), keys.indexOf(seededBase)], data: createWithSeedData(seededBase, seed) },
+      // InitializeAccount3: [account, mint], owner in data.
+      { programIdIndex: keys.indexOf(TOKEN_PROGRAM), accountIndexes: [keys.indexOf(seededAcct), idxOf(WSOL)], data: initializeAccount3Data(tokenOwner || vault) },
       // System::Transfer: [from, to]
       { programIdIndex: keys.indexOf(SYSTEM_PROGRAM), accountIndexes: [0, destIdx], data: systemTransferData() },
     ];
@@ -2530,6 +2539,34 @@ describe('assertLimitOrderDepositDestination', () => {
     const tx = splDeposit({ wallet, vault, mint: USDC, dest: elsewhere });
     expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC, vaultOwner: vault }))
       .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*vault-seeded deposit account/i);
+  });
+
+  it('rejects a TransferChecked into a vault-seeded account initialized with attacker authority', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const attacker = generateSolanaWallet().address;
+    const tx = splDeposit({ wallet, vault, mint: USDC, tokenOwner: attacker });
+    expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC, vaultOwner: vault }))
+      .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*authority[\s\S]*expected vault owner/i);
+  });
+
+  it('rejects a TransferChecked into a vault-seeded account without a matching initializer', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const seed = 'order-seed-no-init';
+    const seededAcct = seededAccount(vault, seed);
+    const sourceAta = generateSolanaWallet().address;
+    const keys = [wallet, sourceAta, USDC, seededAcct, TOKEN_PROGRAM, SYSTEM_PROGRAM, vault];
+    const tx = buildTransaction({
+      accountKeys: keys,
+      instructions: [
+        { programIdIndex: 5, accountIndexes: [0, 3, 6], data: createWithSeedData(vault, seed) },
+        { programIdIndex: 4, accountIndexes: [1, 2, 3, 0], data: Buffer.from([12, 0, 0, 0, 0, 0, 0, 0, 0, 6]) },
+      ],
+    });
+
+    expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC, vaultOwner: vault }))
+      .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*trusted vault authority/i);
   });
 
   it('rejects a native System::Transfer whose destination is not the seeded account', () => {
@@ -2572,6 +2609,7 @@ describe('assertLimitOrderDepositDestination', () => {
       accountKeys: keys,
       instructions: [
         { programIdIndex: 5, accountIndexes: [0, 3, 6], data: createWithSeedData(vault, seed) },
+        { programIdIndex: 4, accountIndexes: [3, 2], data: initializeAccount3Data(vault) },
         { programIdIndex: 4, accountIndexes: [1, 2, 3, 0], data: Buffer.from([12, 0, 0, 0, 0, 0, 0, 0, 0, 6]) },
       ],
     });

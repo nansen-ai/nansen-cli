@@ -28,6 +28,9 @@ const SPL_SET_AUTHORITY = 6;
 const SPL_CLOSE_ACCOUNT = 9;
 const SPL_TRANSFER_CHECKED = 12;
 const SPL_APPROVE_CHECKED = 13;
+const SPL_INITIALIZE_ACCOUNT = 1;
+const SPL_INITIALIZE_ACCOUNT2 = 16;
+const SPL_INITIALIZE_ACCOUNT3 = 18;
 
 const SYSTEM_PROGRAM = '11111111111111111111111111111111';
 const SYSTEM_INSTR_TRANSFER = 2;
@@ -1904,44 +1907,89 @@ export function assertLimitOrderDepositDestination(txBase64, { walletAddress, in
     return false;
   };
 
+  const expectedMint = SOLANA_NATIVE_SOL_ALIASES.has(inputMint) ? WSOL_MINT : inputMint;
+
   // Pass 1: collect the token accounts this transaction creates via
-  // System::CreateAccountWithSeed seeded off the trusted vault owner. These are
-  // the only destinations a legitimate deposit may target.
+  // System::CreateAccountWithSeed seeded off the trusted vault owner, plus the
+  // matching SPL InitializeAccount* owner/mint assignment. A seeded address
+  // alone is not enough: the token-account authority must also be the trusted
+  // vault owner, otherwise the deposit can be withdrawn by whoever controls the
+  // initialized account.
   const vaultSeededAccounts = new Set();
+  const initializedAccounts = new Map();
   for (const ix of parsed.instructions) {
-    if (resolveStaticAccount(parsed, ix.programIdIndex) !== SYSTEM_PROGRAM) continue;
-    if (ix.data.length < 4 || ix.data.readUInt32LE(0) !== SYSTEM_INSTR_CREATE_ACCOUNT_WITH_SEED) continue;
-    // Layout: u32 index | 32 base | u64 seedLen | seed | u64 lamports | u64 space | 32 owner
-    let off = 4;
-    const need = (n) => { if (off + n > ix.data.length) throw fail('malformed CreateAccountWithSeed instruction.'); };
-    need(32); const base = ix.data.subarray(off, off + 32); off += 32;
-    need(8); const seedLen = Number(ix.data.readBigUInt64LE(off)); off += 8;
-    need(seedLen); const seed = ix.data.subarray(off, off + seedLen); off += seedLen;
-    need(16); off += 16; // skip lamports (u64) + space (u64)
-    need(32); const owner = ix.data.subarray(off, off + 32);
-    if (base58Encode(base) !== vaultOwner) continue; // not seeded off our vault
-    if (!SPL_TOKEN_PROGRAMS.has(base58Encode(owner))) continue; // not a token account
-    // create_with_seed(base, seed, owner) = base58(sha256(base || seed || owner)).
-    const derived = base58Encode(crypto.createHash('sha256').update(Buffer.concat([base, seed, owner])).digest());
-    // The account the instruction creates (index 1) must equal the recomputed
-    // address; a mismatch means a malformed/crafted instruction — fail closed.
-    const created = accountAt(ix, 1);
-    if (created !== null && created !== derived) {
-      throw fail('CreateAccountWithSeed target does not match its base/seed/owner derivation.');
+    const programId = resolveStaticAccount(parsed, ix.programIdIndex);
+    if (programId === SYSTEM_PROGRAM) {
+      if (ix.data.length < 4 || ix.data.readUInt32LE(0) !== SYSTEM_INSTR_CREATE_ACCOUNT_WITH_SEED) continue;
+      // Layout: u32 index | 32 base | u64 seedLen | seed | u64 lamports | u64 space | 32 owner
+      let off = 4;
+      const need = (n) => { if (off + n > ix.data.length) throw fail('malformed CreateAccountWithSeed instruction.'); };
+      need(32); const base = ix.data.subarray(off, off + 32); off += 32;
+      need(8); const seedLen = Number(ix.data.readBigUInt64LE(off)); off += 8;
+      need(seedLen); const seed = ix.data.subarray(off, off + seedLen); off += seedLen;
+      need(16); off += 16; // skip lamports (u64) + space (u64)
+      need(32); const owner = ix.data.subarray(off, off + 32);
+      if (base58Encode(base) !== vaultOwner) continue; // not seeded off our vault
+      if (!SPL_TOKEN_PROGRAMS.has(base58Encode(owner))) continue; // not a token account
+      // create_with_seed(base, seed, owner) = base58(sha256(base || seed || owner)).
+      const derived = base58Encode(crypto.createHash('sha256').update(Buffer.concat([base, seed, owner])).digest());
+      // The account the instruction creates (index 1) must equal the recomputed
+      // address; a mismatch means a malformed/crafted instruction — fail closed.
+      const created = accountAt(ix, 1);
+      if (created !== null && created !== derived) {
+        throw fail('CreateAccountWithSeed target does not match its base/seed/owner derivation.');
+      }
+      vaultSeededAccounts.add(derived);
+      continue;
     }
-    vaultSeededAccounts.add(derived);
+
+    if (!SPL_TOKEN_PROGRAMS.has(programId) || ix.data.length === 0) continue;
+    const discriminator = ix.data[0];
+    let account;
+    let mint;
+    let owner;
+
+    if (discriminator === SPL_INITIALIZE_ACCOUNT) {
+      // InitializeAccount: accounts [account, mint, owner, rent].
+      account = accountAt(ix, 0);
+      mint = accountAt(ix, 1);
+      owner = accountAt(ix, 2);
+    } else if (discriminator === SPL_INITIALIZE_ACCOUNT2 || discriminator === SPL_INITIALIZE_ACCOUNT3) {
+      // InitializeAccount2/3: accounts [account, mint, ...], data [disc, owner pubkey].
+      if (ix.data.length < 33) throw fail('malformed InitializeAccount owner field.');
+      account = accountAt(ix, 0);
+      mint = accountAt(ix, 1);
+      owner = base58Encode(ix.data.subarray(1, 33));
+    } else {
+      continue;
+    }
+
+    if (account === null || mint === null || owner === null) {
+      throw fail('token account initializer uses an address only resolvable via an address lookup table.');
+    }
+    initializedAccounts.set(account, { mint, owner });
   }
 
-  const expectedMint = SOLANA_NATIVE_SOL_ALIASES.has(inputMint) ? WSOL_MINT : inputMint;
-  const requireSeeded = (destination, label) => {
+  // Pass 2: every wallet-sourced transfer of value must land in a vault-seeded
+  // account that is also initialized in this transaction with the vault as its
+  // token-account authority. Covers both deposit shapes — SPL token transfers
+  // and the native-SOL System::Transfer that funds a wrapped-SOL order account.
+  const requireTrustedDestination = (destination, label) => {
     if (!vaultSeededAccounts.has(destination)) {
       throw fail(`wallet-authorized ${label} sends funds to ${destination || 'an address only resolvable via an address lookup table'} instead of a vault-seeded deposit account.`);
     }
+    const initialized = initializedAccounts.get(destination);
+    if (!initialized) {
+      throw fail(`wallet-authorized ${label} sends funds to ${destination} before verifying it is initialized with the trusted vault authority.`);
+    }
+    if (!tokensEqual(initialized.mint, expectedMint, 'solana')) {
+      throw fail(`vault-seeded token account is initialized for mint ${initialized.mint} instead of deposit mint ${expectedMint}.`);
+    }
+    if (initialized.owner !== vaultOwner) {
+      throw fail(`vault-seeded token account authority is ${initialized.owner} instead of expected vault owner ${vaultOwner}.`);
+    }
   };
 
-  // Pass 2: every wallet-sourced transfer of value must land in a vault-seeded
-  // account. Covers both deposit shapes — SPL token transfers and the native-SOL
-  // System::Transfer that funds a wrapped-SOL order account.
   for (const ix of parsed.instructions) {
     const programId = resolveStaticAccount(parsed, ix.programIdIndex);
     if (!programId) {
@@ -1949,13 +1997,14 @@ export function assertLimitOrderDepositDestination(txBase64, { walletAddress, in
     }
 
     if (programId === SYSTEM_PROGRAM) {
-      if (ix.data.length < 4 || ix.data.readUInt32LE(0) !== SYSTEM_INSTR_TRANSFER) continue;
+      if (ix.data.length < 4) continue;
+      if (ix.data.readUInt32LE(0) !== SYSTEM_INSTR_TRANSFER) continue;
       // System::Transfer accounts: [from (signer), to]. `from` must be a signer,
       // so it can never be ALT-resolved; null means a malformed tx — fail closed.
       const from = accountAt(ix, 0);
       if (from === null) throw fail('native transfer source is unresolvable (malformed transaction).');
       if (from !== walletAddress) continue; // not our funds
-      requireSeeded(accountAt(ix, 1), 'native transfer');
+      requireTrustedDestination(accountAt(ix, 1), 'native transfer');
       continue;
     }
 
@@ -1967,14 +2016,14 @@ export function assertLimitOrderDepositDestination(txBase64, { walletAddress, in
       // the balance-delta gate still bounds which token and how much leave the
       // wallet. Use TransferChecked (below) for instruction-level mint binding.
       if (!walletAuthorizes(ix, 2)) continue;
-      requireSeeded(accountAt(ix, 1), 'token transfer');
+      requireTrustedDestination(accountAt(ix, 1), 'token transfer');
     } else if (discriminator === SPL_TRANSFER_CHECKED) {
       if (!walletAuthorizes(ix, 3)) continue;
       const mint = accountAt(ix, 1);
       if (!tokensEqual(mint, expectedMint, 'solana')) {
         throw fail(`wallet-authorized TransferChecked uses mint ${mint || 'an address only resolvable via an address lookup table'} instead of deposit mint ${expectedMint}.`);
       }
-      requireSeeded(accountAt(ix, 2), 'TransferChecked');
+      requireTrustedDestination(accountAt(ix, 2), 'TransferChecked');
     }
   }
 
