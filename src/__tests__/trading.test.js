@@ -3552,6 +3552,26 @@ describe('API error handling', () => {
     global.fetch = origFetch;
   });
 
+  it('treats non-JSON sub-500 execute responses as nonfatal execute errors', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      text: async () => '<!DOCTYPE html><html><body>rate limited</body></html>',
+    });
+
+    const { executeTransaction } = await import('../trading.js');
+    await expect(executeTransaction({
+      signedTransaction: 'test',
+      chain: 'solana',
+    }, { retries: 0 })).rejects.toMatchObject({
+      code: 'EXECUTE_ERROR',
+      status: 429,
+    });
+
+    global.fetch = origFetch;
+  });
+
   it('should surface NO_QUOTES_AVAILABLE errors', async () => {
     const origFetch = global.fetch;
     const errorBody = JSON.stringify({
