@@ -1,10 +1,9 @@
 /**
  * Tests for revert-reason decoding (issue #81, narrow scope).
  *
- * PR #84 attempted a broader version of this fix (deny-list pre-checks +
- * revert decoding) and was closed by its own author: "approach needs more
- * thought on the right way to handle deny list checks and revert decoding."
- * This covers only the revert-decoding half — turning a bare
+ * A prior attempt combined deny-list pre-checks with revert decoding in one
+ * PR; that combined scope was too broad to land cleanly, so this covers only
+ * the revert-decoding half — turning a bare
  * "Transaction reverted on-chain (status: 0x0)" into a message that explains
  * why, by replaying the transaction via eth_call at the block it was mined
  * in and decoding the standard Error(string)/Panic(uint256) ABI encodings.
@@ -60,6 +59,24 @@ describe('decodeRevertReason', () => {
     // A hostile or corrupt payload claiming a huge string length must not crash the CLI.
     const hex = '0x08c379a2' + (32).toString(16).padStart(64, '0') + 'ff'.repeat(32);
     expect(decodeRevertReason(hex)).toBeNull();
+  });
+
+  it('rejects a moderately over-claimed length that fits within the total payload but exceeds the bytes actually available for the string', () => {
+    // Regression: the guard previously compared `length` against the WHOLE
+    // payload (payload.length / 2) instead of the bytes available AFTER the
+    // 64-byte offset+length header. A length like this — bigger than what's
+    // left for the string, but smaller than the total payload — used to slip
+    // past the guard, then get silently truncated by .slice() instead of
+    // rejected, producing a garbled/null-padded string instead of null.
+    const message = 'short';
+    const hex = abiEncodeErrorString(message);
+    const payload = hex.slice(10);
+    const totalPayloadBytes = payload.length / 2;
+    const availableForString = totalPayloadBytes - 64;
+    const overClaim = availableForString + 10; // still <= totalPayloadBytes, so the old bound missed it
+    const lengthHex = overClaim.toString(16).padStart(64, '0');
+    const tampered = '0x08c379a2' + hex.slice(10, 10 + 64) + lengthHex + hex.slice(10 + 128);
+    expect(decodeRevertReason(tampered)).toBeNull();
   });
 });
 

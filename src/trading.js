@@ -1055,7 +1055,14 @@ export function decodeRevertReason(hexData) {
     try {
       const payload = hexData.slice(10);
       const length = parseInt(payload.slice(64, 128), 16);
-      if (!Number.isFinite(length) || length < 0 || length > payload.length / 2) return null;
+      // The string bytes start 64 bytes into payload (past the offset + length
+      // header fields), so only payload.length/2 - 64 bytes are actually
+      // available for it — not the full payload.length/2. Guarding against the
+      // wrong bound let a moderately over-claimed length slip through: .slice()
+      // would silently truncate instead of throwing, producing a garbled,
+      // null-padded string instead of correctly falling back to null.
+      const availableBytes = (payload.length / 2) - 64;
+      if (!Number.isFinite(length) || length < 0 || length > availableBytes) return null;
       const strHex = payload.slice(128, 128 + length * 2);
       const message = Buffer.from(strHex, 'hex').toString('utf8');
       return message || null;
