@@ -1214,7 +1214,7 @@ export function buildCommands(deps = {}) {
           log('CACHE OPTIONS (for any command):');
           log('  --cache               Enable caching for this session');
           log('  --no-cache            Bypass cache for this request');
-          log('  --cache-ttl <seconds> Set cache TTL (default: 300)');
+          log('  --cache-ttl <seconds> Set non-negative safe integer cache TTL (default: 300)');
         }
       };
       
@@ -2079,10 +2079,10 @@ export async function runCLI(rawArgs, deps = {}) {
       : { maxRetries };
 
     // Configure cache options
-    const cacheTtl = options['cache-ttl'] !== undefined ? parseInt(options['cache-ttl'], 10) : 300;
+    const cacheTtl = parseNonNegativeSafeIntegerOption('cache-ttl', options, flags, 300);
     const cacheOptions = {
       enabled: flags['cache'] && !flags['no-cache'],
-      ttl: Number.isNaN(cacheTtl) ? 300 : cacheTtl
+      ttl: cacheTtl
     };
 
     const defaultHeaders = {};
