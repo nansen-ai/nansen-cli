@@ -110,6 +110,26 @@ describe('keychain', () => {
       expect(fs.readFileSync(targetPath, 'utf8')).toBe('leave unchanged\n');
     });
 
+    it.skipIf(process.platform === 'win32')('should refuse to overwrite a hard-linked credentials file on POSIX', () => {
+      setPlatform('linux');
+      execFileSync.mockImplementation(() => { throw new Error('secret-tool unavailable'); });
+
+      const credDir = path.join(tempDir, '.nansen', 'wallets');
+      const credPath = path.join(credDir, '.credentials');
+      const victimPath = path.join(tempDir, 'hardlink-victim');
+      fs.mkdirSync(credDir, { recursive: true });
+      fs.writeFileSync(victimPath, 'leave unchanged\n');
+      fs.chmodSync(victimPath, 0o644);
+      // O_NOFOLLOW cannot see this: the link is a second name for the same
+      // regular inode, not a symlink.
+      fs.linkSync(victimPath, credPath);
+      expect(fs.statSync(credPath).nlink).toBe(2);
+
+      expect(storePassword('replacement-password')).toEqual({ stored: false, method: 'none' });
+      expect(fs.readFileSync(victimPath, 'utf8')).toBe('leave unchanged\n');
+      expect(fs.statSync(victimPath).mode & 0o777).toBe(0o644);
+    });
+
     it('should fall back to .credentials on unsupported platform', () => {
       setPlatform('freebsd');
       fs.mkdirSync(path.join(tempDir, '.nansen', 'wallets'), { recursive: true });
