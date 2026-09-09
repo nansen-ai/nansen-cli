@@ -166,7 +166,12 @@ function credentialsFileWrite(password) {
         | fs.constants.O_NOFOLLOW
         | fs.constants.O_NONBLOCK;
       fd = fs.openSync(filePath, flags, 0o600);
-      if (!fs.fstatSync(fd).isFile()) throw new Error('Credentials path is not a regular file');
+      const stats = fs.fstatSync(fd);
+      if (!stats.isFile()) throw new Error('Credentials path is not a regular file');
+      // O_NOFOLLOW only rejects symlinks. A hard link at .credentials points at
+      // a victim file that is indistinguishable by path or type, so refuse any
+      // regular file with extra links before fchmod/ftruncate touch it.
+      if (stats.nlink !== 1) throw new Error('Credentials file has unexpected hard links');
 
       // Opening an existing file does not apply the requested mode. Tighten it
       // before replacing the secret, then enforce the final mode after writing.
