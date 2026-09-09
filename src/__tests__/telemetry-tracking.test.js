@@ -264,6 +264,55 @@ describe('telemetry tracking for all first-level commands', () => {
     expect(trackFailed.mock.calls[0][0].status).toBe(401);
   });
 
+  // ── from_cache reporting ──
+  //
+  // A cache hit is marked on the payload's `_meta` by getCachedResponse();
+  // there is no top-level `fromCache` field, and `--fields` filtering strips
+  // `_meta`, so the flag has to be read off `_meta` before that filtering.
+
+  /** API stub whose every method resolves to `payload`. */
+  function apiReturning(payload) {
+    return function StubAPI() {
+      return new Proxy({}, {
+        get: (_target, prop) => {
+          if (typeof prop === 'string' && prop !== 'then') {
+            return vi.fn().mockResolvedValue(payload);
+          }
+        },
+      });
+    };
+  }
+
+  const cachedPayload = { data: [{ symbol: 'ETH' }], _meta: { fromCache: true, cacheAge: 12 } };
+
+  it('reports from_cache: true for a cache hit', async () => {
+    const deps = baseDeps({ NansenAPIClass: apiReturning(cachedPayload) });
+    await runCLI(['research', 'smart-money', 'netflow'], deps);
+    expect(trackSucceeded).toHaveBeenCalledOnce();
+    expect(trackSucceeded.mock.calls[0][0].from_cache).toBe(true);
+  });
+
+  it('reports from_cache: true for a cache hit with --fields', async () => {
+    const deps = baseDeps({ NansenAPIClass: apiReturning(cachedPayload) });
+    await runCLI(['research', 'smart-money', 'netflow', '--fields', 'symbol'], deps);
+    expect(trackSucceeded).toHaveBeenCalledOnce();
+    expect(trackSucceeded.mock.calls[0][0].from_cache).toBe(true);
+  });
+
+  it('reports from_cache: true for a cache hit with --stream', async () => {
+    const deps = baseDeps({ NansenAPIClass: apiReturning(cachedPayload) });
+    await runCLI(['research', 'smart-money', 'netflow', '--stream'], deps);
+    expect(trackSucceeded).toHaveBeenCalledOnce();
+    expect(trackSucceeded.mock.calls[0][0].from_cache).toBe(true);
+  });
+
+  it('reports from_cache: false for a live response', async () => {
+    const deps = baseDeps({ NansenAPIClass: apiReturning({ data: [{ symbol: 'ETH' }] }) });
+    await runCLI(['research', 'smart-money', 'netflow'], deps);
+    expect(trackSucceeded).toHaveBeenCalledOnce();
+    expect(trackSucceeded.mock.calls[0][0].from_cache).toBe(false);
+  });
+
   // ── Meta commands should NOT trigger telemetry ──
 
   it('--help does not trigger telemetry', async () => {
