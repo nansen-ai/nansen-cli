@@ -2105,7 +2105,14 @@ export async function runCLI(rawArgs, deps = {}) {
     // never as a top-level `fromCache`. Capture it here, before `--fields`
     // filtering below drops `_meta` along with every other unrequested key —
     // read any later and a cache hit with `--fields` reports as a live call.
-    const fromCache = !!result?._meta?.fromCache;
+    //
+    // `_meta` alone isn't enough either: handlers are free to rebuild their
+    // result and some do (`alerts list` filters the array into a fresh one),
+    // which drops the marker before we get here. `api.servedFromCache` is set
+    // on the instance next to the cache-hit early return in request(), so it
+    // survives that reshaping. Compared against `true` so a stubbed API whose
+    // every property is a mock function doesn't read as a hit.
+    const fromCache = !!result?._meta?.fromCache || api.servedFromCache === true;
 
     // Credit balance warning, from the headers on the call just made. Goes to
     // stderr so it never contaminates the JSON on stdout that agents parse.
@@ -2147,7 +2154,7 @@ export async function runCLI(rawArgs, deps = {}) {
     // Alerts list with --table uses custom table format
     if (command === 'alerts' && subcommand === 'list' && table) {
       output(formatAlertsTable(result));
-      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, flags: usedFlags, chain });
+      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: fromCache, flags: usedFlags, chain });
       return { type: 'success', data: result };
     }
 
