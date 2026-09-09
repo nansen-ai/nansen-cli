@@ -288,10 +288,11 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
 
     if (!parsed) {
       // Non-JSON on a sub-500 status (a Cloudflare challenge or HTML error
-      // page). Still uninterpretable after the POST went out, so fail closed.
+      // page). A clean sub-500 HTTP response is a definitive edge/backend
+      // rejection, so it stays nonfatal and leaves the quote reusable.
       lastError = Object.assign(
         new Error(`Execute API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`),
-        { code: 'BROADCAST_FAILED', status: res.status, details: text.slice(0, 200) }
+        { code: 'EXECUTE_ERROR', status: res.status, details: text.slice(0, 200) }
       );
       throw lastError;
     }
