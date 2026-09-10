@@ -48,8 +48,12 @@ function parseWcJson(output) {
  *   actually approved for THAT chain (`eip155:<chainId>`) is returned — a session
  *   connected only to, say, Ethereum mainnet must not be handed back as if it were
  *   approved for Base just because both are "eip155:*". Mirrors the mainnet-only
- *   exact-match already done for Solana above; omit chainId to keep the old
- *   any-EVM-chain behavior for callers that don't yet sign/broadcast with it.
+ *   exact-match already done for Solana above. Only meaningful for
+ *   chainType === 'evm' -- the Solana branch already does its own exact
+ *   match unconditionally, so omit chainId there (a chain-config chain ID
+ *   like Solana's 501 is not a CAIP-2 EIP-155 chain ID and would not match
+ *   anything); also omit it when no specific chain needs verifying at all
+ *   (chainType itself omitted, for first-account backward compat).
  */
 export async function getWalletConnectAddress(chainType, chainId) {
   try {

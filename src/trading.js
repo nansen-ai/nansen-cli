@@ -2216,7 +2216,11 @@ CROSS-CHAIN NOTES (when using --to-chain):
           // Scoped to this chain's ID (see getWalletConnectAddress's chainId
           // param): a session approved only for a different EVM chain must
           // not be treated as valid here just because it's "some eip155:*"
-          // account -- EVM addresses are identical across chains.
+          // account -- EVM addresses are identical across chains. chainId is
+          // only ever passed for 'evm': Solana's chainConfig.chainId (501) is
+          // not a CAIP-2 EIP-155 chain ID, and getWalletConnectAddress's own
+          // Solana branch already does its own exact match unconditionally --
+          // passing 501 through here would break it, not narrow it further.
           walletAddress = chainType === 'evm'
             ? await getWalletConnectAddress(chainType, chainConfig.chainId)
             : await getWalletConnectAddress(chainType);
@@ -2575,6 +2579,10 @@ EXAMPLES:
           // getWalletConnectAddress's chainId param) because an address
           // match alone can't tell a session on the right chain from one on
           // the wrong chain -- EVM addresses are identical across chains.
+          // chainId is only ever passed for 'evm': Solana's chainConfig.chainId
+          // (501) is not a CAIP-2 EIP-155 chain ID, and getWalletConnectAddress's
+          // own Solana branch already does its own exact match unconditionally --
+          // passing 501 through here would break it, not narrow it further.
           const wcAddress = chainType === 'evm'
             ? await getWalletConnectAddress(chainType, chainConfig.chainId)
             : await getWalletConnectAddress(chainType);
