@@ -24,9 +24,13 @@ import { evaluatePaymentRequirement } from '../x402-policy.js';
 import { wcExec } from '../walletconnect-exec.js';
 import { handleX402Payment, buildEIP712TypedData } from '../walletconnect-x402.js';
 
+// Session approved for Base (eip155:8453) only -- the account entry carries
+// the CAIP-2 chain tag getWalletConnectAddress matches on, not just a bare
+// address, so a mock without a `chain` field would mask the exact-chain bug
+// this file used to have (accounts[0] taken with no chain filter at all).
 const CONNECTED_WALLET = {
   connected: true,
-  accounts: [{ address: '0xWalletAddress' }],
+  accounts: [{ chain: 'eip155:8453', address: '0xWalletAddress' }],
 };
 
 const REQUIREMENT = {
@@ -80,6 +84,70 @@ describe('handleX402Payment — policy guard', () => {
 
     const signCalls = wcExec.mock.calls.filter(c => c[1]?.[0] === 'sign-typed-data');
     expect(signCalls).toHaveLength(1);
+  });
+});
+
+describe('handleX402Payment — WalletConnect chain scoping', () => {
+  it('refuses to pay when the connected session is approved for a different EVM chain', async () => {
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC' });
+    // Session approved for Ethereum mainnet only; the payment requirement is on Base.
+    wcExec.mockImplementation((_cmd, args) => {
+      if (args[0] === 'whoami') {
+        return Promise.resolve(JSON.stringify({
+          connected: true,
+          accounts: [{ chain: 'eip155:1', address: '0xWalletAddress' }],
+        }));
+      }
+      return Promise.resolve(JSON.stringify({ signature: '0xfakesig' }));
+    });
+
+    await expect(
+      handleX402Payment(PAYMENT_REQUIREMENTS),
+    ).rejects.toThrow(/no WalletConnect session is active for chain eip155:8453/);
+
+    // A wrong-chain session must never reach signing.
+    const signCalls = wcExec.mock.calls.filter(c => c[1]?.[0] === 'sign-typed-data');
+    expect(signCalls).toHaveLength(0);
+  });
+
+  it('refuses to pay when no WalletConnect session is connected at all', async () => {
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC' });
+    wcExec.mockImplementation((_cmd, args) => {
+      if (args[0] === 'whoami') {
+        return Promise.resolve(JSON.stringify({ connected: false }));
+      }
+      return Promise.resolve(JSON.stringify({ signature: '0xfakesig' }));
+    });
+
+    await expect(
+      handleX402Payment(PAYMENT_REQUIREMENTS),
+    ).rejects.toThrow(/no WalletConnect session is active for chain eip155:8453/);
+  });
+
+  it('signs from the account matching the target chain, not accounts[0]', async () => {
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC' });
+    // Deliberately DIFFERENT addresses per chain entry (a multi-account
+    // wallet, or a proxy quirk) and the Base entry deliberately placed
+    // SECOND, not first -- so this test can only pass if the chain tag,
+    // not array position, decides which address is used. Two entries
+    // sharing one address would let a bug that still reads accounts[0]
+    // slip through unnoticed.
+    wcExec.mockImplementation((_cmd, args) => {
+      if (args[0] === 'whoami') {
+        return Promise.resolve(JSON.stringify({
+          connected: true,
+          accounts: [
+            { chain: 'eip155:1', address: '0xEthOnlyAddress' },
+            { chain: 'eip155:8453', address: '0xBaseAddress' },
+          ],
+        }));
+      }
+      return Promise.resolve(JSON.stringify({ signature: '0xfakesig' }));
+    });
+
+    const result = await handleX402Payment(PAYMENT_REQUIREMENTS);
+    const decoded = JSON.parse(Buffer.from(result, 'base64').toString('utf8'));
+    expect(decoded.payload.authorization.from).toBe('0xBaseAddress');
   });
 });
 
