@@ -8,22 +8,8 @@
 import crypto from 'crypto';
 import { NansenError, ErrorCode } from './api.js';
 import { wcExec } from './walletconnect-exec.js';
+import { getWalletConnectAddress } from './walletconnect-trading.js';
 import { evaluatePaymentRequirement, resolvePaymentAmount, resolvePayTo } from './x402-policy.js';
-
-/**
- * Check if a WalletConnect wallet session is active.
- * Returns { wallet, accounts, expires } or null.
- */
-export async function checkWalletConnection() {
-  try {
-    const output = await wcExec('walletconnect', ['whoami', '--json'], 3000);
-    const data = JSON.parse(output);
-    if (data.connected === false) return null;
-    return data;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Select a compatible payment requirement from the accepts array.
@@ -160,28 +146,7 @@ function formatPaymentAmount(requirement) {
  * @throws {NansenError} On failure
  */
 export async function handleX402Payment(paymentRequirements) {
-  // 1. Check wallet connection
-  const wallet = await checkWalletConnection();
-  if (!wallet) {
-    throw new NansenError(
-      'x402 payment required but no wallet connected. ' +
-        'To pay automatically: create a local wallet with `nansen wallet create` (then set NANSEN_WALLET_PASSWORD), ' +
-        'or connect an external wallet via the `walletconnect` CLI (`walletconnect connect`).',
-      ErrorCode.PAYMENT_REQUIRED,
-      402
-    );
-  }
-
-  const fromAddress = wallet.accounts[0]?.address;
-  if (!fromAddress) {
-    throw new NansenError(
-      'x402 payment required but wallet has no accounts.',
-      ErrorCode.PAYMENT_REQUIRED,
-      402
-    );
-  }
-
-  // 2. Select compatible payment requirement
+  // 1. Select compatible payment requirement
   const accepts = paymentRequirements.accepts || paymentRequirements;
   const requirement = selectPaymentRequirement(Array.isArray(accepts) ? accepts : [accepts]);
   if (!requirement) {
@@ -193,10 +158,35 @@ export async function handleX402Payment(paymentRequirements) {
     );
   }
 
-  // 3. Evaluate payment policy before touching any signing material
+  // 2. Evaluate payment policy before touching any signing material
   const decision = evaluatePaymentRequirement(requirement);
   if (!decision.ok) {
     throw new Error(decision.reason);
+  }
+
+  // 3. Resolve the WalletConnect signer scoped to this exact chain. EVM
+  // addresses are identical across chains, so "some account exists in the
+  // session" can't prove the session was actually approved for THIS chain --
+  // only the CAIP-2 chain tag can (mirrors getWalletConnectAddress's chainId
+  // param, used the same way before signing/broadcasting in trading.js and
+  // transfer.js). Without this, a session connected only to, say, Base would
+  // be silently accepted to authorize a payment on BNB Chain or X Layer --
+  // the same defect class fixed in #615, just unguarded here because this
+  // path never reused getWalletConnectAddress and instead took accounts[0]
+  // with no chain filter at all.
+  const chainId = parseChainId(requirement.network);
+  if (chainId === null) {
+    throw new Error(`Refusing to auto-pay: unsupported or missing EVM network ${requirement.network}.`);
+  }
+  const fromAddress = await getWalletConnectAddress('evm', chainId);
+  if (!fromAddress) {
+    throw new NansenError(
+      `x402 payment required but no WalletConnect session is active for chain ${requirement.network}. ` +
+        'To pay automatically: create a local wallet with `nansen wallet create` (then set NANSEN_WALLET_PASSWORD), ' +
+        'or connect an external wallet approved for this chain via the `walletconnect` CLI (`walletconnect connect`).',
+      ErrorCode.PAYMENT_REQUIRED,
+      402
+    );
   }
 
   // 4. Build EIP-712 typed data
