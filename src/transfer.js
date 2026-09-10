@@ -116,8 +116,9 @@ function bigIntToHex(n) {
 // ============= EVM Transaction =============
 
 async function buildEvmTransaction({ to, amount, token, privateKey, chain, max = false }) {
+  const chainId = CHAIN_IDS[chain];
+  if (!chainId) throw new Error(`Unsupported chain: ${chain} (no chain ID configured for EVM transfers)`);
   const rpcUrl = CHAIN_RPCS[chain] || CHAIN_RPCS.evm;
-  const chainId = CHAIN_IDS[chain] || 1;
 
   // Derive address and buffer for signing
   const privBuf = Buffer.from(privateKey, 'hex');
@@ -829,11 +830,16 @@ export async function sendTokens({ to, amount, chain, token = null, wallet = nul
  * Send tokens via WalletConnect (EVM only).
  */
 async function sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRun }) {
+  const chainId = CHAIN_IDS[chain];
+  if (!chainId) throw new Error(`Unsupported chain: ${chain} (no chain ID configured for EVM transfers)`);
   const rpcUrl = CHAIN_RPCS[chain] || CHAIN_RPCS.evm;
-  const chainId = CHAIN_IDS[chain] || 1;
 
-  const wcAddress = await getWalletConnectAddress();
-  if (!wcAddress) throw new Error('No WalletConnect session active. Run: walletconnect connect');
+  // Scoped to this specific chain, not just "any EVM account" — a session
+  // approved only for a different chain must not be used to sign a transfer
+  // on this one (addresses are identical across EVM chains, so an address
+  // match alone can't catch this; the CAIP-2 chain tag can).
+  const wcAddress = await getWalletConnectAddress('evm', chainId);
+  if (!wcAddress) throw new Error(`No WalletConnect session active for chain "${chain}" (eip155:${chainId}). Run: walletconnect connect`);
 
   let txTo, txValue, txData;
 
