@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { NansenAPI, ErrorCode } from '../api.js';
+import { NansenAPI, ErrorCode, clearCache } from '../api.js';
 
 const LIVE_TEST = process.env.NANSEN_LIVE_TEST === '1';
 const API_KEY = process.env.NANSEN_API_KEY || 'test-key';
@@ -440,6 +440,44 @@ describe('NansenAPI', () => {
     it('should accept custom base URL', () => {
       const customApi = new NansenAPI('test-key', 'https://custom.api.com');
       expect(customApi.baseUrl).toBe('https://custom.api.com');
+    });
+  });
+
+  // =================== Cache Isolation (request-level) ===================
+  // Regression coverage for the `useCache && cacheContext` guards in request()
+  // (the read before fetch and the write after it) — exercised through the
+  // public request() call sites, not just the underlying cache helpers.
+
+  describe('Cache isolation via request()', () => {
+    afterEach(() => {
+      clearCache();
+    });
+
+    it('does not serve one API key\'s cached response to a different API key', async () => {
+      if (LIVE_TEST) return;
+
+      const endpoint = '/api/v1/cache-isolation-test';
+      const body = { probe: true };
+      const apiA = new NansenAPI('key-a', 'https://api.nansen.ai', { cache: { enabled: true } });
+      const apiB = new NansenAPI('key-b', 'https://api.nansen.ai', { cache: { enabled: true } });
+
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ secret: 'A' }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ secret: 'B' }) });
+
+      const resultA = await apiA.request(endpoint, body);
+      expect(resultA.secret).toBe('A');
+
+      // Different identity must miss the cache and hit the network again.
+      const resultB = await apiB.request(endpoint, body);
+      expect(resultB.secret).toBe('B');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+
+      // Same identity as the first call must now be served from cache.
+      const resultACached = await apiA.request(endpoint, body);
+      expect(resultACached.secret).toBe('A');
+      expect(resultACached._meta.fromCache).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
     });
   });
 
