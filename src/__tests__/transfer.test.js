@@ -600,6 +600,47 @@ describe('sendTokens via WalletConnect', () => {
     vi.restoreAllMocks();
   });
 
+  test('scopes the WalletConnect address lookup to the target chain, not just any EVM account', async () => {
+    const addrSpy = vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmocktx123' });
+    fetch.mockImplementation(async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      const r = { 'eth_getTransactionReceipt': { status: '0x1', blockNumber: '0x100' } };
+      return { json: () => Promise.resolve({ result: r[body.method] || '0x0' }) };
+    });
+
+    await sendTokens({
+      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      amount: '0.1',
+      chain: 'base',
+      walletconnect: true,
+    });
+
+    expect(addrSpy).toHaveBeenCalledWith('evm', 8453);
+    vi.restoreAllMocks();
+  });
+
+  test('rejects when the WalletConnect session is connected but not to the target chain (regression)', async () => {
+    // Before the fix: getWalletConnectAddress() took no chain argument at all
+    // and returned any eip155:* account, so a session approved only for a
+    // different chain would silently be used to sign a transfer meant for
+    // this one -- EVM addresses are identical across chains, so nothing
+    // downstream could have caught the mismatch.
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockImplementation(async (chainType, chainId) => {
+      // Session is connected, but only approved for Ethereum mainnet (1), not Base (8453).
+      return chainId === 1 ? '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4' : null;
+    });
+
+    await expect(sendTokens({
+      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      amount: '0.1',
+      chain: 'base',
+      walletconnect: true,
+    })).rejects.toThrow('No WalletConnect session active');
+
+    vi.restoreAllMocks();
+  });
+
   test('skips password verification for walletconnect', async () => {
     const exportSpy = vi.spyOn(wallet, 'exportWallet');
     vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');

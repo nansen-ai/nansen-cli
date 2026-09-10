@@ -1577,6 +1577,141 @@ describe('WalletConnect execute support', () => {
     vi.restoreAllMocks();
   });
 
+  it('scopes the WalletConnect address lookup to the quote chain before signing', async () => {
+    const addrSpy = vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmocktx' });
+
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn(async () => ({
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify({ result: { status: '0x1', blockNumber: '0x100' } })),
+      json: () => Promise.resolve({ result: { status: '0x1', blockNumber: '0x100' } }),
+    }));
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'lifi',
+        inputMint: BASE_ETH,
+        outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        inAmount: '1000000000000000000',
+        outAmount: '3000000000',
+        transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '200000' },
+      }],
+    }, 'base', 'walletconnect', null, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({
+        walletAddress: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+        fromToken: BASE_ETH,
+        toToken: BASE_USDC,
+        amount: '1000000000000000000',
+        maxInputAmount: '1000000000000000000',
+      }),
+    });
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await cmds.execute([], null, {}, { quote: quoteId });
+
+    // Base's chain ID (8453), not just "some EVM account" -- the call right
+    // before signing/broadcasting must be scoped to the chain being used.
+    expect(addrSpy.mock.calls.some(call => call[0] === 'evm' && call[1] === 8453)).toBe(true);
+
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('rejects execute when the WalletConnect session is connected but not to the quote chain (regression)', async () => {
+    // Before the fix: getWalletConnectAddress(chainType) ignored the chain ID
+    // entirely and returned any eip155:* account, so a session approved only
+    // for a different chain would silently sign/broadcast here. EVM
+    // addresses are identical across chains, so nothing else in this path
+    // (assertQuoteMatchesRequest included) could have caught the mismatch.
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockImplementation(async (chainType, chainId) => {
+      if (chainType !== 'evm') return null;
+      // Session is connected -- but only approved for Ethereum mainnet (1), not Base (8453).
+      return chainId === 1 ? '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4' : null;
+    });
+    vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmocktx' });
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'lifi',
+        inputMint: BASE_ETH,
+        outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        inAmount: '1000000000000000000',
+        outAmount: '3000000000',
+        transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '200000' },
+      }],
+    }, 'base', 'walletconnect', null, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({
+        walletAddress: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+        fromToken: BASE_ETH,
+        toToken: BASE_USDC,
+        amount: '1000000000000000000',
+        maxInputAmount: '1000000000000000000',
+      }),
+    });
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow('No WalletConnect session active for chain "base"');
+
+    vi.restoreAllMocks();
+  });
+
+  it('rejects execute when the WalletConnect session switches to a different chain between the pre-check and signing (regression)', async () => {
+    // The pre-check right after loading the quote (line ~2571) and the check
+    // immediately before signing (line ~3036) both call
+    // getWalletConnectAddress -- deliberately, to close the gap where a
+    // session could disconnect or switch chains in between (same rationale
+    // as the pre-existing "session dropped mid-execute" guard this extends).
+    // Simulate that gap: the session is on the right chain for the first
+    // check, then switches before the second one runs.
+    let calls = 0;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockImplementation(async (chainType, chainId) => {
+      if (chainType !== 'evm') return null;
+      calls++;
+      if (calls === 1) return chainId === 8453 ? '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4' : null;
+      // Second call onward: session has moved to a different chain.
+      return chainId === 8453 ? null : '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4';
+    });
+    vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmocktx' });
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'lifi',
+        inputMint: BASE_ETH,
+        outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        inAmount: '1000000000000000000',
+        outAmount: '3000000000',
+        transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '200000' },
+      }],
+    }, 'base', 'walletconnect', null, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({
+        walletAddress: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+        fromToken: BASE_ETH,
+        toToken: BASE_USDC,
+        amount: '1000000000000000000',
+        maxInputAmount: '1000000000000000000',
+      }),
+    });
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow('No WalletConnect session for this chain');
+    expect(calls).toBeGreaterThanOrEqual(2);
+
+    vi.restoreAllMocks();
+  });
+
   it('should allow Solana + walletconnect for execute', async () => {
     vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
     vi.spyOn(wcTrading, 'sendSolanaTransactionViaWalletConnect').mockResolvedValue({ signedTransaction: '5K4Ld...' });

@@ -832,8 +832,12 @@ async function sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRu
   const rpcUrl = CHAIN_RPCS[chain] || CHAIN_RPCS.evm;
   const chainId = CHAIN_IDS[chain] || 1;
 
-  const wcAddress = await getWalletConnectAddress();
-  if (!wcAddress) throw new Error('No WalletConnect session active. Run: walletconnect connect');
+  // Scoped to this specific chain, not just "any EVM account" — a session
+  // approved only for a different chain must not be used to sign a transfer
+  // on this one (addresses are identical across EVM chains, so an address
+  // match alone can't catch this; the CAIP-2 chain tag can).
+  const wcAddress = await getWalletConnectAddress('evm', chainId);
+  if (!wcAddress) throw new Error(`No WalletConnect session active for chain "${chain}" (eip155:${chainId}). Run: walletconnect connect`);
 
   let txTo, txValue, txData;
 

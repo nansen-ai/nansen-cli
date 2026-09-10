@@ -2213,9 +2213,15 @@ CROSS-CHAIN NOTES (when using --to-chain):
         let walletProvider = 'local';
         let privyWalletIds = null;
         if (isWalletConnect) {
-          walletAddress = await getWalletConnectAddress(chainType);
+          // Scoped to this chain's ID (see getWalletConnectAddress's chainId
+          // param): a session approved only for a different EVM chain must
+          // not be treated as valid here just because it's "some eip155:*"
+          // account -- EVM addresses are identical across chains.
+          walletAddress = chainType === 'evm'
+            ? await getWalletConnectAddress(chainType, chainConfig.chainId)
+            : await getWalletConnectAddress(chainType);
           if (!walletAddress) {
-            throw new CommandError('No WalletConnect session active. Run: walletconnect connect', 'NO_WALLET');
+            throw new CommandError(`No WalletConnect session active for chain "${chain}". Run: walletconnect connect`, 'NO_WALLET');
           }
         } else if (walletName) {
           const wallet = showWallet(walletName);
@@ -2564,10 +2570,16 @@ EXAMPLES:
 
           exported = exportWallet(effectiveWalletName, password);
         } else {
-          // Verify WalletConnect session is still active and address matches quote
-          const wcAddress = await getWalletConnectAddress(chainType);
+          // Verify WalletConnect session is still active, approved for this
+          // chain, and its address matches the quote. Chain-scoped (see
+          // getWalletConnectAddress's chainId param) because an address
+          // match alone can't tell a session on the right chain from one on
+          // the wrong chain -- EVM addresses are identical across chains.
+          const wcAddress = chainType === 'evm'
+            ? await getWalletConnectAddress(chainType, chainConfig.chainId)
+            : await getWalletConnectAddress(chainType);
           if (!wcAddress) {
-            throw new CommandError('No WalletConnect session active. Run: walletconnect connect', 'NO_WALLET');
+            throw new CommandError(`No WalletConnect session active for chain "${chain}". Run: walletconnect connect`, 'NO_WALLET');
           }
           // Check address matches the one used during quoting
           const quoteWallet = quoteData.response?.quotes?.[0]?.transaction?.from
@@ -3027,14 +3039,20 @@ EXAMPLES:
               requestId = currentQuote.metadata?.requestId;
 
             } else if (isWalletConnect) {
-              // EVM via WalletConnect: wallet signs and may broadcast
-              const wcAddress = await getWalletConnectAddress(chainType);
-              // A session dropped mid-execute returns null here. Without this
+              // EVM via WalletConnect: wallet signs and may broadcast.
+              // Scoped to this chain's ID, not just "any EVM account" -- a
+              // session approved only for a different chain must not sign
+              // here. EVM addresses are identical across chains, so the
+              // address-based checks below (assertQuoteMatchesRequest) can't
+              // catch a session connected to the wrong chain on their own.
+              const wcAddress = await getWalletConnectAddress(chainType, chainConfig.chainId);
+              // A session dropped mid-execute, or one that's connected but not
+              // approved for this chain, returns null here. Without this
               // guard a null address would fall through to assertQuoteMatchesRequest,
               // whose `request.walletAddress && walletAddress` condition would
               // silently skip the signer-binding check. Fail closed instead.
               if (!wcAddress) {
-                throw new CommandError('WalletConnect session lost during execute. Reconnect with `walletconnect connect` and retry.', 'NO_WALLET');
+                throw new CommandError('No WalletConnect session for this chain. Reconnect with `walletconnect connect` and retry.', 'NO_WALLET');
               }
               const isNative = isNativeToken(currentQuote.inputMint);
 
