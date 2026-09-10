@@ -2522,6 +2522,24 @@ describe('assertLimitOrderDepositDestination', () => {
       .toEqual({ verified: true });
   });
 
+  it('rejects when no wallet-authorized deposit transfer is present', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const seed = 'order-seed-no-transfer';
+    const seededAcct = seededAccount(vault, seed);
+    const keys = [wallet, seededAcct, USDC, TOKEN_PROGRAM, SYSTEM_PROGRAM, vault];
+    const tx = buildTransaction({
+      accountKeys: keys,
+      instructions: [
+        { programIdIndex: 4, accountIndexes: [0, 1, 5], data: createWithSeedData(vault, seed) },
+        { programIdIndex: 3, accountIndexes: [1, 2], data: initializeAccount3Data(vault) },
+      ],
+    });
+
+    expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC, vaultOwner: vault }))
+      .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*no wallet-authorized deposit transfer/i);
+  });
+
   it('rejects a TransferChecked to an account not seeded off the vault (the drain the ticket describes)', () => {
     const wallet = generateSolanaWallet().address;
     const vault = generateSolanaWallet().address;

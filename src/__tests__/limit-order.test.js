@@ -31,8 +31,13 @@ import {
   cancelOrderRequest,
   confirmCancelOrder,
 } from '../limit-order.js';
-import { createWallet, base58Decode, generateSolanaWallet } from '../wallet.js';
+import { createWallet, base58Decode, base58Encode, generateSolanaWallet } from '../wallet.js';
 import { SIMULATION_RPCS } from '../rpc-urls.js';
+
+const TEST_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const TEST_WSOL_MINT = 'So11111111111111111111111111111111111111112';
+const TEST_VAULT_PUBKEY = '11111111111111111111111111111111';
+const TEST_TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
 let originalHome;
 let tempDir;
@@ -602,7 +607,7 @@ describe('buildLimitOrderCommands', () => {
     });
 
     it('accepts valid slippage-bps and forwards it to createOrder', async () => {
-      createTestWallet('lo-create-slip');
+      const wallet = createTestWallet('lo-create-slip');
       const logs = [];
       const exit = vi.fn();
       const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
@@ -611,7 +616,7 @@ describe('buildLimitOrderCommands', () => {
         { body: { challenge: 'sign this' } },
         { body: { token: 'jwt-123' } },
         { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' } },
-        { body: { transaction: buildFakeBase64Tx(), requestId: 'dep-req-1' } },
+        { body: { transaction: buildFakeBase64Tx({ walletPubkey: wallet.solana }), requestId: 'dep-req-1' } },
         { body: { id: 'order-slip', txSignature: 'sig-slip' }, status: 201 },
       ]);
 
@@ -655,7 +660,7 @@ describe('buildLimitOrderCommands', () => {
     });
 
     it('accepts valid Solana mint address', async () => {
-      createTestWallet('lo-addr-test');
+      const wallet = createTestWallet('lo-addr-test');
       const logs = [];
       const exit = vi.fn();
       const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
@@ -664,7 +669,7 @@ describe('buildLimitOrderCommands', () => {
         { body: { challenge: 'sign this' } },
         { body: { token: 'jwt-123' } },
         { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' } },
-        { body: { transaction: buildFakeBase64Tx(), requestId: 'dep-1' } },
+        { body: { transaction: buildFakeBase64Tx({ walletPubkey: wallet.solana }), requestId: 'dep-1' } },
         { body: { id: 'order-1', txSignature: 'sig-1' }, status: 201 },
       ]);
 
@@ -715,7 +720,7 @@ describe('buildLimitOrderCommands', () => {
      */
     async function createAndGetInputAmount(amountStr, fromToken = 'SOL') {
       const walletName = `lo-amt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      createTestWallet(walletName);
+      const wallet = createTestWallet(walletName);
       const logs = [];
       const exit = vi.fn();
       const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
@@ -725,7 +730,7 @@ describe('buildLimitOrderCommands', () => {
         { body: { challenge: 'sign this' } },          // [0] auth/challenge
         { body: { token: 'jwt-123' } },                 // [1] auth/verify
         { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' } }, // [2] vault check
-        { body: { transaction: buildFakeBase64Tx(), requestId: 'dep-1' } }, // [3] deposit/craft
+        { body: { transaction: buildFakeBase64Tx({ walletPubkey: wallet.solana, inputMint: fromToken === 'USDC' ? TEST_USDC_MINT : TEST_WSOL_MINT }), requestId: 'dep-1' } }, // [3] deposit/craft
         { body: { id: 'order-1', txSignature: 'sig-1' }, status: 201 },    // [4] createOrder
       ]);
 
@@ -824,7 +829,7 @@ describe('buildLimitOrderCommands', () => {
     });
 
     it('executes full create flow with local wallet', async () => {
-      createTestWallet('lo-create-test');
+      const wallet = createTestWallet('lo-create-test');
 
       const logs = [];
       const exit = vi.fn();
@@ -836,7 +841,7 @@ describe('buildLimitOrderCommands', () => {
         { body: { challenge: 'sign this' } },
         { body: { token: 'jwt-123' } },
         { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' } },
-        { body: { transaction: buildFakeBase64Tx(), requestId: 'dep-req-1' } },
+        { body: { transaction: buildFakeBase64Tx({ walletPubkey: wallet.solana }), requestId: 'dep-req-1' } },
         { body: { id: 'order-abc', txSignature: 'sig-xyz' }, status: 201 },
       ]);
 
@@ -864,7 +869,7 @@ describe('buildLimitOrderCommands', () => {
     });
 
     it('auto-registers vault when not found', async () => {
-      createTestWallet('lo-vault-test');
+      const wallet = createTestWallet('lo-vault-test');
 
       const logs = [];
       const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit: vi.fn() });
@@ -875,7 +880,7 @@ describe('buildLimitOrderCommands', () => {
         { body: { token: 'jwt-123' } },
         { body: { message: 'Vault not found' }, status: 404 }, // getVault returns no vault
         { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' }, status: 201 }, // registerVault
-        { body: { transaction: buildFakeBase64Tx(), requestId: 'dep-1' } },
+        { body: { transaction: buildFakeBase64Tx({ walletPubkey: wallet.solana }), requestId: 'dep-1' } },
         { body: { id: 'order-1', txSignature: 'sig-1' }, status: 201 },
       ]);
 
@@ -890,7 +895,7 @@ describe('buildLimitOrderCommands', () => {
     });
 
     it('recovers vault address by re-fetching when register reports "already registered"', async () => {
-      createTestWallet('lo-vault-race');
+      const wallet = createTestWallet('lo-vault-race');
 
       const logs = [];
       const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit: vi.fn() });
@@ -902,7 +907,7 @@ describe('buildLimitOrderCommands', () => {
         { body: { message: 'Vault not found' }, status: 404 }, // [1] getVault: miss
         { body: { message: 'vault already registered' }, status: 409 }, // [2] registerVault: race lost
         { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' } }, // [3] getVault retry: recovered
-        { body: { transaction: buildFakeBase64Tx(), requestId: 'dep-1' } },
+        { body: { transaction: buildFakeBase64Tx({ walletPubkey: wallet.solana }), requestId: 'dep-1' } },
         { body: { id: 'order-1', txSignature: 'sig-1' }, status: 201 },
       ]);
 
@@ -1564,23 +1569,91 @@ describe('outcome verification (fail-closed)', () => {
 
 // ============= Helpers =============
 
-/**
- * Build a minimal parseable legacy Solana transaction whose first account key
- * is the real wallet pubkey (writable, the only required signer) so
- * simulateSolanaAssetChanges can locate and track it. `extraWritableKey`, when
- * given, is a second writable non-signer account (used to simulate a token
- * account the wallet owns). Zero instructions — the outcome tests only care
- * about the mocked pre/post account snapshots, not the instruction contents.
- */
-function buildLimitOrderTx({ walletPubkey, extraWritableKey } = {}) {
-  const keys = extraWritableKey ? [walletPubkey, extraWritableKey] : [walletPubkey];
-  const header = Buffer.from([1, 0, 0]); // 1 required signer (wallet), 0 readonly signed, 0 readonly unsigned
+function testSeededAccount(base, seed, owner = TEST_TOKEN_PROGRAM) {
+  return base58Encode(crypto.createHash('sha256')
+    .update(Buffer.concat([base58Decode(base), Buffer.from(seed, 'utf8'), base58Decode(owner)]))
+    .digest());
+}
+
+function createWithSeedInstructionData(base, seed, owner = TEST_TOKEN_PROGRAM, { lamports = 2039280, space = 165 } = {}) {
+  const seedBytes = Buffer.from(seed, 'utf8');
+  const idx = Buffer.alloc(4); idx.writeUInt32LE(3);
+  const seedLen = Buffer.alloc(8); seedLen.writeBigUInt64LE(BigInt(seedBytes.length));
+  const lam = Buffer.alloc(8); lam.writeBigUInt64LE(BigInt(lamports));
+  const sp = Buffer.alloc(8); sp.writeBigUInt64LE(BigInt(space));
+  return Buffer.concat([idx, base58Decode(base), seedLen, seedBytes, lam, sp, base58Decode(owner)]);
+}
+
+function initializeAccount3InstructionData(owner) {
+  return Buffer.concat([Buffer.from([18]), base58Decode(owner)]);
+}
+
+function systemTransferInstructionData(lamports = 1000000000) {
+  const idx = Buffer.alloc(4); idx.writeUInt32LE(2);
+  const lam = Buffer.alloc(8); lam.writeBigUInt64LE(BigInt(lamports));
+  return Buffer.concat([idx, lam]);
+}
+
+function buildStaticDepositTx({
+  walletPubkey = generateSolanaWallet().address,
+  inputMint = TEST_WSOL_MINT,
+  vaultPubkey = TEST_VAULT_PUBKEY,
+  extraWritableKey,
+} = {}) {
+  const seed = 'test-order-seed';
+  const seededAcct = testSeededAccount(vaultPubkey, seed);
+  const isNative = inputMint === TEST_WSOL_MINT;
+  const sourceAta = extraWritableKey || (isNative ? null : generateSolanaWallet().address);
+  const keys = sourceAta
+    ? [walletPubkey, sourceAta, inputMint, seededAcct, TEST_TOKEN_PROGRAM, TEST_VAULT_PUBKEY]
+    : [walletPubkey, seededAcct, inputMint, TEST_TOKEN_PROGRAM, TEST_VAULT_PUBKEY];
+  const idxOf = (key) => {
+    const existing = keys.indexOf(key);
+    if (existing >= 0) return existing;
+    keys.push(key);
+    return keys.length - 1;
+  };
+  const tokenProgramIdx = idxOf(TEST_TOKEN_PROGRAM);
+  const systemProgramIdx = idxOf(TEST_VAULT_PUBKEY);
+  const vaultIdx = idxOf(vaultPubkey);
+  const seededIdx = idxOf(seededAcct);
+  const mintIdx = idxOf(inputMint);
+  const walletIdx = idxOf(walletPubkey);
+
+  const instructions = [
+    { programIdIndex: systemProgramIdx, accountIndexes: [walletIdx, seededIdx, vaultIdx], data: createWithSeedInstructionData(vaultPubkey, seed) },
+    { programIdIndex: tokenProgramIdx, accountIndexes: [seededIdx, mintIdx], data: initializeAccount3InstructionData(vaultPubkey) },
+  ];
+  if (isNative && !sourceAta) {
+    instructions.push({ programIdIndex: systemProgramIdx, accountIndexes: [walletIdx, seededIdx], data: systemTransferInstructionData() });
+  } else {
+    const sourceIdx = idxOf(sourceAta);
+    instructions.push({ programIdIndex: tokenProgramIdx, accountIndexes: [sourceIdx, mintIdx, seededIdx, walletIdx], data: Buffer.from([12, 64, 66, 15, 0, 0, 0, 0, 0, 6]) });
+  }
+
+  const writableCount = sourceAta ? 2 : 1;
+  const header = Buffer.from([1, 0, Math.max(0, keys.length - writableCount)]);
   const numKeys = Buffer.from([keys.length]);
   const keyBytes = Buffer.concat(keys.map((k) => base58Decode(k)));
   const blockhash = Buffer.alloc(32, 0x03);
-  const numInstructions = Buffer.from([0x00]);
-  const message = Buffer.concat([header, numKeys, keyBytes, blockhash, numInstructions]);
+  const encodedInstructions = instructions.map((ix) => Buffer.concat([
+    Buffer.from([ix.programIdIndex, ix.accountIndexes.length, ...ix.accountIndexes, ix.data.length]),
+    ix.data,
+  ]));
+  const message = Buffer.concat([header, numKeys, keyBytes, blockhash, Buffer.from([instructions.length]), ...encodedInstructions]);
   return Buffer.concat([Buffer.from([1]), Buffer.alloc(64), message]).toString('base64');
+}
+
+/**
+ * Build a parseable legacy Solana transaction whose first account key is the
+ * real wallet pubkey (writable, the only required signer) so
+ * simulateSolanaAssetChanges can locate and track it. extraWritableKey, when
+ * given, is a second writable non-signer account (used to simulate a token
+ * account the wallet owns). The instruction contents are a statically valid
+ * limit-order deposit so destination validation can pass before outcome checks.
+ */
+function buildLimitOrderTx({ walletPubkey, extraWritableKey, inputMint = TEST_WSOL_MINT, vaultPubkey = TEST_VAULT_PUBKEY } = {}) {
+  return buildStaticDepositTx({ walletPubkey, extraWritableKey, inputMint, vaultPubkey });
 }
 
 function buildTokenTransferCheckedTx({ walletPubkey, mint, destination }) {
@@ -1619,26 +1692,8 @@ function solanaTokenAccountInfo({ mint, owner, amount }) {
 }
 
 /**
- * Build a minimal valid base64-encoded Solana VersionedTransaction.
- * This is a simplified fake for testing — just needs to be parseable
- * by signSolanaTransaction (compact-u16 sig count + 64-byte sig slot + message).
+ * Build a valid parseable limit-order deposit transaction for command tests.
  */
-function buildFakeBase64Tx() {
-  // A valid, parseable legacy transaction with a single benign instruction:
-  // 1 signature slot, then a legacy message [header][2 account keys][blockhash]
-  // [1 instruction referencing a non-SPL program]. It must actually parse —
-  // assertSolanaInstructionsSafe (run before signing on this path) now rejects
-  // unparseable transactions rather than silently ignoring them.
-  const sigCount = Buffer.from([0x01]);
-  const emptySig = Buffer.alloc(64, 0);
-  const header = Buffer.from([1, 0, 1]); // 1 signer (writable), 1 readonly unsigned (the program)
-  const numKeys = Buffer.from([0x02]);
-  const signerKey = Buffer.alloc(32, 0x01); // account index 0 = signer / fee payer
-  const programKey = Buffer.alloc(32, 0x02); // account index 1 = an arbitrary (non-SPL) program
-  const blockhash = Buffer.alloc(32, 0x03);
-  const numInstructions = Buffer.from([0x01]);
-  // instruction: programIdIndex=1, 1 account (index 0), 1 data byte
-  const instruction = Buffer.from([0x01, 0x01, 0x00, 0x01, 0x00]);
-  const message = Buffer.concat([header, numKeys, signerKey, programKey, blockhash, numInstructions, instruction]);
-  return Buffer.concat([sigCount, emptySig, message]).toString('base64');
+function buildFakeBase64Tx({ walletPubkey, inputMint = TEST_WSOL_MINT, vaultPubkey = TEST_VAULT_PUBKEY } = {}) {
+  return buildStaticDepositTx({ walletPubkey, inputMint, vaultPubkey });
 }

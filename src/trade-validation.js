@@ -1989,6 +1989,7 @@ export function assertLimitOrderDepositDestination(txBase64, { walletAddress, in
       throw fail(`vault-seeded token account authority is ${initialized.owner} instead of expected vault owner ${vaultOwner}.`);
     }
   };
+  let sawValidDepositTransfer = false;
 
   for (const ix of parsed.instructions) {
     const programId = resolveStaticAccount(parsed, ix.programIdIndex);
@@ -2005,6 +2006,7 @@ export function assertLimitOrderDepositDestination(txBase64, { walletAddress, in
       if (from === null) throw fail('native transfer source is unresolvable (malformed transaction).');
       if (from !== walletAddress) continue; // not our funds
       requireTrustedDestination(accountAt(ix, 1), 'native transfer');
+      sawValidDepositTransfer = true;
       continue;
     }
 
@@ -2017,6 +2019,7 @@ export function assertLimitOrderDepositDestination(txBase64, { walletAddress, in
       // wallet. Use TransferChecked (below) for instruction-level mint binding.
       if (!walletAuthorizes(ix, 2)) continue;
       requireTrustedDestination(accountAt(ix, 1), 'token transfer');
+      sawValidDepositTransfer = true;
     } else if (discriminator === SPL_TRANSFER_CHECKED) {
       if (!walletAuthorizes(ix, 3)) continue;
       const mint = accountAt(ix, 1);
@@ -2024,8 +2027,12 @@ export function assertLimitOrderDepositDestination(txBase64, { walletAddress, in
         throw fail(`wallet-authorized TransferChecked uses mint ${mint || 'an address only resolvable via an address lookup table'} instead of deposit mint ${expectedMint}.`);
       }
       requireTrustedDestination(accountAt(ix, 2), 'TransferChecked');
+      sawValidDepositTransfer = true;
     }
   }
 
+  if (!sawValidDepositTransfer) {
+    throw fail('no wallet-authorized deposit transfer into a vault-seeded account was detected.');
+  }
   return { verified: true };
 }
