@@ -116,8 +116,9 @@ function bigIntToHex(n) {
 // ============= EVM Transaction =============
 
 async function buildEvmTransaction({ to, amount, token, privateKey, chain, max = false }) {
+  const chainId = CHAIN_IDS[chain];
+  if (!chainId) throw new Error(`Unsupported chain: ${chain}`);
   const rpcUrl = CHAIN_RPCS[chain] || CHAIN_RPCS.evm;
-  const chainId = CHAIN_IDS[chain] || 1;
 
   // Derive address and buffer for signing
   const privBuf = Buffer.from(privateKey, 'hex');
@@ -829,8 +830,9 @@ export async function sendTokens({ to, amount, chain, token = null, wallet = nul
  * Send tokens via WalletConnect (EVM only).
  */
 async function sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRun }) {
+  const chainId = CHAIN_IDS[chain];
+  if (!chainId) throw new Error(`Unsupported chain: ${chain}`);
   const rpcUrl = CHAIN_RPCS[chain] || CHAIN_RPCS.evm;
-  const chainId = CHAIN_IDS[chain] || 1;
 
   // Scoped to this specific chain, not just "any EVM account" — a session
   // approved only for a different chain must not be used to sign a transfer
