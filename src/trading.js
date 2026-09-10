@@ -3048,6 +3048,10 @@ EXAMPLES:
 
             } else if (isWalletConnect) {
               // EVM via WalletConnect: wallet signs and may broadcast.
+              // chainType is always 'evm' here (unguarded, unlike the two
+              // other call sites) -- the Solana WalletConnect path is fully
+              // handled above in the `if (chainConfig.type === 'solana')`
+              // branch, so this `else if` is only ever reached for EVM.
               // Scoped to this chain's ID, not just "any EVM account" -- a
               // session approved only for a different chain must not sign
               // here. EVM addresses are identical across chains, so the
