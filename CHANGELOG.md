@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.44.2
+
+### Patch Changes
+
+- [#604](https://github.com/nansen-ai/nansen-cli/pull/604) [`9d541d7`](https://github.com/nansen-ai/nansen-cli/commit/9d541d7d6aef232b0761846f6e716222f67798c4) Thanks [@kome12](https://github.com/kome12)! - Bind limit-order deposits to the trusted vault destination: reject any deposit whose wallet-sourced transfer (SPL token or native SOL) does not land in a token account this same transaction creates via CreateAccountWithSeed seeded off the user's vault. Covers both the SPL-token and native-SOL deposit paths.
+
+- [#600](https://github.com/nansen-ai/nansen-cli/pull/600) [`c86af55`](https://github.com/nansen-ai/nansen-cli/commit/c86af55dff3fa71c61726650ec66060b61d1918e) Thanks [@kome12](https://github.com/kome12)! - Isolate the response cache by credential and request context so cached
+  responses can no longer be shared across different API keys or API origins that
+  use the same cache directory. Cache keys now include the base URL, HTTP method,
+  and a hashed form of the effective credentials, and use SHA-256.
+
+- [#612](https://github.com/nansen-ai/nansen-cli/pull/612) [`492b441`](https://github.com/nansen-ai/nansen-cli/commit/492b441d49df6e256b3e63645e16644bdec3a56c) Thanks [@gulshngill](https://github.com/gulshngill)! - Reject hard-linked `.credentials` files in the wallet-password fallback write, so the credential write cannot chmod, truncate, or overwrite an unrelated file
+
+- [#611](https://github.com/nansen-ai/nansen-cli/pull/611) [`959225c`](https://github.com/nansen-ai/nansen-cli/commit/959225c1527540359763bb55a90f12fc4ffb14ea) Thanks [@gulshngill](https://github.com/gulshngill)! - Report `from_cache` telemetry from the API instance so it survives command handlers that rebuild their result, and pass it on the `alerts list --table` path, which previously never reported the field at all
+
+- [#609](https://github.com/nansen-ai/nansen-cli/pull/609) [`288f566`](https://github.com/nansen-ai/nansen-cli/commit/288f566b674f8b550b19b26b4721e3fe68cc54f6) Thanks [@gulshngill](https://github.com/gulshngill)! - Fix `from_cache` telemetry always reporting `false` on cache hits
+
+- [#586](https://github.com/nansen-ai/nansen-cli/pull/586) [`b254240`](https://github.com/nansen-ai/nansen-cli/commit/b25424008fe0202972ac706913721a3433f30d59) Thanks [@Kewe63](https://github.com/Kewe63)! - Tighten POSIX permissions when rewriting the fallback wallet credentials file and refuse non-regular credential paths.
+
+- [#615](https://github.com/nansen-ai/nansen-cli/pull/615) [`9166884`](https://github.com/nansen-ai/nansen-cli/commit/916688496c2c83dee17e81a9b6c753a94b8ff0be) Thanks [@teyrebaz33](https://github.com/teyrebaz33)! - Fix `nansen transfer`/`nansen trade execute` with `--wallet walletconnect` using any connected EVM account instead of verifying the WalletConnect session is actually approved for the chain being signed/broadcast on.
+
+  `getWalletConnectAddress('evm')` matched any account whose CAIP-2 chain tag started with `eip155:`, regardless of which specific chain it was approved for. Because EVM addresses are identical across chains, a session connected only to Ethereum mainnet would be silently used to sign a transaction destined for Base (or vice versa) -- nothing downstream (including the quote/request-intent binding checks) could catch this, since they only compare addresses, not chains.
+
+  `getWalletConnectAddress` now accepts an optional `chainId`, and when given, only returns an account the session has approved for that exact chain (mirroring the mainnet-only exact match already used for Solana in the same function). Every place that resolves a WalletConnect EVM address before signing or broadcasting a real transaction now passes the target chain ID and fails closed with a clear error instead of proceeding with a wrong-chain session: `nansen transfer`'s `sendTokensViaWalletConnect`, and `nansen trade execute`'s quote-building, pre-execute wallet-match check, and immediate pre-signing check for its EVM WalletConnect swap path.
+
 ## 1.44.1
 
 ### Patch Changes
