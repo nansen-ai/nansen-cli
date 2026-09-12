@@ -66,11 +66,49 @@ export async function consumeSSEStream(response, callbacks = {}) {
   const toolCalls = [];
   let conversationId = null;
   let errorPayload = null;
+  let done = false;
 
   const reader = response.body;
   const decoder = new TextDecoder();
   let buffer = '';
 
+  const processFrame = (frame) => {
+    for (const line of frame.split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      const payload = line.slice(6);
+      if (payload === '[DONE]') { done = true; return; }
+
+      let event;
+      try {
+        event = JSON.parse(payload);
+      } catch {
+        continue;
+      }
+
+      switch (event.type) {
+        case 'delta':
+          if (event.text) {
+            chunks.push(event.text);
+            if (onDelta) onDelta(event.text);
+          }
+          break;
+        case 'tool_call':
+          if (event.name) {
+            toolCalls.push(event.name);
+            if (onToolCall) onToolCall(event.name);
+          }
+          break;
+        case 'finish':
+          conversationId = event.conversation_id ?? null;
+          break;
+        case 'error':
+          errorPayload = event;
+          break;
+      }
+    }
+  };
+
+  outer:
   for await (const raw of reader) {
     buffer += decoder.decode(raw, { stream: true });
 
@@ -79,47 +117,19 @@ export async function consumeSSEStream(response, callbacks = {}) {
 
     // SSE: split on double-newline boundaries
     let boundary;
-    let done = false;
     while ((boundary = buffer.indexOf('\n\n')) !== -1) {
       const frame = buffer.slice(0, boundary);
       buffer = buffer.slice(boundary + 2);
-
-      for (const line of frame.split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        const payload = line.slice(6);
-        if (payload === '[DONE]') { done = true; break; }
-
-        let event;
-        try {
-          event = JSON.parse(payload);
-        } catch {
-          continue;
-        }
-
-        switch (event.type) {
-          case 'delta':
-            if (event.text) {
-              chunks.push(event.text);
-              if (onDelta) onDelta(event.text);
-            }
-            break;
-          case 'tool_call':
-            if (event.name) {
-              toolCalls.push(event.name);
-              if (onToolCall) onToolCall(event.name);
-            }
-            break;
-          case 'finish':
-            conversationId = event.conversation_id ?? null;
-            break;
-          case 'error':
-            errorPayload = event;
-            break;
-        }
-      }
-      if (done) break;
+      processFrame(frame);
+      if (done) break outer;
     }
-    if (done) break;
+  }
+
+  // Flush a trailing unterminated frame (stream closed without \n\n after
+  // the last event, e.g. 'finish' or a final 'delta').
+  if (!done && buffer.trim() !== '') {
+    buffer += decoder.decode(); // flush any pending multi-byte UTF-8 tail
+    processFrame(buffer);
   }
 
   if (errorPayload) {
