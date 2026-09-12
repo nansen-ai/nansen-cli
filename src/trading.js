@@ -121,7 +121,7 @@ export async function evmRpcCall(chain, method, params = []) {
       { code: 'RPC_HTTP_ERROR', status: res.status },
     );
   }
-  if (body.error) throw Object.assign(new Error(`RPC error (${method}): ${body.error.message}`), { code: 'RPC_JSON_ERROR' });
+  if (body.error) throw Object.assign(new Error(`RPC error (${method}): ${body.error.message}`), { code: 'RPC_JSON_ERROR', data: body.error.data });
   return body.result;
 }
 
@@ -895,7 +895,11 @@ export async function waitForReceipt(chain, txHash, timeoutMs = 180000, pollMs =
       if (receipt) {
         const status = parseInt(receipt.status, 16);
         if (status !== 1) {
-          throw new Error(`Transaction reverted on-chain (status: ${receipt.status}). Tx: ${txHash}`);
+          // Best-effort: try to explain WHY it reverted rather than leaving the
+          // user with a bare status code and no next step (issue #81).
+          const reason = await getRevertReason(chain, txHash, receipt.blockNumber).catch(() => null);
+          const reasonSuffix = reason ? ` Reason: ${reason}.` : '';
+          throw new Error(`Transaction reverted on-chain (status: ${receipt.status}).${reasonSuffix} Tx: ${txHash}`);
         }
         return receipt;
       }
@@ -1016,6 +1020,120 @@ export async function confirmEvmBroadcast(chain, signedTxHex, broadcasterTxHash,
   const hash = assertTxHashMatch(signedTxHex, broadcasterTxHash, label);
   const receipt = await waitForReceipt(chain, hash);
   return { receipt, hash };
+}
+
+// Known Solidity Panic(uint256) codes (0x4e487b71) — see the Solidity docs'
+// "Panic via assert" table. Anything not listed here still gets a code number.
+const PANIC_REASONS = {
+  0x01: 'assertion failed',
+  0x11: 'arithmetic overflow or underflow',
+  0x12: 'division or modulo by zero',
+  0x21: 'invalid enum value',
+  0x22: 'invalid storage byte array access',
+  0x31: '.pop() called on an empty array',
+  0x32: 'array index out of bounds',
+  0x41: 'out-of-memory allocation (array too large)',
+  0x51: 'call to a zero-initialized internal function pointer',
+};
+
+/**
+ * Decode ABI-encoded revert data from a failed `eth_call`/receipt replay into
+ * a human-readable string, when the selector is one of the two standard
+ * Solidity revert encodings. Returns null for anything it can't confidently
+ * decode (malformed data, or a custom error selector it doesn't know) rather
+ * than guessing — callers fall back to the raw hex or the RPC's message.
+ *
+ * @param {string} hexData - Revert data as returned by an RPC's `error.data` (0x...)
+ * @returns {string|null}
+ */
+export function decodeRevertReason(hexData) {
+  if (!hexData || typeof hexData !== 'string' || !hexData.startsWith('0x') || hexData.length < 10) return null;
+  const selector = hexData.slice(0, 10).toLowerCase();
+
+  if (selector === '0x08c379a2') {
+    // Error(string): [selector][offset(32B)][length(32B)][utf8 bytes, right-padded]
+    try {
+      const payload = hexData.slice(10);
+      const length = parseInt(payload.slice(64, 128), 16);
+      // The string bytes start 64 bytes into payload (past the offset + length
+      // header fields), so only payload.length/2 - 64 bytes are actually
+      // available for it — not the full payload.length/2. Guarding against the
+      // wrong bound let a moderately over-claimed length slip through: .slice()
+      // would silently truncate instead of throwing, producing a garbled,
+      // null-padded string instead of correctly falling back to null.
+      const availableBytes = (payload.length / 2) - 64;
+      if (!Number.isFinite(length) || length < 0 || length > availableBytes) return null;
+      const strHex = payload.slice(128, 128 + length * 2);
+      const message = Buffer.from(strHex, 'hex').toString('utf8');
+      return message || null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (selector === '0x4e487b71') {
+    // Panic(uint256): [selector][code(32B)]
+    try {
+      const code = parseInt(hexData.slice(10, 74), 16);
+      if (!Number.isFinite(code)) return null;
+      const desc = PANIC_REASONS[code] || `unrecognized panic code`;
+      return `panic: ${desc} (0x${code.toString(16)})`;
+    } catch {
+      return null;
+    }
+  }
+
+  // A custom Solidity error (`error InsufficientLiquidity()`) or a selector we
+  // don't recognize — surface the raw bytes rather than staying silent, but
+  // don't pretend to decode it.
+  return `unrecognized revert data ${hexData.length > 74 ? `${hexData.slice(0, 74)}…` : hexData}`;
+}
+
+/**
+ * Best-effort lookup of why a mined transaction reverted, by replaying it via
+ * `eth_call` at the exact block it was included in (state at 'latest' may
+ * have moved on since, which would replay against different balances/prices
+ * and give a misleading or absent error).
+ *
+ * Returns null — never throws — on anything inconclusive: no RPC configured,
+ * a network/transport error while replaying, or a replay that unexpectedly
+ * succeeds (the revert may have been due to a since-passed condition, e.g. a
+ * relative deadline). A null reason means "revert confirmed, cause unknown",
+ * not "the transaction actually succeeded" — waitForReceipt() only calls
+ * this after eth_getTransactionReceipt already reported status !== 1.
+ *
+ * @param {string} chain - Chain name
+ * @param {string} txHash - The reverted transaction's hash
+ * @param {string} blockNumber - 0x-hex block number the tx was mined in
+ * @returns {Promise<string|null>}
+ */
+export async function getRevertReason(chain, txHash, blockNumber) {
+  let tx;
+  try {
+    tx = await evmRpcCall(chain, 'eth_getTransactionByHash', [txHash]);
+  } catch {
+    return null;
+  }
+  if (!tx) return null;
+
+  try {
+    const callObj = { from: tx.from, to: tx.to, data: tx.input, value: tx.value || '0x0' };
+    if (tx.gas) callObj.gas = tx.gas;
+    await evmRpcCall(chain, 'eth_call', [callObj, blockNumber]);
+    // Replay didn't revert — inconclusive (e.g. a deadline that has since
+    // passed differently), not evidence the original tx actually succeeded.
+    return null;
+  } catch (e) {
+    if (e.code !== 'RPC_JSON_ERROR') return null; // couldn't even replay it — nothing to report
+    if (e.data) {
+      const decoded = decodeRevertReason(e.data);
+      if (decoded) return decoded;
+    }
+    // No usable `error.data` — some nodes only put the decoded string in the
+    // JSON-RPC error message itself (mirrors simulateEvmCall's fallback).
+    const m = (e.message || '').match(/^RPC error \(eth_call\): (.+)$/);
+    return m ? m[1] : null;
+  }
 }
 
 /**
