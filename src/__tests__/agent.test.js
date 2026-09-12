@@ -598,4 +598,37 @@ describe('consumeSSEStream', () => {
     const result = await consumeSSEStream(response);
     expect(result.text).toBe('ok');
   });
+
+  it('flushes a trailing delta chunk with no terminating blank line', async () => {
+    // Server closes the connection right after the last event, without a
+    // final \n\n. This is a realistic SSE termination pattern (socket
+    // close signals end-of-stream) and must not silently drop data.
+    const response = mockSSEResponse(
+      'data: {"type":"delta","text":"hello"}\n'
+    );
+    const result = await consumeSSEStream(response);
+    expect(result.text).toBe('hello');
+  });
+
+  it('flushes a trailing finish event with no terminating blank line', async () => {
+    const response = mockSSEResponse([
+      'data: {"type":"delta","text":"hi"}\n\n',
+      'data: {"type":"finish","conversation_id":"abc-123"}\n',
+    ]);
+    const result = await consumeSSEStream(response);
+    expect(result.text).toBe('hi');
+    expect(result.conversationId).toBe('abc-123');
+  });
+
+  it('does not flush a leftover buffer after [DONE] has already been seen', async () => {
+    // Guard against the flush accidentally re-processing/duplicating data
+    // when the stream terminates normally via [DONE].
+    const onDelta = vi.fn();
+    const response = mockSSEResponse(
+      'data: {"type":"delta","text":"before"}\n\ndata: [DONE]\n\n'
+    );
+    const result = await consumeSSEStream(response, { onDelta });
+    expect(result.text).toBe('before');
+    expect(onDelta).toHaveBeenCalledTimes(1);
+  });
 });
