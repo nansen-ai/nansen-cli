@@ -448,4 +448,43 @@ describe('createPaymentSignatures — cumulative cap enforcement', () => {
     }
     expect(results).toHaveLength(0);
   });
+
+  it('propagates corrupt-ledger failures instead of skipping to the next requirement', async () => {
+    vi.doMock('../wallet.js', () => ({
+      listWallets: () => ({ defaultWallet: 'test', wallets: [{ name: 'test', evm: '0xAddr', solana: 'SolAddr' }] }),
+      exportWallet: () => ({ evm: { address: '0xAddr', privateKey: '0xkey' }, solana: { address: 'SolAddr', privateKey: new Uint8Array(32) } }),
+      getWalletConfig: () => ({ passwordHash: null }),
+    }));
+    const ledgerError = Object.assign(new Error('ledger is corrupt'), { failClosedX402: true });
+    const recordPaymentAttempt = vi.fn();
+    vi.doMock('../x402-ledger.js', () => ({
+      assertCumulativeSpendAllowed: () => { throw ledgerError; },
+      recordPaymentAttempt,
+    }));
+
+    const paymentHeader = Buffer.from(JSON.stringify({
+      accepts: [{
+        scheme: 'exact',
+        network: 'eip155:8453',
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        amount: '10000',
+        pay_to: '0xRecipient',
+      }, {
+        scheme: 'exact',
+        network: 'eip155:8453',
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        amount: '10000',
+        pay_to: '0xRecipient',
+      }],
+    })).toString('base64');
+    const mockResponse = { headers: { get: (h) => h === 'payment-required' ? paymentHeader : null } };
+
+    const { createPaymentSignatures } = await import('../x402.js');
+    await expect(async () => {
+      for await (const _item of createPaymentSignatures(mockResponse, 'https://api.nansen.ai/test')) {
+        // no-op
+      }
+    }).rejects.toThrow(/ledger is corrupt/);
+    expect(recordPaymentAttempt).not.toHaveBeenCalled();
+  });
 });

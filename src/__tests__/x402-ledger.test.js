@@ -184,4 +184,61 @@ describe('recordPaymentAttempt and audit log', () => {
     const result = assertCumulativeSpendAllowed({ amountUsd: 0.02 });
     expect(result.ok).toBe(false);
   });
+
+  it('stores accepted spend as exact integer micro-dollars', async () => {
+    const { recordPaymentAttempt, finalizePaymentAttempt, assertCumulativeSpendAllowed, getDailySpendState, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+
+    const first = recordPaymentAttempt({ provider: 'local', amountUsd: 0.1, network: 'eip155:8453', asset: '0xt', symbol: 'USDC', amountRaw: '100000', payTo: '0xr', requestUrl: 'https://api.nansen.ai/test' });
+    finalizePaymentAttempt(first, { status: 'accepted' });
+    const second = recordPaymentAttempt({ provider: 'local', amountUsd: 0.2, network: 'eip155:8453', asset: '0xt', symbol: 'USDC', amountRaw: '200000', payTo: '0xr', requestUrl: 'https://api.nansen.ai/test' });
+    finalizePaymentAttempt(second, { status: 'accepted' });
+
+    const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
+    const spendFile = fs.readdirSync(ledgerDir).find((name) => name.startsWith('spend-'));
+    const stored = JSON.parse(fs.readFileSync(path.join(ledgerDir, spendFile), 'utf8'));
+    expect(stored).toMatchObject({ totalUsdMicros: '300000' });
+    expect(stored).not.toHaveProperty('totalUsd');
+    expect(getDailySpendState().totalUsd).toBe(0.3);
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.7 }).ok).toBe(true);
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.700001 }).ok).toBe(false);
+  });
+
+  it('reads legacy totalUsd ledger files for compatibility', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, getDailySpendState } = await import('../x402-ledger.js');
+    const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
+    fs.mkdirSync(ledgerDir, { recursive: true });
+    const today = new Date();
+    const yyyy = today.getUTCFullYear();
+    const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(today.getUTCDate()).padStart(2, '0');
+    fs.writeFileSync(path.join(ledgerDir, `spend-${yyyy}-${mm}-${dd}.json`), JSON.stringify({ totalUsd: 0.3 }));
+
+    expect(getDailySpendState().totalUsd).toBe(0.3);
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.7 }).ok).toBe(true);
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.700001 }).ok).toBe(false);
+  });
+
+  it('does not overwrite a corrupt ledger while finalizing an accepted payment', async () => {
+    const { recordPaymentAttempt, finalizePaymentAttempt, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+    const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
+    fs.mkdirSync(ledgerDir, { recursive: true });
+    const today = new Date();
+    const yyyy = today.getUTCFullYear();
+    const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(today.getUTCDate()).padStart(2, '0');
+    const spendPath = path.join(ledgerDir, `spend-${yyyy}-${mm}-${dd}.json`);
+    fs.writeFileSync(spendPath, 'NOT VALID JSON');
+
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const id = recordPaymentAttempt({ provider: 'local', amountUsd: 0.01, network: 'eip155:8453', asset: '0xt', symbol: 'USDC', amountRaw: '10000', payTo: '0xr', requestUrl: 'https://api.nansen.ai/test' });
+    finalizePaymentAttempt(id, { status: 'accepted' });
+
+    expect(fs.readFileSync(spendPath, 'utf8')).toBe('NOT VALID JSON');
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/could not update daily spend ledger/));
+    warn.mockRestore();
+  });
 });

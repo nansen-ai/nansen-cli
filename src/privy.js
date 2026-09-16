@@ -305,7 +305,13 @@ export async function* createPrivyPaymentSignatures(response, url) {
           console.error(`[x402] ${decision.reason}`);
           continue;
         }
-        const capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
+        let capCheck;
+        try {
+          capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
+        } catch (err) {
+          console.error(`[x402] ${err.message}`);
+          throw err;
+        }
         if (!capCheck.ok) {
           console.error(`[x402] ${capCheck.reason}`);
           continue;
@@ -372,7 +378,13 @@ export async function* createPrivyPaymentSignatures(response, url) {
           console.error(`[x402] ${svmDecision.reason}`);
           continue;
         }
-        const svmCapCheck = assertCumulativeSpendAllowed({ amountUsd: svmDecision.usd });
+        let svmCapCheck;
+        try {
+          svmCapCheck = assertCumulativeSpendAllowed({ amountUsd: svmDecision.usd });
+        } catch (err) {
+          console.error(`[x402] ${err.message}`);
+          throw err;
+        }
         if (!svmCapCheck.ok) {
           console.error(`[x402] ${svmCapCheck.reason}`);
           continue;

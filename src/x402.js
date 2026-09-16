@@ -121,7 +121,13 @@ async function buildPaymentForRequirement(requirement, exported, url, walletLabe
   }
 
   const { assertCumulativeSpendAllowed, recordPaymentAttempt } = await import('./x402-ledger.js');
-  const capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
+  let capCheck;
+  try {
+    capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
+  } catch (err) {
+    console.error(`[x402] ${err.message}`);
+    throw err;
+  }
   if (!capCheck.ok) {
     console.error(`[x402] ${capCheck.reason}`);
     return null;
@@ -233,7 +239,8 @@ export async function* createPaymentSignatures(response, url, options = {}) {
     try {
       const result = await buildPaymentForRequirement(req, exported, url, walletLabel);
       if (result) yield { signature: result.sig, network: req.network, asset: req.asset, paymentId: result.paymentId };
-    } catch {
+    } catch (err) {
+      if (err?.failClosedX402) throw err;
       // This payment option failed to build, try next
       continue;
     }

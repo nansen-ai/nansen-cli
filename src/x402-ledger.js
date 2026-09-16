@@ -8,9 +8,18 @@ import fs from 'fs';
 import path from 'path';
 
 export const DEFAULT_DAILY_MAX_AMOUNT_USD = 10.0;
+const MICRO_USD_SCALE = 1_000_000;
 
 // Session accumulator — lives in process memory only
-let sessionSpendUsd = 0;
+let sessionSpendMicros = 0n;
+
+export class X402LedgerError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'X402LedgerError';
+    this.failClosedX402 = true;
+  }
+}
 
 export function resolveDailySpendCapUsd() {
   const env = process.env.NANSEN_X402_DAILY_MAX_AMOUNT;
@@ -50,7 +59,35 @@ export function getDailySpendState(now = new Date()) {
   if (!fs.existsSync(filePath)) return { totalUsd: 0 };
   const raw = fs.readFileSync(filePath, 'utf8');
   const data = JSON.parse(raw); // intentional: callers handle thrown errors
-  return { totalUsd: Number(data.totalUsd) || 0 };
+  return { totalUsd: microsToUsd(readSpendMicrosFromData(data)) };
+}
+
+function usdToMicros(amountUsd) {
+  if (!Number.isFinite(amountUsd) || amountUsd < 0) {
+    throw new X402LedgerError(`Invalid x402 spend amount: ${amountUsd}`);
+  }
+  return BigInt(Math.round(amountUsd * MICRO_USD_SCALE));
+}
+
+function microsToUsd(micros) {
+  return Number(micros) / MICRO_USD_SCALE;
+}
+
+function readSpendMicrosFromData(data) {
+  if (data && data.totalUsdMicros !== undefined) {
+    const raw = String(data.totalUsdMicros);
+    if (/^\d+$/.test(raw)) return BigInt(raw);
+    throw new Error('Invalid totalUsdMicros');
+  }
+  if (data && data.totalUsd !== undefined) {
+    return usdToMicros(Number(data.totalUsd));
+  }
+  return 0n;
+}
+
+function readDailySpendMicros(filePath) {
+  const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  return readSpendMicrosFromData(data);
 }
 
 /**
@@ -58,8 +95,9 @@ export function getDailySpendState(now = new Date()) {
  * Throws on corrupt ledger (fail-closed: a corrupt ledger must not silently disable the cap).
  */
 export function assertCumulativeSpendAllowed({ amountUsd, now = new Date() }) {
+  const amountMicros = usdToMicros(amountUsd);
   const sessionCap = resolveSessionSpendCapUsd();
-  if (Number.isFinite(sessionCap) && sessionSpendUsd + amountUsd > sessionCap) {
+  if (Number.isFinite(sessionCap) && sessionSpendMicros + amountMicros > usdToMicros(sessionCap)) {
     return {
       ok: false,
       reason:
@@ -73,22 +111,19 @@ export function assertCumulativeSpendAllowed({ amountUsd, now = new Date() }) {
 
   const dir = getLedgerDir();
   const filePath = path.join(dir, getDailyFileName(now));
-  let dailyTotal = 0;
+  let dailyTotal = 0n;
   if (fs.existsSync(filePath)) {
-    let raw;
     try {
-      raw = fs.readFileSync(filePath, 'utf8');
-      const data = JSON.parse(raw);
-      dailyTotal = Number(data.totalUsd) || 0;
+      dailyTotal = readDailySpendMicros(filePath);
     } catch {
-      throw new Error(
+      throw new X402LedgerError(
         `x402 daily spend ledger is corrupt and cannot be read safely. ` +
         `To reset: remove ${filePath}. (fail-closed: not signing this payment)`,
       );
     }
   }
 
-  if (dailyTotal + amountUsd > dailyCap) {
+  if (dailyTotal + amountMicros > usdToMicros(dailyCap)) {
     const capStr = `$${dailyCap.toFixed(2)}`;
     return {
       ok: false,
@@ -176,7 +211,7 @@ export function finalizePaymentAttempt(id, patch) {
       } catch (err) {
         console.error(`[x402] Warning: could not update daily spend ledger: ${err.message}`);
       }
-      sessionSpendUsd += amountUsd;
+      sessionSpendMicros += usdToMicros(amountUsd);
     }
   }
   pendingAmounts.delete(id);
@@ -187,15 +222,20 @@ function incrementDailySpend(amountUsd, now = new Date()) {
   const filePath = path.join(dir, getDailyFileName(now));
   const tmpPath = filePath + '.tmp';
 
-  let current = 0;
+  const amountMicros = usdToMicros(amountUsd);
+  let current = 0n;
   if (fs.existsSync(filePath)) {
     try {
-      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      current = Number(data.totalUsd) || 0;
-    } catch { /* start from 0 if corrupt */ }
+      current = readDailySpendMicros(filePath);
+    } catch {
+      throw new X402LedgerError(
+        `x402 daily spend ledger is corrupt and cannot be updated safely. ` +
+        `To reset: remove ${filePath}. (fail-closed: preserving existing ledger)`,
+      );
+    }
   }
 
-  const updated = { totalUsd: current + amountUsd, updatedAt: new Date().toISOString() };
+  const updated = { totalUsdMicros: (current + amountMicros).toString(), updatedAt: new Date().toISOString() };
   ensureLedgerDir();
   fs.writeFileSync(tmpPath, JSON.stringify(updated), { mode: 0o600 });
   fs.renameSync(tmpPath, filePath);
@@ -203,5 +243,5 @@ function incrementDailySpend(amountUsd, now = new Date()) {
 
 // Exported for tests only
 export function _resetSessionSpend() {
-  sessionSpendUsd = 0;
+  sessionSpendMicros = 0n;
 }
