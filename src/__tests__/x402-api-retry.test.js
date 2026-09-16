@@ -26,6 +26,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('../x402-ledger.js', () => ({
+  finalizePaymentAttempt: vi.fn(),
+}));
+
+import { finalizePaymentAttempt } from '../x402-ledger.js';
 import { NansenAPI, RESPONSE_META, X402_PAYMENT_REJECTED, ErrorCode, NansenError } from '../api.js';
 
 function makeApi() {
@@ -36,6 +42,7 @@ describe('NansenAPI._x402Retry', () => {
   let mockFetch;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     mockFetch = vi.fn();
     vi.stubGlobal('fetch', mockFetch);
   });
@@ -260,5 +267,83 @@ describe('NansenAPI._x402Retry', () => {
       expect(err.code).toBe(ErrorCode.PAYMENT_AMBIGUOUS);
       expect(err.message).toMatch(/not attempting another payment/i);
     }
+  });
+});
+
+describe('NansenAPI._x402Retry — payment finalization', () => {
+  let mockFetch;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('finalizes as accepted when the paid response is ok', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ ok: true }), headers: new Map() });
+    const api = makeApi();
+    await api._x402Retry('sig', null, null, 'https://api.nansen.ai/test', {}, {}, null, { paymentId: 'pid-1' });
+    expect(finalizePaymentAttempt).toHaveBeenCalledWith('pid-1', expect.objectContaining({ status: 'accepted' }));
+  });
+
+  it('finalizes as rejected for a readable non-5xx rejection', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 402, json: async () => ({ error: 'rejected' }) });
+    const api = makeApi();
+    await api._x402Retry('sig', null, null, 'https://api.nansen.ai/test', {}, {}, null, { paymentId: 'pid-2' });
+    expect(finalizePaymentAttempt).toHaveBeenCalledWith('pid-2', expect.objectContaining({ status: 'rejected' }));
+  });
+
+  it('finalizes as ambiguous for a 5xx response after transmission', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 503, json: async () => ({}) });
+    const api = makeApi();
+    await expect(api._x402Retry('sig', null, null, 'https://api.nansen.ai/test', {}, {}, null, { paymentId: 'pid-3' }))
+      .rejects.toMatchObject({ code: ErrorCode.PAYMENT_AMBIGUOUS });
+    expect(finalizePaymentAttempt).toHaveBeenCalledWith('pid-3', expect.objectContaining({ status: 'ambiguous' }));
+  });
+
+  it('finalizes as ambiguous when fetch fails after transmission', async () => {
+    mockFetch.mockRejectedValue(new TypeError('network down'));
+    const api = makeApi();
+    await expect(api._x402Retry('sig', null, null, 'https://api.nansen.ai/test', {}, {}, null, { paymentId: 'pid-4' }))
+      .rejects.toMatchObject({ code: ErrorCode.PAYMENT_AMBIGUOUS });
+    expect(finalizePaymentAttempt).toHaveBeenCalledWith('pid-4', expect.objectContaining({ status: 'ambiguous' }));
+  });
+
+  it('finalizes as ambiguous when an ok response body is unreadable', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockRejectedValue(new SyntaxError('bad json')),
+    });
+    const api = makeApi();
+    await expect(api._x402Retry('sig', null, null, 'https://api.nansen.ai/test', {}, {}, null, { paymentId: 'pid-5' }))
+      .rejects.toMatchObject({ code: ErrorCode.PAYMENT_AMBIGUOUS });
+    expect(finalizePaymentAttempt).toHaveBeenCalledWith('pid-5', expect.objectContaining({ status: 'ambiguous' }));
+  });
+
+  it('logs a clearer message for insufficient-balance rejections and records reason', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 402,
+      json: async () => ({ error: 'insufficient balance for transfer', code: 'INSUFFICIENT_BALANCE' }),
+    });
+    const api = makeApi();
+    await api._x402Retry('sig', null, 'eip155:8453', 'https://api.nansen.ai/test', {}, {}, null, { paymentId: 'pid-6' });
+    const logOutput = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(logOutput).toMatch(/insufficient balance/i);
+    expect(finalizePaymentAttempt).toHaveBeenCalledWith('pid-6', expect.objectContaining({ status: 'rejected', reason: 'INSUFFICIENT_BALANCE' }));
+    consoleSpy.mockRestore();
+  });
+
+  it('skips finalization when paymentMeta has no paymentId', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ ok: true }), headers: new Map() });
+    const api = makeApi();
+    await api._x402Retry('sig', null, null, 'https://api.nansen.ai/test', {}, {}, null, {});
+    expect(finalizePaymentAttempt).not.toHaveBeenCalled();
   });
 });

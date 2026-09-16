@@ -112,26 +112,23 @@ async function hasPermit2Allowance(network, token, owner, amount) {
 
 /**
  * Build a payment signature for a single requirement.
- * @returns {string|null} Base64 payment signature, or null on failure
+ * @returns {{ sig: string, paymentId: string }|null}
  */
-async function buildPaymentForRequirement(requirement, exported, url) {
+async function buildPaymentForRequirement(requirement, exported, url, walletLabel) {
   const decision = evaluatePaymentRequirement(requirement);
   if (!decision.ok) {
     console.error(`[x402] ${decision.reason}`);
     return null;
   }
 
-  // exportWallet returns a null key for a chain the wallet file doesn't hold.
-  // Skip that option with a clear reason instead of failing on the missing key.
-  const rail = isEvmNetwork(requirement.network) ? 'evm' : 'solana';
-  if (!exported[rail]?.privateKey || !exported[rail]?.address) {
-    const chain = rail === 'evm' ? 'EVM' : 'Solana';
-    console.error(
-      `[x402] Skipping ${requirement.network} option: wallet "${exported.name}" has no ${chain} key. ` +
-      'Create a wallet with both keys (nansen wallet create) and make it the default (nansen wallet default <name>).',
-    );
+  const { assertCumulativeSpendAllowed, recordPaymentAttempt } = await import('./x402-ledger.js');
+  const capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
+  if (!capCheck.ok) {
+    console.error(`[x402] ${capCheck.reason}`);
     return null;
   }
+
+  let sig = null;
 
   if (isEvmNetwork(requirement.network)) {
     if (!await hasSufficientEvmPaymentBalance(requirement, exported.evm.address)) return null;
@@ -153,19 +150,16 @@ async function buildPaymentForRequirement(requirement, exported, url) {
         return null;
       }
     }
-    return createEvmPaymentPayload(
+    sig = await createEvmPaymentPayload(
       requirement,
       exported.evm.privateKey,
       exported.evm.address,
       url,
     );
-  }
-
-  if (isSvmNetwork(requirement.network)) {
-    if (!await hasSufficientSvmPaymentBalance(requirement, exported.solana.address)) return null;
+  } else if (isSvmNetwork(requirement.network)) {
     const rpcUrl = getSolanaRpcUrl(requirement.network);
     const blockhash = await fetchRecentBlockhash(rpcUrl);
-    return createSvmPaymentPayload(
+    sig = await createSvmPaymentPayload(
       requirement,
       exported.solana.privateKey,
       exported.solana.address,
@@ -174,7 +168,21 @@ async function buildPaymentForRequirement(requirement, exported, url) {
     );
   }
 
-  return null;
+  if (!sig) return null;
+
+  const paymentId = recordPaymentAttempt({
+    provider: 'local',
+    walletLabel: walletLabel || 'local wallet',
+    network: decision.network,
+    asset: decision.asset,
+    symbol: decision.symbol,
+    amountUsd: decision.usd,
+    amountRaw: decision.amountRaw,
+    payTo: decision.payTo,
+    requestUrl: url,
+  });
+
+  return { sig, paymentId };
 }
 
 /**
@@ -222,15 +230,13 @@ export async function* createPaymentSignatures(response, url, options = {}) {
     return;
   }
 
+  const walletLabel = `local wallet ${walletName}`;
   for (const req of ranked) {
     try {
-      const sig = await buildPaymentForRequirement(req, exported, url);
-      if (sig) yield { signature: sig, network: req.network, asset: req.asset };
-    } catch (err) {
-      // This payment option failed to build; say why and try the next one
-      // (otherwise a malformed server option only surfaces as a generic
-      // payment failure once every option is exhausted).
-      console.error(`[x402] Skipping ${req.network} option: ${err?.message || err}`);
+      const result = await buildPaymentForRequirement(req, exported, url, walletLabel);
+      if (result) yield { signature: result.sig, network: req.network, asset: req.asset, paymentId: result.paymentId };
+    } catch {
+      // This payment option failed to build, try next
       continue;
     }
   }

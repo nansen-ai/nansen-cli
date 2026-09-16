@@ -160,7 +160,13 @@ async function prepareRequirement(requirement) {
   const decision = evaluatePaymentRequirement(requirement);
   if (!decision.ok) return { error: new Error(decision.reason) };
 
-  // Resolve the WalletConnect signer scoped to this exact chain. EVM
+  const { assertCumulativeSpendAllowed, recordPaymentAttempt } = await import('./x402-ledger.js');
+  const capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
+  if (!capCheck.ok) {
+    throw new NansenError(capCheck.reason, ErrorCode.PAYMENT_REQUIRED, 402);
+  }
+
+  // 3. Resolve the WalletConnect signer scoped to this exact chain. EVM
   // addresses are identical across chains, so "some account exists in the
   // session" can't prove the session was actually approved for THIS chain --
   // only the CAIP-2 chain tag can (mirrors getWalletConnectAddress's chainId
@@ -256,8 +262,20 @@ async function signRequirement(requirement, fromAddress, typedData, resource) {
     accepted: requirement,
   });
 
+  const paymentId = recordPaymentAttempt({
+    provider: 'walletconnect',
+    walletLabel: 'WalletConnect',
+    network: decision.network,
+    asset: decision.asset,
+    symbol: decision.symbol,
+    amountUsd: decision.usd,
+    amountRaw: decision.amountRaw,
+    payTo: decision.payTo,
+    requestUrl: (paymentRequirements.resource || {}).url || null,
+  });
+
   process.stderr.write(`x402: Payment signed successfully.\n`);
-  return headerValue;
+  return { signature: headerValue, paymentId, network: requirement.network, asset: requirement.asset };
 }
 
 /**

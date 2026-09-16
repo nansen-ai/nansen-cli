@@ -291,6 +291,8 @@ export async function* createPrivyPaymentSignatures(response, url) {
   const requirements = parsePaymentRequirements(response);
   if (!requirements || requirements.length === 0) return;
 
+  const { assertCumulativeSpendAllowed, recordPaymentAttempt } = await import('./x402-ledger.js');
+
   const client = getClient();
 
   // EVM requirements
@@ -302,6 +304,11 @@ export async function* createPrivyPaymentSignatures(response, url) {
         const decision = evaluatePaymentRequirement(requirement);
         if (!decision.ok) {
           console.error(`[x402] ${decision.reason}`);
+          continue;
+        }
+        const capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
+        if (!capCheck.ok) {
+          console.error(`[x402] ${capCheck.reason}`);
           continue;
         }
         try {
@@ -333,7 +340,19 @@ export async function* createPrivyPaymentSignatures(response, url) {
             accepted: requirement,
           });
 
-          yield { signature: header, network: requirement.network, asset: requirement.asset };
+          const paymentId = recordPaymentAttempt({
+            provider: 'privy',
+            walletLabel: `Privy wallet ${evmWallet.id}`,
+            network: decision.network,
+            asset: decision.asset,
+            symbol: decision.symbol,
+            amountUsd: decision.usd,
+            amountRaw: decision.amountRaw,
+            payTo: decision.payTo,
+            requestUrl: url,
+          });
+
+          yield { signature: header, network: requirement.network, asset: requirement.asset, paymentId };
         } catch (err) {
           console.error(`[x402] Privy EVM signing failed for ${requirement.network}: ${err.message}`);
           continue;
@@ -353,6 +372,11 @@ export async function* createPrivyPaymentSignatures(response, url) {
         const svmDecision = evaluatePaymentRequirement(requirement);
         if (!svmDecision.ok) {
           console.error(`[x402] ${svmDecision.reason}`);
+          continue;
+        }
+        const svmCapCheck = assertCumulativeSpendAllowed({ amountUsd: svmDecision.usd });
+        if (!svmCapCheck.ok) {
+          console.error(`[x402] ${svmCapCheck.reason}`);
           continue;
         }
         try {
@@ -379,7 +403,19 @@ export async function* createPrivyPaymentSignatures(response, url) {
           }
 
           const header = Buffer.from(JSON.stringify(payload)).toString("base64");
-          yield { signature: header, network: requirement.network, asset: requirement.asset };
+          const paymentId = recordPaymentAttempt({
+            provider: 'privy',
+            walletLabel: `Privy wallet ${solWallet.id}`,
+            network: svmDecision.network,
+            asset: svmDecision.asset,
+            symbol: svmDecision.symbol,
+            amountUsd: svmDecision.usd,
+            amountRaw: svmDecision.amountRaw,
+            payTo: svmDecision.payTo,
+            requestUrl: url,
+          });
+
+          yield { signature: header, network: requirement.network, asset: requirement.asset, paymentId };
         } catch (err) {
           console.error(`[x402] Privy Solana signing failed for ${requirement.network}: ${err.message}`);
           continue;

@@ -3877,7 +3877,7 @@ describe('NansenAPI', () => {
       const autoPayApi = new NansenAPI(null, 'https://api.nansen.ai');
 
       // Mock the dynamic import — resetModules ensures fresh resolution
-      const mockHandleX402Payment = vi.fn().mockResolvedValue('mock-payment-sig');
+      const mockHandleX402Payment = vi.fn().mockResolvedValue({ signature: 'mock-payment-sig', network: 'eip155:8453', asset: '0xUSDC', paymentId: 'mock-pid' });
       vi.resetModules();
       vi.doMock('../walletconnect-x402.js', () => ({ createWalletConnectPaymentSignatures: wcSignatures(mockHandleX402Payment) }));
 
@@ -3925,7 +3925,7 @@ describe('NansenAPI', () => {
         .mockResolvedValueOnce(errorResponse)
         .mockResolvedValueOnce(successResponse);
 
-      const mockHandleX402Payment = vi.fn().mockResolvedValue('mock-payment-sig');
+      const mockHandleX402Payment = vi.fn().mockResolvedValue({ signature: 'mock-payment-sig', network: 'eip155:8453', asset: '0xUSDC', paymentId: 'mock-pid' });
       vi.resetModules();
       vi.doMock('../walletconnect-x402.js', () => ({ createWalletConnectPaymentSignatures: wcSignatures(mockHandleX402Payment) }));
 
@@ -4107,7 +4107,7 @@ describe('NansenAPI', () => {
           .mockResolvedValueOnce(errorResponse)
           .mockResolvedValueOnce(ambiguousRetryResponse);
 
-        const mockHandleX402Payment = vi.fn().mockResolvedValue('walletconnect-sig');
+        const mockHandleX402Payment = vi.fn().mockResolvedValue({ signature: 'walletconnect-sig', network: 'eip155:8453', asset: '0xUSDC', paymentId: 'mock-pid' });
         vi.resetModules();
         // Skip real wallet/crypto setup: yield one already-built local signature.
         vi.doMock('../x402.js', () => ({
@@ -4170,7 +4170,7 @@ describe('NansenAPI', () => {
 
         // No local wallet configured (empty temp HOME) — falls straight
         // through to WalletConnect, which signs successfully.
-        const mockHandleX402Payment = vi.fn().mockResolvedValue('walletconnect-sig');
+        const mockHandleX402Payment = vi.fn().mockResolvedValue({ signature: 'walletconnect-sig', network: 'eip155:8453', asset: '0xUSDC', paymentId: 'mock-pid' });
         vi.resetModules();
         vi.doMock('../walletconnect-x402.js', () => ({ createWalletConnectPaymentSignatures: wcSignatures(mockHandleX402Payment) }));
 
