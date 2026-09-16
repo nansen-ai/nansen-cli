@@ -404,3 +404,48 @@ describe('parsePaymentRequirements — UTF-8 decode', () => {
     expect(parsed[0].extra.name).toBe('USD₮0');
   });
 });
+
+describe('createPaymentSignatures — cumulative cap enforcement', () => {
+  let mockFetch;
+
+  beforeEach(() => {
+    mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('yields no signature when the daily cap would be exceeded', async () => {
+    vi.doMock('../wallet.js', () => ({
+      listWallets: () => ({ defaultWallet: 'test', wallets: [{ name: 'test', evm: '0xAddr', solana: 'SolAddr' }] }),
+      exportWallet: () => ({ evm: { address: '0xAddr', privateKey: '0xkey' }, solana: { address: 'SolAddr', privateKey: new Uint8Array(32) } }),
+      getWalletConfig: () => ({ passwordHash: null }),
+    }));
+    vi.doMock('../x402-ledger.js', () => ({
+      assertCumulativeSpendAllowed: () => ({ ok: false, reason: 'Refusing to auto-pay: daily cap exceeded' }),
+      recordPaymentAttempt: vi.fn().mockReturnValue('mock-id'),
+    }));
+
+    const paymentHeader = Buffer.from(JSON.stringify({
+      accepts: [{
+        scheme: 'exact',
+        network: 'eip155:8453',
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        amount: '10000',
+        pay_to: '0xRecipient',
+      }],
+    })).toString('base64');
+
+    const mockResponse = { headers: { get: (h) => h === 'payment-required' ? paymentHeader : null } };
+
+    const { createPaymentSignatures } = await import('../x402.js');
+    const results = [];
+    for await (const item of createPaymentSignatures(mockResponse, 'https://api.nansen.ai/test')) {
+      results.push(item);
+    }
+    expect(results).toHaveLength(0);
+  });
+});
