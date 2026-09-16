@@ -1168,6 +1168,9 @@ export class NansenAPI {
                 // treated as an ordinary payment failure — there is no other
                 // provider to fall back to here, and retrying could double-pay.
                 if (privyErr instanceof NansenError && privyErr.code === ErrorCode.PAYMENT_AMBIGUOUS) throw privyErr;
+                if (privyErr?.failClosedX402) {
+                  throw new NansenError(privyErr.message, ErrorCode.PAYMENT_REQUIRED, 402);
+                }
                 message = safeSessionError ? 'x402 Privy payment failed. Check the wallet configuration and balance.' : `x402 Privy payment failed: ${privyErr.message}`;
               }
             } else {
@@ -1186,6 +1189,9 @@ export class NansenAPI {
                 // WalletConnect below — that would sign and transmit a second,
                 // independent payment authorization for the same request.
                 if (localErr instanceof NansenError && localErr.code === ErrorCode.PAYMENT_AMBIGUOUS) throw localErr;
+                if (localErr?.failClosedX402) {
+                  throw new NansenError(localErr.message, ErrorCode.PAYMENT_REQUIRED, 402);
+                }
                 /* local wallet unavailable for any other reason, try WalletConnect */
               }
 
