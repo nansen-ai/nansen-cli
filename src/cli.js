@@ -14,7 +14,7 @@ import { buildAgentCommands } from './commands/agent.js';
 import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
-import { buildPagination, parseSort } from './query-options.js';
+import { buildPagination, parseSort, parseCsvOption } from './query-options.js';
 export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
 import { compareSemver } from './semver.js';
@@ -119,26 +119,6 @@ export function parseFields(fieldsOption) {
     throw new NansenError('--fields must be a comma-separated string', ErrorCode.INVALID_PARAMS);
   }
   return fieldsOption.split(',').map(f => f.trim()).filter(f => f.length > 0);
-}
-
-/**
- * Split a CLI option into a trimmed comma-separated list, rejecting non-string
- * values (e.g. `--flag true` is parsed by parseArgs as the boolean `true`).
- * Also accepts an array (parseArgs collects repeated flags into one), validating
- * every element is a string rather than rejecting the array outright.
- */
-function splitCsvOption(value, flagName) {
-  if (value === undefined || value === '') return undefined;
-  if (Array.isArray(value)) {
-    if (!value.every(v => typeof v === 'string')) {
-      throw new NansenError(`--${flagName} values must be strings`, ErrorCode.INVALID_PARAMS);
-    }
-    return value;
-  }
-  if (typeof value !== 'string') {
-    throw new NansenError(`--${flagName} must be a string`, ErrorCode.INVALID_PARAMS);
-  }
-  return value.split(',').map(s => s.trim()).filter(Boolean);
 }
 
 /**
@@ -1369,7 +1349,7 @@ export function buildCommands(deps = {}) {
           if (addresses.length > 100) {
             throw new NansenError('Batch is limited to 100 addresses', ErrorCode.INVALID_PARAMS);
           }
-          const parsedInclude = splitCsvOption(options.include, 'include');
+          const parsedInclude = parseCsvOption(options.include, 'include');
           const include = (parsedInclude && parsedInclude.length > 0) ? parsedInclude : ['labels', 'balance'];
           const delayMs = options.delay ? parseInt(options.delay) : 1000;
           return batchProfile(apiInstance, { addresses, chain, include, delayMs });
@@ -1564,9 +1544,9 @@ export function buildCommands(deps = {}) {
       const handlers = {
         'screener': () => {
           const traderType = options['trader-type'];
-          const sectorsFilter = splitCsvOption(options['sectors-filter'], 'sectors-filter');
-          const smLabelFilter = splitCsvOption(options['sm-label-filter'], 'sm-label-filter');
-          const traderLabelFilter = splitCsvOption(options['trader-label-filter'], 'trader-label-filter');
+          const sectorsFilter = parseCsvOption(options['sectors-filter'], 'sectors-filter');
+          const smLabelFilter = parseCsvOption(options['sm-label-filter'], 'sm-label-filter');
+          const traderLabelFilter = parseCsvOption(options['trader-label-filter'], 'trader-label-filter');
           return apiInstance.perpScreener({ filters, orderBy, pagination, days, traderType, sectorsFilter, smLabelFilter, traderLabelFilter });
         },
         'leaderboard': () => {
@@ -1631,7 +1611,7 @@ export function buildCommands(deps = {}) {
       const pagination = buildPagination(options);
 
       // Screener-specific filter options
-      const tags = splitCsvOption(options.tags, 'tags');
+      const tags = parseCsvOption(options.tags, 'tags');
       const minLiquidity = options['min-liquidity'] != null ? Number(options['min-liquidity']) : undefined;
       const maxLiquidity = options['max-liquidity'] != null ? Number(options['max-liquidity']) : undefined;
       const minUniqueTraders24h = options['min-unique-traders-24h'] != null ? Number(options['min-unique-traders-24h']) : undefined;

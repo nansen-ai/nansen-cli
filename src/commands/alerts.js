@@ -4,6 +4,7 @@
  */
 
 import { NansenError, ErrorCode } from '../api.js';
+import { parseCsvOption } from '../query-options.js';
 
 // ============= Formatting =============
 
@@ -105,29 +106,10 @@ function deepMergePlain(target, source) {
 }
 
 /**
- * Normalise a comma-separated-string-or-array option to an array of strings,
- * or undefined if absent. Used for --chains/--events style flags that accept
- * either a single "a,b,c" string or repeated flags collected into an array.
- */
-function parseCsvList(val, name) {
-  if (val === undefined || val === '') return undefined;
-  if (Array.isArray(val)) {
-    if (!val.every(v => typeof v === 'string')) {
-      throw new NansenError(`--${name} values must be strings`, ErrorCode.INVALID_PARAMS);
-    }
-    return val;
-  }
-  if (typeof val !== 'string') {
-    throw new NansenError(`--${name} must be a string`, ErrorCode.INVALID_PARAMS);
-  }
-  return val.split(',').map(s => s.trim()).filter(Boolean);
-}
-
-/**
  * Normalise chains option to array.
  */
 function parseChains(chainsOpt) {
-  return parseCsvList(chainsOpt, 'chains');
+  return parseCsvOption(chainsOpt, 'chains');
 }
 
 /**
@@ -232,7 +214,7 @@ export function buildCommonTokenTransferData(options) {
   const chains = parseChains(options.chains);
   if (chains) data.chains = chains;
 
-  const events = parseCsvList(options.events, 'events');
+  const events = parseCsvOption(options.events, 'events');
   if (events) data.events = events;
 
   const usdRange = buildRange(options['usd-min'], options['usd-max'], 'usd');
