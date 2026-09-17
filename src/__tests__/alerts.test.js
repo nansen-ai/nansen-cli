@@ -129,6 +129,11 @@ describe('alerts string option validation', () => {
     expect(buildCommonTokenTransferData({ events: 'send, receive' }).events).toEqual(['send', 'receive']);
   });
 
+  it('trims whitespace and drops blank entries in a repeated --events/--chains flag, matching the CSV-string path', () => {
+    expect(buildCommonTokenTransferData({ events: [' send ', '', 'receive'] }).events).toEqual(['send', 'receive']);
+    expect(buildSmTokenFlowsData({ chains: [' ethereum ', '', 'base'] }).chains).toEqual(['ethereum', 'base']);
+  });
+
   it('rejects non-string --token-sector/--exclude-token-sector values', () => {
     expect(() => buildSmTokenFlowsData({ 'token-sector': true })).toThrow(/--token-sector/);
     expect(() => buildSmTokenFlowsData({ 'token-sector': [true] })).toThrow(/--token-sector/);

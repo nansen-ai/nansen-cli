@@ -45,7 +45,7 @@ export function parseCsvOption(val, name) {
     if (!val.every(v => typeof v === 'string')) {
       throw new NansenError(`--${name} values must be strings`, ErrorCode.INVALID_PARAMS);
     }
-    return val;
+    return val.map(v => v.trim()).filter(Boolean);
   }
   if (typeof val !== 'string') {
     throw new NansenError(`--${name} must be a string`, ErrorCode.INVALID_PARAMS);

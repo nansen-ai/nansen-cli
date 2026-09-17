@@ -5708,6 +5708,13 @@ describe('perp screener CLI handler - new filters (ECINT-6680)', () => {
     ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
   });
 
+  it('trims whitespace and drops blank entries in a repeated --sectors-filter flag, matching the CSV-string path', async () => {
+    await commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': [' Crypto:AI ', '', 'Crypto:DeFi'] });
+    expect(mockApi.perpScreener).toHaveBeenCalledWith(expect.objectContaining({
+      sectorsFilter: ['Crypto:AI', 'Crypto:DeFi'],
+    }));
+  });
+
   it('rejects non-string sm-label-filter (JSON-primitive) with INVALID_PARAMS instead of crashing', async () => {
     await expect(
       commands['perp'](['screener'], mockApi, {}, { 'sm-label-filter': true })
