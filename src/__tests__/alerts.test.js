@@ -104,4 +104,13 @@ describe('alerts string option validation', () => {
   it('accepts a repeated --chains flag where every element is a string', () => {
     expect(buildSmTokenFlowsData({ chains: ['ethereum', 'base'] }).chains).toEqual(['ethereum', 'base']);
   });
+
+  it('rejects falsy non-string --token/--subject/--chains (false/null) instead of silently dropping the filter', () => {
+    expect(() => buildCommonTokenTransferData({ token: false })).toThrow(/--token/);
+    expect(() => buildCommonTokenTransferData({ token: null })).toThrow(/--token/);
+    expect(() => buildCommonTokenTransferData({ subject: false })).toThrow(/--subject/);
+    expect(() => buildCommonTokenTransferData({ subject: null })).toThrow(/--subject/);
+    expect(() => buildSmTokenFlowsData({ chains: false })).toThrow(/--chains/);
+    expect(() => buildSmTokenFlowsData({ chains: null })).toThrow(/--chains/);
+  });
 });

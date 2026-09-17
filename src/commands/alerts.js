@@ -54,7 +54,7 @@ export function formatAlertsTable(alerts) {
  * Handles single string or array of strings (from repeated --token flags).
  */
 function parseTokens(tokenArg) {
-  if (!tokenArg) return undefined;
+  if (tokenArg === undefined || tokenArg === '') return undefined;
   const tokens = Array.isArray(tokenArg) ? tokenArg : [tokenArg];
   return tokens.map(t => {
     if (typeof t !== 'string') {
@@ -71,7 +71,7 @@ function parseTokens(tokenArg) {
  * Handles single string or array (from repeated --subject flags).
  */
 function parseSubjects(subjectArg) {
-  if (!subjectArg) return undefined;
+  if (subjectArg === undefined || subjectArg === '') return undefined;
   const subjects = Array.isArray(subjectArg) ? subjectArg : [subjectArg];
   return subjects.map(s => {
     if (typeof s !== 'string') {
@@ -108,7 +108,7 @@ function deepMergePlain(target, source) {
  * Normalise chains option to array.
  */
 function parseChains(chainsOpt) {
-  if (!chainsOpt) return undefined;
+  if (chainsOpt === undefined || chainsOpt === '') return undefined;
   if (Array.isArray(chainsOpt)) {
     if (!chainsOpt.every(c => typeof c === 'string')) {
       throw new NansenError('--chains values must be strings', ErrorCode.INVALID_PARAMS);
