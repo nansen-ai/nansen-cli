@@ -4206,6 +4206,21 @@ describe('profiler batch command', () => {
     expect(mockApi.addressLabels).toHaveBeenCalled();
     expect(mockApi.addressBalance).toHaveBeenCalled();
   });
+
+  it('falls back to the default include for an all-commas --include (splits to blank tokens)', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+    await commands['profiler'](['batch'], mockApi, {}, {
+      addresses: '0x0000000000000000000000000000000000000001',
+      include: ',,',
+      delay: '0'
+    });
+    expect(mockApi.addressLabels).toHaveBeenCalled();
+    expect(mockApi.addressBalance).toHaveBeenCalled();
+  });
 });
 
 // =================== profiler trace ===================

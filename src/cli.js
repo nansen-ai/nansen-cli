@@ -1361,7 +1361,8 @@ export function buildCommands(deps = {}) {
           if (addresses.length > 100) {
             throw new NansenError('Batch is limited to 100 addresses', ErrorCode.INVALID_PARAMS);
           }
-          const include = splitCsvOption(options.include, 'include') || ['labels', 'balance'];
+          const parsedInclude = splitCsvOption(options.include, 'include');
+          const include = (parsedInclude && parsedInclude.length > 0) ? parsedInclude : ['labels', 'balance'];
           const delayMs = options.delay ? parseInt(options.delay) : 1000;
           return batchProfile(apiInstance, { addresses, chain, include, delayMs });
         },
