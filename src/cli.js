@@ -115,7 +115,22 @@ export function filterFields(data, fields) {
  */
 export function parseFields(fieldsOption) {
   if (!fieldsOption) return null;
+  if (typeof fieldsOption !== 'string') {
+    throw new NansenError('--fields must be a comma-separated string', ErrorCode.INVALID_PARAMS);
+  }
   return fieldsOption.split(',').map(f => f.trim()).filter(f => f.length > 0);
+}
+
+/**
+ * Split a CLI option into a trimmed comma-separated list, rejecting non-string
+ * values (e.g. `--flag true` is parsed by parseArgs as the boolean `true`).
+ */
+function splitCsvOption(value, flagName) {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') {
+    throw new NansenError(`--${flagName} must be a string`, ErrorCode.INVALID_PARAMS);
+  }
+  return value.split(',').map(s => s.trim()).filter(Boolean);
 }
 
 /**
@@ -1346,7 +1361,7 @@ export function buildCommands(deps = {}) {
           if (addresses.length > 100) {
             throw new NansenError('Batch is limited to 100 addresses', ErrorCode.INVALID_PARAMS);
           }
-          const include = options.include ? options.include.split(',').map(s => s.trim()) : ['labels', 'balance'];
+          const include = splitCsvOption(options.include, 'include') || ['labels', 'balance'];
           const delayMs = options.delay ? parseInt(options.delay) : 1000;
           return batchProfile(apiInstance, { addresses, chain, include, delayMs });
         },
@@ -1540,15 +1555,9 @@ export function buildCommands(deps = {}) {
       const handlers = {
         'screener': () => {
           const traderType = options['trader-type'];
-          const sectorsFilter = options['sectors-filter']
-            ? options['sectors-filter'].split(',').map(s => s.trim()).filter(Boolean)
-            : undefined;
-          const smLabelFilter = options['sm-label-filter']
-            ? options['sm-label-filter'].split(',').map(s => s.trim()).filter(Boolean)
-            : undefined;
-          const traderLabelFilter = options['trader-label-filter']
-            ? options['trader-label-filter'].split(',').map(s => s.trim()).filter(Boolean)
-            : undefined;
+          const sectorsFilter = splitCsvOption(options['sectors-filter'], 'sectors-filter');
+          const smLabelFilter = splitCsvOption(options['sm-label-filter'], 'sm-label-filter');
+          const traderLabelFilter = splitCsvOption(options['trader-label-filter'], 'trader-label-filter');
           return apiInstance.perpScreener({ filters, orderBy, pagination, days, traderType, sectorsFilter, smLabelFilter, traderLabelFilter });
         },
         'leaderboard': () => {
@@ -1613,7 +1622,7 @@ export function buildCommands(deps = {}) {
       const pagination = buildPagination(options);
 
       // Screener-specific filter options
-      const tags = options.tags ? options.tags.split(',').map(t => t.trim()) : undefined;
+      const tags = splitCsvOption(options.tags, 'tags');
       const minLiquidity = options['min-liquidity'] != null ? Number(options['min-liquidity']) : undefined;
       const maxLiquidity = options['max-liquidity'] != null ? Number(options['max-liquidity']) : undefined;
       const minUniqueTraders24h = options['min-unique-traders-24h'] != null ? Number(options['min-unique-traders-24h']) : undefined;
