@@ -113,4 +113,34 @@ describe('alerts string option validation', () => {
     expect(() => buildSmTokenFlowsData({ chains: false })).toThrow(/--chains/);
     expect(() => buildSmTokenFlowsData({ chains: null })).toThrow(/--chains/);
   });
+
+  it('rejects a non-string/boolean-containing --events instead of sending it as-is', () => {
+    expect(() => buildCommonTokenTransferData({ events: true })).toThrow(/--events/);
+    expect(() => buildCommonTokenTransferData({ events: [true] })).toThrow(/--events/);
+    expect(() => buildCommonTokenTransferData({ events: ['send', true] })).toThrow(/--events/);
+  });
+
+  it('accepts valid --events as CSV string or array', () => {
+    expect(buildCommonTokenTransferData({ events: 'send,receive' }).events).toEqual(['send', 'receive']);
+    expect(buildCommonTokenTransferData({ events: ['send', 'receive'] }).events).toEqual(['send', 'receive']);
+  });
+
+  it('rejects non-string --token-sector/--exclude-token-sector values', () => {
+    expect(() => buildSmTokenFlowsData({ 'token-sector': true })).toThrow(/--token-sector/);
+    expect(() => buildSmTokenFlowsData({ 'token-sector': [true] })).toThrow(/--token-sector/);
+    expect(() => buildCommonTokenTransferData({ 'exclude-token-sector': false })).toThrow(/--exclude-token-sector/);
+    expect(() => buildCommonTokenTransferData({ 'exclude-token-sector': ['defi', null] })).toThrow(/--exclude-token-sector/);
+  });
+
+  it('rejects non-string --signature-hash values', () => {
+    expect(() => buildSmartContractCallData({ 'signature-hash': true })).toThrow(/--signature-hash/);
+    expect(() => buildSmartContractCallData({ 'signature-hash': ['0xa9059cbb', true] })).toThrow(/--signature-hash/);
+  });
+
+  it('accepts valid --signature-hash as single string or array', () => {
+    expect(buildSmartContractCallData({ 'signature-hash': '0xa9059cbb' }).signatureHash).toEqual(['0xa9059cbb']);
+    expect(buildSmartContractCallData({ 'signature-hash': ['0xa9059cbb', '0x23b872dd'] }).signatureHash).toEqual([
+      '0xa9059cbb', '0x23b872dd',
+    ]);
+  });
 });

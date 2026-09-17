@@ -105,20 +105,29 @@ function deepMergePlain(target, source) {
 }
 
 /**
+ * Normalise a comma-separated-string-or-array option to an array of strings,
+ * or undefined if absent. Used for --chains/--events style flags that accept
+ * either a single "a,b,c" string or repeated flags collected into an array.
+ */
+function parseCsvList(val, name) {
+  if (val === undefined || val === '') return undefined;
+  if (Array.isArray(val)) {
+    if (!val.every(v => typeof v === 'string')) {
+      throw new NansenError(`--${name} values must be strings`, ErrorCode.INVALID_PARAMS);
+    }
+    return val;
+  }
+  if (typeof val !== 'string') {
+    throw new NansenError(`--${name} must be a string`, ErrorCode.INVALID_PARAMS);
+  }
+  return val.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+/**
  * Normalise chains option to array.
  */
 function parseChains(chainsOpt) {
-  if (chainsOpt === undefined || chainsOpt === '') return undefined;
-  if (Array.isArray(chainsOpt)) {
-    if (!chainsOpt.every(c => typeof c === 'string')) {
-      throw new NansenError('--chains values must be strings', ErrorCode.INVALID_PARAMS);
-    }
-    return chainsOpt;
-  }
-  if (typeof chainsOpt !== 'string') {
-    throw new NansenError('--chains must be a string', ErrorCode.INVALID_PARAMS);
-  }
-  return chainsOpt.split(',').map(s => s.trim()).filter(Boolean);
+  return parseCsvList(chainsOpt, 'chains');
 }
 
 /**
@@ -161,10 +170,16 @@ function buildRange(minVal, maxVal, name) {
 
 /**
  * Normalise a repeatable string option to array, or undefined if absent.
+ * Validates every element is a string so a stray boolean/number (from a
+ * repeated flag, or the option itself) doesn't reach the API payload.
  */
-function normArray(val) {
-  if (!val) return undefined;
-  return Array.isArray(val) ? val : [val];
+function normArray(val, name) {
+  if (val === undefined || val === '') return undefined;
+  const arr = Array.isArray(val) ? val : [val];
+  if (!arr.every(v => typeof v === 'string')) {
+    throw new NansenError(`--${name} values must be strings`, ErrorCode.INVALID_PARAMS);
+  }
+  return arr;
 }
 
 /**
@@ -190,9 +205,9 @@ export function buildSmTokenFlowsData(options) {
   if (tokens) data.inclusion = { ...data.inclusion, tokens };
   if (excludeTokens) data.exclusion = { ...data.exclusion, tokens: excludeTokens };
 
-  const sectors = normArray(options['token-sector']);
+  const sectors = normArray(options['token-sector'], 'token-sector');
   if (sectors) data.inclusion = { ...data.inclusion, tokenSectors: sectors };
-  const excludeSectors = normArray(options['exclude-token-sector']);
+  const excludeSectors = normArray(options['exclude-token-sector'], 'exclude-token-sector');
   if (excludeSectors) data.exclusion = { ...data.exclusion, tokenSectors: excludeSectors };
 
   if (options['token-age-max'] !== undefined) {
@@ -217,9 +232,8 @@ export function buildCommonTokenTransferData(options) {
   const chains = parseChains(options.chains);
   if (chains) data.chains = chains;
 
-  if (options.events) {
-    data.events = typeof options.events === 'string' ? options.events.split(',') : options.events;
-  }
+  const events = parseCsvList(options.events, 'events');
+  if (events) data.events = events;
 
   const usdRange = buildRange(options['usd-min'], options['usd-max'], 'usd');
   if (usdRange) data.usdValue = usdRange;
@@ -238,9 +252,9 @@ export function buildCommonTokenTransferData(options) {
   if (tokens) data.inclusion = { ...data.inclusion, tokens };
   if (excludeTokens) data.exclusion = { ...data.exclusion, tokens: excludeTokens };
 
-  const sectors = normArray(options['token-sector']);
+  const sectors = normArray(options['token-sector'], 'token-sector');
   if (sectors) data.inclusion = { ...data.inclusion, tokenSectors: sectors };
-  const excludeSectors = normArray(options['exclude-token-sector']);
+  const excludeSectors = normArray(options['exclude-token-sector'], 'exclude-token-sector');
   if (excludeSectors) data.exclusion = { ...data.exclusion, tokenSectors: excludeSectors };
 
   const tokenAgeMin = options['token-age-min'];
@@ -275,11 +289,8 @@ export function buildSmartContractCallData(options) {
   const usdRange = buildRange(options['usd-min'], options['usd-max'], 'usd');
   if (usdRange) data.usdValue = usdRange;
 
-  if (options['signature-hash']) {
-    data.signatureHash = Array.isArray(options['signature-hash'])
-      ? options['signature-hash']
-      : [options['signature-hash']];
-  }
+  const signatureHashes = normArray(options['signature-hash'], 'signature-hash');
+  if (signatureHashes) data.signatureHash = signatureHashes;
 
   const callers = parseSubjects(options.caller);
   const contracts = parseSubjects(options.contract);
