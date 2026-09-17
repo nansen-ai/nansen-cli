@@ -94,4 +94,14 @@ describe('alerts string option validation', () => {
       { type: 'wallet', value: '0x1' },
     ]);
   });
+
+  it('rejects a non-string element in a repeated --chains flag instead of accepting it silently', () => {
+    // parseArgs turns repeated `--chains ethereum --chains true` into
+    // ['ethereum', true]; the array branch used to skip type-checking entirely.
+    expect(() => buildSmTokenFlowsData({ chains: ['ethereum', true] })).toThrow(/--chains/);
+  });
+
+  it('accepts a repeated --chains flag where every element is a string', () => {
+    expect(buildSmTokenFlowsData({ chains: ['ethereum', 'base'] }).chains).toEqual(['ethereum', 'base']);
+  });
 });

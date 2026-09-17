@@ -109,7 +109,12 @@ function deepMergePlain(target, source) {
  */
 function parseChains(chainsOpt) {
   if (!chainsOpt) return undefined;
-  if (Array.isArray(chainsOpt)) return chainsOpt;
+  if (Array.isArray(chainsOpt)) {
+    if (!chainsOpt.every(c => typeof c === 'string')) {
+      throw new NansenError('--chains values must be strings', ErrorCode.INVALID_PARAMS);
+    }
+    return chainsOpt;
+  }
   if (typeof chainsOpt !== 'string') {
     throw new NansenError('--chains must be a string', ErrorCode.INVALID_PARAMS);
   }
@@ -629,7 +634,7 @@ USAGE:
           if (options.type) alerts = alerts.filter(a => a.type === options.type);
           if (flags.enabled) alerts = alerts.filter(a => a.isEnabled === true);
           if (flags.disabled) alerts = alerts.filter(a => a.isEnabled === false);
-          if (options['token-address']) {
+          if (options['token-address'] !== undefined && options['token-address'] !== '') {
             if (typeof options['token-address'] !== 'string') {
               throw new NansenError('--token-address must be a string', ErrorCode.INVALID_PARAMS);
             }
@@ -639,7 +644,7 @@ USAGE:
               return allTokens.some(t => t.address?.toLowerCase() === addr);
             });
           }
-          if (options.chain) {
+          if (options.chain !== undefined && options.chain !== '') {
             if (typeof options.chain !== 'string') {
               throw new NansenError('--chain must be a string', ErrorCode.INVALID_PARAMS);
             }

@@ -759,6 +759,22 @@ describe('alerts list — client-side filtering', () => {
       .rejects.toThrow('--chain must be a string');
   });
 
+  it('rejects a falsy non-string --token-address (false/null) instead of silently skipping the filter', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { 'token-address': false }))
+      .rejects.toThrow('--token-address must be a string');
+    await expect(cmd(['list'], mockApi, {}, { 'token-address': null }))
+      .rejects.toThrow('--token-address must be a string');
+  });
+
+  it('rejects a falsy non-string --chain (false/null) instead of silently skipping the filter', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { chain: false }))
+      .rejects.toThrow('--chain must be a string');
+    await expect(cmd(['list'], mockApi, {}, { chain: null }))
+      .rejects.toThrow('--chain must be a string');
+  });
+
   it('should match --chain against "all" even when no explicit match', async () => {
     const { mockApi, cmd } = setup();
     const result = await cmd(['list'], mockApi, {}, { chain: 'arbitrum' });
