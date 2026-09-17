@@ -124,9 +124,17 @@ export function parseFields(fieldsOption) {
 /**
  * Split a CLI option into a trimmed comma-separated list, rejecting non-string
  * values (e.g. `--flag true` is parsed by parseArgs as the boolean `true`).
+ * Also accepts an array (parseArgs collects repeated flags into one), validating
+ * every element is a string rather than rejecting the array outright.
  */
 function splitCsvOption(value, flagName) {
   if (value === undefined || value === '') return undefined;
+  if (Array.isArray(value)) {
+    if (!value.every(v => typeof v === 'string')) {
+      throw new NansenError(`--${flagName} values must be strings`, ErrorCode.INVALID_PARAMS);
+    }
+    return value;
+  }
   if (typeof value !== 'string') {
     throw new NansenError(`--${flagName} must be a string`, ErrorCode.INVALID_PARAMS);
   }

@@ -125,6 +125,10 @@ describe('alerts string option validation', () => {
     expect(buildCommonTokenTransferData({ events: ['send', 'receive'] }).events).toEqual(['send', 'receive']);
   });
 
+  it('trims whitespace around comma-separated --events (e.g. "send, receive")', () => {
+    expect(buildCommonTokenTransferData({ events: 'send, receive' }).events).toEqual(['send', 'receive']);
+  });
+
   it('rejects non-string --token-sector/--exclude-token-sector values', () => {
     expect(() => buildSmTokenFlowsData({ 'token-sector': true })).toThrow(/--token-sector/);
     expect(() => buildSmTokenFlowsData({ 'token-sector': [true] })).toThrow(/--token-sector/);

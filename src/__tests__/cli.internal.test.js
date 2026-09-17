@@ -3173,6 +3173,23 @@ describe('SCHEMA', () => {
     ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
   });
 
+  it('accepts a repeated --tags flag (parseArgs array) instead of rejecting it as non-string', async () => {
+    const mockApi = { pmMarketScreener: vi.fn().mockResolvedValue({ markets: [] }) };
+    const commands = buildCommands({});
+    await commands['prediction-market'](['market-screener'], mockApi, {}, { tags: ['defi', 'nft'] });
+    expect(mockApi.pmMarketScreener).toHaveBeenCalledWith(expect.objectContaining({
+      tags: ['defi', 'nft'],
+    }));
+  });
+
+  it('rejects a non-string element in a repeated --tags flag', async () => {
+    const mockApi = { pmMarketScreener: vi.fn().mockResolvedValue({ markets: [] }) };
+    const commands = buildCommands({});
+    await expect(
+      commands['prediction-market'](['market-screener'], mockApi, {}, { tags: ['defi', true] })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
   // Note: returns removed in minimal schema (skills document output fields)
 
   it('should include option defaults', () => {
@@ -5675,6 +5692,19 @@ describe('perp screener CLI handler - new filters (ECINT-6680)', () => {
   it('rejects non-string sectors-filter (JSON-primitive) with INVALID_PARAMS instead of crashing', async () => {
     await expect(
       commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': true })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('accepts a repeated --sectors-filter flag (parseArgs array) instead of rejecting it as non-string', async () => {
+    await commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': ['Crypto:AI', 'Crypto:DeFi'] });
+    expect(mockApi.perpScreener).toHaveBeenCalledWith(expect.objectContaining({
+      sectorsFilter: ['Crypto:AI', 'Crypto:DeFi'],
+    }));
+  });
+
+  it('rejects a non-string element in a repeated --sectors-filter flag', async () => {
+    await expect(
+      commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': ['Crypto:AI', true] })
     ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
   });
 
