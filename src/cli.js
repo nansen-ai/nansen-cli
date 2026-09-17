@@ -126,7 +126,7 @@ export function parseFields(fieldsOption) {
  * values (e.g. `--flag true` is parsed by parseArgs as the boolean `true`).
  */
 function splitCsvOption(value, flagName) {
-  if (value === undefined) return undefined;
+  if (value === undefined || value === '') return undefined;
   if (typeof value !== 'string') {
     throw new NansenError(`--${flagName} must be a string`, ErrorCode.INVALID_PARAMS);
   }

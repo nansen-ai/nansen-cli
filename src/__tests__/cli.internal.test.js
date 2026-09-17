@@ -4175,6 +4175,21 @@ describe('profiler batch command', () => {
       })
     ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
   });
+
+  it('falls back to the default include (labels,balance) for an empty --include, not an empty set', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+    await commands['profiler'](['batch'], mockApi, {}, {
+      addresses: '0x0000000000000000000000000000000000000001',
+      include: '',
+      delay: '0'
+    });
+    expect(mockApi.addressLabels).toHaveBeenCalled();
+    expect(mockApi.addressBalance).toHaveBeenCalled();
+  });
 });
 
 // =================== profiler trace ===================
@@ -5642,5 +5657,11 @@ describe('perp screener CLI handler - new filters (ECINT-6680)', () => {
     await expect(
       commands['perp'](['screener'], mockApi, {}, { 'trader-label-filter': true })
     ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('treats an empty --sectors-filter as "no filter" (undefined), not an empty-array filter', async () => {
+    await commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': '' });
+    const call = mockApi.perpScreener.mock.calls[0][0];
+    expect(call.sectorsFilter).toBeUndefined();
   });
 });
