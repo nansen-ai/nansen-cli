@@ -114,7 +114,7 @@ export function filterFields(data, fields) {
  * Parse comma-separated fields string
  */
 export function parseFields(fieldsOption) {
-  if (!fieldsOption) return null;
+  if (fieldsOption === undefined || fieldsOption === '') return null;
   if (typeof fieldsOption !== 'string') {
     throw new NansenError('--fields must be a comma-separated string', ErrorCode.INVALID_PARAMS);
   }

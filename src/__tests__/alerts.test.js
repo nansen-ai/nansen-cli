@@ -55,3 +55,43 @@ describe('alerts numeric range validation', () => {
     expect(buildSmTokenFlowsData({}).inflow_1h).toBeUndefined();
   });
 });
+
+/**
+ * parseArgs JSON.parses option values, so `--chains true` / `--token true`
+ * etc. arrive here as JS primitives, not strings. parseChains/parseTokens/
+ * parseSubjects used to call .split()/.lastIndexOf()/.indexOf() directly on
+ * these values, crashing with a raw TypeError instead of an actionable
+ * INVALID_PARAMS error.
+ */
+describe('alerts string option validation', () => {
+  it('rejects non-string --chains instead of crashing on .split()', () => {
+    expect(() => buildSmTokenFlowsData({ chains: true })).toThrow(/--chains/);
+  });
+
+  it('rejects non-string --token instead of crashing on .lastIndexOf()', () => {
+    expect(() => buildSmTokenFlowsData({ token: true })).toThrow(/--token/);
+  });
+
+  it('rejects a non-string element in a repeated --token flag', () => {
+    expect(() => buildSmTokenFlowsData({ token: ['0x1:ethereum', true] })).toThrow(/--token/);
+  });
+
+  it('rejects non-string --subject instead of crashing on .indexOf()', () => {
+    expect(() => buildCommonTokenTransferData({ subject: true })).toThrow(/--subject/);
+  });
+
+  it('rejects non-string --caller/--contract on smart-contract-call', () => {
+    expect(() => buildSmartContractCallData({ caller: true })).toThrow(/--subject/);
+    expect(() => buildSmartContractCallData({ contract: true })).toThrow(/--subject/);
+  });
+
+  it('accepts valid string --chains/--token/--subject unaffected by the guard', () => {
+    expect(buildSmTokenFlowsData({ chains: 'ethereum,base' }).chains).toEqual(['ethereum', 'base']);
+    expect(buildCommonTokenTransferData({ token: '0x1:ethereum' }).inclusion.tokens).toEqual([
+      { address: '0x1', chain: 'ethereum' },
+    ]);
+    expect(buildCommonTokenTransferData({ subject: 'wallet:0x1' }).subjects).toEqual([
+      { type: 'wallet', value: '0x1' },
+    ]);
+  });
+});

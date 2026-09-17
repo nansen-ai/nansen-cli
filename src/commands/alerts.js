@@ -57,6 +57,9 @@ function parseTokens(tokenArg) {
   if (!tokenArg) return undefined;
   const tokens = Array.isArray(tokenArg) ? tokenArg : [tokenArg];
   return tokens.map(t => {
+    if (typeof t !== 'string') {
+      throw new NansenError('--token values must be strings', ErrorCode.INVALID_PARAMS);
+    }
     const colonIdx = t.lastIndexOf(':');
     if (colonIdx === -1) throw new NansenError(`Invalid token format: "${t}". Expected address:chain`, ErrorCode.INVALID_PARAMS);
     return { address: t.slice(0, colonIdx), chain: t.slice(colonIdx + 1) };
@@ -71,6 +74,9 @@ function parseSubjects(subjectArg) {
   if (!subjectArg) return undefined;
   const subjects = Array.isArray(subjectArg) ? subjectArg : [subjectArg];
   return subjects.map(s => {
+    if (typeof s !== 'string') {
+      throw new NansenError('--subject values must be strings', ErrorCode.INVALID_PARAMS);
+    }
     const colonIdx = s.indexOf(':');
     if (colonIdx === -1) throw new NansenError(`Invalid subject format: "${s}". Expected type:value`, ErrorCode.INVALID_PARAMS);
     return { type: s.slice(0, colonIdx), value: s.slice(colonIdx + 1) };
@@ -104,6 +110,9 @@ function deepMergePlain(target, source) {
 function parseChains(chainsOpt) {
   if (!chainsOpt) return undefined;
   if (Array.isArray(chainsOpt)) return chainsOpt;
+  if (typeof chainsOpt !== 'string') {
+    throw new NansenError('--chains must be a string', ErrorCode.INVALID_PARAMS);
+  }
   return chainsOpt.split(',').map(s => s.trim()).filter(Boolean);
 }
 
@@ -621,6 +630,9 @@ USAGE:
           if (flags.enabled) alerts = alerts.filter(a => a.isEnabled === true);
           if (flags.disabled) alerts = alerts.filter(a => a.isEnabled === false);
           if (options['token-address']) {
+            if (typeof options['token-address'] !== 'string') {
+              throw new NansenError('--token-address must be a string', ErrorCode.INVALID_PARAMS);
+            }
             const addr = options['token-address'].toLowerCase();
             alerts = alerts.filter(a => {
               const allTokens = [...(a.data?.inclusion?.tokens ?? []), ...(a.data?.exclusion?.tokens ?? [])];
@@ -628,6 +640,9 @@ USAGE:
             });
           }
           if (options.chain) {
+            if (typeof options.chain !== 'string') {
+              throw new NansenError('--chain must be a string', ErrorCode.INVALID_PARAMS);
+            }
             const ch = options.chain.toLowerCase();
             alerts = alerts.filter(a => {
               const chains = a.data?.chains;

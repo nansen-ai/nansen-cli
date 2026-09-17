@@ -747,6 +747,18 @@ describe('alerts list — client-side filtering', () => {
     expect(result.map(a => a.id)).toEqual(['2', '4']);
   });
 
+  it('rejects non-string --token-address (JSON-primitive) instead of crashing', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { 'token-address': true }))
+      .rejects.toThrow('--token-address must be a string');
+  });
+
+  it('rejects non-string --chain (JSON-primitive) instead of crashing', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { chain: true }))
+      .rejects.toThrow('--chain must be a string');
+  });
+
   it('should match --chain against "all" even when no explicit match', async () => {
     const { mockApi, cmd } = setup();
     const result = await cmd(['list'], mockApi, {}, { chain: 'arbitrum' });
@@ -3277,6 +3289,15 @@ describe('parseFields', () => {
 
   it('rejects a non-string value (JSON-primitive) with INVALID_PARAMS instead of crashing', () => {
     expect(() => parseFields(true)).toThrowError(
+      expect.objectContaining({ code: ErrorCode.INVALID_PARAMS })
+    );
+  });
+
+  it('rejects falsy non-string values (--fields false / --fields null) instead of silently returning null', () => {
+    expect(() => parseFields(false)).toThrowError(
+      expect.objectContaining({ code: ErrorCode.INVALID_PARAMS })
+    );
+    expect(() => parseFields(null)).toThrowError(
       expect.objectContaining({ code: ErrorCode.INVALID_PARAMS })
     );
   });
