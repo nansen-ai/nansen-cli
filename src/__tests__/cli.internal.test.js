@@ -3147,9 +3147,24 @@ describe('parseSort with special characters', () => {
     expect(result).toEqual([{ field: 'field', direction: 'ASC' }]);
   });
 
-  it('should handle empty field name gracefully', () => {
-    const result = parseSort(':asc', undefined);
-    expect(result).toEqual([{ field: '', direction: 'ASC' }]);
+  it('should reject an empty field name instead of sending it upstream', () => {
+    expect(() => parseSort(':asc', undefined)).toThrow(NansenError);
+    expect(() => parseSort(':asc', undefined)).toThrow('--sort needs a field name');
+    expect(() => parseSort(' :desc', undefined)).toThrow('--sort needs a field name');
+  });
+
+  it('should reject a direction other than asc/desc instead of sending it upstream', () => {
+    for (const bad of ['pnl_usd:sideways', 'pnl_usd:up', 'pnl_usd:descending']) {
+      let error;
+      try { parseSort(bad, undefined); } catch (e) { error = e; }
+      expect(error).toBeInstanceOf(NansenError);
+      expect(error.code).toBe(ErrorCode.INVALID_PARAMS);
+      expect(error.message).toContain('asc or desc');
+    }
+  });
+
+  it('should still accept a trailing colon as the default direction', () => {
+    expect(parseSort('pnl_usd:', undefined)).toEqual([{ field: 'pnl_usd', direction: 'DESC' }]);
   });
 
   it('should handle case-insensitive direction', () => {

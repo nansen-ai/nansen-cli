@@ -26,8 +26,17 @@ export function parseSort(sortOption, orderByOption) {
   if (orderByOption) return orderByOption;
   if (!sortOption) return undefined;
   const parts = String(sortOption).split(':');
-  const field = parts[0];
-  const direction = (parts[1] || 'desc').toUpperCase();
+  const field = parts[0].trim();
+  const direction = (parts[1] || 'desc').trim().toUpperCase();
+  if (!field) {
+    throw new NansenError('--sort needs a field name, e.g. --sort value_usd:desc', ErrorCode.INVALID_PARAMS);
+  }
+  if (direction !== 'ASC' && direction !== 'DESC') {
+    throw new NansenError(
+      `--sort direction must be asc or desc, got "${parts[1]}" (e.g. --sort ${field}:desc)`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
   return [{ field, direction }];
 }
 
