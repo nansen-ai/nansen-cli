@@ -2439,6 +2439,32 @@ describe('buildCommands', () => {
       );
     });
 
+    it('should resolve ENS names for the other profiler subcommands when --chain is omitted', async () => {
+      const ens = await import('../ens.js');
+      vi.spyOn(ens, 'isEnsName').mockReturnValue(true);
+      vi.spyOn(ens, 'resolveAddress').mockResolvedValue({
+        address: '0x0000000000000000000000000000000000000001',
+        ensName: 'vitalik.eth'
+      });
+      const mockApi = {
+        addressLabels: vi.fn().mockResolvedValue({ data: [] }),
+        addressBalance: vi.fn().mockResolvedValue({ data: [] }),
+      };
+
+      await commands['profiler'](['labels'], mockApi, {}, { address: 'vitalik.eth' });
+      await commands['profiler'](['balance'], mockApi, {}, { address: 'vitalik.eth' });
+
+      // The shared handler defaults --chain to 'all'; the resolver must accept it.
+      expect(ens.resolveAddress).toHaveBeenCalledWith('vitalik.eth', 'all');
+      expect(mockApi.addressLabels).toHaveBeenCalledWith(
+        expect.objectContaining({ address: '0x0000000000000000000000000000000000000001', chain: 'all' })
+      );
+      expect(mockApi.addressBalance).toHaveBeenCalledWith(
+        expect.objectContaining({ address: '0x0000000000000000000000000000000000000001', chain: 'all' })
+      );
+      vi.restoreAllMocks();
+    });
+
     it('should resolve ENS names for first-funder using an EVM chain', async () => {
       const ens = await import('../ens.js');
       vi.spyOn(ens, 'isEnsName').mockReturnValue(true);
