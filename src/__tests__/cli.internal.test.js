@@ -5327,6 +5327,163 @@ describe('compareWallets', () => {
     expect(result.balances[0].total_usd).toBe(1000);
     expect(result.balances[1].total_usd).toBe(2000);
   });
+  it('should surface a failure of every request instead of returning an empty comparison', async () => {
+    const reject = () => Promise.reject(new NansenError('Invalid API key', ErrorCode.UNAUTHORIZED, 401));
+    const mockApi = { addressCounterparties: vi.fn(reject), addressBalance: vi.fn(reject) };
+
+    await expect(compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    })).rejects.toMatchObject({ code: ErrorCode.UNAUTHORIZED, status: 401 });
+  });
+
+  it('should report a partial failure instead of an empty overlap', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn()
+        .mockResolvedValueOnce({ counterparties: [{ counterparty_address: '0x0000000000000000000000000000000000000003' }] })
+        .mockRejectedValueOnce(new NansenError('Rate limited', ErrorCode.RATE_LIMITED, 429)),
+      addressBalance: vi.fn()
+        .mockResolvedValueOnce({ balances: [{ token_symbol: 'ETH', token_address: '0xeth', value_usd: 1000 }] })
+        .mockResolvedValueOnce({ balances: [{ token_symbol: 'ETH', token_address: '0xeth', value_usd: 2000 }] }),
+    };
+
+    const result = await compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    });
+
+    expect(result.incomplete).toBe(true);
+    expect(result.errors).toEqual([
+      { address: '0x0000000000000000000000000000000000000002', source: 'counterparties', code: ErrorCode.RATE_LIMITED, message: 'Rate limited' },
+    ]);
+    expect(result.shared_counterparties).toBeNull();
+    expect(result.shared_tokens).toEqual(['ETH']);
+    expect(result.balances[0].total_usd).toBe(1000);
+    expect(result.balances[1].total_usd).toBe(2000);
+  });
+
+  it('should report UNKNOWN for a failure that is not a NansenError', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      addressBalance: vi.fn()
+        .mockResolvedValueOnce({ balances: [] })
+        .mockRejectedValueOnce(new TypeError('fetch failed')),
+    };
+
+    const result = await compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    });
+
+    expect(result.errors).toEqual([
+      { address: '0x0000000000000000000000000000000000000002', source: 'balance', code: 'UNKNOWN', message: 'fetch failed' },
+    ]);
+  });
+
+  it('should null the balance total of a wallet whose balance request failed', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      addressBalance: vi.fn()
+        .mockResolvedValueOnce({ balances: [{ token_symbol: 'ETH', token_address: '0xeth', value_usd: 1000 }] })
+        .mockRejectedValueOnce(new NansenError('Server error', ErrorCode.SERVER_ERROR, 500)),
+    };
+
+    const result = await compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    });
+
+    expect(result.incomplete).toBe(true);
+    expect(result.shared_counterparties).toEqual([]);
+    expect(result.shared_tokens).toBeNull();
+    expect(result.balances[0].total_usd).toBe(1000);
+    expect(result.balances[1].total_usd).toBeNull();
+  });
+
+  it('should not report the same symbol on different contracts as a shared token', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      addressBalance: vi.fn()
+        .mockResolvedValueOnce({ balances: [
+          { token_symbol: 'ABC', token_address: '0xAAAA', value_usd: 1 },
+          { token_symbol: 'USDC', token_address: '0xusdc', value_usd: 1 },
+        ] })
+        .mockResolvedValueOnce({ balances: [
+          { token_symbol: 'ABC', token_address: '0xbbbb', value_usd: 1 },
+          { token_symbol: 'USDC', token_address: '0xUSDC', value_usd: 1 },
+        ] }),
+    };
+
+    const result = await compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    });
+
+    expect(result.shared_tokens).toEqual(['USDC']);
+    expect(result.incomplete).toBeUndefined();
+  });
+
+  it('should fall back to the symbol when only one side reports a token address', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      addressBalance: vi.fn()
+        .mockResolvedValueOnce({ balances: [
+          { token_symbol: 'ETH', token_address: '0x0000000000000000000000000000000000000000', value_usd: 1 },
+          { token_symbol: 'ABC', value_usd: 1 },
+        ] })
+        .mockResolvedValueOnce({ balances: [
+          { token_symbol: 'ETH', value_usd: 1 },
+          { token_symbol: 'ABC', token_address: '0xabc', value_usd: 1 },
+        ] }),
+    };
+
+    const result = await compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    });
+
+    expect(result.shared_tokens).toEqual(['ETH', 'ABC']);
+  });
+
+  it('should label a shared token by its address when the symbol is empty', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      addressBalance: vi.fn()
+        .mockResolvedValueOnce({ balances: [{ token_symbol: '', token_address: '0xABCD', value_usd: 1 }] })
+        .mockResolvedValueOnce({ balances: [{ token_symbol: '', token_address: '0xabcd', value_usd: 1 }] }),
+    };
+
+    const result = await compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    });
+
+    expect(result.shared_tokens).toEqual(['0xabcd']);
+  });
+
+  it('should fall back to the symbol when neither side reports a token address', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      addressBalance: vi.fn()
+        .mockResolvedValueOnce({ balances: [{ token_symbol: 'ETH', value_usd: 1 }] })
+        .mockResolvedValueOnce({ balances: [{ token_symbol: 'ETH', value_usd: 1 }] }),
+    };
+
+    const result = await compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    });
+
+    expect(result.shared_tokens).toEqual(['ETH']);
+  });
 });
 
 describe('ENS integration in batchProfile', () => {
