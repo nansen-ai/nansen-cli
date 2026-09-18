@@ -3479,6 +3479,58 @@ describe('NansenAPI', () => {
       vi.useRealTimers();
     });
 
+    it('should wait at least as long as a Retry-After longer than maxDelayMs', async () => {
+      if (LIVE_TEST) return;
+
+      vi.useFakeTimers();
+      const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+
+      const rateLimitResponse = {
+        ok: false,
+        status: 429,
+        headers: new Map([['retry-after', '60']]),
+        json: async () => ({ error: 'Rate limited' })
+      };
+      rateLimitResponse.headers.get = (name) => (name.toLowerCase() === 'retry-after' ? '60' : null);
+      const successResponse = { ok: true, json: async () => ({ data: [] }) };
+      mockFetch.mockResolvedValueOnce(rateLimitResponse).mockResolvedValueOnce(successResponse);
+
+      let result;
+      const promise = api.smartMoneyNetflow({ chains: ['solana'] }).then(r => { result = r; });
+      // The default maxDelayMs is 30s; nothing may happen before the 60s the server asked for.
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      await vi.runAllTimersAsync();
+      await promise;
+
+      expect(result).toBeDefined();
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const delays = setTimeoutSpy.mock.calls.map(c => c[1]).filter(ms => typeof ms === 'number' && ms >= 1000);
+      expect(Math.min(...delays)).toBeGreaterThanOrEqual(60_000);
+      setTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it('should not retry when Retry-After exceeds maxRetryAfterMs', async () => {
+      if (LIVE_TEST) return;
+
+      const rateLimitResponse = {
+        ok: false,
+        status: 429,
+        headers: new Map([['retry-after', '3600']]),
+        json: async () => ({ error: 'Rate limited' })
+      };
+      rateLimitResponse.headers.get = (name) => (name.toLowerCase() === 'retry-after' ? '3600' : null);
+      mockFetch.mockResolvedValue(rateLimitResponse);
+
+      const error = await api.smartMoneyNetflow({ chains: ['solana'] }).catch(e => e);
+
+      expect(error.code).toBe(ErrorCode.RATE_LIMITED);
+      expect(error.status).toBe(429);
+      expect(error.details.retryAfterMs).toBe(3_600_000);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
     it('should handle missing retry-after header', async () => {
       if (LIVE_TEST) return;
       
