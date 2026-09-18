@@ -1615,6 +1615,9 @@ export function buildCommands(deps = {}) {
         'info': () => apiInstance.tokenInformation({ tokenAddress, chain, timeframe: options.timeframe }),
         'screener': async () => {
           const search = options.search;
+          if (search !== undefined && typeof search !== 'string') {
+            throw new NansenError('--search must be a string', ErrorCode.INVALID_PARAMS);
+          }
           // When searching, fetch more results to filter from (API has no server-side search)
           const searchPagination = search 
             ? { page: 1, per_page: Math.max(500, pagination?.per_page || 0) }
@@ -1650,7 +1653,14 @@ export function buildCommands(deps = {}) {
         },
         'who-bought-sold': () => {
           const date = parseDateOption(options.date, days, flags.date);
-          const buyOrSell = (options['buy-or-sell'] || 'BUY').toUpperCase();
+          const buyOrSellRaw = options['buy-or-sell'];
+          if (buyOrSellRaw !== undefined && typeof buyOrSellRaw !== 'string') {
+            throw new NansenError('--buy-or-sell must be BUY or SELL', ErrorCode.INVALID_PARAMS);
+          }
+          const buyOrSell = (buyOrSellRaw || 'BUY').toUpperCase();
+          if (buyOrSell !== 'BUY' && buyOrSell !== 'SELL') {
+            throw new NansenError('--buy-or-sell must be BUY or SELL', ErrorCode.INVALID_PARAMS);
+          }
           return apiInstance.tokenWhoBoughtSold({ tokenAddress, chain, buyOrSell, filters, orderBy, pagination, days, date });
         },
         'flow-intelligence': () => apiInstance.tokenFlowIntelligence({ tokenAddress, chain, timeframe: options.timeframe || '1d' }),

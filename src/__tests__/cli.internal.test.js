@@ -2549,6 +2549,15 @@ describe('buildCommands', () => {
       );
     });
 
+    it('should reject non-string --search values before calling the API', async () => {
+      const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [] }) };
+      for (const bad of [true, [], {}, ['a', true]]) {
+        await expect(commands['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: bad }))
+          .rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS, message: '--search must be a string' });
+      }
+      expect(mockApi.tokenScreener).not.toHaveBeenCalled();
+    });
+
     it('should filter screener results by search option (client-side, flat)', async () => {
       const mockApi = {
         tokenScreener: vi.fn().mockResolvedValue({ data: [
@@ -2669,6 +2678,28 @@ describe('buildCommands', () => {
       expect(mockApi.tokenWhoBoughtSold).toHaveBeenCalledWith(
         expect.objectContaining({ days: 7 })
       );
+    });
+
+    it('should reject non-string buy-or-sell values before calling the API', async () => {
+      const mockApi = { tokenWhoBoughtSold: vi.fn().mockResolvedValue({ data: [] }) };
+      for (const bad of [true, [], {}, ['a', true]]) {
+        await expect(commands['token'](['who-bought-sold'], mockApi, {}, { token: '0xabc', 'buy-or-sell': bad }))
+          .rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS, message: '--buy-or-sell must be BUY or SELL' });
+      }
+      expect(mockApi.tokenWhoBoughtSold).not.toHaveBeenCalled();
+    });
+
+    it('should reject buy-or-sell values outside the BUY/SELL enum', async () => {
+      const mockApi = { tokenWhoBoughtSold: vi.fn().mockResolvedValue({ data: [] }) };
+      await expect(commands['token'](['who-bought-sold'], mockApi, {}, { token: '0xabc', 'buy-or-sell': 'hold' }))
+        .rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+      expect(mockApi.tokenWhoBoughtSold).not.toHaveBeenCalled();
+    });
+
+    it('should still accept lowercase buy-or-sell values', async () => {
+      const mockApi = { tokenWhoBoughtSold: vi.fn().mockResolvedValue({ data: [] }) };
+      await commands['token'](['who-bought-sold'], mockApi, {}, { token: '0xabc', 'buy-or-sell': 'sell' });
+      expect(mockApi.tokenWhoBoughtSold).toHaveBeenCalledWith(expect.objectContaining({ buyOrSell: 'SELL' }));
     });
 
     it('should pass buy-or-sell to who-bought-sold handler', async () => {
