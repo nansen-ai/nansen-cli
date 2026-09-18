@@ -2579,6 +2579,31 @@ describe('buildCommands', () => {
       expect(result.data.pagination.page).toBe(1);
     });
 
+    it('should page the client-side search results with --page and --limit', async () => {
+      const data = Array.from({ length: 30 }, (_, i) => ({ token_symbol: `PEPE${i}`, price_usd: i }));
+      const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data }) };
+
+      const page1 = await commands['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: 'pepe', limit: '10', page: '1' });
+      const page2 = await commands['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: 'pepe', limit: '10', page: '2' });
+      const page4 = await commands['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: 'pepe', limit: '10', page: '4' });
+
+      expect(page1.data.map(t => t.token_symbol)).toEqual(data.slice(0, 10).map(t => t.token_symbol));
+      expect(page2.data.map(t => t.token_symbol)).toEqual(data.slice(10, 20).map(t => t.token_symbol));
+      expect(page4.data).toEqual([]);
+      // The upstream fetch still starts at page 1 and covers every page up to the requested one.
+      expect(mockApi.tokenScreener).toHaveBeenLastCalledWith(
+        expect.objectContaining({ pagination: { page: 1, per_page: 500 } })
+      );
+    });
+
+    it('should widen the search candidate fetch when the requested page is past the default 500', async () => {
+      const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [] }) };
+      await commands['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: 'pepe', limit: '100', page: '7' });
+      expect(mockApi.tokenScreener).toHaveBeenCalledWith(
+        expect.objectContaining({ pagination: { page: 1, per_page: 700 } })
+      );
+    });
+
     it('should call holders with token address', async () => {
       const mockApi = {
         tokenHolders: vi.fn().mockResolvedValue({ data: [] })

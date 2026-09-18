@@ -1615,19 +1615,23 @@ export function buildCommands(deps = {}) {
         'info': () => apiInstance.tokenInformation({ tokenAddress, chain, timeframe: options.timeframe }),
         'screener': async () => {
           const search = options.search;
-          // When searching, fetch more results to filter from (API has no server-side search)
-          const searchPagination = search 
-            ? { page: 1, per_page: Math.max(500, pagination?.per_page || 0) }
+          // When searching, fetch more results to filter from (API has no server-side search).
+          // --page/--limit are applied client-side to the filtered list, so the
+          // candidate fetch has to cover every page up to the requested one.
+          const requestedLimit = pagination?.per_page || 100;
+          const requestedPage = pagination?.page || 1;
+          const searchPagination = search
+            ? { page: 1, per_page: Math.max(500, requestedPage * requestedLimit) }
             : pagination;
           const result = await apiInstance.tokenScreener({ chains, timeframe, filters, orderBy, pagination: searchPagination });
           if (search) {
             const q = search.toLowerCase();
-            const requestedLimit = pagination?.per_page || 100;
+            const offset = (requestedPage - 1) * requestedLimit;
             const filterArr = (arr) => arr.filter(t => 
               (t.token_symbol && t.token_symbol.toLowerCase().includes(q)) ||
               (t.token_name && t.token_name.toLowerCase().includes(q)) ||
               (t.token_address && t.token_address.toLowerCase() === q)
-            ).slice(0, requestedLimit);
+            ).slice(offset, offset + requestedLimit);
             // Handle nested response shapes: {data: [...]} or {data: {data: [...]}}
             if (Array.isArray(result?.data)) {
               return { ...result, data: filterArr(result.data) };
