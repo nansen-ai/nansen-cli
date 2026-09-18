@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0
+
+### Major Changes
+
+- [#501](https://github.com/nansen-ai/nansen-cli/pull/501) [`5a79f9d`](https://github.com/nansen-ai/nansen-cli/commit/5a79f9db91aa3dab3d0e8b043172e5a3af418924) Thanks [@gulshngill](https://github.com/gulshngill)! - Guard `wallet export` against accidental plaintext key disclosure. The default output is now redacted (addresses only — no decryption, no password needed). Printing private keys to stdout requires explicit acknowledgement via `--reveal` (which also warns on stderr when stdout is an interactive terminal), and the new `--file <path>` writes keys to a file created with 0600 permissions (refusing to overwrite) while keeping stdout clean. Scripts that parsed `wallet export` output must add `--reveal` or switch to `--file`. `--file` failures carry machine-readable codes: `FILE_EXISTS` when the path already exists, `FILE_WRITE_FAILED` for any other create/write error.
+
 ## 1.45.0
 
 ### Minor Changes
