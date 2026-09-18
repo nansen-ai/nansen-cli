@@ -15,6 +15,7 @@ import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
 import { buildPagination, parseSort, parseCsvOption, rejectBlankOption } from './query-options.js';
+import { enableAutoPagination, DEFAULT_MAX_PAGES } from './auto-paginate.js';
 export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
 import { compareSemver } from './semver.js';
@@ -175,7 +176,7 @@ export const VALUELESS_FLAGS = new Set([
   'enrich', 'full', 'human', 'enabled', 'disabled', 'expert', 'json', 'offline',
   'no-simulate', 'no-verify-outcome', 'no-revoke-excessive-allowance', 'dry-run',
   'send-api-key', 'all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password',
-  'reveal',
+  'reveal', 'paginate',
 ]);
 
 export function parseArgs(args) {
@@ -929,7 +930,8 @@ COMMANDS:
   cache       clear
   changelog   --since <version> to filter
 
-OPTIONS: --chain --limit --sort field:dir --fields a,b --days N --filters '{}'
+OPTIONS: --chain --limit --page N --sort field:dir --fields a,b --days N --filters '{}'
+PAGING:  --paginate (alias --all) fetch every page, --max-pages N (default 10), --limit sets page size
 FORMAT:  --pretty --table --format csv --stream (NDJSON)
 RETRY:   --no-retry --retries N --cache --cache-ttl N
 
@@ -2290,6 +2292,17 @@ export async function runCLI(rawArgs, deps = {}) {
       defaultHeaders['Payment-Signature'] = options['x402-payment-signature'];
     }
     const api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders });
+
+    // --paginate (alias --all): walk every page of a list command and return one
+    // merged response, bounded by --max-pages. Wraps api.request so every list
+    // handler inherits it; non-list requests pass through untouched.
+    if (flags.paginate || flags.all) {
+      const maxPages = parseNonNegativeSafeIntegerOption('max-pages', options, flags, DEFAULT_MAX_PAGES);
+      if (maxPages < 1) {
+        throw new NansenError(`--max-pages must be at least 1; received: ${maxPages}`, ErrorCode.INVALID_PARAMS);
+      }
+      enableAutoPagination(api, { maxPages });
+    }
 
     // Deprecated top-level aliases otherwise run silently (the notice was only
     // shown in --help). Warn on stderr so it doesn't pollute parsed stdout.

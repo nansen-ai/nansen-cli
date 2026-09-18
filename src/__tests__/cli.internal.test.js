@@ -6297,3 +6297,78 @@ describe('perp screener CLI handler - new filters (ECINT-6680)', () => {
     expect(call.sectorsFilter).toBeUndefined();
   });
 });
+
+describe('--paginate / --all flag integration (API-275)', () => {
+  let outputs;
+  let errors;
+  let exitCode;
+
+  // The mock mirrors NansenAPI: handler methods route through request(), which
+  // is the method --paginate wraps. 23 rows served 10 per page.
+  function MockAPI() {
+    this.request = vi.fn(async (endpoint, body) => {
+      const { page, per_page = 10 } = body.pagination;
+      const start = (page - 1) * per_page;
+      return { data: Array.from({ length: Math.max(0, Math.min(per_page, 23 - start)) }, (_, i) => ({ id: start + i })) };
+    });
+    this.smartMoneyNetflow = function ({ chains, pagination }) {
+      return this.request('/api/v1/smart-money/netflow', { chains, filters: {}, order_by: undefined, pagination });
+    };
+  }
+
+  const deps = () => ({
+    output: (msg) => outputs.push(msg),
+    errorOutput: (msg) => errors.push(msg),
+    exit: (code) => { exitCode = code; },
+    NansenAPIClass: MockAPI,
+  });
+
+  beforeEach(() => { outputs = []; errors = []; exitCode = null; });
+
+  it('keeps the default single-page behaviour without the flag', async () => {
+    const d = deps();
+    const result = await runCLI(['smart-money', 'netflow', '--limit', '10'], d);
+    expect(result.type).toBe('success');
+    expect(result.data.data).toHaveLength(10);
+    expect(result.data.pagination).toBeUndefined();
+  });
+
+  it('merges every page and reports traversal metadata', async () => {
+    const result = await runCLI(['smart-money', 'netflow', '--limit', '10', '--paginate'], deps());
+    expect(result.type).toBe('success');
+    const out = JSON.parse(outputs[0]);
+    expect(out.success).toBe(true);
+    expect(out.data.data.map(r => r.id)).toEqual(Array.from({ length: 23 }, (_, i) => i));
+    expect(out.data.pagination).toEqual({ page: 1, pages_fetched: 3, next_page: null, complete: true });
+  });
+
+  it('accepts --all as an alias and starts from --page', async () => {
+    const result = await runCLI(['smart-money', 'netflow', '--limit', '10', '--page', '2', '--all'], deps());
+    expect(result.data.data.map(r => r.id)).toEqual(Array.from({ length: 13 }, (_, i) => 10 + i));
+    expect(result.data.pagination.page).toBe(2);
+  });
+
+  it('bounds traversal with --max-pages and marks the result incomplete', async () => {
+    const result = await runCLI(['smart-money', 'netflow', '--limit', '5', '--paginate', '--max-pages', '2'], deps());
+    expect(result.data.data).toHaveLength(10);
+    expect(result.data.pagination).toEqual({ page: 1, pages_fetched: 2, next_page: 3, complete: false });
+  });
+
+  it('streams all merged rows as NDJSON with --stream', async () => {
+    const result = await runCLI(['smart-money', 'netflow', '--limit', '10', '--paginate', '--stream'], deps());
+    expect(result.type).toBe('stream');
+    const lines = outputs[0].split('\n');
+    expect(lines).toHaveLength(23);
+    expect(JSON.parse(lines[22]).id).toBe(22);
+  });
+
+  it('rejects an invalid --max-pages with the machine-readable error envelope', async () => {
+    const d = deps();
+    const result = await runCLI(['smart-money', 'netflow', '--paginate', '--max-pages', '0'], d);
+    expect(result.type).toBe('error');
+    expect(exitCode).toBe(1);
+    const out = JSON.parse(outputs[0]);
+    expect(out).toMatchObject({ success: false, code: 'INVALID_PARAMS' });
+    expect(out.error).toMatch(/--max-pages must be at least 1/);
+  });
+});

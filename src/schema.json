@@ -2618,6 +2618,17 @@
       "default": 1,
       "description": "1-based page number for list-returning research commands; maps to pagination.page. Supported by smart-money, profiler, token, perp, points, prediction-market, and supported research historical-* commands. Trade, wallet, and operational commands ignore it; token ohlcv, profiler perp-positions, and historical-token-flow-summary do not support pagination. profiler labels defaults to page 1 when omitted."
     },
+    "paginate": {
+      "type": "boolean",
+      "description": "Fetch every page of a list-returning command and return one merged response (alias: --all). Starts at --page (default 1) and uses --limit as the page size; stops on a short or empty page, when the server's pagination.total_pages is reached, when a page repeats rows already seen, or after --max-pages requests. The merged response keeps the first page's shape (a bare array is wrapped as { data: [...] }) with rows de-duplicated, plus pagination: { page, pages_fetched, next_page, complete } — next_page is null when complete, otherwise the page to resume from. Each page is a separate, separately billed API call. Works with --stream (NDJSON), --table, --format csv and --fields. Commands without pagination are unaffected."
+    },
+    "max-pages": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "default": 10,
+      "description": "Upper bound on the number of pages --paginate requests (positive safe integer). Hitting the cap sets pagination.complete to false and pagination.next_page to the page to resume from"
+    },
     "no-retry": {
       "type": "boolean",
       "description": "Disable automatic retry on rate limits/errors"

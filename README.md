@@ -301,6 +301,7 @@ after upgrading the CLI to pick up new commands.
 | `--pretty` | Human-readable JSON |
 | `--table` | Table format |
 | `--stream` | NDJSON output for large results |
+| `--paginate` | Fetch every page of a list command (alias `--all`); bound with `--max-pages <n>` (default 10) |
 | `--labels <label>` | Smart Money label filter |
 | `--smart-money` | Filter for Smart Money addresses only |
 
@@ -318,6 +319,15 @@ nansen research smart-money netflow --chain solana --fields token_symbol,net_flo
 ```
 
 **Use `--stream` for large results** — outputs NDJSON instead of buffering a giant array.
+
+**Use `--paginate` to fetch every page** of a list command in one call instead of looping over `--page`:
+```bash
+nansen smart-money netflow --chain solana --limit 100 --paginate --max-pages 5
+```
+`--limit` is the page size and `--max-pages` (default 10) caps the number of requests — every page is a
+separate, separately billed API call. Rows are de-duplicated and the response gains
+`pagination: { page, pages_fetched, next_page, complete }`; when `complete` is `false`, resume with
+`--page <next_page>`. Combine with `--stream` for NDJSON.
 
 **ENS names** work anywhere `--address` is accepted: `--address vitalik.eth`
 
