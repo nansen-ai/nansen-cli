@@ -61,24 +61,33 @@ export function resolveBooleanOption(options, flags, key) {
 // ============= Field Filtering =============
 
 /**
- * Filter object to include only specified fields
- * Supports nested paths with dot notation (e.g., "data.results")
+ * Filter object to include only specified fields.
+ *
+ * A bare name ("address") matches that key at any depth. A dotted path
+ * ("data.results", "results.address") matches only at that position, counted
+ * from the root of the payload; array elements do not add a segment, so
+ * "results.address" selects `address` inside each item of `results`.
  */
 export function filterFields(data, fields) {
   if (!fields || fields.length === 0) return data;
   
-  const fieldSet = new Set(fields);
+  const names = new Set();
+  const paths = new Set();
+  for (const field of fields) {
+    (field.includes('.') ? paths : names).add(field);
+  }
   
-  function filterObject(obj) {
+  function filterObject(obj, path) {
     if (obj === null || obj === undefined) return obj;
     if (Array.isArray(obj)) {
-      return obj.map(item => filterObject(item));
+      return obj.map(item => filterObject(item, path));
     }
     if (typeof obj !== 'object') return obj;
     
     const filtered = {};
     for (const key of Object.keys(obj)) {
-      if (fieldSet.has(key)) {
+      const keyPath = path ? `${path}.${key}` : key;
+      if (names.has(key) || paths.has(keyPath)) {
         // Explicitly requested — include as-is
         filtered[key] = obj[key];
       } else if (typeof obj[key] === 'object' && obj[key] !== null) {
@@ -89,7 +98,7 @@ export function filterFields(data, fields) {
           const hasObjectElements = obj[key].length > 0 &&
             typeof obj[key][0] === 'object' && obj[key][0] !== null;
           if (hasObjectElements) {
-            const nested = obj[key].map(item => filterObject(item))
+            const nested = obj[key].map(item => filterObject(item, keyPath))
               .filter(item => Object.keys(item).length > 0);
             if (nested.length > 0) {
               filtered[key] = nested;
@@ -97,7 +106,7 @@ export function filterFields(data, fields) {
           }
         } else {
           // Plain object — always recurse in case it wraps requested fields
-          const nested = filterObject(obj[key]);
+          const nested = filterObject(obj[key], keyPath);
           if (nested !== null && nested !== undefined && Object.keys(nested).length > 0) {
             filtered[key] = nested;
           }
@@ -107,7 +116,7 @@ export function filterFields(data, fields) {
     return filtered;
   }
   
-  return filterObject(data);
+  return filterObject(data, '');
 }
 
 /**

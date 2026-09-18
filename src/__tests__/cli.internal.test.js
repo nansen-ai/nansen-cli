@@ -3671,6 +3671,60 @@ describe('filterFields', () => {
   });
 });
 
+describe('filterFields with dotted paths', () => {
+  const data = {
+    data: {
+      results: [
+        { address: '0x1', value: 100, meta: { chain: 'ethereum', tag: 'a' } },
+        { address: '0x2', value: 200, meta: { chain: 'base', tag: 'b' } },
+      ],
+      total: 2,
+    },
+    pagination: { page: 1, address: 'not-a-wallet' },
+  };
+
+  it('selects a nested path exactly, dropping its siblings', () => {
+    expect(filterFields(data, ['data.results'])).toEqual({ data: { results: data.data.results } });
+  });
+
+  it('selects a field inside array items by path without touching same-named keys elsewhere', () => {
+    expect(filterFields(data, ['data.results.address'])).toEqual({
+      data: { results: [{ address: '0x1' }, { address: '0x2' }] },
+    });
+  });
+
+  it('accepts sibling paths and deeper paths together', () => {
+    expect(filterFields(data, ['data.results.value', 'data.results.meta.chain', 'data.total'])).toEqual({
+      data: {
+        results: [
+          { value: 100, meta: { chain: 'ethereum' } },
+          { value: 200, meta: { chain: 'base' } },
+        ],
+        total: 2,
+      },
+    });
+  });
+
+  it('keeps matching a bare name at any depth', () => {
+    expect(filterFields(data, ['address'])).toEqual({
+      data: { results: [{ address: '0x1' }, { address: '0x2' }] },
+      pagination: { address: 'not-a-wallet' },
+    });
+  });
+
+  it('does not match a path at a different depth', () => {
+    expect(filterFields(data, ['results.address'])).toEqual({});
+    expect(filterFields(data, ['data.results.meta.address'])).toEqual({});
+  });
+
+  it('mixes bare names and paths', () => {
+    expect(filterFields(data, ['data.total', 'page'])).toEqual({
+      data: { total: 2 },
+      pagination: { page: 1 },
+    });
+  });
+});
+
 describe('--fields flag integration', () => {
   let outputs;
   let errors;
