@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { RLP } from '@ethereumjs/rlp';
 
 vi.mock('../wallet.js', () => ({
   showWallet: vi.fn(),
@@ -165,6 +166,101 @@ describe('bridge execute wallet hardening', () => {
 
     await cmds.execute([], cleanApi, {}, { quote: 'bridge-4', wallet: 'p' }).catch(() => {});
     expect(exportWallet).not.toHaveBeenCalled();
+  });
+
+  it('rejects a duplicated EVM deposit plan before any eth_sendRawTransaction', async () => {
+    // A tampered plan with [deposit, deposit] passes per-item checks (each deposit
+    // is individually valid) but fails preflightEvmBridgeSteps (exactly one deposit
+    // required). This test ensures preflightEvmBridgeSteps is wired into execute:
+    // if it were removed, processEvmStep would reach eth_sendRawTransaction.
+    const requestedAmount = 2000000n;
+    const depositData = depositCalldata(ADDR, BASE_USDC, requestedAmount);
+    const cmds = buildBridgeCommands({ log: () => {} });
+    showWallet.mockReturnValue({ name: 'w', evm: ADDR, provider: 'local' });
+    exportWallet.mockReturnValue({ evm: { privateKey: '11'.repeat(32) } });
+
+    const fakeFetch = mockChainRpc();
+    globalThis.fetch = fakeFetch;
+
+    writeQuote('bridge-preflight', {
+      requestedAmountBaseUnits: requestedAmount.toString(),
+      response: {
+        execution_type: 'evm_transaction',
+        steps: [
+          { id: 'deposit-1', items: [{ status: 'incomplete', data: { to: DEPOSIT_ROUTER, data: depositData, value: '0' } }] },
+          { id: 'deposit-2', items: [{ status: 'incomplete', data: { to: DEPOSIT_ROUTER, data: depositData, value: '0' } }] },
+        ],
+        request_id: 'r-preflight',
+      },
+    });
+
+    let err;
+    try {
+      await cmds.execute([], cleanApi, {}, { quote: 'bridge-preflight', wallet: 'w' });
+    } catch (e) {
+      err = e;
+    }
+
+    expect(err).toBeDefined();
+    expect(err.message).toMatch(/at most one approve and exactly one deposit/);
+
+    // No broadcast must have happened.
+    const calls = fakeFetch.mock.calls;
+    const rpcBodies = calls.map(([, init]) => JSON.parse(init.body));
+    const broadcasts = rpcBodies.filter(b => b.method === 'eth_sendRawTransaction');
+    expect(broadcasts).toHaveLength(0);
+  });
+
+  it('broadcasts the normalized deposit calldata, not the dirty server bytes', async () => {
+    // A single deposit whose depositor/token words carry non-zero garbage in
+    // their upper 12 bytes is still individually VALID (decodeBridgeDeposit reads
+    // the clean last-20-bytes), so it sails through preflightEvmBridgeSteps. The
+    // only thing that strips the garbage before it reaches the wire is the
+    // per-step assertEvmBridgeStepIntent inside processEvmStep, whose returned
+    // `bound.data` is what gets signed. This pins THAT layer independently: if
+    // processEvmStep signed txData.data instead of bound.data, the dirty bytes
+    // would broadcast and this assertion would fail — even though preflight,
+    // which the sibling duplicate-deposit test pins, still passes here.
+    const requestedAmount = 2000000n;
+    const dirtyDepositor = ('deadbeef'.repeat(3) + ADDR.slice(2)).toLowerCase();   // 12 dirty + 20 clean bytes
+    const dirtyToken = ('cafebabe'.repeat(3) + BASE_USDC.slice(2)).toLowerCase();
+    const dirtyDeposit = '0xe8017952' + dirtyDepositor + dirtyToken
+      + word(requestedAmount.toString(16)) + word('a');
+    const canonicalDeposit = depositCalldata(ADDR, BASE_USDC, requestedAmount);
+    expect(dirtyDeposit).not.toBe(canonicalDeposit); // guard: the input really is dirty
+
+    const cmds = buildBridgeCommands({ log: () => {} });
+    showWallet.mockReturnValue({ name: 'w', evm: ADDR, provider: 'local' });
+    exportWallet.mockReturnValue({ evm: { privateKey: '11'.repeat(32) } });
+
+    const fakeFetch = mockChainRpc();
+    globalThis.fetch = fakeFetch;
+
+    writeQuote('bridge-normalize', {
+      requestedAmountBaseUnits: requestedAmount.toString(),
+      response: {
+        execution_type: 'evm_transaction',
+        steps: [
+          { id: 'deposit-1', items: [{ status: 'incomplete', data: { to: DEPOSIT_ROUTER, data: dirtyDeposit, value: '0' } }] },
+        ],
+        request_id: 'r-normalize',
+      },
+    });
+
+    await cmds.execute([], cleanApi, {}, { quote: 'bridge-normalize', wallet: 'w' });
+
+    // Exactly one broadcast; decode the legacy signed tx and read its calldata
+    // (RLP field 5: [nonce, gasPrice, gasLimit, to, value, data, v, r, s]).
+    const broadcasts = fakeFetch.mock.calls
+      .map(([, init]) => JSON.parse(init.body))
+      .filter(b => b.method === 'eth_sendRawTransaction');
+    expect(broadcasts).toHaveLength(1);
+    const signedTx = broadcasts[0].params[0];
+    const fields = RLP.decode(Buffer.from(signedTx.replace(/^0x/, ''), 'hex'));
+    const broadcastData = '0x' + Buffer.from(fields[5]).toString('hex');
+
+    expect(broadcastData).toBe(canonicalDeposit);
+    expect(broadcastData).not.toBe(dirtyDeposit);
   });
 
   it('screens a distinct bridge recipient with the signer', async () => {

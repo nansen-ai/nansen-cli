@@ -268,7 +268,7 @@
     },
     "bridge": {
       "description": "Move funds between Base and Hyperliquid",
-      "notes": "Supported routes: base -> hyperliquid (deposit); hyperliquid -> base, hyperliquid -> ethereum, hyperliquid -> arbitrum (withdrawal). Any other combination is rejected. Deposits broadcast an EVM transaction from the local wallet, so they require a locally signable origin chain; withdrawals sign a Hyperliquid action and never transact on the destination chain.",
+      "notes": "Supported routes: base -> hyperliquid (deposit); hyperliquid -> base, hyperliquid -> ethereum, hyperliquid -> arbitrum (withdrawal). Any other combination is rejected. base -> hyperliquid deposits currently support USDC only — a non-USDC --from-token is rejected with INVALID_INPUT before the quote is created. Deposits broadcast an EVM transaction from the local wallet, so they require a locally signable origin chain; withdrawals sign a Hyperliquid action and never transact on the destination chain.",
       "routes": [
         {
           "origin": "base",
@@ -319,7 +319,7 @@
             "from-token": {
               "type": "string",
               "required": true,
-              "description": "Source token symbol (USDC) or address (alias: --token)"
+              "description": "Source token symbol or address (alias: --token). Base -> Hyperliquid deposits require USDC; a non-USDC token is rejected before the quote is created."
             },
             "to-token": {
               "type": "string",
