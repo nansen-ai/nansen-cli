@@ -387,8 +387,21 @@
             "nonce": {
               "type": "string",
               "description": "Sign at this nonce instead of the next one, to replace a stuck transaction (EVM deposit legs only)"
+            },
+            "dry-run": {
+              "type": "boolean",
+              "description": "Validate the quote, wallet and recipient, print the transfer that would be signed, then stop before the first signature. Nothing is broadcast, no wallet password is needed, and the quote stays usable. Exits 0."
+            },
+            "yes": {
+              "type": "boolean",
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
           },
+          "examples": [
+            "nansen bridge execute --quote bridge-1708900000000-abc123",
+            "nansen bridge execute --quote bridge-1708900000000-abc123 --dry-run",
+            "nansen bridge execute --quote bridge-1708900000000-abc123 --yes"
+          ],
           "prerequisites": [
             "A wallet must be configured. Run: nansen wallet create"
           ]
@@ -2130,8 +2143,21 @@
             "no-revoke-excessive-allowance": {
               "type": "boolean",
               "description": "Skip revoking an existing on-chain ERC-20 allowance before re-approving when it exceeds 10x this trade's scoped amount. By default, an oversized or legacy allowance is revoked to zero and a fresh trade-scoped allowance is granted. WalletConnect users will see separate wallet prompts for the revoke and re-approval."
+            },
+            "dry-run": {
+              "type": "boolean",
+              "description": "Validate the quote, plan the approval and print what would be sent, then stop before signing. Nothing is signed or broadcast, no wallet password is needed, and the quote stays usable. On EVM it also reads the current allowance and runs the pre-broadcast revert simulation when no approval is outstanding. Exits 0."
+            },
+            "yes": {
+              "type": "boolean",
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
-          }
+          },
+          "examples": [
+            "nansen trade execute --quote 1708900000000-abc123",
+            "nansen trade execute --quote 1708900000000-abc123 --dry-run",
+            "nansen trade execute --quote 1708900000000-abc123 --yes"
+          ]
         },
         "bridge-status": {
           "description": "Check cross-chain bridge transaction status. Aggregator (Li.Fi or Relay) is auto-detected from a local tx record saved at execute time (kept 30 days); pass --aggregator to override when polling from a different machine.",

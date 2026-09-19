@@ -175,7 +175,7 @@ export const VALUELESS_FLAGS = new Set([
   'enrich', 'full', 'human', 'enabled', 'disabled', 'expert', 'json', 'offline',
   'no-simulate', 'no-verify-outcome', 'no-revoke-excessive-allowance', 'dry-run',
   'send-api-key', 'all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password',
-  'reveal',
+  'reveal', 'yes',
 ]);
 
 export function parseArgs(args) {
@@ -982,7 +982,7 @@ SUBCOMMANDS:
 USAGE:
   nansen trade quote --chain <chain> --from <token> --to <token> --amount <units> [--wallet <name>]
   nansen trade quote --chain <chain> --to-chain <chain> --from <token> --to <token> --amount <units>
-  nansen trade execute --quote <quoteId> [--wallet <name>]
+  nansen trade execute --quote <quoteId> [--wallet <name>] [--dry-run] [--yes]
   nansen trade bridge-status --tx-hash <hash> --from-chain <chain> --to-chain <chain>
   nansen trade limit-order <create|list|cancel|update> [options]
 
@@ -998,6 +998,13 @@ EXAMPLES:
 WALLET:
   --wallet <name>   Use a named wallet, or "walletconnect" / "wc" for WalletConnect.
                     Defaults to the default local wallet if omitted.
+
+BEFORE BROADCASTING (execute only):
+  --dry-run         Validate and print what would be sent, then stop. Nothing is
+                    signed or broadcast and the quote stays usable. Exits 0.
+  --yes, -y         Skip the confirmation prompt (same as NANSEN_YES=1). The prompt
+                    only appears when stdin is a terminal — agents, CI and pipes run
+                    unprompted either way. Declining exits 1 with nothing signed.
 
 SYMBOLS:
   Common tokens resolve automatically: SOL, ETH, USDC, USDT, WETH
@@ -1058,6 +1065,33 @@ export async function prompt(question, hidden = false, { input = process.stdin, 
         resolve(answer);
       });
     }
+  });
+}
+
+// Confirmation prompts belong to the CLI adapter rather than trade/bridge
+// core. EOF and Ctrl+C resolve as the safe default ("no") so a closed input
+// cannot leave an irreversible command hanging forever.
+export async function promptForConfirmation(question, { input = process.stdin, output = process.stderr } = {}) {
+  const rl = readline.createInterface({ input, output });
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (answer) => {
+      if (settled) return;
+      settled = true;
+      rl.close();
+      resolve(answer);
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      rl.close();
+      reject(error);
+    };
+
+    rl.once('close', () => finish(''));
+    rl.once('SIGINT', () => finish(''));
+    rl.once('error', fail);
+    rl.question(question, finish);
   });
 }
 
@@ -1935,8 +1969,13 @@ SUBCOMMANDS:
 
 USAGE:
   nansen bridge quote --from-chain base --to-chain hyperliquid --from-token USDC --amount 1000000
-  nansen bridge execute --quote <quoteId>
+  nansen bridge execute --quote <quoteId> [--dry-run] [--yes]
   nansen bridge status --request-id <id>
+
+BEFORE BROADCASTING (execute only):
+  --dry-run   Validate and print what would be signed, then stop. Exits 0.
+  --yes, -y   Skip the confirmation prompt (same as NANSEN_YES=1). The prompt only
+              appears when stdin is a terminal; declining exits 1, signing nothing.
 
 SUPPORTED ROUTES:
   ${formatBridgeRoutes()}`);
@@ -2075,10 +2114,25 @@ export async function runCLI(rawArgs, deps = {}) {
     exit = process.exit,
     NansenAPIClass = NansenAPI,
     commandOverrides = {},
-    // Injectable so tests can exercise both renderings; defaults to the real
-    // terminal, which is false under a pipe or in CI.
+    // Output TTY controls human-vs-structured error rendering. Keep the
+    // existing `isTTY` seam for callers/tests that inject both terminal states.
     isTTY = process.stdout.isTTY,
   } = deps;
+
+  // Confirmation is governed by INPUT interactivity. stdout may be redirected
+  // while a person still answers on stdin, so it must not decide whether an
+  // irreversible command prompts. Callers can split the two signals explicitly
+  // with `isInputTTY`; legacy `isTTY` injection still drives both.
+  const isInputTTY = deps.isInputTTY ?? (deps.isTTY ?? process.stdin.isTTY);
+
+  // Pass the CLI-owned terminal seams into command modules. Keeping these out
+  // of core means direct/library callers are non-interactive unless they
+  // explicitly provide a prompt.
+  const commandDeps = {
+    ...deps,
+    isTTY: isInputTTY,
+    promptFn: deps.promptFn ?? promptForConfirmation,
+  };
 
   const { _: positional, flags, options } = parseArgs(rawArgs);
 
@@ -2123,7 +2177,7 @@ export async function runCLI(rawArgs, deps = {}) {
 
   // mcp prints its own output via `log`; runCLI callers inject their stdout
   // sink as `output`, so map it across (an explicit `log` dep still wins).
-  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...buildAlertsCommands(deps), ...buildAgentCommands(deps), ...buildMcpCommands({ ...deps, log: deps.log ?? output }), ...buildCompletionCommands({ ...deps, log: deps.log ?? output }), ...commandOverrides };
+  const commands = { ...buildCommands(commandDeps), ...buildWalletCommands(commandDeps), ...buildTradingCommands(commandDeps), ...buildAlertsCommands(commandDeps), ...buildAgentCommands(commandDeps), ...buildMcpCommands({ ...commandDeps, log: deps.log ?? output }), ...buildCompletionCommands({ ...commandDeps, log: deps.log ?? output }), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);
