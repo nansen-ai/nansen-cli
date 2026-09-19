@@ -175,10 +175,8 @@ function resolveWalletAddress(walletName) {
 // response that doesn't cover every requested address all abort the trade
 // before signing, never trade through.
 
-// Exported for bridge.js, which needs the same fail-closed check before it signs
-// (its EVM deposit leg broadcasts straight to a public RPC, so no server-side
-// screen sits in that path). Worth lifting into its own module if a third caller
-// appears.
+// Shared with bridge.js and trading.js, whose direct signing/broadcast paths do
+// not have a server-side screen after this checkpoint.
 export async function screenOrThrow(apiInstance, addresses) {
   let result;
   try {
@@ -196,7 +194,9 @@ export async function screenOrThrow(apiInstance, addresses) {
   }
 
   const results = Array.isArray(result?.results) ? result.results : [];
-  const sanctioned = results.filter(r => r && r.sanctioned).map(r => r.address);
+  const sanctioned = results
+    .filter(r => r && r.sanctioned === true)
+    .map(r => r.address);
   if (sanctioned.length > 0) {
     throw new CommandError(
       `Wallet address is on the compliance blocklist and cannot trade: ${sanctioned.join(', ')}`,
@@ -204,10 +204,21 @@ export async function screenOrThrow(apiInstance, addresses) {
     );
   }
 
-  // A 200 that omitted a requested address is unverifiable — fail closed rather
-  // than assume the missing address is clean.
-  const screened = new Set(results.map(r => String(r.address).toLowerCase()));
-  const missing = addresses.filter(a => !screened.has(String(a).toLowerCase()));
+  // A 200 that omitted a requested address or did not return a boolean verdict
+  // is unverifiable — fail closed rather than assume the address is clean.
+  // EVM addresses are case-insensitive; base58 addresses (including Solana)
+  // are case-sensitive and must match exactly. Lowercasing every result here
+  // would let a verdict for a different Solana address satisfy the gate.
+  const addressKey = (address) => {
+    const value = String(address);
+    return /^0x[0-9a-f]{40}$/i.test(value) ? value.toLowerCase() : value;
+  };
+  const screened = new Set(
+    results
+      .filter(r => r && typeof r.sanctioned === 'boolean' && r.address != null)
+      .map(r => addressKey(r.address)),
+  );
+  const missing = addresses.filter(a => !screened.has(addressKey(a)));
   if (missing.length > 0) {
     throw new CommandError(
       `Compliance screening did not cover all addresses, so the trade was not submitted: ${missing.join(', ')}`,

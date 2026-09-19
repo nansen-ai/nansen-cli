@@ -181,7 +181,7 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 | Var | Purpose |
 |-----|---------|
 | `NANSEN_WALLET_PASSWORD` | **Required for `trade execute`.** Wallet encryption password — persisted in `~/.nansen/.env`. Source before executing: `source ~/.nansen/.env && nansen trade execute ...` |
-| `NANSEN_API_KEY` | API key (also set via `nansen login`) |
+| `NANSEN_API_KEY` | API key (also set via `nansen login`). `trade quote` and `trade execute` need it for the pre-trade compliance screen below. |
 
 > **Agents:** Never hold a wallet password only in session memory. If `NANSEN_WALLET_PASSWORD` is not in `~/.nansen/.env`, follow the setup flow in the nansen-wallet-manager skill Password Policy to generate and persist one before proceeding.
 
@@ -189,6 +189,7 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 
 - Quotes expire after ~1 hour. If execute fails, get a fresh quote.
 - A wallet is required even for quotes (the API builds sender-specific transactions).
+- Compliance screen: `trade quote` and `trade execute` check the signing wallet (and any distinct `--to-wallet` destination) against the compliance blocklist through the Nansen API before requesting a quote or signing — the same fail-closed check `bridge` and `perp` run. A flagged address aborts with code `SANCTIONED`; if the screening call itself fails the command aborts with `SCREENING_UNAVAILABLE`. Nothing is signed or broadcast in either case.
 - ERC-20 swaps may require an approval step — execute handles this automatically.
 
 # Perp Trading
