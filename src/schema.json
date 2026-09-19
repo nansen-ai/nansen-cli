@@ -2372,12 +2372,20 @@
       "description": "Show API key status, plan, and remaining credits. Does not consume credits."
     },
     "auth": {
-      "description": "Offline authentication status. Reports API key presence and source (env var vs config file), base URL, and x402 wallet readiness without any network call. Consumes no credits.",
+      "description": "Offline authentication status. Reports effective credential source, cached/unverified browser session metadata, API key presence, base URL, and x402 wallet readiness without any network call. Consumes no credits.",
       "subcommands": {
         "status": {
           "description": "Show where credentials come from, entirely offline",
           "returns": [
             "logged_in",
+            "effective_credential.kind",
+            "effective_credential.source",
+            "effective_credential.validity",
+            "saved_session.account_id",
+            "saved_session.expires_at",
+            "saved_session.expired",
+            "saved_session.validity",
+            "saved_session.storage_access",
             "api_key.present",
             "api_key.source",
             "api_key.masked",
@@ -2528,7 +2536,7 @@
           ]
         },
         "install": {
-          "description": "Add the Nansen MCP server to a client's config. Client (positional): claude-code, claude-desktop, or cursor. Uses the API key from `nansen login` / NANSEN_API_KEY; re-run after key rotation to update the entry.",
+          "description": "Add the Nansen MCP server to a client's config. Client (positional): claude-code, claude-desktop, or cursor. Uses the API key from `nansen login --human` / NANSEN_API_KEY; re-run after key rotation to update the entry.",
           "args": [
             {
               "name": "client",
@@ -2594,6 +2602,33 @@
           ]
         }
       }
+    },
+    "login": {
+      "description": "Fresh browser approval; securely save a revocable session. Plain login never persists NANSEN_API_KEY; it still overrides commands. Prerelease only; expired sessions require login until renewal ships.",
+      "options": {
+        "no-browser": {
+          "type": "boolean",
+          "description": "Print the approval URL/code without opening a browser"
+        },
+        "json": {
+          "type": "boolean",
+          "description": "NDJSON pending and one terminal event; automatic in non-TTY"
+        },
+        "human": {
+          "type": "boolean",
+          "description": "Legacy API-key setup: option, environment, then hidden interactive prompt"
+        },
+        "api-key": {
+          "type": "string",
+          "description": "Legacy API key to verify and save; recorded in shell history"
+        }
+      },
+      "returns": {
+        "description": "Operational command. Machine events: pending {verification_uri,user_code,expires_at}; saved {account_id,effective_source,cleanup}; error/cancelled {code,message,cleanup}. Never includes device_code or tokens. Cleanup preserves malformed journals and reports AUTH_JOURNAL_INVALID; unrecognized JSON files remain untouched."
+      }
+    },
+    "logout": {
+      "description": "Clear saved API authentication and attempt browser-family retirement. Preserve wallets and environment keys. Report incomplete local deletion or remote revocation separately. Preserve damaged recovery journals and report auth-operations repair guidance."
     }
   },
   "globalOptions": {

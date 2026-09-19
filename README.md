@@ -21,13 +21,12 @@ Three options — pick whichever fits your setup:
 1. **API key** (subscription):
    ```bash
    nansen login --human   # interactive prompt; saves to ~/.nansen/config.json
-   nansen login           # uses NANSEN_API_KEY when already set
    nansen logout          # remove saved key
    ```
    For automation, inject `NANSEN_API_KEY` through your environment or secret manager.
    Get your API key at [app.nansen.ai/auth/agent-setup](https://app.nansen.ai/auth/agent-setup).
 
-2. **x402 micropayment** (no key needed): `nansen wallet create`, fund with USDC on Base or Solana, or USDT0 on X Layer, then call any endpoint — the CLI signs `Payment-Signature` headers automatically on 402 responses. See [Wallet](#wallet).
+2. **x402 micropayment** (no key needed): `nansen wallet create`, fund with USDC on Base or Solana, or USDT0 on X Layer, then call any endpoint — with no selected API key or browser session, the CLI signs `Payment-Signature` headers automatically on 402 responses. Selected credentials never trigger automatic payment; top up the selected account or use an explicit manual API-key payment. See [Wallet](#wallet).
 
 3. **MPP via tempo** (no key needed): install the [tempo CLI](https://docs.tempo.xyz) separately, run `tempo wallet login` to set up, then call the Nansen API through `tempo request`. The Nansen API selects the MPP rail when it sees `Authorization: Payment ...`. See [MPP / Tempo](#mpp--tempo) below.
 
@@ -76,6 +75,16 @@ Plus the `historical-*` point-in-time commands — run `nansen research help` fo
 
 Run `nansen schema --pretty` for the full subcommand and field reference.
 
+## Browser login prerelease
+
+The API506 draft changes plain `nansen login` to fresh browser approval. It preflights secure storage, shows a link/code, verifies the approved account through the free account endpoint, then replaces the single saved API credential. `nansen login --no-browser` runs the same flow in a remote terminal. Non-TTY login and `--json` emit NDJSON pending and terminal events; the private device code and tokens are never printed.
+
+`NANSEN_API_KEY` still overrides the saved session. Login verifies the new account independently and explains this override. Failed approval or installation preserves the previous selection. `nansen auth status` is offline and labels saved metadata as cached/unverified; `nansen account` checks the effective credential live. `nansen logout` removes saved API authentication and attempts family retirement, preserving wallets and environment keys. Remote revocation and physical deletion failures are reported separately.
+
+This is a breaking change for scripts that used plain login to persist an environment key. Use explicit `nansen login --human` with that environment key, or `--api-key <key>` with its existing shell-history risk. Direct key-authenticated commands need no migration. Automatic wallet payment now requires anonymous access: even a valid selected API key returning 402 will not automatically buy credits or sign a payment. Top up the selected account or explicitly supply `--x402-payment-signature`. Selected invalid credentials never cause an account switch; intended anonymous payments and explicit manual API-key payments retain their behavior.
+
+This draft is for a controlled prerelease cohort, not normal-release promotion. Automatic renewal is separate: expired sessions require login. Public research billing, staging acceptance and OS verification remain gates. Read [browser login custody, compatibility and release gates](docs/browser-login.md) before cohort use. Browser sessions do not add wallet-signing authority and cannot be exported as MCP API keys.
+
 ## MCP
 
 Connect any MCP client to Nansen's streamable HTTP server:
@@ -94,7 +103,7 @@ nansen mcp install cursor --dry-run  # print what would be written (key redacted
 nansen mcp uninstall <client>        # remove the entry (add --dry-run to preview)
 ```
 
-Uses the API key from `nansen login` / `NANSEN_API_KEY`; re-run `install` after rotating your key. Writes are merge-only and atomic: existing servers and settings are preserved, a `.bak` copy is written before every install or uninstall, and the CLI refuses to touch a config it can't parse. Note the client config stores the API key in plaintext — new files are created with `0600` permissions. Restart the client after installing.
+Uses the API key from `nansen login --human` / `NANSEN_API_KEY`; re-run `install` after rotating your key. Writes are merge-only and atomic: existing servers and settings are preserved, a `.bak` copy is written before every install or uninstall, and the CLI refuses to touch a config it can't parse. Note the client config stores the API key in plaintext — new files are created with `0600` permissions. Restart the client after installing.
 
 **Manual setup**, for other clients or if you would rather not use the CLI — the paths below, and the connection docs at [docs.nansen.ai/mcp/connecting](https://docs.nansen.ai/mcp/connecting).
 

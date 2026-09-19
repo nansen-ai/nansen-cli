@@ -241,6 +241,26 @@ function commandToPath(command) {
   return '/' + String(command).replace(/\s+/g, '/');
 }
 
+// Authentication accepts positional extras for compatibility, but none of that
+// input is analytics metadata. Keep this vocabulary closed on both outcomes.
+const AUTH_FLAGS = new Set(['--human', '--api-key', '--no-browser', '--json']);
+const AUTH_ERRORS = new Set(['PAIRING_CANCELLED', 'PAIRING_DENIED', 'PAIRING_EXPIRED', 'PAIRING_FAILED', 'AUTH_NETWORK_ERROR', 'AUTH_STORE_UNAVAILABLE', 'AUTH_LOCK_UNAVAILABLE', 'AUTH_BUSY', 'AUTH_STATE_INVALID', 'AUTH_JOURNAL_INVALID', 'AUTH_CLEANUP_REQUIRED', 'AUTH_SELECTION_CHANGED', 'AUTH_ORIGIN_UNSUPPORTED', 'INVALID_BROWSER_SESSION', 'SESSION_VERIFICATION_FAILED', 'BROWSER_SESSION_SETUP_REQUIRED']);
+export function trackAuthCommand({ command, duration_ms, flags = [], error_code, failed = false }) {
+  if (command !== 'login' && command !== 'logout') return Promise.resolve();
+  return sendEvent({
+    event: failed ? 'cli_command_failed' : 'cli_command_succeeded',
+    event_source: getEventSource(), event_id: crypto.randomUUID(), user_id: null,
+    anonymous_id: getAnonymousId(), session_id: getSessionId(),
+    timestamp: new Date().toISOString(), path: `/${command}`,
+    properties: {
+      source: `nansen-cli/${cliVersion}`, latency: duration_ms / 1000,
+      flags: [...new Set(flags.filter(flag => AUTH_FLAGS.has(flag)))],
+      ...(failed && { error_code: AUTH_ERRORS.has(error_code) ? error_code : 'AUTH_FAILED' }),
+    },
+    context: buildContext(),
+  });
+}
+
 /**
  * Track a CLI command that completed successfully.
  *

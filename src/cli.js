@@ -1,9 +1,10 @@
+import { browserLogin, defaultAuthState, cleanupMessage } from './auth-login.js';
 /**
  * Nansen CLI - Core logic (testable)
  * Extracted from index.js for coverage
  */
 
-import { NansenAPI, NansenError, CommandError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, normalizeAddress, sleep } from './api.js';
+import { NansenAPI, NansenError, CommandError, ErrorCode, getConfigFile, clearCache, getCacheDir, validateAddress, normalizeAddress, sleep } from './api.js';
 import { buildWalletCommands } from './wallet.js';
 import { buildBridgeCommands, formatBridgeRoutes } from './bridge.js';
 import { buildPerpCommands } from './perp.js';
@@ -23,7 +24,7 @@ import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './
 import { getAuthStatus, runDoctorChecks, runConnectivityChecks, formatDoctorReport } from './doctor.js';
 import { refreshCostMapIfStale, getCostForEndpoint, creditsCharged } from './cost-cache.js';
 import { creditWarning, noticeWarnings } from './response-meta.js';
-import { trackCommandSucceeded, trackCommandFailed } from './telemetry.js';
+import { trackCommandSucceeded, trackCommandFailed, trackAuthCommand } from './telemetry.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
 
@@ -172,7 +173,7 @@ export function compactSchema(schema) {
 // subcommand, so it lives here rather than inline in parseArgs.
 export const VALUELESS_FLAGS = new Set([
   'pretty', 'help', 'version', 'table', 'no-retry', 'cache', 'no-cache', 'stream',
-  'enrich', 'full', 'human', 'enabled', 'disabled', 'expert', 'json', 'offline',
+  'enrich', 'full', 'human', 'no-browser', 'enabled', 'disabled', 'expert', 'json', 'offline',
   'no-simulate', 'no-verify-outcome', 'no-revoke-excessive-allowance', 'dry-run',
   'send-api-key', 'all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password',
   'reveal',
@@ -921,8 +922,8 @@ COMMANDS:
   mcp         install/uninstall/verify the Nansen MCP server
   account     Show API key status, plan, and remaining credits
   auth        status — offline auth status: key source, wallets (no network)
-  login       Save API key (--human, NANSEN_API_KEY, or --api-key <key>)
-  logout      Remove saved API key
+  login       Sign in through browser approval (--no-browser for remote terminals)
+  logout      Remove saved API authentication; preserve wallets
   doctor      Diagnostics: auth, wallets, caches, connectivity (--offline --json)
   schema      JSON schema for all commands (use "nansen schema <cmd>" for one)
   completion  Shell completions: bash, zsh, fish
@@ -1070,10 +1071,11 @@ export function buildCommands(deps = {}) {
     log = console.log,
     errorOutput: _errorOutput = console.error,
     NansenAPIClass: _NansenAPIClass = NansenAPI,
-    saveConfigFn = saveConfig,
-    deleteConfigFn = deleteConfig,
+    authState = defaultAuthState(),
+    browserLoginFn = browserLogin,
     getConfigFileFn = getConfigFile,
-    isTTY = process.stdin.isTTY,
+    isTTY = process.stdout.isTTY,
+    stdinTTY = deps.isTTY ?? process.stdin.isTTY,
     env = process.env
   } = deps;
 
@@ -1191,29 +1193,20 @@ export function buildCommands(deps = {}) {
     },
 
     'login': async (args, apiInstance, flags, options) => {
-      if (flags.help || flags.h) {
-        log('nansen login - Save your Nansen API key\n');
-        log('USAGE:');
-        log('  nansen login --human              (interactive prompt; key never enters shell history)');
-        log('  nansen login                      (uses NANSEN_API_KEY when already set)');
-        log('  nansen login --api-key <key>      (literal key IS recorded in shell history)\n');
-        log('OPTIONS:');
-        log('  --api-key <key>   Your Nansen API key (recorded in shell history — prefer --human)');
-        log('  --human           Enable interactive prompt');
-        log('  --help            Show this help\n');
-        log('Setting a literal key in a command may record it in shell history.');
-        log('Get your API key at: https://app.nansen.ai/auth/agent-setup');
-        return;
+      if (flags['api-key']) throw new CommandError('--api-key requires a value.', 'MISSING_PARAM');
+      if ('api-key' in options && typeof options['api-key'] !== 'string') throw new CommandError('--api-key must be a single key string.', 'INVALID_PARAMS');
+      if (!flags.human && options['api-key'] === undefined) {
+        return browserLoginFn({ flags, env, isTTY, log, errorOutput: _errorOutput, state: authState });
       }
-
+      if (flags['no-browser']) throw new CommandError('--no-browser cannot be combined with legacy key setup.', 'INVALID_PARAMS');
       let apiKey = options['api-key'];
 
-      if (!apiKey) {
-        apiKey = process.env.NANSEN_API_KEY;
+      if (apiKey === undefined) {
+        apiKey = env.NANSEN_API_KEY;
       }
 
-      if (!apiKey && flags.human) {
-        if (!isTTY) {
+      if (apiKey === undefined && flags.human) {
+        if (!stdinTTY) {
           throw new CommandError('--human requires an interactive terminal. Set NANSEN_API_KEY in the environment (or pass --api-key <key>, which is recorded in shell history).', 'NOT_A_TTY', {
             error: 'NOT_A_TTY',
             message: '--human requires an interactive terminal. Set NANSEN_API_KEY in the environment (or pass --api-key <key>, which is recorded in shell history).',
@@ -1236,51 +1229,53 @@ export function buildCommands(deps = {}) {
         });
       }
 
-      // Verify API key before saving
-      const NansenAPIClass = _NansenAPIClass;
-      const testApi = new NansenAPIClass(apiKey.trim(), undefined, {
-        retry: { maxRetries: 2 },
-        cache: { enabled: false }
-      });
-
       let accountInfo;
+      const attempt = await authState.begin({ preflight: false });
       try {
-        accountInfo = await testApi.getAccount();
-      } catch (error) {
-        if (error.code === ErrorCode.UNAUTHORIZED) {
-          throw new CommandError('The API key is not valid.', 'INVALID_API_KEY', {
-            error: 'INVALID_API_KEY',
-            message: 'The API key is not valid.',
-            resolution: ['Check or rotate your key at https://app.nansen.ai/api?tab=api'],
+        // Verify API key before saving
+        const NansenAPIClass = _NansenAPIClass;
+        const testApi = new NansenAPIClass(apiKey.trim(), undefined, {
+          allowPayment: false,
+          retry: { maxRetries: 2 },
+          cache: { enabled: false }
+        });
+
+        try {
+          accountInfo = await testApi.getAccount();
+        } catch (error) {
+          if (error.code === ErrorCode.UNAUTHORIZED) {
+            throw new CommandError('The API key is not valid.', 'INVALID_API_KEY', {
+              error: 'INVALID_API_KEY',
+              message: 'The API key is not valid.',
+              resolution: ['Check or rotate your key at https://app.nansen.ai/api?tab=api'],
+            });
+          }
+          // Restore signal from the STRUCTURED error code only — never from
+          // error.message, which can echo the upstream response body (and the key
+          // with it). A transient failure shouldn't read as "check your key".
+          let message = 'Could not verify API key.';
+          let resolution = ['Check your internet connection', 'Try again'];
+          if (error.code === ErrorCode.RATE_LIMITED) {
+            message = 'Rate limited while verifying the API key.';
+            resolution = ['Wait a moment, then run nansen login again'];
+          } else if (error.code === ErrorCode.SERVER_ERROR || error.code === ErrorCode.SERVICE_UNAVAILABLE) {
+            message = 'The Nansen API is unavailable right now, so the key could not be verified.';
+            resolution = ['Try again shortly'];
+          } else if (error.code === ErrorCode.TIMEOUT) {
+            message = 'Timed out verifying the API key.';
+            resolution = ['Check your connection', 'Try again'];
+          }
+          throw new CommandError(message, 'VERIFICATION_FAILED', {
+            error: 'VERIFICATION_FAILED',
+            message,
+            resolution,
           });
         }
-        // Restore signal from the STRUCTURED error code only — never from
-        // error.message, which can echo the upstream response body (and the key
-        // with it). A transient failure shouldn't read as "check your key".
-        let message = 'Could not verify API key.';
-        let resolution = ['Check your internet connection', 'Try again'];
-        if (error.code === ErrorCode.RATE_LIMITED) {
-          message = 'Rate limited while verifying the API key.';
-          resolution = ['Wait a moment, then run nansen login again'];
-        } else if (error.code === ErrorCode.SERVER_ERROR || error.code === ErrorCode.SERVICE_UNAVAILABLE) {
-          message = 'The Nansen API is unavailable right now, so the key could not be verified.';
-          resolution = ['Try again shortly'];
-        } else if (error.code === ErrorCode.TIMEOUT) {
-          message = 'Timed out verifying the API key.';
-          resolution = ['Check your connection', 'Try again'];
-        }
-        throw new CommandError(message, 'VERIFICATION_FAILED', {
-          error: 'VERIFICATION_FAILED',
-          message,
-          resolution,
-        });
-      }
 
-      // Key is valid - now save
-      saveConfigFn({
-        apiKey: apiKey.trim(),
-        baseUrl: 'https://api.nansen.ai'
-      });
+        const result = await authState.install(attempt, { apiKey: apiKey.trim(), baseUrl: 'https://api.nansen.ai' });
+        for (const message of cleanupMessage(result.cleanup)) log(message);
+      } finally { await authState.finish(attempt); }
+      if (env.NANSEN_API_KEY !== undefined) log('Commands still use NANSEN_API_KEY. Unset it to use the saved credential.');
 
       log(`✓ Saved to ${getConfigFileFn()}\n`);
       if (accountInfo?.plan) {
@@ -1294,15 +1289,11 @@ export function buildCommands(deps = {}) {
     },
 
     'logout': async (_args, _apiInstance, _flags, _options) => {
-      const deleted = deleteConfigFn();
-      if (deleted) {
-        log(`✓ Removed ${getConfigFileFn()}`);
-      } else {
-        log('No saved credentials found');
-      }
-      if (env.NANSEN_API_KEY) {
-        log('Warning: NANSEN_API_KEY remains active. Run: unset NANSEN_API_KEY');
-      }
+      const result = await authState.logout();
+      if (result.cleanup.some(item => item.local === 'incomplete')) log('Saved authentication selection cleared; secure-store deletion incomplete.');
+      else log(result.removed ? 'Local credentials removed.' : 'No saved credentials found.');
+      for (const message of cleanupMessage(result.cleanup)) log(message);
+      if (env.NANSEN_API_KEY !== undefined) log('Warning: NANSEN_API_KEY remains active. Run: unset NANSEN_API_KEY');
     },
 
     'help': async (_args, _apiInstance, _flags, _options) => {
@@ -2101,14 +2092,15 @@ export async function runCLI(rawArgs, deps = {}) {
   const isMcpUsage = command === 'mcp' && (subcommand !== 'verify' || flags.help || flags.h);
   // `completion` renders from the checked-in schema — no network, and its
   // stdout is piped straight into a shell, so keep the update check out of it.
+  const isAuthMutation = command === 'login' || command === 'logout';
   const isOfflineCommand = command === 'auth' || (command === 'doctor' && flags.offline) || isMcpUsage || command === 'completion';
-  const trackSucceeded = isOfflineCommand ? async () => {} : trackCommandSucceeded;
-  const trackFailed = isOfflineCommand ? async () => {} : trackCommandFailed;
+  const trackSucceeded = isOfflineCommand ? async () => {} : isAuthMutation ? metadata => trackAuthCommand({ ...metadata, command }) : trackCommandSucceeded;
+  const trackFailed = isOfflineCommand ? async () => {} : isAuthMutation ? metadata => trackAuthCommand({ ...metadata, command, failed: true }) : trackCommandFailed;
 
   // Update check (read cached result + schedule background refresh)
   const updateNotification = getUpdateNotification(VERSION);
   const upgradeNotice = getUpgradeNotice(VERSION);
-  if (!isOfflineCommand) scheduleUpdateCheck();
+  if (!isOfflineCommand && !isAuthMutation) scheduleUpdateCheck();
   const notify = () => {
     if (upgradeNotice) errorOutput(upgradeNotice);
     if (updateNotification) errorOutput(updateNotification);
@@ -2133,7 +2125,7 @@ export async function runCLI(rawArgs, deps = {}) {
   if (command === 'help' || flags.help || flags.h) {
     // Help for an offline command still owes the zero-network contract: the
     // cost-map refresh fetches the OpenAPI spec and writes ~/.nansen/cost-map.json.
-    if (!isOfflineCommand) await refreshCostMapIfStale();
+    if (!isOfflineCommand && !isAuthMutation) await refreshCostMapIfStale();
     // Check for subcommand-specific help: nansen <command> <subcommand> --help
     if (flags.help || flags.h) {
       // Handle 'research <category> <sub> --help' (3-level)
@@ -2217,7 +2209,6 @@ export async function runCLI(rawArgs, deps = {}) {
     // Prevents destructive commands like logout from running when user just wants help
     if (commands[command]) {
       const simpleHelp = {
-        'logout': 'nansen logout — Remove saved API key from ~/.nansen/config.json',
         'schema': 'nansen schema [command] [--pretty] — Show JSON schema for all commands (or a specific command)',
         'cache':  'nansen cache clear — Clear the API response cache',
       };

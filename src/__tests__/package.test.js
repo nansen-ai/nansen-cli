@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { mkdtempSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -41,7 +41,7 @@ describe('Package Integrity', () => {
     // (not just slow) rather than failing, so nothing short of avoiding it
     // keeps this test from hanging the whole CI job.
     execSync('npm init -y', { cwd: tmpDir, stdio: 'ignore' });
-    execSync(`npm install --no-audit --no-fund "${tgzPath}"`, { cwd: tmpDir, stdio: 'ignore' });
+    execSync(`npm install --omit=optional --no-audit --no-fund "${tgzPath}"`, { cwd: tmpDir, stdio: 'ignore' });
 
     // Smoke test - if any import fails (e.g., missing src/commands/), this crashes.
     // Resolve the .cmd extension on Windows, where node_modules/.bin shims aren't extensionless.
@@ -53,6 +53,25 @@ describe('Package Integrity', () => {
 
     expect(result).toContain('nansen');
     expect(result).toContain('COMMANDS');
+    expect(existsSync(join(tmpDir, 'node_modules/nansen-cli/docs/browser-login.md'))).toBe(true);
+    expect(existsSync(join(tmpDir, 'node_modules/nansen-cli/src/auth-store-native.js'))).toBe(true);
+    // Native auth modules must stay lazy when optional bindings are omitted.
+    const apiModule = join(tmpDir, 'node_modules/nansen-cli/src/api.js');
+    const stateModule = join(tmpDir, 'node_modules/nansen-cli/src/auth-state.js');
+    const smoke = execFileSync(process.execPath, ['--input-type=module', '-e', `
+      import { pathToFileURL } from 'node:url';
+      const { NansenAPI } = await import(pathToFileURL(${JSON.stringify(apiModule)}));
+      globalThis.fetch = async (_url, options) => {
+        if (options.headers.apikey !== 'synthetic-key') throw new Error('wrong credential');
+        return new Response(JSON.stringify({user_id:'synthetic'}));
+      };
+      await new NansenAPI('synthetic-key').getAccount();
+      const { createAuthState } = await import(pathToFileURL(${JSON.stringify(stateModule)}));
+      try { await createAuthState({directory:${JSON.stringify(join(tmpDir, 'auth'))}}).begin(); throw new Error('unexpected native availability'); }
+      catch (error) { if(error.code !== 'AUTH_LOCK_UNAVAILABLE' || !error.message.includes('offline-recovery-without-native-locking')) throw error; }
+      console.log('key-auth-without-native-ok');
+    `], { cwd: tmpDir, encoding: 'utf8' });
+    expect(smoke).toContain('key-auth-without-native-ok');
 
     // Cleanup tarball
     rmSync(tgzPath, { force: true });

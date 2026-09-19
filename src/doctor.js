@@ -1,3 +1,4 @@
+import { authConfigView } from './auth-credentials.js';
 /**
  * Nansen CLI - Offline diagnostics
  *
@@ -86,46 +87,7 @@ const DEV_CONFIG_PATH = path.join(__dirname, '..', 'config.json');
  * overrides — but lazily and without secrets leaving this function unmasked.
  */
 export function resolveAuthConfig(env, devConfigPath = DEV_CONFIG_PATH) {
-  const userConfigPath = getConfigFilePath(env);
-
-  let config = null;
-  let configPath = null;
-  let configError = null;
-
-  if (fs.existsSync(userConfigPath)) {
-    const result = readJsonDetailed(userConfigPath);
-    config = result.data;
-    configPath = userConfigPath;
-    configError = result.error;
-  }
-  if (!config && fs.existsSync(devConfigPath)) {
-    config = readJson(devConfigPath);
-    if (config) configPath = devConfigPath;
-  }
-
-  let apiKey = config?.apiKey || null;
-  let apiKeySource = apiKey ? (configPath === devConfigPath ? 'dev-config' : 'config') : null;
-  if (env.NANSEN_API_KEY) {
-    apiKey = env.NANSEN_API_KEY;
-    apiKeySource = 'env';
-  }
-
-  let baseUrl = config?.baseUrl || DEFAULT_BASE_URL;
-  let baseUrlSource = config?.baseUrl ? 'config' : 'default';
-  if (env.NANSEN_BASE_URL) {
-    baseUrl = env.NANSEN_BASE_URL;
-    baseUrlSource = 'env';
-  }
-
-  return {
-    apiKey,
-    apiKeySource,
-    baseUrl,
-    baseUrlSource,
-    configPath,
-    configFileExists: fs.existsSync(userConfigPath),
-    configError,
-  };
+  return authConfigView(env, devConfigPath);
 }
 
 /**
@@ -213,7 +175,15 @@ export function getAuthStatus(deps = {}) {
   const defaultEntry = walletInfo.wallets.find(w => w.name === walletInfo.defaultWallet) || null;
 
   return {
-    logged_in: Boolean(auth.apiKey),
+    logged_in: Boolean(auth.apiKey || auth.selected.kind === 'session'),
+    effective_credential: { kind: auth.selected.kind, source: auth.selected.source, validity: 'unverified' },
+    saved_session: auth.config.auth?.active?.kind === 'session' ? {
+      account_id: auth.config.auth.active.accountId,
+      expires_at: auth.config.auth.active.expiresAt,
+      expired: auth.config.auth.active.expiresAt <= Date.now(),
+      validity: 'cached_unverified',
+      storage_access: 'not_checked_no_prompt',
+    } : null,
     api_key: {
       present: Boolean(auth.apiKey),
       source: auth.apiKeySource,
@@ -288,9 +258,9 @@ export function runDoctorChecks(deps = {}) {
   // Report the URL the CLI will actually use — a config file can set a
   // non-default base URL too, not just the env var
   if (auth.baseUrlSource === 'env') {
-    checks.push(check('base-url', 'warn', `NANSEN_BASE_URL override active: ${auth.baseUrl}`, `Unset NANSEN_BASE_URL to use ${DEFAULT_BASE_URL}`));
+    checks.push(check('base-url', 'warn', `NANSEN_BASE_URL override active: ${auth.baseUrl}`, `Unset NANSEN_BASE_URL to use the saved baseUrl, or ${DEFAULT_BASE_URL} when none is saved`));
   } else if (auth.baseUrl !== DEFAULT_BASE_URL) {
-    checks.push(check('base-url', 'warn', `Non-default API base URL in ${auth.configPath}: ${auth.baseUrl}`, 'Run: nansen login (re-saves the default)'));
+    checks.push(check('base-url', 'warn', `Non-default API base URL in ${auth.configPath}: ${auth.baseUrl}`, 'Correct baseUrl in config.json or set NANSEN_BASE_URL=https://api.nansen.ai for this invocation. Plain login preserves the selected origin.'));
   } else {
     checks.push(check('base-url', 'ok', `API base URL: ${auth.baseUrl}`));
   }
@@ -299,9 +269,11 @@ export function runDoctorChecks(deps = {}) {
   if (auth.configError === 'unreadable') {
     checks.push(check('config-file', 'error', `${getConfigFilePath(env)} exists but cannot be read — permission problem?`, `Check ownership and mode: ls -l "${getConfigFilePath(env)}"`));
   } else if (auth.configError === 'parse') {
-    checks.push(check('config-file', 'error', `${getConfigFilePath(env)} exists but is not valid JSON`, 'Run: nansen login (re-saves the file)'));
+    checks.push(check('config-file', 'error', `${getConfigFilePath(env)} exists but is not valid JSON`, 'Restore or repair config.json before retrying nansen login'));
   }
-  if (auth.apiKey) {
+  if (auth.selected.kind === 'session') {
+    checks.push(check('browser-session', 'warn', 'Saved browser session metadata is cached and unverified; secure storage was not opened.', 'Run: nansen account for a live check'));
+  } else if (auth.apiKey) {
     const sourceLabel = auth.apiKeySource === 'env'
       ? 'NANSEN_API_KEY env var'
       : `config file ${auth.configPath}`;

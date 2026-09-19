@@ -19,20 +19,11 @@ const { version: VERSION } = require('../../package.json');
 export const COMPLETION_SHELLS = ['bash', 'zsh', 'fish'];
 
 /**
- * Commands the CLI dispatches that schema.json does not describe. Adding them
- * to schema.json instead would change `nansen logout --help` (the schema help
- * path runs before the hand-written text), so they are declared here.
+ * Commands the CLI dispatches that schema.json does not describe. They retain
+ * their hand-written help; the schema help path otherwise takes precedence.
  * completion.test.js fails if a new top-level command appears in neither place.
  */
 export const UNSCHEMA_COMMANDS = {
-  login: {
-    description: 'Save your Nansen API key',
-    options: {
-      'api-key': { type: 'string', description: 'API key (recorded in shell history — prefer --human)' },
-      human: { type: 'boolean', description: 'Prompt for the key interactively' },
-    },
-  },
-  logout: { description: 'Remove the saved API key' },
   schema: {
     description: 'Print the JSON schema for every command',
     options: { full: { type: 'boolean', description: 'Verbose schema instead of the compact listing' } },

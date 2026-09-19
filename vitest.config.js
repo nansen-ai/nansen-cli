@@ -3,6 +3,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     globals: true,
+    setupFiles: ['src/__tests__/test-isolation.js'],
     environment: 'node',
     env: {
       NANSEN_NO_TELEMETRY: '1',

@@ -224,7 +224,7 @@ describe('mcp command handler', () => {
 
   it('requires login and writes nothing without a key', async () => {
     await expect(run(['install', 'cursor'], { apiInstance: { apiKey: null } }))
-      .rejects.toThrow('Not logged in. Run: nansen login');
+      .rejects.toThrow('MCP installation requires an API key');
     expect(fs.existsSync(cursorPath())).toBe(false);
   });
 

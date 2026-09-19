@@ -4,20 +4,20 @@
  */
 
 import crypto from 'crypto';
-import { NansenError, ErrorCode, statusToErrorCode, telemetryHeaders, packageVersion } from '../api.js';
+import { NansenError, ErrorCode, statusToErrorCode, browserSessionError, browserSessionResponseMeta, telemetryHeaders, packageVersion } from '../api.js';
 import { getCostForEndpoint } from '../cost-cache.js';
 import { readResponseMeta } from '../response-meta.js';
 
 /**
  * Build standard request headers, matching apiInstance.request() conventions.
  */
-function buildHeaders(apiInstance) {
+async function buildHeaders(apiInstance) {
   return {
     'Content-Type': 'application/json',
     'X-Client-Type': 'nansen-cli',
     'X-Client-Version': packageVersion,
     ...telemetryHeaders(),
-    ...(apiInstance.apiKey ? { 'apikey': apiInstance.apiKey } : {}),
+    ...await apiInstance.requestCredentials(),
     ...(apiInstance.defaultHeaders || {}),
   };
 }
@@ -239,7 +239,7 @@ EXAMPLES:
       }
 
       // ── Auth guard ──
-      if (!apiInstance.apiKey) {
+      if (apiInstance.selection?.kind === 'anonymous') {
         throw new NansenError(
           'Not logged in. Run: nansen login',
           ErrorCode.UNAUTHORIZED,
@@ -249,11 +249,14 @@ EXAMPLES:
       }
 
       // ── Request (no retry — SSE streams are not idempotent) ──
+      const sessionAuth = apiInstance.selection?.kind === 'session';
       const url = `${apiInstance.baseUrl}${endpoint}`;
       const body = {
         text: question,
         conversation_id: conversationId,
       };
+
+      const requestHeaders = await buildHeaders(apiInstance);
 
       // ── Timeout ──
       const timeoutMs = expert ? 300_000 : 120_000; // 5min expert, 2min fast
@@ -268,7 +271,7 @@ EXAMPLES:
           // forwards custom credential headers (apikey) across a cross-origin
           // redirect, handing the key to whatever host the response points at.
           redirect: 'error',
-          headers: buildHeaders(apiInstance),
+          headers: requestHeaders,
           body: JSON.stringify(body),
           signal: controller.signal,
         });
@@ -283,10 +286,10 @@ EXAMPLES:
           );
         }
         throw new NansenError(
-          `Network error: ${err.message}`,
+          sessionAuth ? 'Agent network request failed. Retry after checking connectivity.' : `Network error: ${err.message}`,
           ErrorCode.NETWORK_ERROR,
           null,
-          { originalError: err.message },
+          sessionAuth ? {} : { originalError: err.message },
         );
       }
 
@@ -299,6 +302,10 @@ EXAMPLES:
             errData = await response.json();
             serverDetail = errData.detail || errData.message;
           } catch { /* ignore parse failure */ }
+        }
+        if (sessionAuth) {
+          const safe = browserSessionError(response.status, errData);
+          throw new NansenError(safe.message, safe.code, response.status, browserSessionResponseMeta(response));
         }
         const meta = readResponseMeta(response);
         throwApiError(
@@ -321,6 +328,7 @@ EXAMPLES:
             { detail: `${modeName} mode timeout (${timeoutMs / 1000}s)` },
           );
         }
+        if (sessionAuth) throw new NansenError('Agent stream failed. The selected browser session was not replaced.', err.code || ErrorCode.NETWORK_ERROR, err.status || null);
         throw err;
       };
 

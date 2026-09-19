@@ -56,3 +56,7 @@ Cost: 5-50 credits per call
 - Don't use `nansen agent` for simple data fetches -- 40x more expensive
 - Don't use raw CLI for open-ended analysis -- returns data, not interpretation
 - Don't chain 3+ agent calls -- get raw data via CLI, call agent once for synthesis
+
+## Browser session prerelease
+
+Plain `nansen login` requests fresh browser approval; `--no-browser` prints the link/code for remote use. NANSEN_API_KEY still overrides the single saved credential. Use `nansen auth status` for offline selection details and `nansen account` for a free live check. Explicit `login --human` or `login --api-key` retains legacy key setup. A rejected credential never switches accounts or signs a payment. This draft does not add renewal or enable research billing: expired sessions require login, and account-only server denial must be preserved. Browser sessions cannot authorize wallet signing or be exported as MCP keys.
