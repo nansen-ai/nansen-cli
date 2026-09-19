@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { EVM_CHAINS } from './chain-ids.js';
 import { getAnonymousId, TELEMETRY_DISABLED } from './telemetry.js';
 import { readResponseMeta } from './response-meta.js';
+import { trace, traceRequest, traceResponse, traceError, traceRetry, traceCacheHit } from './debug.js';
 
 /**
  * Key for the credit/rate-limit metadata attached to a successful response.
@@ -634,6 +635,20 @@ function parseRetryAfter(headerValue) {
 }
 
 /**
+ * Server-side request id for a response, or null when it carries none.
+ * Read straight off the header so the debug trace can name the id on every
+ * attempt without paying for a full metadata parse. Tolerates any header bag
+ * with a .get() — a real Headers, or a Map in tests.
+ */
+function requestIdOf(response) {
+  try {
+    return response?.headers?.get?.('x-request-id') ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Build a date range from today back N days
  * @param {number} days - Number of days back from today
  * @returns {{from: string, to: string}} Date range with YYYY-MM-DD strings
@@ -717,6 +732,9 @@ export class NansenAPI {
     const method = options.method || 'POST';
     const isGet = method === 'GET';
     let paidResponse;
+    const startedAt = Date.now();
+    // The signature itself is never traced — only that a paid retry went out.
+    traceRequest({ method, url, attempt: 1, payment: 'x402' });
     try {
       paidResponse = await fetch(url, {
         method,
@@ -733,6 +751,7 @@ export class NansenAPI {
         ...(!isGet && method !== 'DELETE' && { body: JSON.stringify(NansenAPI.cleanBody(body)) }),
       });
     } catch (err) {
+      traceError({ method, url, durationMs: Date.now() - startedAt, attempt: 1, error: err.message });
       // The signature was already on the wire when the connection failed —
       // the server may have received and settled it before we lost the
       // response. Fail closed rather than let the caller sign and send a
@@ -742,6 +761,15 @@ export class NansenAPI {
         ErrorCode.PAYMENT_AMBIGUOUS,
       );
     }
+    traceResponse({
+      method,
+      url,
+      status: paidResponse.status,
+      durationMs: Date.now() - startedAt,
+      requestId: requestIdOf(paidResponse),
+      attempt: 1,
+      payment: 'x402',
+    });
     if (!paidResponse.ok) {
       // A 5xx doesn't prove the payment was rejected — the server could have
       // processed it before failing to respond. Only a readable non-5xx
@@ -818,6 +846,7 @@ export class NansenAPI {
       const cached = getCachedResponse(endpoint, body, cacheTtl, cacheContext);
       if (cached) {
         this.servedFromCache = true;
+        traceCacheHit({ method, url });
         return cached;
       }
     }
@@ -825,8 +854,12 @@ export class NansenAPI {
 
     let lastError;
 
+    const maxAttempts = (shouldRetry ? maxRetries : 0) + 1;
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       let response;
+      const startedAt = Date.now();
+      traceRequest({ method, url, attempt: attempt + 1, maxAttempts });
       try {
         const isGet = method === 'GET';
         response = await fetch(url, {
@@ -845,20 +878,31 @@ export class NansenAPI {
         });
       } catch (err) {
         // Network-level errors - retry these too
+        traceError({ method, url, durationMs: Date.now() - startedAt, attempt: attempt + 1, error: err.message });
         lastError = new NansenError(
           `Network error: ${err.message}`,
           ErrorCode.NETWORK_ERROR,
           null,
           { originalError: err.message, attempt: attempt + 1 }
         );
-        
+
         if (shouldRetry && attempt < maxRetries) {
           const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs);
+          traceRetry({ method, url, attempt: attempt + 1, reason: 'network-error', delayMs });
           await sleep(delayMs);
           continue;
         }
         throw lastError;
       }
+
+      traceResponse({
+        method,
+        url,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+        requestId: requestIdOf(response),
+        attempt: attempt + 1,
+      });
 
       let data;
       try {
@@ -880,6 +924,7 @@ export class NansenAPI {
         
         if (shouldRetry && attempt < maxRetries && response.status >= 500) {
           const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs);
+          traceRetry({ method, url, status: response.status, attempt: attempt + 1, reason: 'unparseable-response', delayMs });
           await sleep(delayMs);
           lastError = error;
           continue;
@@ -924,7 +969,7 @@ export class NansenAPI {
                 defaultWalletProvider = wallet.provider || 'local';
               }
             } catch (err) {
-              if (process.env.DEBUG) console.error(`[x402] Failed to detect wallet provider: ${err.message}`);
+              trace('x402.wallet_provider_lookup_failed', { error: err.message });
             }
 
             if (defaultWalletProvider === 'privy') {
@@ -1033,6 +1078,15 @@ export class NansenAPI {
         // Retry on specific status codes
         if (shouldRetry && attempt < maxRetries && retryOnStatus.includes(response.status)) {
           const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs, retryAfterMs);
+          traceRetry({
+            method,
+            url,
+            status: response.status,
+            attempt: attempt + 1,
+            reason: retryAfterMs ? 'retry-after' : 'retryable-status',
+            delayMs,
+            retryAfterMs,
+          });
           await sleep(delayMs);
           continue;
         }
