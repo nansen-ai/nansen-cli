@@ -957,7 +957,7 @@ DEPRECATED ALIASES (still work, will be removed in a future version):
   smart-money, profiler, token, search, perp, portfolio → use "nansen research <command>"
   quote, execute → use "nansen trade <command>"
 
-Research chains: ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, linea, scroll, mantle, ronin, sei, plasma, sonic, monad, hyperevm, iotaevm
+Research chains: ${SCHEMA.chains.join(', ')}
 Trade chains: solana, base
 Bridge chains: ethereum, base, arbitrum, polygon, bnb, hyperliquid
 Labels: Fund, Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader

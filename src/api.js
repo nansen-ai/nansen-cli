@@ -397,9 +397,8 @@ export const COUNTERPARTIES_BATCH_MAX_DAYS = 90;
  * validates `chain` against. Anything outside it is a 422.
  *
  * Deliberately NOT derived from EVM_CHAINS. That list is this CLI's own
- * address-format/ENS set and disagrees with the endpoint in both directions: it
- * carries `scroll` and `ronin`, which the endpoint rejects, and omits every
- * non-EVM chain the endpoint does serve (bitcoin, tron, sui, ton, near, ...).
+ * address-format/ENS set and omits every non-EVM chain the endpoint does serve
+ * (bitcoin, tron, sui, ton, near, ...).
  * Mirrors ADDRESS_COUNTERPARTIES_BATCH_CHAINS on the MCP side (nansen-ra#3550),
  * which additionally drops `arc` and `starknet`; the spec enum is the contract
  * here, so they stay in.

@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { NansenAPI } from '../api.js';
-import { batchProfile, traceCounterparties, compareWallets } from '../cli.js';
+import { batchProfile, traceCounterparties, compareWallets, SCHEMA } from '../cli.js';
 
 // All documented endpoints from Nansen API
 const DOCUMENTED_ENDPOINTS = {
@@ -200,22 +200,26 @@ describe('API Endpoint Coverage', () => {
 });
 
 describe('Supported Chains Coverage', () => {
-  const DOCUMENTED_CHAINS = [
-    'ethereum', 'solana', 'base', 'bnb', 'arbitrum',
-    'polygon', 'optimism', 'avalanche', 'linea', 'scroll',
-    'mantle', 'ronin', 'sei', 'plasma',
-    'sonic', 'monad', 'hyperevm', 'iotaevm'
-  ];
+  // `nansen schema` is the single source of truth for the chain list; read it
+  // from there rather than keeping a second hand-copied list here that can drift.
+  const DOCUMENTED_CHAINS = SCHEMA.chains;
 
   it('should document all supported chains', () => {
-    // Just verify the list is comprehensive
     expect(DOCUMENTED_CHAINS).toContain('ethereum');
     expect(DOCUMENTED_CHAINS).toContain('solana');
     expect(DOCUMENTED_CHAINS).toContain('base');
     expect(DOCUMENTED_CHAINS.length).toBeGreaterThanOrEqual(18);
-    
+
     console.log(`\n🔗 Supported Chains: ${DOCUMENTED_CHAINS.length}`);
     console.log(`   ${DOCUMENTED_CHAINS.join(', ')}`);
+  });
+
+  it('lists every chain as a lowercase slug, exactly once, in alphabetical order', () => {
+    for (const chain of DOCUMENTED_CHAINS) {
+      expect(chain, `"${chain}" is not a lowercase slug`).toMatch(/^[a-z0-9]+$/);
+    }
+    expect(new Set(DOCUMENTED_CHAINS).size, 'schema.json chains has duplicates').toBe(DOCUMENTED_CHAINS.length);
+    expect(DOCUMENTED_CHAINS, 'schema.json chains is not sorted').toEqual([...DOCUMENTED_CHAINS].sort());
   });
 });
 
