@@ -762,10 +762,10 @@ export function buildWalletCommands(deps = {}) {
             throw new CommandError('Usage: nansen wallet export <name> [--reveal | --file <path>]', 'MISSING_ARGS');
           }
 
-          // Bare `--file` parses as flags.file, `--file true` JSON-parses to a
-          // boolean, and `--file ""` (an unset shell variable) is an empty path
-          // that would only fail at open time — reject all of them before any
-          // secret is decrypted.
+          // Bare `--file` parses as flags.file, a repeated or JSON-array `--file`
+          // arrives as a non-string, and `--file ""` (an unset shell variable) is
+          // an empty path that would only fail at open time — reject all of them
+          // before any secret is decrypted.
           const wantsFile = options.file !== undefined || flags.file;
           if (wantsFile && (typeof options.file !== 'string' || options.file === '')) {
             throw new CommandError('--file requires a path: nansen wallet export <name> --file <path>', 'INVALID_INPUT');

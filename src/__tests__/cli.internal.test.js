@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   parseArgs,
+  resolveBooleanOption,
   formatValue,
   formatTable,
   formatOutput,
@@ -68,6 +69,28 @@ describe('parseArgs', () => {
   it('should parse JSON options', () => {
     const result = parseArgs(['--filters', '{"only_smart_money":true}']);
     expect(result.options.filters).toEqual({ only_smart_money: true });
+  });
+
+  it('should keep true/false/null option values as strings instead of JSON keywords', () => {
+    const result = parseArgs(['--sort', 'true', '--search', 'false', '--label', 'null']);
+    expect(result.options).toEqual({ sort: 'true', search: 'false', label: 'null' });
+    expect(result.flags).toEqual({});
+  });
+
+  it('should keep true/false/null as strings inside repeated options too', () => {
+    const result = parseArgs(['--token', 'true', '--token', '0xabc:base']);
+    expect(result.options.token).toEqual(['true', '0xabc:base']);
+  });
+
+  it('should still parse object and array option values as JSON', () => {
+    const result = parseArgs(['--filters', '{}', '--order-by', '[{"field":"x"}]']);
+    expect(result.options.filters).toEqual({});
+    expect(result.options['order-by']).toEqual([{ field: 'x' }]);
+  });
+
+  it('should keep numeric option values as strings exactly as before', () => {
+    const result = parseArgs(['--limit', '10', '--amount', '1000000000000000000000', '--slippage', '0.5', '--days', '-7']);
+    expect(result.options).toEqual({ limit: '10', amount: '1000000000000000000000', slippage: '0.5', days: '-7' });
   });
 
   it('should handle mixed args', () => {
@@ -139,6 +162,35 @@ describe('parseArgs', () => {
       expect(result.options[flag]).toBeUndefined();
       expect(result._).toEqual(['trade', 'execute', '1708900000000-abc123']);
     }
+  });
+});
+
+describe('resolveBooleanOption', () => {
+  const resolve = (argv, key = 'premium-labels') => {
+    const { flags, options } = parseArgs(argv);
+    return resolveBooleanOption(options, flags, key);
+  };
+
+  it('treats a bare --flag as true', () => {
+    expect(resolve(['--premium-labels'])).toBe(true);
+    expect(resolve(['--premium-labels', '--chain', 'solana'])).toBe(true);
+  });
+
+  it('treats --flag true as true', () => {
+    expect(resolve(['--premium-labels', 'true'])).toBe(true);
+    expect(resolve(['--premium-labels', 'TRUE'])).toBe(true);
+    expect(resolve(['--premium-labels', '1'])).toBe(true);
+  });
+
+  it('treats --flag false as false', () => {
+    expect(resolve(['--premium-labels', 'false'])).toBe(false);
+    expect(resolve(['--premium-labels', 'False'])).toBe(false);
+    expect(resolve(['--premium-labels', '0'])).toBe(false);
+  });
+
+  it('returns undefined when the option is absent', () => {
+    expect(resolve([])).toBeUndefined();
+    expect(resolve(['--chain', 'solana'])).toBeUndefined();
   });
 });
 
@@ -1901,6 +1953,22 @@ describe('parseSort', () => {
     const result = parseSort('timestamp', undefined);
     expect(result).toEqual([{ field: 'timestamp', direction: 'DESC' }]);
   });
+
+  it('should treat the words true/false/null as literal field names', () => {
+    expect(parseSort('true', undefined)).toEqual([{ field: 'true', direction: 'DESC' }]);
+    expect(parseSort('false', undefined)).toEqual([{ field: 'false', direction: 'DESC' }]);
+    expect(parseSort('null:asc', undefined)).toEqual([{ field: 'null', direction: 'ASC' }]);
+  });
+
+  it('should reject a non-string value with an actionable error instead of a TypeError', () => {
+    for (const bad of [true, ['a', 'b'], { field: 'x' }]) {
+      let error;
+      try { parseSort(bad, undefined); } catch (e) { error = e; }
+      expect(error).toBeInstanceOf(NansenError);
+      expect(error.code).toBe(ErrorCode.INVALID_PARAMS);
+      expect(error.message).toBe('--sort must be "field" or "field:direction"');
+    }
+  });
 });
 
 describe('HELP', () => {
@@ -2208,6 +2276,31 @@ describe('buildCommands', () => {
         orderBy: undefined,
         pagination: { page: 1, per_page: 10 }
       });
+    });
+
+    it('should treat --sort true as a literal field name instead of crashing', async () => {
+      const mockApi = {
+        smartMoneyNetflow: vi.fn().mockResolvedValue({ data: [] })
+      };
+      const { _: args, flags, options } = parseArgs(['netflow', '--chain', 'solana', '--sort', 'true']);
+      await commands['smart-money'](args, mockApi, flags, options);
+
+      expect(mockApi.smartMoneyNetflow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chains: ['solana'],
+          orderBy: [{ field: 'true', direction: 'DESC' }],
+        })
+      );
+    });
+
+    it('should reject a repeated --sort instead of sending a joined field name', async () => {
+      const mockApi = {
+        smartMoneyNetflow: vi.fn().mockResolvedValue({ data: [] })
+      };
+      const { _: args, flags, options } = parseArgs(['netflow', '--sort', 'a', '--sort', 'b']);
+      await expect(commands['smart-money'](args, mockApi, flags, options))
+        .rejects.toThrow('--sort must be "field" or "field:direction"');
+      expect(mockApi.smartMoneyNetflow).not.toHaveBeenCalled();
     });
 
     it('should add smart money labels filter', async () => {

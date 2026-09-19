@@ -194,15 +194,22 @@ export function parseArgs(args) {
       // string is a real value, and skipping it here left `""` dangling to be
       // picked up as a positional arg on the next iteration.
       } else if (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next))) {
-        // Try to parse as JSON first (for objects/arrays/booleans),
-        // but keep numeric strings as strings to avoid precision loss
-        // and scientific notation for large integers (e.g. 1e+21).
-        let parsedValue;
+        // Try to parse as JSON so object/array options (`--filters '{}'`,
+        // `--order-by '[...]'`) arrive structured. Numbers stay strings to
+        // avoid precision loss and scientific notation for large integers
+        // (e.g. 1e+21). The bare keywords true/false/null stay strings too:
+        // no option takes a boolean or null *value*, so coercing them would
+        // silently retype a string option (`--sort true` used to become the
+        // boolean true). Boolean options read the strings 'true'/'false'
+        // through resolveBooleanOption().
+        let parsedValue = next;
         try {
           const parsed = JSON.parse(next);
-          parsedValue = typeof parsed === 'number' ? next : parsed;
+          if (typeof parsed !== 'number' && typeof parsed !== 'boolean' && parsed !== null) {
+            parsedValue = parsed;
+          }
         } catch {
-          parsedValue = next;
+          // Not JSON: keep the raw string.
         }
         i++;
         // Accumulate repeated options into arrays (supports repeatable flags like --token, --subject)

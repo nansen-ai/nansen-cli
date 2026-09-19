@@ -12,8 +12,18 @@ function invoke(argv) {
 }
 
 describe('web string option validation', () => {
-  it('rejects JSON boolean --query values with an actionable error', async () => {
+  it('treats --query true as the literal string "true", not a boolean', async () => {
     const { api, promise } = invoke(['search', '--query', 'true']);
+
+    await promise;
+    expect(api.webSearch).toHaveBeenCalledWith({
+      queries: ['true'],
+      numResults: undefined,
+    });
+  });
+
+  it('rejects JSON object --query values with an actionable error', async () => {
+    const { api, promise } = invoke(['search', '--query', '{"q":"btc"}']);
 
     await expect(promise).rejects.toThrow('--query values must be strings');
     expect(api.webSearch).not.toHaveBeenCalled();
@@ -23,7 +33,7 @@ describe('web string option validation', () => {
     const { api, promise } = invoke([
       'search',
       '--query', 'bitcoin',
-      '--query', 'true',
+      '--query', '{"q":"btc"}',
     ]);
 
     await expect(promise).rejects.toThrow('--query values must be strings');
@@ -40,11 +50,25 @@ describe('web string option validation', () => {
     });
   });
 
-  it('rejects non-string --question values instead of throwing TypeError', async () => {
+  it('treats --question true as the literal string "true", not a boolean', async () => {
     const { api, promise } = invoke([
       'fetch',
       'https://nansen.ai',
       '--question', 'true',
+    ]);
+
+    await promise;
+    expect(api.webFetch).toHaveBeenCalledWith({
+      urls: ['https://nansen.ai'],
+      question: 'true',
+    });
+  });
+
+  it('rejects non-string --question values instead of throwing TypeError', async () => {
+    const { api, promise } = invoke([
+      'fetch',
+      'https://nansen.ai',
+      '--question', '{"ask":"what"}',
     ]);
 
     await expect(promise).rejects.toThrow('--question must be a string');
