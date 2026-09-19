@@ -581,6 +581,25 @@ export async function deleteWallet(name, password) {
 // ============= CLI Command Builder =============
 
 /**
+ * Every `nansen wallet` subcommand the dispatcher below accepts, in the order
+ * they are advertised to users. `help` is deliberately absent: it is the
+ * fallback, not a capability. The top-level help banner builds its wallet line
+ * from this list, and command-surface.test.js checks the handlers, README and
+ * src/schema.json against it so the four cannot drift apart.
+ */
+export const WALLET_SUBCOMMANDS = [
+  'create',
+  'list',
+  'show',
+  'export',
+  'default',
+  'delete',
+  'send',
+  'forget-password',
+  'secure',
+];
+
+/**
  * Build wallet command handlers for integration into CLI.
  */
 export function buildWalletCommands(deps = {}) {

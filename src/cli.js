@@ -4,7 +4,7 @@
  */
 
 import { NansenAPI, NansenError, CommandError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, normalizeAddress, sleep } from './api.js';
-import { buildWalletCommands } from './wallet.js';
+import { buildWalletCommands, WALLET_SUBCOMMANDS } from './wallet.js';
 import { buildBridgeCommands, formatBridgeRoutes } from './bridge.js';
 import { buildPerpCommands } from './perp.js';
 import { buildTradingCommands } from './trading.js';
@@ -912,9 +912,9 @@ USAGE: nansen <command> [subcommand] [options]
 COMMANDS:
   trade       DEX swaps/bridges: quote, execute, bridge-status, limit-order
   bridge      Hyperliquid bridge: quote, execute, status (EVM <-> HL)
-  perp        Hyperliquid perps: order, cancel, close, leverage, positions
+  perp        Hyperliquid perps: order, cancel, close, leverage, transfer, approve-builder-fee, positions, orders, account, meta
   research    analytics: smart-money, profiler, token, search, perp, portfolio
-  wallet      create, list, show, export, default, delete, forget-password
+  wallet      ${WALLET_SUBCOMMANDS.join(', ')}
   agent       Ask the Nansen AI research agent (fast/expert modes)
   alerts      list, create, update, toggle, delete
   web         search, fetch
