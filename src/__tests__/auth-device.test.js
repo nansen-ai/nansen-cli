@@ -108,3 +108,9 @@ it.each(['not-a-jwt', 'e30.e30.signature'])('reports malformed issued expiry as 
   expect(onIssued.mock.calls[0][0].refreshToken).toBe('synthetic-cleanup-authority');
   expect(onIssued.mock.calls[0][0]).not.toHaveProperty('expiresAt');
 });
+
+it('keeps device authorization grants bounded at one hour before polling', async () => {
+  const fetchFn = vi.fn().mockResolvedValue(response(200, { ...grant(), expires_in: 3601 }));
+  await expect(pairDevice(createDeviceClient({ audience: 'https://api.nansen.ai', fetchFn }), { wait: async () => {}, onPending: vi.fn() })).rejects.toMatchObject({ code: 'PAIRING_FAILED' });
+  expect(fetchFn).toHaveBeenCalledOnce();
+});

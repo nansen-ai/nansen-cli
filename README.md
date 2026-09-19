@@ -83,7 +83,7 @@ The API506 draft changes plain `nansen login` to fresh browser approval. It pref
 
 This is a breaking change for scripts that used plain login to persist an environment key. Use explicit `nansen login --human` with that environment key, or `--api-key <key>` with its existing shell-history risk. Direct key-authenticated commands need no migration. Automatic wallet payment now requires anonymous access: even a valid selected API key returning 402 will not automatically buy credits or sign a payment. Top up the selected account or explicitly supply `--x402-payment-signature`. Selected invalid credentials never cause an account switch; intended anonymous payments and explicit manual API-key payments retain their behavior.
 
-This draft is for a controlled prerelease cohort, not normal-release promotion. Automatic renewal is separate: expired sessions require login. Public research billing, staging acceptance and OS verification remain gates. Read [browser login custody, compatibility and release gates](docs/browser-login.md) before cohort use. Browser sessions do not add wallet-signing authority and cannot be exported as MCP API keys.
+This draft is for a controlled prerelease cohort, not normal-release promotion. Selected browser sessions renew automatically near expiry. A lost refresh response without a complete stored replacement requires fresh login; the consumed credential is never retried. Public research billing, staging acceptance and OS verification remain gates. Read [browser login custody, compatibility and release gates](docs/browser-login.md) before cohort use. Browser sessions do not add wallet-signing authority and cannot be exported as MCP API keys.
 
 ## MCP
 

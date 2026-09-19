@@ -18,6 +18,14 @@ export function trustedIssuer(audience) {
   if (!issuer) throw new AuthError('AUTH_ORIGIN_UNSUPPORTED', 'Browser sessions require the Nansen production or staging API origin. Check the selected origin in NANSEN_BASE_URL or config.json baseUrl; plain login preserves it.');
   return issuer;
 }
+export function validAuthPointer(auth) {
+  if (!auth || ![1, 2].includes(auth.version) || !['none', 'api-key', 'session'].includes(auth.active?.kind)) return false;
+  if (auth.version === 1) return true; // Preserve the pre-renewal reader's format contract.
+  if (auth.version === 2 && (typeof auth.selectionEpoch !== 'string' || !/^[a-f0-9-]{36}$/.test(auth.selectionEpoch))) return false;
+  return auth.active.kind !== 'session' || (typeof auth.active.generation === 'string' && /^[a-f0-9-]{36}$/.test(auth.active.generation) &&
+    typeof auth.selectionEpoch === 'string' && /^[a-f0-9-]{36}$/.test(auth.selectionEpoch) &&
+    ['issuer', 'audience', 'accountId'].every(k => typeof auth.active[k] === 'string' && auth.active[k].length > 0 && auth.active[k].length <= 255) && Number.isFinite(auth.active.expiresAt));
+}
 export function readAuthConfig(env = process.env, devConfigPath = DEV_CONFIG) {
   const userPath = path.join(authDirectory(env), 'config.json');
   const configPath = fs.existsSync(userPath) ? userPath : fs.existsSync(devConfigPath) ? devConfigPath : null;
@@ -29,7 +37,7 @@ export function readAuthConfig(env = process.env, devConfigPath = DEV_CONFIG) {
       if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error();
     } catch (err) { config = {}; configError = err instanceof SyntaxError ? 'parse' : 'unreadable'; }
   }
-  if (config.auth && (config.auth.version !== 1 || !['none', 'api-key', 'session'].includes(config.auth.active?.kind))) configError = 'format';
+  if (config.auth && !validAuthPointer(config.auth)) configError = 'format';
   return { config, configPath, configError, configFileExists: fs.existsSync(userPath), devConfigPath };
 }
 export function resolveCredential({ env = process.env, explicitKey, snapshot = readAuthConfig(env) } = {}) {

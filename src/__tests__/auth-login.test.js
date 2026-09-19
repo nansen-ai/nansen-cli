@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { browserLogin } from '../auth-login.js';
+import { browserLogin, cleanupMessage } from '../auth-login.js';
 import { buildCommands, runCLI } from '../cli.js';
 import { NansenAPI, loadConfig } from '../api.js';
 import { createAuthState } from '../auth-state.js';
@@ -132,13 +132,14 @@ describe('selected credential and payment boundary', () => {
     await expect(buildMcpCommands({ log }).mcp(['install', 'claude-code'], api, { 'dry-run': true }, {})).rejects.toMatchObject({ code: 'API_KEY_REQUIRED' });
     expect(log).not.toHaveBeenCalled();
   });
-  it('expired selected sessions fail before network or cache', async () => {
+  it('expired selected sessions never use cache after uncertain renewal', async () => {
     const f = fixture(); const bundle = sessionFixture({ now: Date.now() - 7200000 });
     const attempt = await f.state.begin(); await f.state.install(attempt, { bundle, baseUrl: bundle.audience }); await f.state.finish(attempt);
     const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
     const selection = resolveCredential({ env: f.env });
     const api = new NansenAPI(null, bundle.audience, { credential: selection, authState: f.state, cache: { enabled: true } });
-    await expect(api.getAccount()).rejects.toMatchObject({ code: 'SESSION_EXPIRED' }); expect(fetch).not.toHaveBeenCalled();
+    await expect(api.getAccount()).rejects.toMatchObject({ code: 'SESSION_RENEWAL_UNCERTAIN' }); expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][0]).toBe(bundle.issuer + '/token/refresh');
   });
   it('browser session errors never echo tokens and never fall back', async () => {
     const f = fixture(); const bundle = sessionFixture(); const attempt = await f.state.begin(); await f.state.install(attempt, { bundle, baseUrl: bundle.audience }); await f.state.finish(attempt);
@@ -217,4 +218,24 @@ it('legacy prompting depends on stdin while redirected browser output stays mach
   expect(promptFn).toHaveBeenCalledOnce(); expect(JSON.parse(fs.readFileSync(f.file)).apiKey).toBe('synthetic-key');
   await commands.login([], null, {}, {});
   expect(browserLoginFn.mock.calls[0][0].isTTY).toBe(false);
+});
+
+it.each(['response', 'jwt'])('fresh pairing rejects over-ceiling %s lifetime with operator guidance and candidate retirement', async kind => {
+  const { createDeviceClient, pairDevice } = await import('../auth-device.js');
+  const f = fixture(); fs.writeFileSync(f.file, JSON.stringify({ apiKey: 'previous-key' }));
+  const bundle = sessionFixture(); const parts = bundle.accessToken.split('.'); const claims = JSON.parse(Buffer.from(parts[1], 'base64url'));
+  if (kind === 'jwt') { claims.exp = claims.iat + 3601; parts[1] = Buffer.from(JSON.stringify(claims)).toString('base64url'); }
+  const fetchFn = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ device_code: 'fixture', user_code: 'ABCD-EFGH', verification_uri: 'https://idp.nansen.ai/device', verification_uri_complete: 'https://idp.nansen.ai/device?user_code=ABCD-EFGH', expires_in: 600, interval: 1 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: parts.join('.'), refresh_token: bundle.refreshToken, token_type: 'Bearer', scope: 'nansen:read', expires_in: kind === 'response' ? 3601 : 3600 })));
+  const retire = vi.fn(async () => ({ remote: 'recorded_pending' }));
+  const client = createDeviceClient({ audience: bundle.audience, privateJwk: bundle.privateJwk, fetchFn });
+  await expect(browserLogin({ env: f.env, state: f.state, clientFactory: () => client, pair: (c, options) => pairDevice(c, { ...options, wait: async () => {} }), retire, signals: new EventEmitter(), isTTY: false, log: vi.fn(), errorOutput: vi.fn() })).rejects.toMatchObject({ code: 'BROWSER_SESSION_SETUP_REQUIRED', message: expect.stringContaining('3600 seconds') });
+  expect(fetchFn).toHaveBeenCalledTimes(2); expect(retire).toHaveBeenCalledOnce(); expect(retire.mock.calls[0][0].refreshToken).toBe(bundle.refreshToken);
+  expect(JSON.parse(fs.readFileSync(f.file)).apiKey).toBe('previous-key');
+});
+
+it('state disagreement guidance preserves the code and directs unconfirmed revocation to the operator', () => {
+  const messages = cleanupMessage([{ local: 'incomplete', remote: 'unconfirmed', code: 'AUTH_STATE_INVALID' }]).join(' ');
+  expect(messages).toContain('metadata disagree'); expect(messages).toContain('session/revocation operator');
+  expect(messages).not.toContain('Unlock'); expect(messages).not.toContain('account security settings');
 });

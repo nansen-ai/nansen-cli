@@ -41,7 +41,7 @@ describe('Package Integrity', () => {
     // (not just slow) rather than failing, so nothing short of avoiding it
     // keeps this test from hanging the whole CI job.
     execSync('npm init -y', { cwd: tmpDir, stdio: 'ignore' });
-    execSync(`npm install --omit=optional --no-audit --no-fund "${tgzPath}"`, { cwd: tmpDir, stdio: 'ignore' });
+    execSync(`npm install --omit=optional --no-audit --no-fund --fetch-retries=0 --fetch-timeout=15000 "${tgzPath}"`, { cwd: tmpDir, stdio: 'pipe', timeout: 45000, env: { ...process.env, NANSEN_TEST_PACKAGE_INSTALL: '1' } });
 
     // Smoke test - if any import fails (e.g., missing src/commands/), this crashes.
     // Resolve the .cmd extension on Windows, where node_modules/.bin shims aren't extensionless.

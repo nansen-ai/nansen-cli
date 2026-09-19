@@ -42,3 +42,12 @@ it('auth status and doctor offline never send telemetry or other network even wh
   for (const args of [['auth', 'status'], ['doctor', '--offline']]) await runCLI(args, { output: vi.fn(), errorOutput: vi.fn(), exit: vi.fn() });
   expect(fetch).not.toHaveBeenCalled();
 });
+
+it.each(['AUTH_TIMEOUT', 'AUTH_CANCELLED'])('actual public serialization retains fixed %s and honors opt-outs', async code => {
+  for (const optout of [undefined, 'NANSEN_NO_TELEMETRY', 'DO_NOT_TRACK']) {
+    const { runCLI, events, fetch } = await setup(optout);
+    await runCLI(['logout', secret, '--chain', secret], { commandOverrides: { logout: async () => { throw Object.assign(new Error(secret), { code }); } }, output: vi.fn(), errorOutput: vi.fn(), exit: vi.fn() });
+    if (optout) expect(fetch).not.toHaveBeenCalled();
+    else { expect(events[0].properties.error_code).toBe(code); expect(JSON.stringify(events)).not.toContain(secret); }
+  }
+});

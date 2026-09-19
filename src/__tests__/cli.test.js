@@ -29,6 +29,7 @@ function runCLI(args, options = {}) {
   const env = {
     ...process.env,
     PATH: `${MOCK_BIN_DIR}:${process.env.PATH}`,
+    NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require=${path.resolve('src/__tests__/fixtures/cli-network.cjs')}`,
     NANSEN_API_KEY: 'test-key',
     ...options.env
   };

@@ -1,4 +1,5 @@
-import { authConfigView } from './auth-credentials.js';
+import { renewalStatus } from './auth-state.js';
+import { authConfigView, authDirectory } from './auth-credentials.js';
 /**
  * Nansen CLI - Offline diagnostics
  *
@@ -183,6 +184,7 @@ export function getAuthStatus(deps = {}) {
       expired: auth.config.auth.active.expiresAt <= Date.now(),
       validity: 'cached_unverified',
       storage_access: 'not_checked_no_prompt',
+      renewal_state: renewalStatus(authDirectory(env), auth.config.auth),
     } : null,
     api_key: {
       present: Boolean(auth.apiKey),

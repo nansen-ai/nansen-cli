@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll } from 'vitest';
 const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'nansen-unit-home-'));
 process.env.HOME = isolatedHome;
@@ -14,3 +15,6 @@ afterAll(() => fs.rmSync(isolatedHome, { recursive: true, force: true }));
 // Tests must explicitly inject transports. A missed retirement/analytics mock
 // must never send even synthetic credential material to a production service.
 globalThis.fetch = async () => { throw new Error('Unexpected outbound fetch: inject a test transport'); };
+
+const guard = fileURLToPath(new URL('./fixtures/network-guard.cjs', import.meta.url));
+process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS || ''} --require=${guard}`;

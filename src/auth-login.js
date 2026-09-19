@@ -7,10 +7,11 @@ export function defaultAuthState() { return createAuthState({ retire: retireSess
 export function cleanupMessage(results = []) {
   const messages = [];
   if (results.some(r => r.code === 'AUTH_JOURNAL_INVALID')) messages.push('Authentication recovery cannot safely read auth-operations. Preserve its files and secure-store entries; see docs/browser-login.md#damaged-or-unrecognized-journals before retrying cleanup.');
+  if (results.some(r => r.code === 'AUTH_STATE_INVALID')) messages.push('Saved authentication and recovery metadata disagree. Preserve config.json, auth-operations and secure-store entries; contact the session operator before retrying cleanup.');
   if (results.some(r => r.local === 'unrecognized')) messages.push('Unrecognized JSON files remain in auth-operations. They were preserved and not treated as credential journals. See docs/browser-login.md#damaged-or-unrecognized-journals.');
-  if (results.some(r => r.local === 'incomplete' && r.code !== 'AUTH_JOURNAL_INVALID')) messages.push('Secure-store deletion incomplete. Unlock the credential store and run nansen logout to finish cleanup.');
+  if (results.some(r => r.local === 'incomplete' && !['AUTH_JOURNAL_INVALID', 'AUTH_STATE_INVALID'].includes(r.code))) messages.push('Secure-store deletion incomplete. Unlock the credential store and run nansen logout to finish cleanup.');
   if (results.some(r => r.local === 'pending')) messages.push('Authentication cleanup remains pending. After other login attempts finish and the credential store is unlocked, rerun nansen logout to process the next bounded batch.');
-  if (results.some(r => r.remote === 'unconfirmed')) messages.push('Remote revocation unconfirmed. Review the old CLI device in your Nansen account security settings.');
+  if (results.some(r => r.remote === 'unconfirmed')) messages.push('Remote revocation unconfirmed. Contact the session/revocation operator to revoke the affected session; local deselection does not confirm remote invalidation.');
   if (results.some(r => r.remote === 'recorded_pending')) messages.push('Family revocation recorded; API propagation is pending.');
   if (results.some(r => r.remote === 'refresh_only')) messages.push('Refresh family retired; issued access tokens may remain valid until expiry.');
   return messages;

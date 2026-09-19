@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import locks from 'fs-native-extensions';
 const roots = [], children = [], orphans = [];
+const guard = fileURLToPath(new URL('./fixtures/network-guard.cjs', import.meta.url));
 const src = fileURLToPath(new URL('..', import.meta.url));
 afterEach(async () => {
   for (const pid of orphans.splice(0)) { try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ } }
@@ -20,7 +21,8 @@ async function until(test, timeout = 5000) {
 function harness() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-lifetime-')); roots.push(root);
   fs.mkdirSync(path.join(root, 'entries'));
-  for (const file of ['auth-state.js', 'auth-store.js', 'auth-store-worker.js', 'auth-credentials.js']) fs.copyFileSync(path.join(src, file), path.join(root, file));
+  for (const file of ['auth-state.js', 'auth-device.js', 'auth-store.js', 'auth-store-worker.js', 'auth-credentials.js']) fs.copyFileSync(path.join(src, file), path.join(root, file));
+  fs.writeFileSync(path.join(root, 'auth-store-worker.js'), `import ${JSON.stringify(guard)};\n` + fs.readFileSync(path.join(root, 'auth-store-worker.js'), 'utf8'));
   fs.writeFileSync(path.join(root, 'package.json'), '{"type":"module"}');
   fs.symlinkSync(path.join(src, '../node_modules'), path.join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   // Only the native backend is replaced. Dispatcher, guardian and state owner
@@ -50,7 +52,7 @@ function harness() {
   return root;
 }
 function start(root, action = 'install') {
-  const child = fork(path.join(root, 'owner.js'), [action], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { PATH: process.env.PATH, NODE_NO_WARNINGS: '1' } }); children.push(child);
+  const child = fork(path.join(root, 'owner.js'), [action], { execArgv: ['--require', guard], stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { PATH: process.env.PATH, NODE_NO_WARNINGS: '1' } }); children.push(child);
   let out = ''; child.stdout.on('data', b => { out += b; }); child.stderr.resume();
   return { child, result: once(child, 'exit').then(([code]) => { if (code !== 0) throw new Error('owner failed'); return out ? JSON.parse(out) : null; }).catch(error => ({ error: error.message })) };
 }
