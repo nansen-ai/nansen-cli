@@ -2021,7 +2021,16 @@ export const RESEARCH_CATEGORY_ALIASES = {
 
 // Generate help text for a specific subcommand using SCHEMA
 export function generateSubcommandHelp(command, subcommand, prefix = null) {
-  const cmdSchema = SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command];
+  // `perp` is both a top-level trading command and a research category, and
+  // the two have different subcommands. Look in both places and use whichever
+  // actually holds this subcommand (top-level wins when both do) instead of
+  // stopping at the first schema whose *name* matches — that made
+  // `research perp screener --help` fall back to listing the category's
+  // subcommands, i.e. telling the caller to run the command they just ran.
+  const topSchema = SCHEMA.commands[command];
+  const researchSchema = SCHEMA.commands.research.subcommands[command];
+  const fromResearch = !topSchema?.subcommands?.[subcommand] && Boolean(researchSchema?.subcommands?.[subcommand]);
+  const cmdSchema = fromResearch ? researchSchema : topSchema || researchSchema;
   if (!cmdSchema) return null;
 
   const subSchema = cmdSchema.subcommands?.[subcommand];
@@ -2052,7 +2061,7 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
 
   const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
   const chain = subSchema.options?.chain?.default || 'solana';
-  const cmdPrefix = prefix || (DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command);
+  const cmdPrefix = prefix || (fromResearch || DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command);
   let example = subSchema.examples?.[0] || `nansen ${cmdPrefix} ${subcommand}`;
   if (!subSchema.examples?.length && subSchema.options) {
     for (const [name, opt] of Object.entries(subSchema.options)) {
