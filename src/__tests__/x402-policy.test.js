@@ -145,6 +145,10 @@ describe('evaluatePaymentRequirement — allowlist and basic pass', () => {
     expect(result.ok).toBe(true);
     expect(result.usd).toBeCloseTo(0.01, 5);
     expect(result.symbol).toBe('USDC');
+    expect(result.network).toBe('eip155:8453');
+    expect(result.asset).toBe('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
+    expect(result.payTo).toBe('0xPaymentRecipient');
+    expect(result.amountRaw).toBe('10000');
   });
 
   it('4. unknown asset on known network → refused (allowlist)', () => {

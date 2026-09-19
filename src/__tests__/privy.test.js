@@ -17,6 +17,12 @@ vi.mock("../wallet.js", async (importOriginal) => {
   return { ...actual, getWalletConfig: () => ({}) };
 });
 
+// Intercept x402-ledger dynamic imports so cap checks are controllable in tests.
+vi.mock("../x402-ledger.js", () => ({
+  assertCumulativeSpendAllowed: vi.fn(() => ({ ok: true })),
+  recordPaymentAttempt: vi.fn(() => "mock-payment-id"),
+}));
+
 // ============= PrivyClient =============
 
 describe("PrivyClient", () => {
@@ -526,5 +532,90 @@ describe("wallet provider guard", () => {
     await commands.wallet(["create"], null, {}, { name: "test-privy-env" });
     const output = logs.join("\n");
     expect(output).toContain("Privy wallet");
+  });
+});
+
+describe("createPrivyPaymentSignatures — cumulative cap enforcement", () => {
+  it("yields no signature and does not call signing when the daily cap would be exceeded", async () => {
+    const { assertCumulativeSpendAllowed } = await import("../x402-ledger.js");
+    vi.mocked(assertCumulativeSpendAllowed).mockReturnValueOnce({ ok: false, reason: "daily cap exceeded" });
+
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+
+    // Privy listWallets response
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ data: [{ id: "w1", chain_type: "ethereum", address: "0xAddr" }] }),
+    });
+
+    const paymentHeader = Buffer.from(JSON.stringify({
+      accepts: [{
+        scheme: "exact",
+        network: "eip155:8453",
+        asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        amount: "10000",
+        pay_to: "0xRecipient",
+        extra: { name: "USD Coin", version: "2", chainId: 8453 },
+      }],
+    })).toString("base64");
+
+    const mockResponse = { headers: { get: (h) => h === "payment-required" ? paymentHeader : null } };
+
+    process.env.PRIVY_APP_ID = "app-id";
+    process.env.PRIVY_APP_SECRET = "app-secret";
+
+    const results = [];
+    for await (const item of createPrivyPaymentSignatures(mockResponse, "https://api.nansen.ai/test")) {
+      results.push(item);
+    }
+    expect(results).toHaveLength(0);
+    // ethSignTypedDataV4 (rpc endpoint) must not have been called
+    const signCalls = mockFetch.mock.calls.filter(c => typeof c[0] === "string" && c[0].includes("rpc"));
+    expect(signCalls).toHaveLength(0);
+
+    vi.unstubAllGlobals();
+    delete process.env.PRIVY_APP_ID;
+    delete process.env.PRIVY_APP_SECRET;
+  });
+
+  it('propagates corrupt-ledger failures instead of falling through payment options', async () => {
+    const { assertCumulativeSpendAllowed } = await import('../x402-ledger.js');
+    const ledgerError = Object.assign(new Error('ledger is corrupt'), { failClosedX402: true });
+    vi.mocked(assertCumulativeSpendAllowed).mockImplementationOnce(() => { throw ledgerError; });
+
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ data: [{ id: 'w1', chain_type: 'ethereum', address: '0xAddr' }] }),
+    });
+
+    const paymentHeader = Buffer.from(JSON.stringify({
+      accepts: [{
+        scheme: 'exact',
+        network: 'eip155:8453',
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        amount: '10000',
+        pay_to: '0xRecipient',
+        extra: { name: 'USD Coin', version: '2', chainId: 8453 },
+      }],
+    })).toString('base64');
+    const mockResponse = { headers: { get: (h) => h === 'payment-required' ? paymentHeader : null } };
+
+    process.env.PRIVY_APP_ID = 'app-id';
+    process.env.PRIVY_APP_SECRET = 'app-secret';
+
+    await expect(async () => {
+      for await (const _item of createPrivyPaymentSignatures(mockResponse, 'https://api.nansen.ai/test')) {
+        // no-op
+      }
+    }).rejects.toThrow(/ledger is corrupt/);
+    const signCalls = mockFetch.mock.calls.filter(c => typeof c[0] === 'string' && c[0].includes('rpc'));
+    expect(signCalls).toHaveLength(0);
+
+    vi.unstubAllGlobals();
+    delete process.env.PRIVY_APP_ID;
+    delete process.env.PRIVY_APP_SECRET;
   });
 });

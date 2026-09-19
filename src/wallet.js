@@ -1162,8 +1162,11 @@ ENVIRONMENT:
   NANSEN_EVM_RPC            Custom Ethereum RPC endpoint (also generic EVM fallback)
   NANSEN_BASE_RPC           Custom Base RPC endpoint
   NANSEN_SOLANA_RPC         Custom Solana RPC endpoint
-  NANSEN_X402_MAX_AMOUNT    Max USD per x402 auto-payment (default 1.00; "unlimited" to disable)
-  NANSEN_X402_ALLOWED_PAYTO Comma-separated recipient allowlist for x402 auto-payment (optional)
+  NANSEN_X402_MAX_AMOUNT         Max USD per x402 auto-payment (default 1.00; "unlimited" to disable)
+  NANSEN_X402_DAILY_MAX_AMOUNT   Max USD cumulative x402 auto-payments per UTC day (default 10.00; "unlimited" to disable)
+  NANSEN_X402_SESSION_MAX_AMOUNT Max USD cumulative x402 auto-payments per process session (optional; "unlimited" to disable)
+  NANSEN_X402_ALLOWED_PAYTO      Comma-separated recipient allowlist for x402 auto-payment (optional)
+  Audit log: ~/.nansen/x402/payments.jsonl
 
 EXAMPLES:
   NANSEN_WALLET_PASSWORD=mypass nansen wallet create --name trading

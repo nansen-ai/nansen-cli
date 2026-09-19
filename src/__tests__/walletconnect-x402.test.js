@@ -20,8 +20,14 @@ vi.mock('../walletconnect-exec.js', () => ({
   wcExec: vi.fn(),
 }));
 
+vi.mock('../x402-ledger.js', () => ({
+  assertCumulativeSpendAllowed: vi.fn(() => ({ ok: true })),
+  recordPaymentAttempt: vi.fn(() => 'mock-payment-id'),
+}));
+
 import { evaluatePaymentRequirement } from '../x402-policy.js';
 import { wcExec } from '../walletconnect-exec.js';
+import { assertCumulativeSpendAllowed } from '../x402-ledger.js';
 import { handleX402Payment, buildEIP712TypedData } from '../walletconnect-x402.js';
 
 // Session approved for Base (eip155:8453) only -- the account entry carries
@@ -73,12 +79,14 @@ describe('handleX402Payment — policy guard', () => {
   });
 
   it('proceeds to sign when evaluatePaymentRequirement returns ok: true', async () => {
-    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC' });
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC', network: 'eip155:8453', asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', payTo: '0xRecipient', amountRaw: '10000' });
 
     const result = await handleX402Payment(PAYMENT_REQUIREMENTS);
 
-    expect(typeof result).toBe('string');
-    const decoded = JSON.parse(Buffer.from(result, 'base64').toString('utf8'));
+    expect(result).toHaveProperty('signature');
+    expect(typeof result.signature).toBe('string');
+    expect(result.network).toBe('eip155:8453');
+    const decoded = JSON.parse(Buffer.from(result.signature, 'base64').toString('utf8'));
     expect(decoded.x402Version).toBe(2);
     expect(decoded.payload.signature).toBe('0xfakesig');
 
@@ -146,7 +154,7 @@ describe('handleX402Payment — WalletConnect chain scoping', () => {
     });
 
     const result = await handleX402Payment(PAYMENT_REQUIREMENTS);
-    const decoded = JSON.parse(Buffer.from(result, 'base64').toString('utf8'));
+    const decoded = JSON.parse(Buffer.from(result.signature, 'base64').toString('utf8'));
     expect(decoded.payload.authorization.from).toBe('0xBaseAddress');
   });
 });
@@ -226,5 +234,17 @@ describe('buildEIP712TypedData — chain id binding', () => {
     expect(() => buildEIP712TypedData({ fromAddress: '0xSender', requirement: req })).toThrow(
       /EIP-712 domain name\/version missing/i,
     );
+  });
+});
+
+describe('handleX402Payment — cumulative cap enforcement', () => {
+  it('throws when the daily cap would be exceeded (wcExec not called)', async () => {
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC', network: 'eip155:8453', asset: '0xtoken', payTo: '0xrec', amountRaw: '10000' });
+    vi.mocked(assertCumulativeSpendAllowed).mockReturnValueOnce({ ok: false, reason: 'Refusing to auto-pay: daily cap exceeded' });
+
+    await expect(handleX402Payment(PAYMENT_REQUIREMENTS)).rejects.toThrow(/daily cap exceeded/);
+
+    const signCalls = wcExec.mock.calls.filter(c => c[1]?.[0] === 'sign-typed-data');
+    expect(signCalls).toHaveLength(0);
   });
 });

@@ -3638,7 +3638,7 @@ describe('NansenAPI', () => {
       const autoPayApi = new NansenAPI('test-key', 'https://api.nansen.ai');
 
       // Mock the dynamic import — resetModules ensures fresh resolution
-      const mockHandleX402Payment = vi.fn().mockResolvedValue('mock-payment-sig');
+      const mockHandleX402Payment = vi.fn().mockResolvedValue({ signature: 'mock-payment-sig', network: 'eip155:8453', asset: '0xUSDC', paymentId: 'mock-pid' });
       vi.resetModules();
       vi.doMock('../walletconnect-x402.js', () => ({ handleX402Payment: mockHandleX402Payment }));
 
@@ -3686,7 +3686,7 @@ describe('NansenAPI', () => {
         .mockResolvedValueOnce(errorResponse)
         .mockResolvedValueOnce(successResponse);
 
-      const mockHandleX402Payment = vi.fn().mockResolvedValue('mock-payment-sig');
+      const mockHandleX402Payment = vi.fn().mockResolvedValue({ signature: 'mock-payment-sig', network: 'eip155:8453', asset: '0xUSDC', paymentId: 'mock-pid' });
       vi.resetModules();
       vi.doMock('../walletconnect-x402.js', () => ({ handleX402Payment: mockHandleX402Payment }));
 
@@ -3869,7 +3869,7 @@ describe('NansenAPI', () => {
           .mockResolvedValueOnce(errorResponse)
           .mockResolvedValueOnce(ambiguousRetryResponse);
 
-        const mockHandleX402Payment = vi.fn().mockResolvedValue('walletconnect-sig');
+        const mockHandleX402Payment = vi.fn().mockResolvedValue({ signature: 'walletconnect-sig', network: 'eip155:8453', asset: '0xUSDC', paymentId: 'mock-pid' });
         vi.resetModules();
         // Skip real wallet/crypto setup: yield one already-built local signature.
         vi.doMock('../x402.js', () => ({
@@ -3894,6 +3894,58 @@ describe('NansenAPI', () => {
         // Exactly the initial 402 + the one ambiguous paid retry — no second
         // payment attempt via WalletConnect.
         expect(mockFetch).toHaveBeenCalledTimes(2);
+        expect(mockHandleX402Payment).not.toHaveBeenCalled();
+
+        vi.doUnmock('../x402.js');
+        vi.doUnmock('../walletconnect-x402.js');
+      });
+
+      it('does not fall back to WalletConnect after a fail-closed local ledger error', async () => {
+        if (LIVE_TEST) return;
+
+        const paymentReqs = {
+          accepts: [{
+            scheme: 'exact',
+            asset: '0xUSDC',
+            payTo: '0xR',
+            amount: '1',
+            network: 'base',
+            extra: { name: 'X', version: '1', chainId: 1 },
+          }],
+        };
+        const paymentHeader = btoa(JSON.stringify(paymentReqs));
+        const errorResponse = {
+          ok: false,
+          status: 402,
+          json: async () => ({ message: 'Payment required' }),
+          headers: { get: (h) => h === 'payment-required' ? paymentHeader : null },
+        };
+        mockFetch.mockResolvedValueOnce(errorResponse);
+
+        const ledgerError = Object.assign(new Error('ledger is corrupt'), { failClosedX402: true });
+        const mockHandleX402Payment = vi.fn().mockResolvedValue({ signature: 'walletconnect-sig', network: 'eip155:8453', asset: '0xUSDC', paymentId: 'mock-pid' });
+        vi.resetModules();
+        vi.doMock('../x402.js', () => ({
+          createPaymentSignatures: async function* () {
+            yield Promise.reject(ledgerError);
+          },
+          checkX402Balance: vi.fn().mockResolvedValue(null),
+        }));
+        vi.doMock('../walletconnect-x402.js', () => ({ handleX402Payment: mockHandleX402Payment }));
+
+        const autoPayApi = new NansenAPI('test-key', 'https://api.nansen.ai');
+
+        let thrownError;
+        try {
+          await autoPayApi.smartMoneyNetflow({});
+        } catch (err) {
+          thrownError = err;
+        }
+
+        expect(thrownError).toBeDefined();
+        expect(thrownError.code).toBe(ErrorCode.PAYMENT_REQUIRED);
+        expect(thrownError.message).toContain('ledger is corrupt');
+        expect(mockFetch).toHaveBeenCalledTimes(1);
         expect(mockHandleX402Payment).not.toHaveBeenCalled();
 
         vi.doUnmock('../x402.js');
@@ -3932,7 +3984,7 @@ describe('NansenAPI', () => {
 
         // No local wallet configured (empty temp HOME) — falls straight
         // through to WalletConnect, which signs successfully.
-        const mockHandleX402Payment = vi.fn().mockResolvedValue('walletconnect-sig');
+        const mockHandleX402Payment = vi.fn().mockResolvedValue({ signature: 'walletconnect-sig', network: 'eip155:8453', asset: '0xUSDC', paymentId: 'mock-pid' });
         vi.resetModules();
         vi.doMock('../walletconnect-x402.js', () => ({ handleX402Payment: mockHandleX402Payment }));
 
