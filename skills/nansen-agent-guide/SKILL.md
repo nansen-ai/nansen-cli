@@ -18,6 +18,8 @@ allowed-tools: Bash(nansen:*)
 
 # Agent vs CLI Routing
 
+This mixed workflow requires a conventional API key for `nansen agent`, including fast and expert modes. Browser-only users can run the admitted direct-data examples below and interpret their results locally. Fresh browser login does not grant agent access.
+
 | Need a... | Use |
 |-----------|-----|
 | **take** (analysis, interpretation) | `nansen agent` |
@@ -57,6 +59,8 @@ Cost: 5-50 credits per call
 - Don't use raw CLI for open-ended analysis -- returns data, not interpretation
 - Don't chain 3+ agent calls -- get raw data via CLI, call agent once for synthesis
 
-## Browser session prerelease
+## Browser session scope
 
-Plain `nansen login` requests fresh browser approval; `--no-browser` prints the link/code for remote use. NANSEN_API_KEY still overrides the single saved credential. Use `nansen auth status` for offline selection details and `nansen account` for a free live check. Explicit `login --human` or `login --api-key` retains legacy key setup. A rejected credential never switches accounts or signs a payment. This draft does not add renewal or enable research billing: expired sessions require login, and account-only server denial must be preserved. Browser sessions cannot authorize wallet signing or be exported as MCP keys.
+Plain `nansen login` requests fresh browser approval; `--no-browser` prints the link/code for remote use. NANSEN_API_KEY overrides the single saved credential. Use `nansen auth status` for offline cached/unverified selection details and `nansen account` for a free live check. Explicit `login --human` or `login --api-key` retains legacy key setup. Selected browser sessions renew automatically; uncertain renewal requires fresh login without replay or fallback to another account/payment.
+
+Browser admission is limited to documented stable-v1 direct-data routes, subject to server enablement, platform verification, credits and entitlements. Agent fast/expert, portfolio DeFi, web, beta, internal, wallet and execution routes are excluded. Browser sessions cannot authorize wallet signing or be exported as MCP keys. Normal-release acceptance and a published cohort remain pending.

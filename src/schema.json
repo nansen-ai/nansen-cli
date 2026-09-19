@@ -410,7 +410,7 @@
       }
     },
     "research": {
-      "description": "Research and analytics commands. Explicitly blank chain, timeframe, and days options are rejected instead of selecting defaults. Profiler batch rejects blank --delay; trace rejects blank --delay, --depth, and --width.",
+      "description": "Research and analytics commands. Explicitly blank chain, timeframe, and days options are rejected instead of selecting defaults. Profiler batch rejects blank --delay; trace rejects blank --delay, --depth, and --width. Browser sessions require enabled admission and support only the documented stable-v1 direct-data routes; portfolio DeFi, beta/historical-* and agent/web/execution routes are excluded. Normal credits and entitlements apply.",
       "subcommands": {
         "portfolio": {
           "subcommands": {
@@ -2369,7 +2369,7 @@
     },
     "account": {
       "endpoint": "/api/v1/account",
-      "description": "Show API key status, plan, and remaining credits. Does not consume credits."
+      "description": "Check the effective credential, plan, and remaining credits live. Free, including for a valid zero-credit account. NANSEN_API_KEY overrides saved authentication."
     },
     "auth": {
       "description": "Offline authentication status. Reports effective credential source, cached/unverified browser session metadata, API key presence, base URL, and x402 wallet readiness without any network call. Consumes no credits.",
@@ -2605,7 +2605,7 @@
       }
     },
     "login": {
-      "description": "Fresh browser approval; securely save a revocable session. Plain login never persists NANSEN_API_KEY; it still overrides commands. Prerelease only; expired sessions require login until renewal ships.",
+      "description": "Fresh browser approval in every starting state; securely save a revocable session. Plain login never persists NANSEN_API_KEY; it still overrides commands. Selected sessions renew automatically; uncertain renewal requires fresh login. Native storage and enabled server admission are required; normal-release acceptance remains pending.",
       "options": {
         "no-browser": {
           "type": "boolean",

@@ -20,15 +20,14 @@ allowed-tools: Bash(nansen:*)
 
 ## Auth Setup
 
-```bash
-# Save API key interactively
-nansen login --human
-# Or use NANSEN_API_KEY after provisioning it through your environment/secret manager
-nansen login
+Use a conventional API key for key-only services. Agents should inject `NANSEN_API_KEY` through their environment or secret manager and use commands directly; no login is needed to persist it. Human terminal users can use explicit `nansen login --human` for legacy key setup. With an already injected environment key, that explicit mode saves it without prompting and requires the native auth lock binding.
 
-# Verify
-nansen research profiler labels --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum
+```bash
+# Free live check of the effective API credential
+nansen account
 ```
+
+Plain `nansen login` instead requests fresh browser approval. It does not save an environment key or grant wallet signing/RPC authority. Wallet custody and provider credentials below remain separate.
 
 ## Wallet Providers
 

@@ -5,7 +5,7 @@
  *
  * Runs after `npm install -g nansen-cli` and offers two optional steps:
  *   1. Install the Nansen AI coding skill (`npx skills add nansen-ai/nansen-cli`)
- *   2. Check account status to verify the API key works (0 credits)
+ *   2. Check account status to verify the effective credential (0 credits)
  *
  * Non-interactive environments (CI, piped stdin) get a one-liner tip instead.
  * Always exits 0 — onboarding failures must never break installation.
@@ -13,9 +13,10 @@
 
 import { createInterface } from "readline";
 import { execFileSync, spawn } from "child_process";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, realpathSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { resolveCredential, assertUsableSelection } from "../src/auth-credentials.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -55,18 +56,6 @@ function hasNpx() {
     const [cmd, cmdArgs] = npxInvocation(["--version"]);
     execFileSync(cmd, cmdArgs, { stdio: "ignore", shell: false });
     return true;
-  } catch {
-    return false;
-  }
-}
-
-function isLoggedIn() {
-  const home = process.env.HOME || process.env.USERPROFILE || "";
-  const configFile = join(home, ".nansen", "config.json");
-  if (!existsSync(configFile)) return false;
-  try {
-    const config = JSON.parse(readFileSync(configFile, "utf8"));
-    return !!(config.apiKey || config.api_key);
   } catch {
     return false;
   }
@@ -130,20 +119,29 @@ async function installSkill() {
 }
 
 async function testQuery() {
-  if (!isLoggedIn()) {
+  // Selection reads metadata only. Never open storage or verify during install.
+  const selection = resolveCredential();
+  try {
+    assertUsableSelection(selection);
+  } catch {
+    log(`Saved or selected authentication needs attention. Run: nansen auth status`);
+    return;
+  }
+  if (selection.kind === "anonymous") {
     log();
-    log(`Not logged in yet. Run ${CYAN}nansen login --human${RESET} to authenticate.`);
-    log(`Get your API key at: ${CYAN}https://app.nansen.ai/auth/agent-setup${RESET}`);
+    log(`Run ${CYAN}nansen login${RESET} for browser approval, or use NANSEN_API_KEY directly.`);
+    log(`Browser login requires a supported OS credential store and enabled server admission. See docs/browser-login.md in this package.`);
     return;
   }
 
   log();
-  log(`Your API key is configured. Let's verify it works.`);
-  const answer = await prompt(`  Check account status? (${DIM}${TEST_QUERY_DISPLAY}${RESET}) [Y/n] `);
+  log(selection.kind === "session"
+    ? `A browser session is configured; cached metadata is unverified and storage has not been checked.`
+    : `An API key is configured; it has not been verified.`);
+  const answer = await prompt(`  Check account status? (${DIM}${TEST_QUERY_DISPLAY}${RESET}, free; may renew a session) [y/N] `);
 
-  if (/^n/i.test(answer)) {
-    log(`Skipped. You're all set! Try: ${CYAN}nansen research smart-money netflow --chain solana${RESET}`);
-    log(`For trading: ${CYAN}nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000${RESET}`);
+  if (!/^y(es)?$/i.test(answer)) {
+    log(`Skipped account verification. Run ${CYAN}nansen account${RESET} when ready.`);
     return;
   }
 
@@ -156,11 +154,11 @@ async function testQuery() {
     log(`${GREEN}✓${RESET} All set! Run ${CYAN}nansen help${RESET} to see all available commands.`);
   } else {
     log();
-    log(`${YELLOW}Query failed. Check your API key with: nansen auth status${RESET}`);
+    log(`${YELLOW}Account check failed. Inspect the effective credential with: nansen auth status${RESET}`);
   }
 }
 
-async function main() {
+export async function main() {
   // Only run for global installs; skip local npm install / npm ci
   if (process.env.npm_lifecycle_event === "postinstall" && process.env.npm_config_global !== "true") {
     return;
@@ -172,7 +170,7 @@ async function main() {
     log(`${BOLD}Nansen CLI installed!${RESET}`);
     log();
     log(`Tip: Run '${CYAN}npx skills add ${SKILL_REPO}${RESET}' to install the Nansen AI coding skill.`);
-    log(`Tip: Run '${CYAN}nansen login --human${RESET}' to authenticate.`);
+    log(`Tip: Run '${CYAN}nansen login${RESET}' for browser approval, or use NANSEN_API_KEY directly.`);
     log(`Tip: To trade, first create a wallet with '${CYAN}nansen wallet create${RESET}', then quote with '${CYAN}nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000${RESET}' and execute with '${CYAN}nansen trade execute --quote <id>${RESET}'.`);
     return;
   }
@@ -186,6 +184,12 @@ async function main() {
   log();
 }
 
-main().catch(() => {
-  // Never fail installation due to onboarding errors
-});
+// Node resolves the module URL through symlinks, but argv may retain them.
+// An unavailable entry path or onboarding failure must never fail installation.
+try {
+  if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+    main().catch(() => {});
+  }
+} catch {
+  // Importing with a missing/non-file argv entry remains silent.
+}
