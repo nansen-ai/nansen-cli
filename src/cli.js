@@ -3,7 +3,7 @@
  * Extracted from index.js for coverage
  */
 
-import { NansenAPI, NansenError, CommandError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, normalizeAddress, sleep } from './api.js';
+import { NansenAPI, NansenError, CommandError, ErrorCode, saveConfig, deleteConfig, getConfigFile, validateAddress, normalizeAddress, sleep } from './api.js';
 import { buildWalletCommands } from './wallet.js';
 import { buildBridgeCommands, formatBridgeRoutes } from './bridge.js';
 import { buildPerpCommands } from './perp.js';
@@ -22,6 +22,7 @@ import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
 import { getAuthStatus, runDoctorChecks, runConnectivityChecks, formatDoctorReport } from './doctor.js';
 import { refreshCostMapIfStale, getCostForEndpoint, creditsCharged } from './cost-cache.js';
+import { collectCacheStats, clearCaches, formatCacheStats, formatCacheClear, CLEAR_TARGETS } from './cache-inspect.js';
 import { creditWarning, noticeWarnings } from './response-meta.js';
 import { trackCommandSucceeded, trackCommandFailed } from './telemetry.js';
 import { createRequire } from 'module';
@@ -162,6 +163,10 @@ export function compactSchema(schema) {
     params_legend: '* = required',
     commands,
     globalOptions: Object.keys(schema.globalOptions).join(', '),
+    // Which commands cache, and how to control it. One rule rather than a flag
+    // repeated on every command — caching is a property of the request path,
+    // not of the individual command.
+    caching: schema.caching,
     chains: schema.chains,
     smartMoneyLabels: schema.smartMoneyLabels
   };
@@ -926,7 +931,7 @@ COMMANDS:
   doctor      Diagnostics: auth, wallets, caches, connectivity (--offline --json)
   schema      JSON schema for all commands (use "nansen schema <cmd>" for one)
   completion  Shell completions: bash, zsh, fish
-  cache       clear
+  cache       stats, clear
   changelog   --since <version> to filter
 
 OPTIONS: --chain --limit --sort field:dir --fields a,b --days N --filters '{}'
@@ -967,6 +972,45 @@ Skills: npx skills add nansen-ai/nansen-cli (agent-optimised docs per command gr
 
 Telemetry: anonymous usage stats (commands, timing, errors). Perp order/close additionally send each leg's side, outcome, order id, shared submission id, and a SHA-256 wallet identifier. Raw wallet, price, size, and exchange error text are not sent. Disable: DO_NOT_TRACK=1
 `;
+
+// Usage text for the `cache` command group. Also the answer to "which commands
+// cache?" — caching is decided by the request path, so the rule lives here (and
+// in schema.json under `caching`) rather than being repeated per command.
+export const CACHE_HELP = `nansen cache — inspect and clear the caches this CLI keeps on disk
+
+SUBCOMMANDS:
+  stats [--json]      What each cache holds: entries, size, age, effective TTL
+  clear [target]      Delete cached entries (default target: responses)
+
+CLEAR TARGETS:
+  responses     API responses saved when --cache is passed (default)
+  cost-map      Per-endpoint credit costs, refreshed every 24h
+  update-check  Latest published version, refreshed every 24h
+  all           All three
+
+WHAT CACHES:
+  Caching is off by default and opt-in per invocation with --cache. With it on,
+  every read the CLI makes through the Nansen API client is served from and
+  written to the response cache — that is all of "nansen research ...", plus
+  "alerts list" and "alerts get".
+  Never cached: account, web search, web fetch, alerts create/update/toggle/delete,
+  agent (streamed), and every trade, bridge, wallet, perp and mcp command, which
+  do not go through that client at all.
+
+CACHE OPTIONS (for any command):
+  --cache               Enable caching for this invocation
+  --no-cache            Bypass the cache for this invocation (or NANSEN_NO_CACHE=1)
+  --cache-ttl <seconds> Non-negative safe integer TTL (default: 300; 0 disables reads)
+
+EXAMPLES:
+  nansen cache stats
+  nansen cache stats --json --pretty
+  nansen cache clear
+  nansen cache clear all
+
+Saved trade quotes are not a cache and are never touched by "cache clear": they
+expire on their own, and an unexecuted quote is still spendable. Credentials,
+wallets and config are never read and never deleted by this command.`;
 
 // Usage text for the `trade` command group. Shared by the trade handler and the
 // --help path in runCLI, so `nansen trade`, `nansen trade <sub> --help`, and the
@@ -1378,32 +1422,42 @@ export function buildCommands(deps = {}) {
       return compactSchema(SCHEMA);
     },
 
-    'cache': async (args, _apiInstance, _flags, _options) => {
+    'cache': async (args, _apiInstance, flags, options) => {
       const subcommand = args[0] || 'help';
-      
+
       const handlers = {
+        'stats': () => {
+          // The TTL this invocation would apply, so "expired" means what the
+          // next call would actually discard.
+          const responseTtlSeconds = parseNonNegativeSafeIntegerOption('cache-ttl', options, flags, 300);
+          const stats = collectCacheStats({ responseTtlSeconds });
+          if (flags.json) return stats;
+          log(formatCacheStats(stats));
+        },
         'clear': () => {
-          const count = clearCache();
-          log(`✓ Cleared ${count} cached responses`);
-          log(`  Cache dir: ${getCacheDir()}`);
+          // Deleting local state needs an explicit target. The default is the
+          // response cache alone — the one cache that is always safely
+          // refetchable — and wiping everything requires saying "all".
+          const target = args[1] || 'responses';
+          if (!CLEAR_TARGETS.includes(target)) {
+            throw new NansenError(
+              `Unknown cache clear target: ${target}. Use one of: ${CLEAR_TARGETS.join(', ')}`,
+              ErrorCode.INVALID_PARAMS,
+            );
+          }
+          log(formatCacheClear(clearCaches(target)));
         },
         'help': () => {
-          log('Cache Management\n');
-          log('USAGE:');
-          log('  nansen cache clear    Clear all cached responses\n');
-          log('CACHE OPTIONS (for any command):');
-          log('  --cache               Enable caching for this session');
-          log('  --no-cache            Bypass cache for this request');
-          log('  --cache-ttl <seconds> Set non-negative safe integer cache TTL (default: 300)');
+          log(CACHE_HELP);
         }
       };
-      
+
       if (!handlers[subcommand]) {
         log(`Unknown cache subcommand: ${subcommand}`);
         handlers['help']();
         return;
       }
-      
+
       return handlers[subcommand]();
     },
 
@@ -2078,6 +2132,7 @@ export async function runCLI(rawArgs, deps = {}) {
     // Injectable so tests can exercise both renderings; defaults to the real
     // terminal, which is false under a pipe or in CI.
     isTTY = process.stdout.isTTY,
+    env = process.env,
   } = deps;
 
   const { _: positional, flags, options } = parseArgs(rawArgs);
@@ -2102,13 +2157,18 @@ export async function runCLI(rawArgs, deps = {}) {
   // `completion` renders from the checked-in schema — no network, and its
   // stdout is piped straight into a shell, so keep the update check out of it.
   const isOfflineCommand = command === 'auth' || (command === 'doctor' && flags.offline) || isMcpUsage || command === 'completion';
+  // `cache` reports on and deletes cache files. The background update check
+  // writes ~/.nansen/update-check.json and the cost map refresh writes
+  // ~/.nansen/cost-map.json — either would repopulate a cache the user just
+  // measured or cleared, so neither runs for this command.
+  const mayRefreshCaches = command !== 'cache';
   const trackSucceeded = isOfflineCommand ? async () => {} : trackCommandSucceeded;
   const trackFailed = isOfflineCommand ? async () => {} : trackCommandFailed;
 
   // Update check (read cached result + schedule background refresh)
   const updateNotification = getUpdateNotification(VERSION);
   const upgradeNotice = getUpgradeNotice(VERSION);
-  if (!isOfflineCommand) scheduleUpdateCheck();
+  if (!isOfflineCommand && mayRefreshCaches) scheduleUpdateCheck();
   const notify = () => {
     if (upgradeNotice) errorOutput(upgradeNotice);
     if (updateNotification) errorOutput(updateNotification);
@@ -2133,7 +2193,7 @@ export async function runCLI(rawArgs, deps = {}) {
   if (command === 'help' || flags.help || flags.h) {
     // Help for an offline command still owes the zero-network contract: the
     // cost-map refresh fetches the OpenAPI spec and writes ~/.nansen/cost-map.json.
-    if (!isOfflineCommand) await refreshCostMapIfStale();
+    if (!isOfflineCommand && mayRefreshCaches) await refreshCostMapIfStale();
     // Check for subcommand-specific help: nansen <command> <subcommand> --help
     if (flags.help || flags.h) {
       // Handle 'research <category> <sub> --help' (3-level)
@@ -2186,8 +2246,8 @@ export async function runCLI(rawArgs, deps = {}) {
         }
       }
       // Then try command-level help (list subcommands)
-      // Skip for 'trade'/'alerts' — let the handler show its own usage
-      const cmdSchemaLookup = command !== 'trade' && command !== 'alerts' && command !== 'agent' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
+      // Skip for 'trade'/'alerts'/'cache' — let the handler show its own usage
+      const cmdSchemaLookup = command !== 'trade' && command !== 'alerts' && command !== 'agent' && command !== 'cache' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
       if (command && cmdSchemaLookup) {
         const cmdSchema = cmdSchemaLookup;
         const lines = [`${command} — ${cmdSchema.description}`];
@@ -2219,7 +2279,7 @@ export async function runCLI(rawArgs, deps = {}) {
       const simpleHelp = {
         'logout': 'nansen logout — Remove saved API key from ~/.nansen/config.json',
         'schema': 'nansen schema [command] [--pretty] — Show JSON schema for all commands (or a specific command)',
-        'cache':  'nansen cache clear — Clear the API response cache',
+        'cache':  CACHE_HELP,
       };
       if (simpleHelp[command]) {
         output(simpleHelp[command]);
@@ -2281,7 +2341,10 @@ export async function runCLI(rawArgs, deps = {}) {
     // Configure cache options
     const cacheTtl = parseNonNegativeSafeIntegerOption('cache-ttl', options, flags, 300);
     const cacheOptions = {
-      enabled: flags['cache'] && !flags['no-cache'],
+      // NANSEN_NO_CACHE is the flagless form of --no-cache, for callers that
+      // cannot edit the command line (a wrapper script or agent harness that
+      // always passes --cache). Both are a veto, never an enable.
+      enabled: flags['cache'] && !flags['no-cache'] && env.NANSEN_NO_CACHE !== '1',
       ttl: cacheTtl
     };
 

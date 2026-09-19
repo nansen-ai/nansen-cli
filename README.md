@@ -53,6 +53,7 @@ nansen wallet <subcommand> [options]
 nansen mcp install <client>           # add the Nansen MCP server to Claude Code/Desktop or Cursor
 nansen completion <bash|zsh|fish>     # shell completions (no API key needed)
 nansen schema [command] [--pretty]    # full command reference (no API key needed)
+nansen cache stats                    # what the local caches hold (no API key needed)
 ```
 
 **Research categories:** `smart-money` (`sm`), `token` (`tgm`), `profiler` (`prof`), `portfolio` (`port`), `prediction-market` (`pm`), `search`, `perp`
@@ -303,6 +304,47 @@ after upgrading the CLI to pick up new commands.
 | `--stream` | NDJSON output for large results |
 | `--labels <label>` | Smart Money label filter |
 | `--smart-money` | Filter for Smart Money addresses only |
+| `--cache` | Serve this invocation from the local cache (see [Caching](#caching)) |
+| `--no-cache` | Bypass the cache for this invocation |
+
+## Caching
+
+Response caching is **off by default** and opt-in per invocation:
+
+```bash
+nansen research token screener --chain solana --cache              # cache this result
+nansen research token screener --chain solana --cache --cache-ttl 60
+nansen research token screener --chain solana --cache --no-cache   # veto: always live
+```
+
+`NANSEN_NO_CACHE=1` does the same as `--no-cache` without a flag, for wrappers
+that cannot change the command line.
+
+With `--cache` on, every read the CLI makes through the Nansen API client is
+cached — all of `nansen research ...`, plus `alerts list` and `alerts get`.
+Never cached: `account`, `web search`, `web fetch`, the `alerts`
+create/update/toggle/delete commands, `agent`, and every `trade`, `bridge`,
+`wallet`, `perp` and `mcp` command.
+
+Inspect and clear what is on disk:
+
+```bash
+nansen cache stats                 # entries, size, age, effective TTL per cache
+nansen cache stats --json          # the same numbers as an object
+nansen cache clear                 # delete cached API responses
+nansen cache clear cost-map        # or update-check, or all
+```
+
+`nansen cache stats` reports aggregates only — no cached payload, request
+parameter or cache key is ever printed. `nansen cache clear` only ever deletes
+files in the cache it was pointed at: credentials, wallets, saved quotes and
+config are never touched.
+
+| Cache | Location | TTL |
+|-------|----------|-----|
+| `responses` | `~/.nansen/cache` | `--cache-ttl`, default 300s |
+| `cost-map` | `~/.nansen/cost-map.json` | 24h |
+| `update-check` | `~/.nansen/update-check.json` | 24h |
 
 ## Supported Chains
 

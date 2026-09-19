@@ -242,7 +242,8 @@ export function deleteConfig() {
 // ============= Response Cache =============
 
 const CACHE_DIR = path.join(CONFIG_DIR, 'cache');
-const DEFAULT_CACHE_TTL = 300; // 5 minutes
+// Exported so the cache inspector reports the same default TTL the client applies.
+export const DEFAULT_CACHE_TTL = 300; // 5 minutes
 
 import crypto from 'crypto';
 

@@ -17,6 +17,14 @@ const CACHE_FILE = path.join(CONFIG_DIR, 'update-check.json');
 const STALE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const PACKAGE_NAME = 'nansen-cli';
 
+/** How long a recorded update check stays fresh. */
+export const UPDATE_CHECK_TTL_MS = STALE_MS;
+
+/** Absolute path of the update check cache file, for `nansen cache stats` and `clear`. */
+export function getUpdateCheckFile() {
+  return CACHE_FILE;
+}
+
 /**
  * Compare two semver strings. Returns true if latest > current.
  * Exported so `nansen doctor` reports upgrade state with identical semantics.

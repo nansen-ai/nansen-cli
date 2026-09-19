@@ -14,6 +14,14 @@ const CACHE_FILE = path.join(CONFIG_DIR, 'cost-map.json');
 const STALE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const OPENAPI_URL = 'https://api.nansen.ai/openapi.json';
 
+/** How long a fetched cost map stays fresh. */
+export const COST_MAP_TTL_MS = STALE_MS;
+
+/** Absolute path of the cost map cache file, for `nansen cache stats` and `clear`. */
+export function getCostMapFile() {
+  return CACHE_FILE;
+}
+
 /**
  * Write `data` to `file` atomically: write to a unique temp file in the same
  * directory, then rename over the target. rename(2) is atomic on POSIX, so a
