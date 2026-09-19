@@ -336,8 +336,12 @@ nansen research smart-money netflow --chain solana --fields token_symbol,net_flo
 | `UNAUTHORIZED` | Wrong or missing key. Re-auth. |
 | `RATE_LIMITED` | Auto-retried by CLI. `details.rateLimit.resetSeconds` is how long the window needs to drain. |
 | `UNSUPPORTED_FILTER` | Remove the filter and retry. |
+| `PLAN_UPGRADE_REQUIRED` | The endpoint or option needs a higher subscription plan. Do not retry. |
+| `GEO_BLOCKED` | Not available in your region. Do not retry. |
 | `SERVER_ERROR` | Not your fault. Quote `details.requestId` when reporting it. |
 | `COMMAND_UNAVAILABLE` | The command is no longer available. For points leaderboard, run `nansen research` to explore other analytics commands. |
+
+Every code documented on the API's [error-handling page](https://docs.nansen.ai/getting-started/error-handling) maps onto one of the CLI codes above; a code the CLI does not recognise is passed through unchanged.
 
 **Error metadata.** When the API reports them, `details` carries:
 
