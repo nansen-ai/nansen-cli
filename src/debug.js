@@ -225,7 +225,9 @@ function redactQueryText(query) {
 /**
  * Redact a header bag (plain object, Map, or fetch Headers) down to names
  * only. Header values are never traced: even the innocuous ones carry nothing
- * worth the risk of a rule that misses one.
+ * worth the risk of a rule that misses one. Production traces currently omit
+ * headers entirely; this is exported as the mandatory boundary if a future
+ * trace event ever includes header names.
  */
 export function redactHeaders(headers) {
   const entries = typeof headers?.entries === 'function' ? [...headers.entries()] : Object.entries(headers ?? {});
