@@ -2309,10 +2309,18 @@
               "type": "boolean",
               "description": "Skip encryption; private keys are stored unencrypted on disk (local only)"
             }
-          }
+          },
+          "examples": [
+            "nansen wallet create --name trading",
+            "nansen wallet create --name agent-wallet --provider privy"
+          ]
         },
         "list": {
-          "description": "List all wallets"
+          "description": "List all wallets",
+          "examples": [
+            "nansen wallet list",
+            "nansen wallet list --pretty"
+          ]
         },
         "show": {
           "description": "Show wallet details",
@@ -2320,7 +2328,10 @@
             "name": {
               "description": "Wallet name"
             }
-          }
+          },
+          "examples": [
+            "nansen wallet show <name>"
+          ]
         },
         "send": {
           "description": "Send tokens or native currency. Explicitly blank --token and --wallet values are rejected; omit them for native currency and the default wallet.",
@@ -2344,7 +2355,11 @@
               "type": "boolean",
               "description": "Send the entire spendable balance instead of --amount"
             }
-          }
+          },
+          "examples": [
+            "nansen wallet send --to <address> --amount 1.5 --chain evm",
+            "nansen wallet send --to <address> --max --chain solana"
+          ]
         },
         "export": {
           "description": "Export private keys (redacted by default; pass --reveal or --file <path> for the actual keys)",
@@ -2357,13 +2372,36 @@
               "type": "string",
               "description": "Write private keys to this path instead of stdout (created with 0600 permissions, refuses to overwrite)"
             }
-          }
+          },
+          "examples": [
+            "nansen wallet export <name>",
+            "nansen wallet export <name> --file backup.json"
+          ]
         },
         "delete": {
-          "description": "Delete a wallet"
+          "description": "Delete a wallet",
+          "examples": [
+            "nansen wallet delete <name>"
+          ]
         },
         "default": {
-          "description": "Set default wallet"
+          "description": "Set default wallet",
+          "examples": [
+            "nansen wallet default <name>"
+          ]
+        },
+        "forget-password": {
+          "description": "Forget the saved wallet password, removing it from the OS keychain and from the local credentials file. Later commands fall back to NANSEN_WALLET_PASSWORD or an interactive prompt (--human).",
+          "examples": [
+            "nansen wallet forget-password"
+          ]
+        },
+        "secure": {
+          "description": "Move a wallet password that is held in the local credentials file or in NANSEN_WALLET_PASSWORD into the OS keychain, then delete the plaintext copy. Verifies the password against the stored hash first, reports success when it is already in the keychain, and fails with KEYCHAIN_UNAVAILABLE when no OS keychain is reachable.",
+          "examples": [
+            "nansen wallet secure",
+            "NANSEN_WALLET_PASSWORD=<password> nansen wallet secure"
+          ]
         }
       }
     },
@@ -2654,24 +2692,42 @@
     }
   },
   "chains": [
-    "ethereum",
-    "solana",
-    "base",
-    "bnb",
+    "algorand",
+    "aptos",
     "arbitrum",
-    "polygon",
-    "optimism",
+    "arc",
     "avalanche",
-    "linea",
-    "scroll",
-    "mantle",
-    "ronin",
-    "sei",
-    "plasma",
-    "sonic",
-    "monad",
+    "base",
+    "bitcoin",
+    "bitlayer",
+    "bnb",
+    "chiliz",
+    "citrea",
+    "ethereum",
+    "gravity",
     "hyperevm",
-    "iotaevm"
+    "hyperliquid",
+    "injective",
+    "iotaevm",
+    "linea",
+    "mantle",
+    "mantra",
+    "monad",
+    "near",
+    "optimism",
+    "plasma",
+    "polygon",
+    "robinhood",
+    "sei",
+    "solana",
+    "sonic",
+    "stacks",
+    "starknet",
+    "stellar",
+    "sui",
+    "ton",
+    "tron",
+    "viction"
   ],
   "smartMoneyLabels": [
     "Fund",

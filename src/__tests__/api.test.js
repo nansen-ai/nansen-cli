@@ -1287,7 +1287,7 @@ describe('NansenAPI', () => {
       });
 
       it.each(['scroll', 'ronin'])(
-        'should reject %s, an EVM chain this CLI knows but the endpoint does not',
+        'should reject %s, a chain the endpoint no longer serves',
         async unsupported => {
           await expect(
             api.addressCounterpartiesBatch({ addresses: [WALLET_A], chain: unsupported })
@@ -4034,10 +4034,9 @@ describe('NansenAPI', () => {
   // =================== Supported Chains ===================
 
   describe('Supported Chains', () => {
-    const CHAINS = [
-      'ethereum', 'solana', 'base', 'bnb', 'arbitrum',
-      'polygon', 'optimism', 'avalanche', 'linea', 'scroll'
-    ];
+    const CHAINS = JSON.parse(
+      fs.readFileSync(new URL('../schema.json', import.meta.url), 'utf8')
+    ).chains;
 
     it('should accept all documented chains', async () => {
       for (const chain of CHAINS) {

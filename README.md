@@ -72,7 +72,7 @@ Plus the `historical-*` point-in-time commands — run `nansen research help` fo
 
 **Trade:** `quote`, `execute`, `bridge-status`, `limit-order` — DEX swaps on Solana and Base, cross-chain bridges, and Solana limit orders.
 
-**Wallet:** `create`, `list`, `show`, `export`, `default`, `delete`, `send` — local or Privy server-side wallets (EVM + Solana).
+**Wallet:** `create`, `list`, `show`, `export`, `default`, `delete`, `send`, `forget-password`, `secure` — local or Privy server-side wallets (EVM + Solana).
 
 Run `nansen schema --pretty` for the full subcommand and field reference.
 
@@ -227,6 +227,8 @@ nansen wallet create --name my-wallet --provider privy  # server-side via Privy
 nansen wallet list
 nansen wallet default <name>
 nansen wallet send --wallet <name> --to <addr> --amount <n> --chain <chain>
+nansen wallet secure                         # move a saved password into the OS keychain
+nansen wallet forget-password                # drop the saved password from every store
 ```
 
 **Local wallets** are password-encrypted. Set `NANSEN_WALLET_PASSWORD` to skip the prompt.
@@ -327,7 +329,7 @@ Events: `http.request`, `http.response`, `http.retry`, `http.error`, `http.cache
 
 ## Supported Chains
 
-`ethereum` `solana` `base` `bnb` `arbitrum` `polygon` `optimism` `avalanche` `linea` `scroll` `mantle` `ronin` `sei` `plasma` `sonic` `monad` `hyperevm` `iotaevm`
+`algorand` `aptos` `arbitrum` `arc` `avalanche` `base` `bitcoin` `bitlayer` `bnb` `chiliz` `citrea` `ethereum` `gravity` `hyperevm` `hyperliquid` `injective` `iotaevm` `linea` `mantle` `mantra` `monad` `near` `optimism` `plasma` `polygon` `robinhood` `sei` `solana` `sonic` `stacks` `starknet` `stellar` `sui` `ton` `tron` `viction`
 
 > Run `nansen schema` to get the current chain list (source of truth).
 
@@ -357,8 +359,12 @@ nansen research smart-money netflow --chain solana --fields token_symbol,net_flo
 | `UNAUTHORIZED` | Wrong or missing key. Re-auth. |
 | `RATE_LIMITED` | Auto-retried by CLI. `details.rateLimit.resetSeconds` is how long the window needs to drain. |
 | `UNSUPPORTED_FILTER` | Remove the filter and retry. |
+| `PLAN_UPGRADE_REQUIRED` | The endpoint or option needs a higher subscription plan. Do not retry. |
+| `GEO_BLOCKED` | Not available in your region. Do not retry. |
 | `SERVER_ERROR` | Not your fault. Quote `details.requestId` when reporting it. |
 | `COMMAND_UNAVAILABLE` | The command is no longer available. For points leaderboard, run `nansen research` to explore other analytics commands. |
+
+Every code documented on the API's [error-handling page](https://docs.nansen.ai/getting-started/error-handling) maps onto a stable CLI error code; a code the CLI does not recognise is passed through unchanged.
 
 **Error metadata.** When the API reports them, `details` carries:
 

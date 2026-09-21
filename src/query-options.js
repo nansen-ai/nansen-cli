@@ -25,7 +25,10 @@ export function parseSort(sortOption, orderByOption) {
   // If --order-by is provided, use it (full JSON control)
   if (orderByOption) return orderByOption;
   if (!sortOption) return undefined;
-  const parts = String(sortOption).split(':');
+  if (typeof sortOption !== 'string') {
+    throw new NansenError('--sort must be "field" or "field:direction"', ErrorCode.INVALID_PARAMS);
+  }
+  const parts = sortOption.split(':');
   const field = parts[0];
   const direction = (parts[1] || 'desc').toUpperCase();
   return [{ field, direction }];
@@ -35,8 +38,8 @@ export function parseSort(sortOption, orderByOption) {
  * Normalise a comma-separated-string-or-array CLI option into an array of
  * strings, or undefined if absent. Accepts either a single "a,b,c" string or
  * an array (parseArgs collects repeated flags, e.g. `--tag a --tag b`, into
- * one), and rejects non-string values/elements (e.g. `--flag true` is
- * parsed by parseArgs as the JSON boolean `true`) with an actionable
+ * one), and rejects non-string values/elements (e.g. `--flag '{}'` is
+ * parsed by parseArgs as a JSON object) with an actionable
  * INVALID_PARAMS error instead of crashing on .split()/.trim().
  */
 export function parseCsvOption(val, name) {

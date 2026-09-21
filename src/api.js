@@ -51,6 +51,8 @@ export const ErrorCode = {
   UNAUTHORIZED: 'UNAUTHORIZED',           // 401 - Invalid or missing API key
   FORBIDDEN: 'FORBIDDEN',                 // 403 - Valid key but insufficient permissions
   CREDITS_EXHAUSTED: 'CREDITS_EXHAUSTED', // 403 - Insufficient API credits
+  PLAN_UPGRADE_REQUIRED: 'PLAN_UPGRADE_REQUIRED', // 403 - Feature needs a higher subscription plan
+  GEO_BLOCKED: 'GEO_BLOCKED',             // 451 - Not available in the caller's region
   PAYMENT_REQUIRED: 'PAYMENT_REQUIRED',   // 402 - x402 payment required
   
   // Rate Limiting
@@ -63,11 +65,15 @@ export const ErrorCode = {
   INVALID_PARAMS: 'INVALID_PARAMS',       // Generic parameter validation error
   MISSING_PARAM: 'MISSING_PARAM',         // Required parameter not provided
   UNSUPPORTED_FILTER: 'UNSUPPORTED_FILTER', // Filter not supported for this token/chain
+  QUERY_TOO_LARGE: 'QUERY_TOO_LARGE',     // Query would return too much data - narrow it; retrying will not help
+  PAYLOAD_TOO_LARGE: 'PAYLOAD_TOO_LARGE', // 413 - Request body exceeds the size limit
   
   // Resource Errors
   NOT_FOUND: 'NOT_FOUND',                 // 404 - Resource not found
   TOKEN_NOT_FOUND: 'TOKEN_NOT_FOUND',     // Token doesn't exist
   ADDRESS_NOT_FOUND: 'ADDRESS_NOT_FOUND', // Address has no data
+  METHOD_NOT_ALLOWED: 'METHOD_NOT_ALLOWED', // 405 - HTTP method not allowed for this endpoint
+  CONFLICT: 'CONFLICT',                   // 409 - Request conflicts with the current state
   
   // Server Errors
   SERVER_ERROR: 'SERVER_ERROR',           // 500+ - Nansen API internal error
@@ -128,16 +134,46 @@ export class NansenError extends Error {
 }
 
 /**
- * Stable snake_case codes the server sends in error bodies, mapped to the
+ * Stable snake_case codes the API sends in error bodies, mapped to the
  * ErrorCode values downstream consumers already key on.
+ *
+ * Every code documented at
+ * https://docs.nansen.ai/getting-started/error-handling has an entry here, so
+ * friendly messages and agent-facing hints engage for each of them. A code
+ * missing from this map passes through statusToErrorCode verbatim; keep the
+ * table in step with that page when the API adds a code.
  */
-const SERVER_CODE_MAP = {
-  rate_limit_exceeded: ErrorCode.RATE_LIMITED,
-  insufficient_credits: ErrorCode.CREDITS_EXHAUSTED,
-  payment_required: ErrorCode.PAYMENT_REQUIRED,
-  unauthorized: ErrorCode.UNAUTHORIZED,
+export const SERVER_CODE_MAP = {
+  // Request validation (400 / 422)
+  missing_field: ErrorCode.MISSING_PARAM,
+  unknown_field: ErrorCode.INVALID_PARAMS,
+  invalid_field_value: ErrorCode.INVALID_PARAMS,
+  invalid_address_format: ErrorCode.INVALID_ADDRESS,
+  invalid_date_format: ErrorCode.INVALID_PARAMS,
+  invalid_date_range: ErrorCode.INVALID_PARAMS,
+  mutually_exclusive_fields: ErrorCode.INVALID_PARAMS,
+  value_out_of_range: ErrorCode.INVALID_PARAMS,
+  too_many_items: ErrorCode.INVALID_PARAMS,
+  // Authentication, authorization, quota
+  unauthenticated: ErrorCode.UNAUTHORIZED,
   forbidden: ErrorCode.FORBIDDEN,
+  geo_blocked: ErrorCode.GEO_BLOCKED,
+  plan_upgrade_required: ErrorCode.PLAN_UPGRADE_REQUIRED,
+  insufficient_credits: ErrorCode.CREDITS_EXHAUSTED,
+  rate_limit_exceeded: ErrorCode.RATE_LIMITED,
+  // Resource and request shape
   not_found: ErrorCode.NOT_FOUND,
+  method_not_allowed: ErrorCode.METHOD_NOT_ALLOWED,
+  conflict: ErrorCode.CONFLICT,
+  payload_too_large: ErrorCode.PAYLOAD_TOO_LARGE,
+  // Server side
+  query_timeout: ErrorCode.TIMEOUT,
+  query_too_large: ErrorCode.QUERY_TOO_LARGE,
+  upstream_unavailable: ErrorCode.SERVICE_UNAVAILABLE,
+  internal_error: ErrorCode.SERVER_ERROR,
+  // Aliases from earlier error-body shapes, kept so older responses still map.
+  unauthorized: ErrorCode.UNAUTHORIZED,
+  payment_required: ErrorCode.PAYMENT_REQUIRED,
   unsupported_filter: ErrorCode.UNSUPPORTED_FILTER,
   validation_error: ErrorCode.INVALID_PARAMS,
   invalid_params: ErrorCode.INVALID_PARAMS,
@@ -184,8 +220,18 @@ export function statusToErrorCode(status, data = {}) {
       if (messageLower.includes('token')) return ErrorCode.TOKEN_NOT_FOUND;
       if (messageLower.includes('address') || messageLower.includes('wallet')) return ErrorCode.ADDRESS_NOT_FOUND;
       return ErrorCode.NOT_FOUND;
+    case 405:
+      return ErrorCode.METHOD_NOT_ALLOWED;
+    case 408:
+      return ErrorCode.TIMEOUT;
+    case 409:
+      return ErrorCode.CONFLICT;
+    case 413:
+      return ErrorCode.PAYLOAD_TOO_LARGE;
     case 429:
       return ErrorCode.RATE_LIMITED;
+    case 451:
+      return ErrorCode.GEO_BLOCKED;
     case 500:
     case 502:
       return ErrorCode.SERVER_ERROR;
@@ -398,9 +444,8 @@ export const COUNTERPARTIES_BATCH_MAX_DAYS = 90;
  * validates `chain` against. Anything outside it is a 422.
  *
  * Deliberately NOT derived from EVM_CHAINS. That list is this CLI's own
- * address-format/ENS set and disagrees with the endpoint in both directions: it
- * carries `scroll` and `ronin`, which the endpoint rejects, and omits every
- * non-EVM chain the endpoint does serve (bitcoin, tron, sui, ton, near, ...).
+ * address-format/ENS set and omits every non-EVM chain the endpoint does serve
+ * (bitcoin, tron, sui, ton, near, ...).
  * Mirrors ADDRESS_COUNTERPARTIES_BATCH_CHAINS on the MCP side (nansen-ra#3550),
  * which additionally drops `arc` and `starknet`; the spec enum is the contract
  * here, so they stay in.

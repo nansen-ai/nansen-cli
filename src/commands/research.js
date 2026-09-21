@@ -79,6 +79,8 @@ function parseTimeframeDays(value) {
 function parseBooleanOption(options, flags, key) {
   const value = options[key] ?? flags[key];
   if (value === undefined) return undefined;
+  // Bare flags arrive through `flags` as true; explicit values arrive through
+  // `options` as strings (for example, `--apply-blacklist-filter false`).
   if (typeof value === 'boolean') return value;
   if (value === 'true' || value === '1') return true;
   if (value === 'false' || value === '0') return false;
