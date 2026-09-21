@@ -217,7 +217,9 @@ function redactQueryText(query) {
       if (index === -1) return pair;
       const key = pair.slice(0, index);
       const value = pair.slice(index + 1);
-      return `${key}=${isSecretName(key) || looksLikeSecretValue(decodeURIComponent(value)) ? REDACTED : value}`;
+      let decoded = value;
+      try { decoded = decodeURIComponent(value); } catch { /* keep malformed encoding readable */ }
+      return `${key}=${isSecretName(key) || looksLikeSecretValue(decoded) ? REDACTED : value}`;
     })
     .join('&');
 }
