@@ -15,7 +15,7 @@ import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
 import { buildPagination, parseSort, parseCsvOption, rejectBlankOption, parseObjectOption } from './query-options.js';
-import { enableAutoPagination, DEFAULT_MAX_PAGES, locateRows } from './auto-paginate.js';
+import { enableAutoPagination, DEFAULT_MAX_PAGES, MAX_PAGES_LIMIT, locateRows } from './auto-paginate.js';
 export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
 import { compareSemver } from './semver.js';
@@ -2513,6 +2513,12 @@ export async function runCLI(rawArgs, deps = {}) {
     // merged response, bounded by --max-pages. Wraps api.request so every list
     // handler inherits it; non-list requests pass through untouched.
     const maxPages = parsePositiveSafeIntegerOption('max-pages', options, flags, DEFAULT_MAX_PAGES);
+    if (maxPages > MAX_PAGES_LIMIT) {
+      throw new NansenError(
+        `--max-pages must be at most ${MAX_PAGES_LIMIT}; received: ${maxPages}`,
+        ErrorCode.INVALID_PARAMS,
+      );
+    }
     if (flags.paginate || flags.all) {
       enableAutoPagination(api, { maxPages });
     }

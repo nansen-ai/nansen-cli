@@ -7180,6 +7180,13 @@ describe('--paginate / --all flag integration (API-275)', () => {
     expect(JSON.parse(outputs[0]).error).toBe('--max-pages must be a positive safe integer; received: 0');
   });
 
+  it('caps --max-pages to bound traversal memory and billed requests', async () => {
+    const result = await runCLI(['smart-money', 'netflow', '--paginate', '--max-pages', '1001'], deps());
+    expect(result.type).toBe('error');
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(outputs[0]).error).toBe('--max-pages must be at most 1000; received: 1001');
+  });
+
   it('reports aggregate credits and a low-credit warning for the whole traversal', async () => {
     function MetadataAPI() {
       this.servedFromCache = false;

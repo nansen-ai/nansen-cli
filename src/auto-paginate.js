@@ -10,6 +10,10 @@
 import { aggregatePaginatedResponseMeta } from './response-meta.js';
 
 export const DEFAULT_MAX_PAGES = 10;
+// Rows and their serialized de-duplication keys stay resident until traversal
+// completes. Keep an explicit ceiling so a typo cannot request effectively
+// unbounded memory and billed API work from a long-running agent.
+export const MAX_PAGES_LIMIT = 1000;
 
 // Where list endpoints keep their rows. Mirrors formatTable/formatStream in cli.js.
 export function locateRows(page, { descriptive = false } = {}) {

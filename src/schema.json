@@ -2699,7 +2699,7 @@
     "max-pages": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 9007199254740991,
+      "maximum": 1000,
       "default": 10,
       "description": "Upper bound on the number of pages --paginate requests (positive safe integer; validated whenever supplied, even without --paginate). Hitting the cap sets pagination.complete to false and pagination.next_page to the page to resume from"
     },
