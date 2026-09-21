@@ -2126,6 +2126,176 @@ export async function buildTradeExecutionPlan({
   ]);
 }
 
+/**
+ * Run every execute validation that can be completed from a cached quote,
+ * public signer address, and read-only RPC calls. This intentionally does not
+ * resolve signing credentials, sign, broadcast, or consume the quote.
+ *
+ * Real execution repeats signer binding with the independently resolved live
+ * signer later. The preview uses the immutable signer saved with the request;
+ * this gives --dry-run the same transaction/intent checks without requiring a
+ * wallet password, Privy secret, or WalletConnect session.
+ */
+async function preflightTradeExecutionCandidate({
+  quoteData,
+  quote,
+  chain,
+  chainConfig,
+  walletAddress,
+  isWalletConnect,
+  gasless,
+  noSimulate,
+  noVerifyOutcome,
+  apiKey,
+  verifiedTargets,
+  log,
+}) {
+  if (gasless && quote.aggregator !== 'relay') {
+    throw new CommandError(
+      `--gasless is only supported for Relay quotes, not "${quote.aggregator}".`,
+      'GASLESS_UNSUPPORTED_AGGREGATOR',
+    );
+  }
+  if (gasless && isWalletConnect) {
+    throw new CommandError(
+      'Gasless swaps are not supported via WalletConnect. Use a local or Privy wallet.',
+      'GASLESS_UNSUPPORTED_WALLET',
+    );
+  }
+
+  if (!walletAddress) {
+    throw new CommandError(
+      'The cached quote has no signer address, so it cannot be validated safely. Request a new quote.',
+      'WALLET_MISMATCH',
+    );
+  }
+
+  if (chainConfig.type === 'solana') {
+    assertCompleteSolanaRequestIntent(quoteData.request);
+    assertQuoteMatchesRequest(quoteData.request, quote, {
+      chain,
+      walletAddress,
+      slippage: quoteData.slippage,
+    });
+    const txBase64 = await normalizeSolanaTransaction(
+      quote.transaction,
+      CHAIN_RPCS.solana,
+      async () => walletAddress,
+    );
+    assertSolanaInstructionsSafe(txBase64, { walletAddress });
+    if (!noVerifyOutcome) {
+      const outcome = await verifySolanaSwapOutcome({
+        chain,
+        walletAddress,
+        txBase64,
+        quote,
+        quoteData,
+        log,
+      });
+      if (!outcome.proceed) {
+        throw new CommandError(
+          `Swap-outcome verification failed: ${outcome.reason}`,
+          'OUTCOME_VERIFICATION_FAILED',
+        );
+      }
+    }
+    return;
+  }
+
+  await validateSwapTarget(chain, quote.transaction.to, quote.inputMint, { verifiedTargets });
+  assertCompleteEvmRequestIntent(quoteData.request);
+  assertQuoteMatchesRequest(quoteData.request, quote, {
+    chain,
+    walletAddress,
+    slippage: quoteData.slippage,
+  });
+  assertSwapCalldataNotBareTransfer(quote.transaction.data);
+
+  const nativeInput = isNativeToken(quote.inputMint);
+  const txValue = BigInt(quote.transaction.value || '0');
+  if (nativeInput) {
+    const expectedValue = BigInt(quote.inAmount || quote.inputAmount || '0');
+    if (txValue !== expectedValue) {
+      throw new CommandError(
+        `Transaction value mismatch: tx.value=${txValue}, expected=${expectedValue}`,
+        'AMOUNT_MISMATCH',
+      );
+    }
+  } else {
+    const bridgeFeeAllowed = quoteData?.request
+      && isBridgeRequest(quoteData.request)
+      && txValue <= EVM_BRIDGE_NATIVE_FEE_SLACK;
+    if (txValue > 0n && !bridgeFeeAllowed) {
+      throw new CommandError(
+        `ERC-20 swap has unexpected non-zero tx.value (${txValue}).`,
+        'AMOUNT_MISMATCH',
+      );
+    }
+  }
+
+  let approvalPending = false;
+  if (quote.approvalAddress && quote.approvalAddress !== '' && !nativeInput) {
+    assertUsableSpender(quote.approvalAddress);
+    const inputAmount = BigInt(quote.inputAmount || quote.inAmount || '0');
+    const approveAmt = approvalAmountForSwap({
+      inputAmount,
+      swapMode: quoteData.swapMode,
+      slippage: quoteData.slippage,
+    });
+    if (approveAmt <= 0n) {
+      throw new CommandError('Quote has a zero input amount, so its approval cannot be scoped safely.', 'INVALID_AMOUNT');
+    }
+    // Exercise the same spender/amount/cap encoder used immediately before a
+    // real approval is signed, but discard the calldata.
+    encodeApproveCalldata(quote.approvalAddress, approveAmt, {
+      maxAllowance: approvalCapForQuote(quoteData),
+    });
+    const existingAllowance = await checkErc20Allowance(
+      chain,
+      quote.inputMint,
+      walletAddress,
+      quote.approvalAddress,
+    );
+    approvalPending = existingAllowance < approveAmt;
+  }
+
+  // These checks require the router to be able to pull the input token. A real
+  // execute runs them after its approval lands; a preview with an outstanding
+  // approval cannot reproduce that future state and reports the deferral in
+  // its plan instead.
+  if (!approvalPending) {
+    if (!noSimulate && !gasless) {
+      const tx = quote.transaction;
+      const sim = await simulateEvmCall(chain, {
+        from: walletAddress,
+        to: tx.to,
+        data: tx.data,
+        value: tx.value ? '0x' + BigInt(tx.value).toString(16) : '0x0',
+      });
+      if (!sim.success) {
+        throw new CommandError(`Pre-broadcast simulation failed: ${sim.reason}`, 'SIMULATION_FAILED');
+      }
+    }
+    if (!noVerifyOutcome) {
+      const outcome = await verifySwapOutcome({
+        chain,
+        from: walletAddress,
+        quote,
+        quoteData,
+        apiKey,
+        log,
+      });
+      if (!outcome.proceed) {
+        throw new CommandError(
+          `Swap-outcome verification failed: ${outcome.reason}`,
+          'OUTCOME_VERIFICATION_FAILED',
+        );
+      }
+    }
+    await resolveEvmSwapGasLimit(quote, { chain, from: walletAddress });
+  }
+}
+
 // ============= CLI Command Builder =============
 
 /**
@@ -2137,6 +2307,7 @@ export function buildTradingCommands(deps = {}) {
     // Injected so the confirmation prompt (and whether there is anyone to
     // answer it) can be driven in tests without a terminal.
     promptFn,
+    confirmationLog = log,
     isTTY = false,
     env = process.env,
   } = deps;
@@ -2703,8 +2874,47 @@ EXAMPLES:
         const planCandidates = allQuotes
           .map((quote, index) => ({ quote, index }))
           .filter(({ quote, index }) => index >= startIndex && index < endIndex && quote?.transaction);
+        const shouldPreflightPlan = guard.dryRun || (guard.isTTY && !guard.assumeYes);
+        const planUsesWalletConnect = quoteData.signerType === 'walletconnect'
+          || walletName === 'walletconnect' || walletName === 'wc';
+        const verifiedPlanTargets = new Set();
+        const validatedPlanCandidates = [];
+        let lastPreflightError = null;
+        for (const candidate of planCandidates) {
+          const planWallet = quoteData.request?.walletAddress
+            || quoteData.response?.metadata?.userWalletAddress
+            || candidate.quote.transaction?.from
+            || null;
+          try {
+            if (shouldPreflightPlan) {
+              await preflightTradeExecutionCandidate({
+                quoteData,
+                quote: candidate.quote,
+                chain,
+                chainConfig,
+                walletAddress: planWallet,
+                isWalletConnect: planUsesWalletConnect,
+                gasless,
+                noSimulate,
+                noVerifyOutcome,
+                apiKey,
+                verifiedTargets: verifiedPlanTargets,
+                log,
+              });
+            }
+            validatedPlanCandidates.push(candidate);
+          } catch (error) {
+            lastPreflightError = error;
+          }
+        }
+        if (!validatedPlanCandidates.length) {
+          throw new CommandError(
+            `\n❌ All quotes failed sign-free preflight. Last error: ${lastPreflightError?.message || 'unknown'}\n`,
+            'ALL_QUOTES_FAILED',
+          );
+        }
         const plans = [];
-        for (const { quote, index } of planCandidates) {
+        for (const { quote, index } of validatedPlanCandidates) {
           const planWallet = quoteData.request?.walletAddress
             || quoteData.response?.metadata?.userWalletAddress
             || quote.transaction?.from
@@ -2723,11 +2933,17 @@ EXAMPLES:
             probe: guard.dryRun,
           }));
         }
-        const fallbackNotice = planCandidates.length > 1
+        const fallbackNotice = validatedPlanCandidates.length > 1
           ? '\n  The CLI may try these candidates in order until one broadcasts successfully.'
           : '';
         const plan = `${plans.join('\n')}${fallbackNotice}`;
-        const proceed = await guardExecution({ plan, ...guard, promptFn, log });
+        const proceed = await guardExecution({
+          plan,
+          ...guard,
+          promptFn,
+          log,
+          confirmationLog,
+        });
         if (!proceed) return undefined;
 
         // Determine if this is a WalletConnect or Privy-signed quote

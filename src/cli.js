@@ -2132,6 +2132,7 @@ export async function runCLI(rawArgs, deps = {}) {
     ...deps,
     isTTY: isInputTTY,
     promptFn: deps.promptFn ?? promptForConfirmation,
+    confirmationLog: deps.confirmationLog ?? errorOutput,
   };
 
   const { _: positional, flags, options } = parseArgs(rawArgs);

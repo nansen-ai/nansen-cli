@@ -1530,6 +1530,7 @@ export function buildBridgeCommands(deps = {}) {
     // Injected so the confirmation prompt (and whether there is anyone to
     // answer it) can be driven in tests without a terminal.
     promptFn,
+    confirmationLog = log,
     isTTY = false,
     env = process.env,
   } = deps;
@@ -1885,6 +1886,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         ...guard,
         promptFn,
         log,
+        confirmationLog,
       });
       if (!proceed) return undefined;
 

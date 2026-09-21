@@ -319,6 +319,83 @@ describe('trade execute --dry-run / --yes', () => {
     expect(saved.broadcasts).toBeUndefined();
   });
 
+  it('--dry-run validates every signer type without resolving signing credentials', async () => {
+    stubFetch();
+    const quoteId = nativeQuote('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    const quotePath = path.join(tmpHome, '.nansen', 'quotes', `${quoteId}.json`);
+    const cmds = buildTradingCommands({ log: () => {}, isTTY: false, env: {} });
+
+    for (const signerType of ['local', 'privy', 'walletconnect']) {
+      const saved = JSON.parse(fs.readFileSync(quotePath, 'utf8'));
+      saved.signerType = signerType;
+      fs.writeFileSync(quotePath, JSON.stringify(saved, null, 2));
+      await expect(cmds.execute([], null, { 'dry-run': true }, { quote: quoteId }))
+        .resolves.toBeUndefined();
+    }
+
+    expect(executeBodies).toHaveLength(0);
+    expect(JSON.parse(fs.readFileSync(quotePath, 'utf8')).executedAt).toBeUndefined();
+  });
+
+  it('--dry-run rejects a quote that exceeds the persisted request before reporting success', async () => {
+    stubFetch();
+    const quoteId = nativeQuote('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    const quotePath = path.join(tmpHome, '.nansen', 'quotes', `${quoteId}.json`);
+    const saved = JSON.parse(fs.readFileSync(quotePath, 'utf8'));
+    saved.response.quotes[0].inAmount = '2000000000000000000';
+    saved.response.quotes[0].inputAmount = '2000000000000000000';
+    saved.response.quotes[0].transaction.value = '2000000000000000000';
+    fs.writeFileSync(quotePath, JSON.stringify(saved, null, 2));
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: m => logs.push(m), isTTY: false, env: {} });
+    for (const signerType of ['local', 'privy', 'walletconnect']) {
+      const variant = JSON.parse(fs.readFileSync(quotePath, 'utf8'));
+      variant.signerType = signerType;
+      fs.writeFileSync(quotePath, JSON.stringify(variant, null, 2));
+      await expect(cmds.execute([], null, { 'dry-run': true }, { quote: quoteId }))
+        .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+    }
+
+    expect(logs.join('\n')).not.toContain('DRY RUN — nothing was broadcast');
+    expect(executeBodies).toHaveLength(0);
+    expect(JSON.parse(fs.readFileSync(quotePath, 'utf8')).executedAt).toBeUndefined();
+  });
+
+  it('--dry-run applies request-intent validation to Solana quotes before signer resolution', async () => {
+    const walletAddress = 'Wallet1111111111111111111111111111111111';
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'jupiter',
+        inputMint: 'So11111111111111111111111111111111111111112',
+        outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        inAmount: '2000000000',
+        inputAmount: '2000000000',
+        outAmount: '50000000',
+        transaction: 'not-needed-before-intent-rejection',
+      }],
+    }, 'solana', 'privy', { solana: 'server-wallet-id' }, null, {
+      swapMode: 'exactIn',
+      slippage: 0.03,
+      request: {
+        chain: 'solana',
+        toChain: null,
+        walletAddress,
+        recipient: null,
+        fromToken: 'So11111111111111111111111111111111111111112',
+        toToken: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        swapMode: 'exactIn',
+        amount: '1000000000',
+        maxInputAmount: '1000000000',
+      },
+    });
+
+    const cmds = buildTradingCommands({ log: () => {}, isTTY: false, env: {} });
+    await expect(cmds.execute([], null, { 'dry-run': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+  });
+
   it('--dry-run plans the ERC-20 approval and defers the simulation to the real run', async () => {
     stubFetch({ allowance: 0n });
     const quoteId = erc20Quote('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
@@ -484,12 +561,17 @@ describe('trade execute --dry-run / --yes', () => {
     Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
     Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
     try {
-      const promptFn = vi.fn(async () => 'n');
+      const stdout = [];
+      const stderr = [];
+      const promptFn = vi.fn(async (question) => {
+        stderr.push(question);
+        return 'n';
+      });
       const exit = vi.fn();
       await runCLI(['trade', 'execute', '--quote', quoteId], {
-        output: () => {},
-        errorOutput: () => {},
-        log: () => {},
+        output: message => stdout.push(message),
+        errorOutput: message => stderr.push(message),
+        log: message => stdout.push(message),
         exit,
         promptFn,
       });
@@ -497,6 +579,9 @@ describe('trade execute --dry-run / --yes', () => {
       expect(promptFn).toHaveBeenCalledTimes(1);
       expect(exit).toHaveBeenCalledWith(1);
       expect(executeBodies).toHaveLength(0);
+      expect(stderr.join('\n')).toContain('Trade plan — Base');
+      expect(stderr.join('\n')).toContain('Broadcast this transaction?');
+      expect(stdout.join('\n')).not.toContain('Trade plan — Base');
     } finally {
       delete process.stdin.isTTY;
       delete process.stdout.isTTY;

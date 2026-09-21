@@ -70,6 +70,7 @@ export async function guardExecution({
   isTTY = false,
   promptFn,
   log = () => {},
+  confirmationLog = log,
   question = 'Broadcast this transaction? [y/N] ',
 }) {
   if (dryRun) {
@@ -90,7 +91,12 @@ export async function guardExecution({
     );
   }
 
-  log(plan);
+  // Keep the plan on the same visible terminal channel as the question. In
+  // particular, stdin can still be a TTY when stdout is redirected to a file;
+  // writing the plan through `log` there would ask the user to approve a plan
+  // they cannot see. Dry-run output deliberately remains on `log`/stdout above
+  // because it is automation-friendly command output rather than a prompt.
+  confirmationLog(plan);
   const answer = await promptFn(question);
   if (!isAffirmative(answer)) {
     throw new CommandError(
