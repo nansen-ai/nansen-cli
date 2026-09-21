@@ -2,10 +2,9 @@
  * Opt-in HTTP request tracing for the CLI.
  *
  * Turned on by the global `--debug` flag (which calls setDebugEnabled) or by
- * `NANSEN_DEBUG=1` in the environment. A bare `DEBUG` is honored too: a few
- * x402 wallet-lookup notes were already keyed on it before this module
- * existed, and they now route through trace() so there is one switch, one
- * output stream, and one redaction pass.
+ * `NANSEN_DEBUG=1` in the environment. The generic `DEBUG` variable is not
+ * consulted: other packages commonly use it, and enabling HTTP tracing must
+ * always be an explicit Nansen choice.
  *
  * Everything is written to **stderr**, never stdout. stdout carries the JSON
  * or CSV that callers pipe into other programs, and a trace line in that
@@ -67,12 +66,19 @@ const LONG_BASE58 = /^[1-9A-HJ-NP-Za-km-z]{80,}$/;
  */
 const LONG_OPAQUE = /^[A-Za-z0-9_\-+/=.]{64,}$/;
 
+/** Credential-shaped substrings inside otherwise useful diagnostic prose. */
+const EMBEDDED_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi;
+const EMBEDDED_NAMED_SECRET = /\b([\w-]*(?:key|token|secret|signature|password|passphrase|mnemonic|seed|auth|credential|cookie|private)[\w-]*)\s*([=:])\s*([^\s,;]+)/gi;
+const EMBEDDED_HEX_32_BYTES = /(?<![0-9a-fA-F])(?:0x)?[0-9a-fA-F]{64}(?![0-9a-fA-F])/g;
+const EMBEDDED_JWT = /\bey[\w-]{8,}\.[\w-]{4,}\.[\w-]+\b/g;
+const EMBEDDED_LONG_OPAQUE = /(?<![A-Za-z0-9_\-+/=.])[A-Za-z0-9_\-+/=.]{64,}(?![A-Za-z0-9_\-+/=.])/g;
+
 let forcedEnabled = null;
 let writer = null;
 
 /**
  * Force tracing on or off for the process, overriding the environment.
- * Pass undefined to hand control back to NANSEN_DEBUG / DEBUG.
+ * Pass undefined to hand control back to NANSEN_DEBUG.
  */
 export function setDebugEnabled(enabled) {
   forcedEnabled = enabled === undefined ? null : Boolean(enabled);
@@ -92,7 +98,7 @@ function envEnabled(value) {
 
 export function isDebugEnabled() {
   if (forcedEnabled !== null) return forcedEnabled;
-  return envEnabled(process.env.NANSEN_DEBUG) || envEnabled(process.env.DEBUG);
+  return envEnabled(process.env.NANSEN_DEBUG);
 }
 
 /** Cut a value to MAX_VALUE_LENGTH, marking that it was cut. */
@@ -130,7 +136,13 @@ function redactString(value) {
   // Drop inline credentials first, keeping the scheme label ("Bearer …") so
   // the trace still says what kind of credential was in play. Doing this
   // before the shape checks keeps the surrounding prose readable.
-  const neutralized = value.replace(INLINE_SCHEME_ALL, (_match, kind) => `${kind} ${REDACTED}`);
+  const neutralized = value
+    .replace(EMBEDDED_URL, match => redactUrl(match))
+    .replace(INLINE_SCHEME_ALL, (_match, kind) => `${kind} ${REDACTED}`)
+    .replace(EMBEDDED_NAMED_SECRET, (_match, name, separator) => `${name}${separator}${REDACTED}`)
+    .replace(EMBEDDED_HEX_32_BYTES, REDACTED)
+    .replace(EMBEDDED_JWT, REDACTED)
+    .replace(EMBEDDED_LONG_OPAQUE, REDACTED);
   if (neutralized !== value) return truncate(neutralized);
   return looksLikeSecretValue(neutralized) ? REDACTED : truncate(neutralized);
 }
@@ -145,6 +157,10 @@ export function redact(value, seen = new WeakSet()) {
   if (typeof value === 'string') return redactString(value);
   if (typeof value === 'number' || typeof value === 'boolean') return value;
   if (typeof value === 'bigint') return `${value}`;
+  if (ArrayBuffer.isView(value)) {
+    return `[${value.constructor?.name || 'TypedArray'} ${value.byteLength} bytes]`;
+  }
+  if (value instanceof ArrayBuffer) return `[ArrayBuffer ${value.byteLength} bytes]`;
   if (Array.isArray(value)) return value.map((item) => redact(item, seen));
   if (typeof value === 'object') {
     if (seen.has(value)) return '[circular]';
@@ -159,9 +175,10 @@ export function redact(value, seen = new WeakSet()) {
 }
 
 /**
- * Redact a URL: drop any userinfo, blank out query values whose parameter is
- * credential-named, and blank out any remaining value that looks like a
- * credential. Path and host are kept — they are what makes a trace useful.
+ * Redact a URL: drop any userinfo and fragment, sanitize path segments, blank out query values
+ * whose parameter is credential-named, and blank out any remaining value that
+ * looks like a credential. Path segments that look credential-related are
+ * withheld because reset/session/payment credentials are often put there.
  */
 export function redactUrl(raw) {
   const text = String(raw ?? '');
@@ -184,7 +201,12 @@ export function redactUrl(raw) {
 
   const credentials = url.username || url.password ? `${REDACTED}@` : '';
   const query = parts.length ? `?${parts.join('&')}` : '';
-  return truncate(`${url.protocol}//${credentials}${url.host}${url.pathname}${query}${url.hash}`);
+  const path = url.pathname.split('/').map((segment) => {
+    let decoded = segment;
+    try { decoded = decodeURIComponent(segment); } catch { /* keep raw text */ }
+    return isSecretName(decoded) || looksLikeSecretValue(decoded) ? REDACTED : segment;
+  }).join('/');
+  return truncate(`${url.protocol}//${credentials}${url.host}${path}${query}`);
 }
 
 function redactQueryText(query) {
@@ -215,7 +237,8 @@ export function redactHeaders(headers) {
 function formatValue(key, value) {
   const safe = key === 'url' ? redactUrl(value) : redact(value);
   const text = typeof safe === 'object' ? JSON.stringify(safe) : String(safe);
-  return /[\s"]/.test(text) ? JSON.stringify(text) : text;
+  const bounded = truncate(text);
+  return /[\s"]/.test(bounded) ? JSON.stringify(bounded) : bounded;
 }
 
 function write(line) {

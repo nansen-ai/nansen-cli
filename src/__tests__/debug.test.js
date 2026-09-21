@@ -134,9 +134,26 @@ describe('redact', () => {
     expect(redact({ hint: 'set the password in the environment' }).hint).toBe('set the password in the environment');
   });
 
-  it('drops URL credentials and survives an unparseable URL', () => {
+  it('drops URL credentials, paths, fragments, and survives an unparseable URL', () => {
     expect(redactUrl(`https://user:${FAKE_API_KEY}@api.example.test/v1/x`)).not.toContain(FAKE_API_KEY);
+    expect(redactUrl(`https://api.example.test/reset/${FAKE_API_KEY}#apikey=${FAKE_API_KEY}`)).toBe(`https://api.example.test/reset/${REDACTED}`);
     expect(redactUrl(`/v1/x?secret=${FAKE_API_KEY}&chain=base`)).toBe(`/v1/x?secret=${REDACTED}&chain=base`);
+  });
+
+  it('blanks credentials embedded in diagnostic prose', () => {
+    const cases = [
+      `request to https://api.example.test/v1/x?apikey=${FAKE_API_KEY} failed`,
+      `signing failed for ${FAKE_PRIVATE_KEY}`,
+      `upstream said api_key=${FAKE_API_KEY}`,
+      'JWT eyJhbGciOiJIUzI1NiJ9.payload.signature',
+    ];
+
+    for (const message of cases) {
+      const printed = redact(message);
+      expect(printed).not.toContain(FAKE_API_KEY);
+      expect(printed).not.toContain(FAKE_PRIVATE_KEY);
+      expect(printed).not.toContain('eyJhbGciOiJIUzI1NiJ9');
+    }
   });
 
   it('truncates long values and tolerates cycles', () => {
@@ -174,7 +191,7 @@ describe('debug switch', () => {
     expect(lines).toEqual([]);
   });
 
-  it('turns on from NANSEN_DEBUG, from DEBUG, and from the flag', () => {
+  it('turns on only from NANSEN_DEBUG or the explicit flag', () => {
     process.env.NANSEN_DEBUG = '1';
     expect(isDebugEnabled()).toBe(true);
 
@@ -183,11 +200,24 @@ describe('debug switch', () => {
 
     delete process.env.NANSEN_DEBUG;
     process.env.DEBUG = '1';
-    expect(isDebugEnabled()).toBe(true);
+    expect(isDebugEnabled()).toBe(false);
+
+    process.env.NANSEN_DEBUG = '0';
+    expect(isDebugEnabled()).toBe(false);
 
     delete process.env.DEBUG;
+    delete process.env.NANSEN_DEBUG;
     setDebugEnabled(true);
     expect(isDebugEnabled()).toBe(true);
+  });
+
+  it('bounds structured and binary fields after serialization', () => {
+    setDebugEnabled(true);
+    trace('probe', { blob: Buffer.alloc(4096, 255), nested: { values: Array.from({ length: 100 }, (_, i) => `item ${i}`) } });
+
+    expect(lines[0].length).toBeLessThan(500);
+    expect(lines[0]).toContain('Buffer 4096 bytes');
+    expect(lines[0]).toContain('…(+');
   });
 
   it('formats a request, a response and a retry decision', () => {

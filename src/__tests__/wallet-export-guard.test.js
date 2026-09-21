@@ -1,7 +1,7 @@
 /**
  * wallet export must never disclose private keys unless explicitly
  * acknowledged (--reveal) or routed to a 0600 file (--file). These tests also
- * prove key material stays out of ordinary errors, DEBUG stderr output, and
+ * prove key material stays out of ordinary errors, debug stderr output, and
  * telemetry payloads.
  */
 
@@ -46,6 +46,7 @@ afterEach(() => {
   process.env.HOME = originalHome;
   if (originalPassword === undefined) delete process.env.NANSEN_WALLET_PASSWORD;
   else process.env.NANSEN_WALLET_PASSWORD = originalPassword;
+  delete process.env.NANSEN_DEBUG;
   delete process.env.DEBUG;
   fs.rmSync(tempDir, { recursive: true, force: true });
   vi.unstubAllGlobals();
@@ -487,9 +488,9 @@ describe('wallet export — secrecy of errors, debug logs, and telemetry', () =>
     expect(tracked).not.toContain('wrong-password-123');
   });
 
-  it('DEBUG=1 runs write no key material to stderr', async () => {
+  it('NANSEN_DEBUG=1 runs write no key material to stderr', async () => {
     const keys = createWalletWithKeys('dbg');
-    process.env.DEBUG = '1';
+    process.env.NANSEN_DEBUG = '1';
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
     const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const errorOutputs = [];
