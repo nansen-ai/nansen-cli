@@ -31,6 +31,7 @@ import {
   parseAddressList
 } from '../cli.js';
 import { parseCsvOption, parseObjectOption } from '../query-options.js';
+import { MAX_PAGES_LIMIT } from '../auto-paginate.js';
 import {
   formatAlertsTable,
   buildAlertData,
@@ -7162,6 +7163,18 @@ describe('--paginate / --all flag integration (API-275)', () => {
     expect(formatCsv(nested)).toBe('id,name\n1,one\n2,two');
   });
 
+  it('formats a descriptive single-array-key envelope for stream, table, and CSV', () => {
+    const descriptive = {
+      trades: [{ id: 1, side: 'buy' }, { id: 2, side: 'sell' }],
+      pagination: { complete: true },
+    };
+
+    expect(formatStream(descriptive).split('\n').map(JSON.parse)).toEqual(descriptive.trades);
+    expect(formatTable(descriptive)).toContain('1  │ buy');
+    expect(formatTable(descriptive)).toContain('2  │ sell');
+    expect(formatCsv(descriptive)).toBe('id,side\n1,buy\n2,sell');
+  });
+
   it.each(['0', '-1', '1.5', '9007199254740992', 'Infinity', 'false', '', '   '])(
     'rejects invalid --max-pages value %# with the machine-readable error envelope',
     async (value) => {
@@ -7202,6 +7215,14 @@ describe('--paginate / --all flag integration (API-275)', () => {
     expect(result.type).toBe('error');
     expect(exitCode).toBe(1);
     expect(JSON.parse(outputs[0]).error).toBe('--max-pages must be at most 1000; received: 1001');
+  });
+
+  it('accepts --max-pages at the configured ceiling', async () => {
+    const result = await runCLI([
+      'smart-money', 'netflow', '--paginate', '--max-pages', String(MAX_PAGES_LIMIT),
+    ], deps());
+    expect(result.type).toBe('success');
+    expect(result.data.data).toHaveLength(23);
   });
 
   it('reports aggregate credits and a low-credit warning for the whole traversal', async () => {

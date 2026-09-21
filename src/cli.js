@@ -385,7 +385,7 @@ function parseNonNegativeSafeIntegerOption(name, options, flags, defaultValue) {
   return value;
 }
 
-function parsePositiveSafeIntegerOption(name, options, flags, defaultValue) {
+function parsePositiveSafeIntegerOption(name, options, flags, defaultValue, { max } = {}) {
   const value = parseSafeIntegerOption(
     name,
     options,
@@ -401,6 +401,13 @@ function parsePositiveSafeIntegerOption(name, options, flags, defaultValue) {
   if (value < 1) {
     throw new NansenError(
       `--${name} must be a positive safe integer; received: ${value}`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+
+  if (max !== undefined && value > max) {
+    throw new NansenError(
+      `--${name} must be at most ${max}; received: ${value}`,
       ErrorCode.INVALID_PARAMS,
     );
   }
@@ -2526,13 +2533,9 @@ export async function runCLI(rawArgs, deps = {}) {
     // --paginate (alias --all): walk every page of a list command and return one
     // merged response, bounded by --max-pages. Wraps api.request so every list
     // handler inherits it; non-list requests pass through untouched.
-    const maxPages = parsePositiveSafeIntegerOption('max-pages', options, flags, DEFAULT_MAX_PAGES);
-    if (maxPages > MAX_PAGES_LIMIT) {
-      throw new NansenError(
-        `--max-pages must be at most ${MAX_PAGES_LIMIT}; received: ${maxPages}`,
-        ErrorCode.INVALID_PARAMS,
-      );
-    }
+    const maxPages = parsePositiveSafeIntegerOption(
+      'max-pages', options, flags, DEFAULT_MAX_PAGES, { max: MAX_PAGES_LIMIT },
+    );
     if (flags.paginate || flags.all) {
       enableAutoPagination(api, { maxPages });
     }
