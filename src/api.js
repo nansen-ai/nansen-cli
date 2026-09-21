@@ -828,6 +828,8 @@ export class NansenAPI {
         ErrorCode.PAYMENT_AMBIGUOUS,
       );
     }
+    // fetch resolves when response headers are available, before body parsing;
+    // duration_ms therefore reports time-to-headers (TTFB), not full download.
     traceResponse({
       method,
       url,
@@ -962,6 +964,8 @@ export class NansenAPI {
         throw lastError;
       }
 
+      // Keep response timing independent of body size: this is elapsed time to
+      // response headers (TTFB), before readBody downloads/parses the payload.
       traceResponse({
         method,
         url,

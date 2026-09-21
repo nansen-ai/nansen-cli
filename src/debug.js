@@ -296,7 +296,11 @@ export function traceRequest({ method, url, attempt, maxAttempts, payment }) {
   });
 }
 
-/** A response came back. `status` and `duration_ms` are the point of this line. */
+/**
+ * Response headers arrived. `duration_ms` is time from attempt start until
+ * fetch resolves with headers (time to first byte / TTFB); it deliberately
+ * excludes downloading and parsing the response body.
+ */
 export function traceResponse({ method, url, status, durationMs, requestId, attempt, payment }) {
   trace('http.response', {
     method,
@@ -309,7 +313,10 @@ export function traceResponse({ method, url, status, durationMs, requestId, atte
   });
 }
 
-/** The request never produced a response. */
+/**
+ * The request never produced response headers. `duration_ms` is elapsed time
+ * from attempt start until the transport failure.
+ */
 export function traceError({ method, url, durationMs, attempt, error }) {
   trace('http.error', { method, url, duration_ms: durationMs, attempt, error });
 }
