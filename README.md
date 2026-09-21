@@ -357,6 +357,12 @@ counted as charges. Combine with `--stream` for NDJSON.
 
 ## Output Format
 
+> **Compatibility note:** `--table`, `--format csv`, and `--stream` now render an
+> unambiguous descriptive top-level array (for example, `trades` or `holdings`)
+> as one row per item, even without `--paginate`. Older versions rendered the
+> enclosing response object as a single row. Envelopes with multiple candidate
+> data arrays remain unexpanded.
+
 ```json
 { "success": true,  "data": <api_response> }
 { "success": false, "error": "message", "code": "ERROR_CODE", "status": 401, "requestId": "...", "details": { ... } }
