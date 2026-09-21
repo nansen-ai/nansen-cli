@@ -42,6 +42,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setDebugEnabled(undefined);
   stderrSpy.mockRestore();
   if (prevNansenDebug === undefined) delete process.env.NANSEN_DEBUG;
   else process.env.NANSEN_DEBUG = prevNansenDebug;
