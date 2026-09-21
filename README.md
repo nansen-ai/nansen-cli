@@ -345,7 +345,7 @@ nansen research token screener --chain solana 2>trace.log | jq .   # trace to a 
 
 Events: `http.request`, `http.response`, `http.retry`, `http.error`, `http.cache_hit` (answered from the local cache, no request made).
 
-**What the trace never contains.** No API keys, wallet keys, mnemonics or payment signatures; no `Authorization`, `apikey` or `Payment-Signature` header values (header values are not traced at all); no request or response bodies. Query-string values are blanked whenever the parameter name mentions a key, token, secret, signature, password or auth, and any remaining credential-shaped value is blanked too. Long values are truncated. Paste a trace into a bug report as-is — but a quick read before you share is always wise.
+**What the trace never contains.** No API keys, wallet keys, mnemonics or payment signatures; no `Authorization`, `apikey` or `Payment-Signature` header values (header values are not traced at all); no request or response bodies. Query-string values are blanked whenever the parameter name mentions a key, token, secret, signature, password or auth, and any remaining credential-shaped value is blanked too. Redaction deliberately fails closed: a bare 64-character hex URL segment is hidden even when it is a public transaction or block hash, because it is indistinguishable from key material without endpoint-specific assumptions. Long values are truncated. Paste a trace into a bug report as-is — but a quick read before you share is always wise.
 
 ## Supported Chains
 
