@@ -7,6 +7,19 @@ import { SOL_SENTINEL } from '../solana-simulation.js';
 import crypto from 'crypto';
 import { base58Decode, base58Encode, generateSolanaWallet } from '../wallet.js';
 
+// `trade quote` / `trade execute` screen the wallet against the sanctions list
+// through the API instance before requesting a quote or signing (the gate itself
+// is covered in trading-sanctions-screening.test.js). Tests here exercise other
+// behaviour, so they get an API instance whose screen always reports clean.
+const screenApi = {
+  request: async (endpoint, body) => {
+    if (endpoint.startsWith('/api/v1/sanctions/screen')) {
+      return { results: (body?.addresses || []).map(address => ({ address, sanctioned: false })) };
+    }
+    throw new Error(`unexpected endpoint ${endpoint}`);
+  },
+};
+
 describe('validateQuoteInput', () => {
   const validSolana = {
     chain: 'solana',
@@ -643,7 +656,7 @@ describe('quote handler integration', () => {
       exit: () => {},
     });
 
-    await expect(commands.quote([], null, {}, {
+    await expect(commands.quote([], screenApi, {}, {
       chain: 'solana',
       from: 'SOL',
       to: 'SOL',
@@ -658,7 +671,7 @@ describe('quote handler integration', () => {
       exit: () => {},
     });
 
-    await expect(commands.quote([], null, {}, {
+    await expect(commands.quote([], screenApi, {}, {
       chain: 'solana',
       from: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
       to: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
@@ -965,7 +978,7 @@ describe('quote handler balance validation integration', () => {
       exit: () => {},
     });
 
-    await expect(commands.quote([], null, {}, {
+    await expect(commands.quote([], screenApi, {}, {
       chain: 'solana',
       from: 'SOL',
       to: 'USDC',
@@ -1057,7 +1070,7 @@ describe('quote handler gas validation integration', () => {
       exit: () => {},
     });
 
-    await expect(commands.quote([], null, {}, {
+    await expect(commands.quote([], screenApi, {}, {
       chain: 'solana',
       from: 'SOL',
       to: 'USDC',
