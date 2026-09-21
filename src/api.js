@@ -663,6 +663,12 @@ export class NansenAPI {
      * low-credit warning wants.
      */
     this.lastResponseMeta = null;
+    /**
+     * Command-level aggregate populated only by the auto-pagination wrapper.
+     * lastResponseMeta above deliberately remains the metadata for the final
+     * individual response.
+     */
+    this.paginatedResponseMeta = null;
     /** API path of the most recent request(), for pairing lastResponseMeta with a cost estimate. */
     this.lastEndpoint = null;
     /**

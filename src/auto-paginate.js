@@ -7,6 +7,8 @@
  * requests (no `pagination` key in the body) pass straight through.
  */
 
+import { aggregatePaginatedResponseMeta } from './response-meta.js';
+
 export const DEFAULT_MAX_PAGES = 10;
 
 // Where list endpoints keep their rows. Mirrors formatTable/formatStream in cli.js.
@@ -130,9 +132,21 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
 export function enableAutoPagination(api, opts = {}) {
   if (typeof api?.request !== 'function') return api;
   const request = api.request.bind(api);
-  api.request = (endpoint, body = {}, options = {}) => {
+  api.request = async (endpoint, body = {}, options = {}) => {
+    api.paginatedResponseMeta = null;
     if (!body || typeof body !== 'object' || !('pagination' in body)) return request(endpoint, body, options);
-    return collectPages(pagination => request(endpoint, { ...body, pagination }, options), body.pagination, opts);
+
+    const pageMetadata = [];
+    const result = await collectPages(async pagination => {
+      const pageResult = await request(endpoint, { ...body, pagination }, options);
+      pageMetadata.push({
+        cached: api.servedFromCache === true,
+        meta: api.servedFromCache === true ? null : api.lastResponseMeta,
+      });
+      return pageResult;
+    }, body.pagination, opts);
+    api.paginatedResponseMeta = aggregatePaginatedResponseMeta(pageMetadata);
+    return result;
   };
   return api;
 }

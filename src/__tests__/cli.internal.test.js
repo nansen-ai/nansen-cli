@@ -6392,4 +6392,28 @@ describe('--paginate / --all flag integration (API-275)', () => {
     expect(out).toMatchObject({ success: false, code: 'INVALID_PARAMS' });
     expect(out.error).toMatch(/--max-pages must be at least 1/);
   });
+
+  it('reports aggregate credits and a low-credit warning for the whole traversal', async () => {
+    function MetadataAPI() {
+      this.servedFromCache = false;
+      this.request = vi.fn(async (_endpoint, body) => {
+        const { page } = body.pagination;
+        this.lastResponseMeta = {
+          credits: { used: 4, remaining: page === 1 ? 8 : 3, cost: 4 },
+        };
+        this.lastEndpoint = '/api/v1/smart-money/netflow';
+        return { data: page === 1 ? [{ id: 1 }, { id: 2 }] : [{ id: 3 }] };
+      });
+      this.smartMoneyNetflow = ({ pagination }) => this.request('/api/v1/smart-money/netflow', { pagination });
+    }
+    const d = { ...deps(), NansenAPIClass: MetadataAPI };
+
+    await runCLI(['smart-money', 'netflow', '--limit', '2', '--paginate'], d);
+
+    expect(errors).toEqual([
+      '⚠️  3 API credits left — less than this call cost (8). Top up at https://app.nansen.ai/api?tab=api',
+      'Credits: 8 (2 page requests)',
+    ]);
+    expect(JSON.parse(outputs[0]).data.data).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+  });
 });

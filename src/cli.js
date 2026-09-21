@@ -2310,15 +2310,22 @@ export async function runCLI(rawArgs, deps = {}) {
     // stderr so it never contaminates the JSON on stdout that agents parse.
     // Placed before every return path below so it fires for operational
     // commands too, which print their own output and return undefined.
-    const lowCredits = creditWarning(api.lastResponseMeta);
+    const responseMeta = api.paginatedResponseMeta || api.lastResponseMeta;
+    const lowCredits = creditWarning(responseMeta);
     if (lowCredits) errorOutput(lowCredits);
-    for (const notice of noticeWarnings(api.lastResponseMeta)) errorOutput(notice);
+    for (const notice of noticeWarnings(responseMeta)) errorOutput(notice);
 
     // What this call cost — authoritative header when the API sent one, else
     // the cached spec estimate. stderr only, so stdout JSON stays pure.
-    const charged = creditsCharged(api.lastResponseMeta, api.lastEndpoint);
+    const charged = creditsCharged(responseMeta, api.lastEndpoint);
     if (charged?.source === 'header') {
-      errorOutput(`Credits: ${charged.cost} (this call)`);
+      const paginationMeta = responseMeta?.pagination;
+      let scope = 'this call';
+      if (paginationMeta?.livePages > 1) scope = `${paginationMeta.livePages} page requests`;
+      else if (paginationMeta?.cachedPages > 0 && paginationMeta.livePages > 0) {
+        scope = `${paginationMeta.livePages} live of ${paginationMeta.pagesFetched} page requests`;
+      } else if (paginationMeta?.livePages === 0) scope = 'cached traversal';
+      errorOutput(`Credits: ${charged.cost} (${scope})`);
     } else if (charged?.source === 'estimate') {
       errorOutput(`Credits: ~${charged.estimate.free} free / ${charged.estimate.pro} pro (estimated)`);
     }

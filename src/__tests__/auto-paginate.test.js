@@ -203,4 +203,80 @@ describe('enableAutoPagination', () => {
     const api = { list: vi.fn() };
     expect(enableAutoPagination(api)).toBe(api);
   });
+
+  it('aggregates credit metadata across live pages without changing the payload', async () => {
+    const api = {
+      lastResponseMeta: null,
+      servedFromCache: false,
+      request: vi.fn(async (_endpoint, body) => {
+        const page = body.pagination.page;
+        api.lastResponseMeta = {
+          requestId: `req-${page}`,
+          credits: { used: 2, remaining: 10 - page * 2, cost: 3 },
+          rateLimit: { limit: 100, remaining: 100 - page, resetSeconds: 60 },
+          ...(page === 1 && { notices: { planNotice: 'Plan notice' } }),
+        };
+        return { data: page === 1 ? [{ id: 1 }, { id: 2 }] : [{ id: 3 }] };
+      }),
+    };
+    enableAutoPagination(api);
+
+    const result = await api.request('/list', { pagination: { page: 1, per_page: 2 } });
+
+    expect(result).toEqual({
+      data: [{ id: 1 }, { id: 2 }, { id: 3 }],
+      pagination: { page: 1, pages_fetched: 2, next_page: null, complete: true },
+    });
+    expect(api.lastResponseMeta.requestId).toBe('req-2');
+    expect(api.paginatedResponseMeta).toEqual({
+      requestId: 'req-2',
+      credits: { used: 4, remaining: 6, cost: 6 },
+      rateLimit: { limit: 100, remaining: 98, resetSeconds: 60 },
+      notices: { planNotice: 'Plan notice' },
+      pagination: { pagesFetched: 2, livePages: 2, cachedPages: 0 },
+    });
+  });
+
+  it('does not charge cached pages or replace the freshest live metadata with stale cache state', async () => {
+    const api = {
+      lastResponseMeta: null,
+      servedFromCache: false,
+      request: vi.fn(async (_endpoint, body) => {
+        const page = body.pagination.page;
+        if (page === 1) {
+          api.servedFromCache = false;
+          api.lastResponseMeta = { credits: { used: 2, remaining: 8, cost: 3 } };
+          return { data: [{ id: 1 }, { id: 2 }] };
+        }
+        api.servedFromCache = true;
+        return { data: [{ id: 3 }] };
+      }),
+    };
+    enableAutoPagination(api);
+
+    await api.request('/list', { pagination: { page: 1, per_page: 2 } });
+
+    expect(api.paginatedResponseMeta).toEqual({
+      credits: { used: 2, remaining: 8, cost: 3 },
+      pagination: { pagesFetched: 2, livePages: 1, cachedPages: 1 },
+    });
+  });
+
+  it('reports an all-cache traversal as zero cost instead of reusing stale response metadata', async () => {
+    const api = {
+      lastResponseMeta: { credits: { used: 99, remaining: 1, cost: 99 } },
+      servedFromCache: true,
+      request: vi.fn(async (_endpoint, body) => ({
+        data: body.pagination.page === 1 ? [{ id: 1 }, { id: 2 }] : [{ id: 3 }],
+      })),
+    };
+    enableAutoPagination(api);
+
+    await api.request('/list', { pagination: { page: 1, per_page: 2 } });
+
+    expect(api.paginatedResponseMeta).toEqual({
+      credits: { used: 0, remaining: null, cost: 0 },
+      pagination: { pagesFetched: 2, livePages: 0, cachedPages: 2 },
+    });
+  });
 });

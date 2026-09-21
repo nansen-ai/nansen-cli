@@ -329,7 +329,8 @@ separate, separately billed API call. Server completion metadata (`total_pages`,
 `is_last_page`) is honoured so a known final page is not fetched again. Rows are de-duplicated and
 the response gains
 `pagination: { page, pages_fetched, next_page, complete }`; when `complete` is `false`, resume with
-`--page <next_page>`. Combine with `--stream` for NDJSON.
+`--page <next_page>`. The stderr credit summary totals the live page requests; cached pages are not
+counted as charges. Combine with `--stream` for NDJSON.
 
 **ENS names** work anywhere `--address` is accepted: `--address vitalik.eth`
 
