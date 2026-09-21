@@ -138,6 +138,23 @@ describe('collectPages', () => {
     expect(res.pagination.complete).toBe(true);
   });
 
+  it('marks a partial traversal incomplete when a later page is not a list response', async () => {
+    const fetchPage = vi.fn(async ({ page }) => (
+      page === 1
+        ? { data: [{ id: 1 }, { id: 2 }] }
+        : { status: 'ok', message: 'unexpected envelope' }
+    ));
+
+    const res = await collectPages(fetchPage, { page: 1, per_page: 2 });
+
+    expect(res.data).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(res.pagination).toMatchObject({
+      pages_fetched: 2,
+      next_page: 2,
+      complete: false,
+    });
+  });
+
   it('drops overlapping rows across pages', async () => {
     const pages = { 1: [{ id: 1 }, { id: 2 }], 2: [{ id: 2 }, { id: 3 }], 3: [{ id: 4 }] };
     const fetchPage = vi.fn(async ({ page }) => ({ data: pages[page] }));

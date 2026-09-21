@@ -101,7 +101,10 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
       first = located;
       firstPagination = locatePagination(res);
     }
-    if (!located) { complete = true; break; }
+    // A later HTTP-200 response with an unexpected shape is not proof that
+    // traversal completed. Return the rows collected so far as incomplete and
+    // leave next_page on this page so callers can investigate or resume.
+    if (!located) { complete = false; break; }
 
     let fresh = 0;
     for (const row of located.rows) {
