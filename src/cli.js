@@ -331,6 +331,25 @@ function parseNonNegativeSafeIntegerOption(name, options, flags, defaultValue) {
   return value;
 }
 
+function parsePositiveSafeIntegerOption(name, options, flags, defaultValue) {
+  const value = parseSafeIntegerOption(
+    name,
+    options,
+    flags,
+    defaultValue,
+    'positive safe integer',
+  );
+
+  if (value < 1) {
+    throw new NansenError(
+      `--${name} must be a positive safe integer; received: ${value}`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+
+  return value;
+}
+
 
 function parseDaysOption(options, flags) {
   const days = parseNonNegativeSafeIntegerOption('days', options, flags, 30);
@@ -2275,11 +2294,8 @@ export async function runCLI(rawArgs, deps = {}) {
     // --paginate (alias --all): walk every page of a list command and return one
     // merged response, bounded by --max-pages. Wraps api.request so every list
     // handler inherits it; non-list requests pass through untouched.
+    const maxPages = parsePositiveSafeIntegerOption('max-pages', options, flags, DEFAULT_MAX_PAGES);
     if (flags.paginate || flags.all) {
-      const maxPages = parseNonNegativeSafeIntegerOption('max-pages', options, flags, DEFAULT_MAX_PAGES);
-      if (maxPages < 1) {
-        throw new NansenError(`--max-pages must be at least 1; received: ${maxPages}`, ErrorCode.INVALID_PARAMS);
-      }
       enableAutoPagination(api, { maxPages });
     }
 

@@ -37,6 +37,24 @@ describe('collectPages', () => {
     expect(fetchPage.mock.calls[0][0]).toEqual({ page: 1 });
   });
 
+  it('uses the server page size for short-page detection when it differs from the request', async () => {
+    const clamped = vi.fn(async ({ page }) => ({
+      pagination: { page, per_page: 2 },
+      data: page === 1 ? [{ id: 1 }, { id: 2 }] : [{ id: 3 }],
+    }));
+    const clampedResult = await collectPages(clamped, { page: 1, per_page: 100 });
+    expect(clamped).toHaveBeenCalledTimes(2);
+    expect(clampedResult.data).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+
+    const partial = vi.fn(async () => ({
+      pagination: { page: 1, per_page: 3 },
+      data: [{ id: 1 }, { id: 2 }],
+    }));
+    const partialResult = await collectPages(partial, { page: 1 });
+    expect(partial).toHaveBeenCalledTimes(1);
+    expect(partialResult.pagination.complete).toBe(true);
+  });
+
   it('honours a start page and other pagination fields', async () => {
     const fetchPage = server(25, 10);
     const res = await collectPages(fetchPage, { page: '2', per_page: 10 });

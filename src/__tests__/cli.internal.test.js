@@ -6383,14 +6383,39 @@ describe('--paginate / --all flag integration (API-275)', () => {
     expect(formatCsv(nested)).toBe('id,name\n1,one\n2,two');
   });
 
-  it('rejects an invalid --max-pages with the machine-readable error envelope', async () => {
-    const d = deps();
-    const result = await runCLI(['smart-money', 'netflow', '--paginate', '--max-pages', '0'], d);
+  it.each(['0', '-1', '1.5', '9007199254740992', 'Infinity', 'false', '', '   '])(
+    'rejects invalid --max-pages value %# with the machine-readable error envelope',
+    async (value) => {
+      const d = deps();
+      const result = await runCLI(['smart-money', 'netflow', '--paginate', '--max-pages', value], d);
+      expect(result.type).toBe('error');
+      expect(exitCode).toBe(1);
+      const out = JSON.parse(outputs[0]);
+      expect(out).toMatchObject({ success: false, code: 'INVALID_PARAMS' });
+      expect(out.error).toMatch(/--max-pages (requires|must be) a positive safe integer/);
+    },
+  );
+
+  it('rejects valueless and repeated --max-pages options', async () => {
+    let result = await runCLI(['smart-money', 'netflow', '--paginate', '--max-pages'], deps());
     expect(result.type).toBe('error');
     expect(exitCode).toBe(1);
-    const out = JSON.parse(outputs[0]);
-    expect(out).toMatchObject({ success: false, code: 'INVALID_PARAMS' });
-    expect(out.error).toMatch(/--max-pages must be at least 1/);
+    expect(JSON.parse(outputs[0]).error).toBe('--max-pages requires a positive safe integer value');
+
+    outputs = [];
+    exitCode = null;
+    result = await runCLI([
+      'smart-money', 'netflow', '--paginate', '--max-pages', '2', '--max-pages', '3',
+    ], deps());
+    expect(result.type).toBe('error');
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(outputs[0]).error).toBe('--max-pages may only be specified once');
+  });
+
+  it('validates --max-pages even when --paginate is omitted', async () => {
+    const result = await runCLI(['smart-money', 'netflow', '--max-pages', '0'], deps());
+    expect(result.type).toBe('error');
+    expect(JSON.parse(outputs[0]).error).toBe('--max-pages must be a positive safe integer; received: 0');
   });
 
   it('reports aggregate credits and a low-credit warning for the whole traversal', async () => {

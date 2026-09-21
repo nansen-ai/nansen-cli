@@ -106,7 +106,7 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
       || (Number.isInteger(totalRows) && effectivePageSize > 0 && page * effectivePageSize >= totalRows);
     const lastPage = located.rows.length === 0
       || fresh === 0
-      || located.rows.length < pageSize
+      || located.rows.length < effectivePageSize
       || serverSaysComplete
       || (Number.isInteger(totalPages) && page >= totalPages);
     if (lastPage) { complete = true; break; }
