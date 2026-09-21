@@ -2910,6 +2910,20 @@ describe('buildCommands', () => {
       expect(page2.data.pagination.page).toBe(1);
     });
 
+    it('returns every matching client-side search result with --paginate', async () => {
+      const data = Array.from({ length: 30 }, (_, i) => ({ token_symbol: `PEPE${i}`, price_usd: i }));
+      const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data }) };
+
+      const result = await commands['token'](
+        ['screener'],
+        mockApi,
+        { paginate: true },
+        { chain: 'ethereum', search: 'pepe', limit: '10', page: '1' },
+      );
+
+      expect(result.data).toEqual(data);
+    });
+
     it('should widen the search candidate fetch when the requested page is past the default 500', async () => {
       const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [] }) };
       await commands['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: 'pepe', limit: '100', page: '7' });

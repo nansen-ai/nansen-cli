@@ -79,6 +79,9 @@ function numericMetadata(value) {
  * A first page with no recognisable rows array is returned unchanged.
  */
 export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_MAX_PAGES } = {}) {
+  if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > MAX_PAGES_LIMIT) {
+    throw new RangeError(`maxPages must be a safe integer between 1 and ${MAX_PAGES_LIMIT}`);
+  }
   const startPage = Math.max(1, Number(pagination?.page) || 1);
   // The page size is learned from the first page when --limit is absent;
   // a short page then means "last page". Endpoints that ignore `page` return

@@ -10,6 +10,16 @@ function server(total, size, extra = {}) {
 }
 
 describe('collectPages', () => {
+  it.each([0, -1, 1.5, 1001, Number.MAX_SAFE_INTEGER])(
+    'rejects an unsafe direct maxPages value: %s',
+    async (maxPages) => {
+      const fetchPage = server(1, 1);
+      await expect(collectPages(fetchPage, { page: 1, per_page: 1 }, { maxPages }))
+        .rejects.toThrow(/maxPages must be a safe integer between 1 and 1000/);
+      expect(fetchPage).not.toHaveBeenCalled();
+    },
+  );
+
   it('walks until a short page and merges rows in order', async () => {
     const fetchPage = server(25, 10);
     const res = await collectPages(fetchPage, { page: 1, per_page: 10 });

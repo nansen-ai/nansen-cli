@@ -1782,11 +1782,15 @@ export function buildCommands(deps = {}) {
           if (search) {
             const q = search.toLowerCase();
             const offset = (requestedPage - 1) * requestedLimit;
-            const filterArr = (arr) => arr.filter(t => 
+            const paginateAll = flags.paginate || flags.all;
+            const filterArr = (arr) => {
+              const matching = arr.filter(t =>
               (t.token_symbol && t.token_symbol.toLowerCase().includes(q)) ||
               (t.token_name && t.token_name.toLowerCase().includes(q)) ||
               (t.token_address && t.token_address.toLowerCase() === q)
-            ).slice(offset, offset + requestedLimit);
+              );
+              return paginateAll ? matching : matching.slice(offset, offset + requestedLimit);
+            };
             // Handle nested response shapes: {data: [...]} or {data: {data: [...]}}
             if (Array.isArray(result?.data)) {
               return { ...result, data: filterArr(result.data) };
