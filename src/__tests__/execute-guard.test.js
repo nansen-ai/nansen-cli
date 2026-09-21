@@ -64,10 +64,10 @@ describe('execute guard flags', () => {
     expect(short.flags.y).toBe(true);
     expect(short.options.quote).toBe('q1');
 
-    // Assignment syntax is not valid for this parser and must not silently
-    // become consent to broadcast.
-    const malformed = parseArgs(['trade', 'execute', '--yes=false', '--quote', 'q1']);
-    expect(resolveExecuteGuard(malformed.flags, { env: {}, isTTY: true }).assumeYes).toBe(false);
+    // Assignment syntax is invalid for valueless switches. Main's strict
+    // parser must reject it rather than silently treating it as consent.
+    expect(() => parseArgs(['trade', 'execute', '--yes=false', '--quote', 'q1']))
+      .toThrow('--yes does not accept a value');
   });
 
   it('drops empty rows from a plan and aligns the rest', () => {
@@ -155,6 +155,7 @@ describe('trade execute --dry-run / --yes', () => {
   let tmpHome;
   let prevHome;
   let executeBodies;
+  let api;
 
   function stubFetch({ allowBroadcast = false, allowance = null, callResult = '0x' } = {}) {
     executeBodies = [];
@@ -275,6 +276,11 @@ describe('trade execute --dry-run / --yes', () => {
     process.env.HOME = tmpHome;
     delete process.env.NANSEN_WALLET_PASSWORD;
     delete process.env.NANSEN_YES;
+    api = {
+      request: vi.fn(async (_endpoint, body) => ({
+        results: body.addresses.map(address => ({ address, sanctioned: false })),
+      })),
+    };
   });
 
   afterEach(() => {
@@ -295,7 +301,7 @@ describe('trade execute --dry-run / --yes', () => {
     const logs = [];
     const promptFn = vi.fn();
     const cmds = buildTradingCommands({ log: m => logs.push(m), promptFn, isTTY: true, env: {} });
-    await cmds.execute([], null, { 'dry-run': true }, { quote: quoteId });
+    await cmds.execute([], api, { 'dry-run': true }, { quote: quoteId });
 
     const out = logs.join('\n');
     expect(out).toContain('Trade plan — Base');
@@ -312,7 +318,7 @@ describe('trade execute --dry-run / --yes', () => {
     const quoteId = nativeQuote('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
     const cmds = buildTradingCommands({ log: () => {}, promptFn: vi.fn(), isTTY: false, env: {} });
 
-    await cmds.execute([], null, { 'dry-run': true }, { quote: quoteId });
+    await cmds.execute([], api, { 'dry-run': true }, { quote: quoteId });
 
     const saved = JSON.parse(fs.readFileSync(path.join(tmpHome, '.nansen', 'quotes', `${quoteId}.json`), 'utf8'));
     expect(saved.executedAt).toBeUndefined();
@@ -329,7 +335,7 @@ describe('trade execute --dry-run / --yes', () => {
       const saved = JSON.parse(fs.readFileSync(quotePath, 'utf8'));
       saved.signerType = signerType;
       fs.writeFileSync(quotePath, JSON.stringify(saved, null, 2));
-      await expect(cmds.execute([], null, { 'dry-run': true }, { quote: quoteId }))
+      await expect(cmds.execute([], api, { 'dry-run': true }, { quote: quoteId }))
         .resolves.toBeUndefined();
     }
 
@@ -353,7 +359,7 @@ describe('trade execute --dry-run / --yes', () => {
       const variant = JSON.parse(fs.readFileSync(quotePath, 'utf8'));
       variant.signerType = signerType;
       fs.writeFileSync(quotePath, JSON.stringify(variant, null, 2));
-      await expect(cmds.execute([], null, { 'dry-run': true }, { quote: quoteId }))
+      await expect(cmds.execute([], api, { 'dry-run': true }, { quote: quoteId }))
         .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
     }
 
@@ -392,7 +398,7 @@ describe('trade execute --dry-run / --yes', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, isTTY: false, env: {} });
-    await expect(cmds.execute([], null, { 'dry-run': true }, { quote: quoteId }))
+    await expect(cmds.execute([], api, { 'dry-run': true }, { quote: quoteId }))
       .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
   });
 
@@ -402,7 +408,7 @@ describe('trade execute --dry-run / --yes', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: m => logs.push(m), promptFn: vi.fn(), isTTY: false, env: {} });
-    await cmds.execute([], null, { 'dry-run': true }, { quote: quoteId });
+    await cmds.execute([], api, { 'dry-run': true }, { quote: quoteId });
 
     const out = logs.join('\n');
     expect(out).toContain(`required → ${LIFI_ROUTER}`);
@@ -422,7 +428,7 @@ describe('trade execute --dry-run / --yes', () => {
       env: {},
     });
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId }))
+    await expect(cmds.execute([], api, {}, { quote: quoteId }))
       .rejects.toMatchObject({ code: 'CONFIRMATION_DECLINED' });
 
     const output = logs.join('\n');
@@ -438,7 +444,7 @@ describe('trade execute --dry-run / --yes', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: m => logs.push(m), promptFn: vi.fn(), isTTY: false, env: {} });
-    await cmds.execute([], null, { 'dry-run': true }, { quote: quoteId });
+    await cmds.execute([], api, { 'dry-run': true }, { quote: quoteId });
 
     const out = logs.join('\n');
     expect(out).toContain('no approval transaction needed');
@@ -456,7 +462,7 @@ describe('trade execute --dry-run / --yes', () => {
     const promptFn = vi.fn(async () => 'n');
     const cmds = buildTradingCommands({ log: m => logs.push(m), promptFn, isTTY: true, env: {} });
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId }))
+    await expect(cmds.execute([], api, {}, { quote: quoteId }))
       .rejects.toMatchObject({ code: 'CONFIRMATION_DECLINED' });
 
     expect(promptFn).toHaveBeenCalledWith('Broadcast this transaction? [y/N] ');
@@ -483,7 +489,7 @@ describe('trade execute --dry-run / --yes', () => {
       isTTY: true,
       env: {},
     });
-    await expect(cmds.execute([], null, {}, { quote: quoteId }))
+    await expect(cmds.execute([], api, {}, { quote: quoteId }))
       .rejects.toMatchObject({ code: 'CONFIRMATION_DECLINED' });
 
     const output = logs.join('\n');
@@ -501,7 +507,7 @@ describe('trade execute --dry-run / --yes', () => {
 
     const promptFn = vi.fn(async () => 'y');
     const cmds = buildTradingCommands({ log: () => {}, promptFn, isTTY: true, env: {} });
-    await cmds.execute([], null, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
+    await cmds.execute([], api, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(promptFn).toHaveBeenCalledTimes(1);
     expect(executeBodies).toHaveLength(1);
@@ -515,7 +521,7 @@ describe('trade execute --dry-run / --yes', () => {
 
     const promptFn = vi.fn();
     const cmds = buildTradingCommands({ log: () => {}, promptFn, isTTY: true, env: {} });
-    await cmds.execute([], null, { yes: true, 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
+    await cmds.execute([], api, { yes: true, 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(promptFn).not.toHaveBeenCalled();
     expect(executeBodies).toHaveLength(1);
@@ -530,7 +536,7 @@ describe('trade execute --dry-run / --yes', () => {
     const logs = [];
     const promptFn = vi.fn();
     const cmds = buildTradingCommands({ log: m => logs.push(m), promptFn, isTTY: false, env: {} });
-    await cmds.execute([], null, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
+    await cmds.execute([], api, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(promptFn).not.toHaveBeenCalled();
     expect(executeBodies).toHaveLength(1);
@@ -548,7 +554,7 @@ describe('trade execute --dry-run / --yes', () => {
     const cmds = buildTradingCommands({
       log: () => {}, promptFn, isTTY: true, env: { NANSEN_YES: '1' },
     });
-    await cmds.execute([], null, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
+    await cmds.execute([], api, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(promptFn).not.toHaveBeenCalled();
     expect(executeBodies).toHaveLength(1);

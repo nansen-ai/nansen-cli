@@ -233,8 +233,8 @@ export function buildMcpCommands(deps = {}) {
     if (flags['api-key']) {
       throw new CommandError('--api-key requires a value. Usage: nansen mcp verify --api-key <key>', 'MISSING_PARAM');
     }
-    // parseArgs JSON-parses option values, so `--api-key null` arrives as
-    // null and a repeated flag as an array - both must fail, not fall back.
+    // parseArgs turns a repeated flag into an array and a JSON object/array
+    // value into an object - both must fail, not fall back.
     if ('api-key' in options && typeof options['api-key'] !== 'string') {
       throw new CommandError('--api-key must be a single key string. Usage: nansen mcp verify --api-key <key>', 'INVALID_PARAMS');
     }

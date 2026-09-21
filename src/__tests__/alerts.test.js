@@ -57,11 +57,11 @@ describe('alerts numeric range validation', () => {
 });
 
 /**
- * parseArgs runs JSON.parse on option values, so `--flag true` /
- * `--flag false` / `--flag null` become JS primitives, not strings. These
- * handlers either crashed with a raw TypeError calling string methods on a
- * non-string option, or silently dropped/passed through bad values instead
- * of raising INVALID_PARAMS.
+ * parseArgs runs JSON.parse on option values, so `--flag '{}'` /
+ * `--flag '[true]'` (or a repeated flag) reach handlers as objects/arrays,
+ * not strings. These handlers either crashed with a raw TypeError calling
+ * string methods on a non-string option, or silently dropped/passed through
+ * bad values instead of raising INVALID_PARAMS.
  */
 describe('alerts string/array option validation', () => {
   it('rejects non-string --chains instead of crashing on .split()', () => {

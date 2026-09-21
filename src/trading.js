@@ -23,6 +23,7 @@ import { CHAIN_RPCS } from './rpc-urls.js';
 import { simulateAssetChanges, SwapSimulationError, hasSimulationRpc } from './swap-simulation.js';
 import { simulateSolanaAssetChanges, SolanaSimulationError, hasSolanaSimulationRpc } from './solana-simulation.js';
 import { packageVersion, CommandError, telemetryHeaders, loadConfig } from './api.js';
+import { screenOrThrow } from './perp.js';
 
 // ============= Constants =============
 
@@ -2298,6 +2299,25 @@ async function preflightTradeExecutionCandidate({
 
 // ============= CLI Command Builder =============
 
+// Addresses a swap must clear compliance screening for: the wallet that signs
+// plus any distinct destination wallet. Blanks are dropped and duplicates
+// removed — case-insensitively for EVM addresses, exactly for base58 (Solana
+// addresses are case-sensitive, so two strings differing only in case are
+// different wallets). Exported for tests.
+export function tradeScreeningAddresses(...addresses) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of addresses) {
+    if (!raw) continue;
+    const address = String(raw);
+    const key = /^0x[0-9a-f]{40}$/i.test(address) ? address.toLowerCase() : address;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(address);
+  }
+  return out;
+}
+
 /**
  * Build trading command handlers for CLI integration.
  */
@@ -2379,6 +2399,8 @@ PREREQUISITE:
   A wallet must be configured before using this command (the trading API builds
   a transaction specific to your sender address).
   Set one up with: nansen wallet create
+  API access is required for pre-trade compliance screening.
+  Authenticate with: nansen login (or set NANSEN_API_KEY)
 
 OPTIONS:
   --chain <chain>           Source chain: solana, base
@@ -2655,6 +2677,15 @@ CROSS-CHAIN NOTES (when using --to-chain):
         if (maxAutoSlippage != null) params.maxAutoSlippagePercent = maxAutoSlippage;
         if (swapMode !== 'exactIn') params.swapMode = swapMode;
 
+        // Compliance screen before the quote request — the same fail-closed
+        // check `bridge` and `perp` run. Quotes are fetched from the trading
+        // backend directly, so nothing else screens this path; refuse here so a
+        // flagged wallet never receives a signable quote. Screens the signing
+        // wallet plus any distinct destination wallet (--to-wallet or the
+        // auto-derived cross-chain destination). Throws SANCTIONED for a hit
+        // and SCREENING_UNAVAILABLE if the check itself cannot complete.
+        await screenOrThrow(apiInstance, tradeScreeningAddresses(walletAddress, params.toWalletAddress));
+
         const response = await getQuote(params);
 
         if (!response.success || !response.quotes?.length) {
@@ -2807,6 +2838,10 @@ CROSS-CHAIN NOTES (when using --to-chain):
       if (!quoteId) {
         throw new CommandError(`Usage: nansen trade execute --quote <quoteId> [options]
 
+PREREQUISITE:
+  API access is required for pre-trade compliance screening.
+  Authenticate with: nansen login (or set NANSEN_API_KEY)
+
 OPTIONS:
   --quote <id>              Quote ID from 'nansen quote'
   --wallet <name>           Wallet name (default: default wallet)
@@ -2877,6 +2912,19 @@ EXAMPLES:
         const shouldPreflightPlan = guard.dryRun || (guard.isTTY && !guard.assumeYes);
         const planUsesWalletConnect = quoteData.signerType === 'walletconnect'
           || walletName === 'walletconnect' || walletName === 'wc';
+        if (guard.dryRun) {
+          const previewScreenAddresses = tradeScreeningAddresses(
+            quoteData.request?.walletAddress || quoteData.response?.metadata?.userWalletAddress,
+            quoteData.request?.recipient,
+          );
+          if (!previewScreenAddresses.length) {
+            throw new CommandError(
+              `Quote "${quoteId}" does not record which wallet it was built for, so it cannot be screened. Request a fresh quote with "nansen trade quote".`,
+              'SCREENING_UNAVAILABLE',
+            );
+          }
+          await screenOrThrow(apiInstance, previewScreenAddresses);
+        }
         const verifiedPlanTargets = new Set();
         const validatedPlanCandidates = [];
         let lastPreflightError = null;
@@ -2953,6 +3001,10 @@ EXAMPLES:
 
         let exported = null;
         let privyClient = null;
+        // The wallet resolved before the per-quote loop, for the pre-signing
+        // compliance screen below. Stays null for Privy, whose address is
+        // fetched from the provider inside the loop.
+        let signerAddress = null;
         if (isPrivy) {
           // Privy signing -- import + instantiate once for all quotes
           const { PrivyClient } = await import('./privy.js');
@@ -2985,6 +3037,13 @@ EXAMPLES:
           }
 
           exported = exportWallet(effectiveWalletName, password);
+          signerAddress = chainType === 'solana' ? exported.solana?.address : exported.evm?.address;
+          // A wallet file with no key for this chain can neither sign nor be
+          // screened. Refuse here with the same actionable message the signing
+          // branch gives, rather than a generic "cannot be screened".
+          if (!signerAddress) {
+            throw new Error(`Could not resolve the local wallet's ${chainType === 'solana' ? 'Solana' : 'EVM'} address; cannot confirm the quote was built for this wallet. Refusing to sign.`);
+          }
         } else {
           // Verify WalletConnect session is still active, approved for this
           // chain, and its address matches the quote. Chain-scoped (see
@@ -3009,7 +3068,32 @@ EXAMPLES:
             : wcAddress.toLowerCase().trim() !== quoteWallet.toLowerCase().trim())) {
             throw new CommandError(`Connected wallet (${wcAddress}) doesn't match quote. Get a new quote with --wallet walletconnect`, 'WALLET_MISMATCH');
           }
+          signerAddress = wcAddress;
         }
+
+        // Compliance screen immediately before signing, mirroring `bridge
+        // execute`: a quote stays valid for up to an hour and the signed
+        // transaction is broadcast with no further check, so this is the last
+        // gate before funds move. Every signing branch below refuses to sign
+        // unless the wallet it resolves is `request.walletAddress`
+        // (assertQuoteMatchesRequest), so that wallet — together with the
+        // signer resolved above and any distinct destination wallet — is every
+        // address this run can move funds from or to. Runs once, outside the
+        // per-quote loop, so a refusal is final rather than "try next quote".
+        // Throws SANCTIONED for a hit and SCREENING_UNAVAILABLE if the check
+        // itself cannot complete; nothing is signed in either case.
+        const screenAddresses = tradeScreeningAddresses(
+          signerAddress,
+          quoteData.request?.walletAddress,
+          quoteData.request?.recipient,
+        );
+        if (!screenAddresses.length) {
+          throw new CommandError(
+            `Quote "${quoteId}" does not record which wallet it was built for, so it cannot be screened. Request a fresh quote with "nansen trade quote".`,
+            'SCREENING_UNAVAILABLE',
+          );
+        }
+        await screenOrThrow(apiInstance, screenAddresses);
 
         let lastQuoteError = null;
         // Swap targets confirmed to carry contract code in this execute run, so a
