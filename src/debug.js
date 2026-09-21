@@ -50,7 +50,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Private-key shaped: 32 bytes of hex, with or without the 0x prefix. */
 const HEX_32_BYTES = /^(0x)?[0-9a-fA-F]{64}$/;
 
-/** BIP-39 shaped: 12 or more lowercase words separated by single spaces. */
+/**
+ * BIP-39 shaped: 12–24 lowercase words. Intentionally covers non-standard
+ * counts between the valid BIP-39 sizes too; over-redacting prose is safer
+ * than letting a malformed or partially copied recovery phrase through.
+ */
 const MNEMONIC = /^([a-z]{3,10} ){11,23}[a-z]{3,10}$/;
 
 /** JWT shaped: three dot-separated base64url segments starting with a JSON header. */
