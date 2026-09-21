@@ -298,7 +298,7 @@ after upgrading the CLI to pick up new commands.
 | `--chain <chain>` | Blockchain to query |
 | `--limit <n>` | Result count |
 | `--timeframe <tf>` | Time window: `5m` `1h` `6h` `24h` `7d` `30d` |
-| `--fields <list>` | Comma-separated fields (reduces response size) |
+| `--fields <list>` | Comma-separated fields (reduces response size); a bare name matches at any depth, a dotted path such as `data.results.address` only at that position |
 | `--sort <field:dir>` | Sort results, e.g. `--sort value_usd:desc` |
 | `--pretty` | Human-readable JSON |
 | `--table` | Table format |

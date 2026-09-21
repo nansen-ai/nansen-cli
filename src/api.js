@@ -8,7 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { EVM_CHAINS } from './chain-ids.js';
 import { getAnonymousId, TELEMETRY_DISABLED } from './telemetry.js';
-import { readResponseMeta } from './response-meta.js';
+import { readResponseMeta, stringHeader } from './response-meta.js';
 import { trace, traceRequest, traceResponse, traceError, traceRetry, traceCacheHit } from './debug.js';
 
 /**
@@ -636,6 +636,28 @@ const DEFAULT_RETRY_OPTIONS = {
 };
 
 /**
+ * Read a response body once. A fetch body can only be consumed once, and
+ * response.json() consumes it even when parsing fails, so a body the server
+ * declares as non-JSON (gateway HTML, plain text) is read as text first. It
+ * is still parsed as JSON when it turns out to be JSON; otherwise the thrown
+ * error carries the text so the caller can report it.
+ */
+async function readBody(response) {
+  const contentType = stringHeader(response, 'content-type');
+  if (contentType && !/json/i.test(contentType)) {
+    const rawBody = await response.text();
+    try {
+      return JSON.parse(rawBody);
+    } catch (_err) {
+      const error = new Error('Response body is not JSON');
+      error.rawBody = rawBody;
+      throw error;
+    }
+  }
+  return response.json();
+}
+
+/**
  * Sleep for a given number of milliseconds
  */
 export function sleep(ms) {
@@ -951,25 +973,32 @@ export class NansenAPI {
 
       let data;
       try {
-        data = await response.json();
-      } catch (_err) {
+        data = await readBody(response);
+      } catch (err) {
         // Non-JSON response (rare, usually server errors)
         const meta = readResponseMeta(response);
         this.lastResponseMeta = meta;
+        // readBody already holds the text when the server declared a non-JSON
+        // body; otherwise try to read it now (null once json() consumed it).
+        const rawBody = err?.rawBody ?? await response.text().catch(() => null);
+        const retryAfterMs = parseRetryAfter(stringHeader(response, 'retry-after'));
         const error = new NansenError(
           `Invalid response from API (status ${response.status})`,
-          response.status >= 500 ? ErrorCode.SERVER_ERROR : ErrorCode.UNKNOWN,
+          statusToErrorCode(response.status, {}),
           response.status,
           {
-            body: await response.text().catch(() => null),
+            body: rawBody,
             attempt: attempt + 1,
+            retryAfterMs,
             ...(meta?.requestId && { requestId: meta.requestId })
           }
         );
         
-        if (shouldRetry && attempt < maxRetries && response.status >= 500) {
-          const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs);
-          traceRetry({ method, url, status: response.status, attempt: attempt + 1, reason: 'unparseable-response', delayMs });
+        // Same retry policy as a JSON error body: a rate limiter or gateway
+        // that answers in plain text or HTML is still a 429/5xx.
+        if (shouldRetry && attempt < maxRetries && retryOnStatus.includes(response.status)) {
+          const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs, retryAfterMs);
+          traceRetry({ method, url, status: response.status, attempt: attempt + 1, reason: 'unparseable-response', delayMs, retryAfterMs });
           await sleep(delayMs);
           lastError = error;
           continue;

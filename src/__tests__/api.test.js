@@ -3279,6 +3279,99 @@ describe('NansenAPI', () => {
   // =================== P2: Non-JSON Error Responses ===================
 
   describe('Non-JSON Error Responses', () => {
+    // These use real Response objects: a fetch body can be read only once, and
+    // the simple {json, text} mocks elsewhere in this file cannot show that.
+    describe('non-JSON bodies on a real Response', () => {
+      const realResponse = (body, status, headers) => new Response(body, { status, headers });
+
+      it('keeps the gateway body in the error details after a failed JSON parse', async () => {
+        if (LIVE_TEST) return;
+        const html = '<html><body><h1>502 Bad Gateway</h1></body></html>';
+        // A fresh Response per attempt: each one is consumed when it is read.
+        mockFetch.mockImplementation(async () => realResponse(html, 502, { 'content-type': 'text/html' }));
+        vi.useFakeTimers();
+
+        let thrownError;
+        const promise = api.smartMoneyNetflow({}).catch(e => { thrownError = e; });
+        await vi.runAllTimersAsync();
+        await promise;
+
+        expect(thrownError.status).toBe(502);
+        expect(thrownError.code).toBe(ErrorCode.SERVER_ERROR);
+        expect(thrownError.details.body).toBe(html);
+        vi.useRealTimers();
+      });
+
+      it('retries a plain-text 429 like a JSON one and honours Retry-After', async () => {
+        if (LIVE_TEST) return;
+        vi.useFakeTimers();
+        const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+        mockFetch
+          .mockResolvedValueOnce(realResponse('rate limited', 429, { 'content-type': 'text/plain', 'retry-after': '2' }))
+          .mockResolvedValueOnce(realResponse(JSON.stringify({ data: [] }), 200, { 'content-type': 'application/json' }));
+
+        let result;
+        const promise = api.smartMoneyNetflow({}).then(r => { result = r; });
+        await vi.runAllTimersAsync();
+        await promise;
+
+        expect(result).toBeDefined();
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+        const delays = setTimeoutSpy.mock.calls.map(c => c[1]).filter(ms => typeof ms === 'number' && ms >= 1000);
+        expect(Math.min(...delays)).toBeGreaterThanOrEqual(2000);
+        setTimeoutSpy.mockRestore();
+        vi.useRealTimers();
+      });
+
+      it('gives a plain-text 429 the same error code as a JSON one', async () => {
+        if (LIVE_TEST) return;
+        mockFetch.mockImplementation(async () => realResponse('rate limited', 429, { 'content-type': 'text/plain' }));
+        const noRetry = new NansenAPI('test-api-key', 'https://api.nansen.ai', { retry: { maxRetries: 0 } });
+
+        const thrownError = await noRetry.smartMoneyNetflow({}).catch(e => e);
+
+        expect(thrownError.status).toBe(429);
+        expect(thrownError.code).toBe(ErrorCode.RATE_LIMITED);
+        expect(thrownError.details.body).toBe('rate limited');
+      });
+
+      it('falls back to body: null when no content type is declared and json() has consumed the body', async () => {
+        if (LIVE_TEST) return;
+        // Without a content type the body is read with json() first, which
+        // consumes it on a real Response; the text() fallback then fails and
+        // the error is reported without a body rather than crashing.
+        // A byte body gets no default content-type (a string body would get text/plain).
+        mockFetch.mockImplementation(async () => new Response(new TextEncoder().encode('<html>502</html>'), { status: 502 }));
+        const noRetry = new NansenAPI('test-api-key', 'https://api.nansen.ai', { retry: { maxRetries: 0 } });
+
+        const thrownError = await noRetry.smartMoneyNetflow({}).catch(e => e);
+
+        expect(thrownError.status).toBe(502);
+        expect(thrownError.code).toBe(ErrorCode.SERVER_ERROR);
+        expect(thrownError.details.body).toBeNull();
+      });
+
+      it('does not retry a plain-text 4xx that is not in retryOnStatus', async () => {
+        if (LIVE_TEST) return;
+        mockFetch.mockImplementation(async () => realResponse('bad request', 400, { 'content-type': 'text/plain' }));
+
+        const thrownError = await api.smartMoneyNetflow({}).catch(e => e);
+
+        expect(thrownError.status).toBe(400);
+        expect(thrownError.details.body).toBe('bad request');
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('still parses JSON that arrives with a non-JSON content type', async () => {
+        if (LIVE_TEST) return;
+        mockFetch.mockImplementation(async () => realResponse(JSON.stringify({ data: [{ ok: true }] }), 200, { 'content-type': 'text/plain' }));
+
+        const result = await api.smartMoneyNetflow({});
+
+        expect(result.data).toEqual([{ ok: true }]);
+      });
+    });
+
     it('should handle HTML error page (502 Bad Gateway)', async () => {
       if (LIVE_TEST) return;
       

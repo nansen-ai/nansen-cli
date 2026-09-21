@@ -74,8 +74,11 @@ export async function consumeSSEStream(response, callbacks = {}) {
 
   const processFrame = (frame) => {
     for (const line of frame.split('\n')) {
-      if (!line.startsWith('data: ')) continue;
-      const payload = line.slice(6);
+      if (!line.startsWith('data:')) continue;
+      // SSE permits `data:value` and `data: value`; discard at most the one
+      // optional space after the colon before parsing the field value.
+      const fieldValue = line.slice(5);
+      const payload = fieldValue.startsWith(' ') ? fieldValue.slice(1) : fieldValue;
       if (payload === '[DONE]') { done = true; return; }
 
       let event;

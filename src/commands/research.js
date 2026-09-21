@@ -5,7 +5,7 @@
  */
 
 import { NansenError, ErrorCode } from '../api.js';
-import { parseSort, rejectBlankOption } from '../query-options.js';
+import { parseSort, rejectBlankOption, parseObjectOption } from '../query-options.js';
 
 // Research subcommands validate --page strictly. The shared helper in
 // src/query-options.js clamps an invalid page to 1 for the category commands,
@@ -256,7 +256,7 @@ export function buildResearchCommands(deps = {}) {
 
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
-      const filters = options.filters || {};
+      const filters = parseObjectOption(options.filters, 'filters');
       const { fromDate, toDate } = resolveDateRange(options);
       const asOfDate = options['as-of-date'];
 

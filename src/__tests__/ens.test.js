@@ -1,4 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { EventEmitter } from 'node:events';
+import https from 'node:https';
 import { isEnsName, resolveAddress } from '../ens.js';
 
 describe('ENS Resolution', () => {
@@ -32,6 +34,39 @@ describe('ENS Resolution', () => {
 
     it('rejects ENS on non-EVM chains', async () => {
       await expect(resolveAddress('nansen.eth', 'solana')).rejects.toThrow('EVM chains');
+    });
+
+    describe('with chain "all"', () => {
+      afterEach(() => vi.restoreAllMocks());
+
+      // Replay one ensideas-style answer without touching the network.
+      function mockEnsIdeas(body) {
+        return vi.spyOn(https, 'get').mockImplementation((_url, _opts, cb) => {
+          const res = new EventEmitter();
+          res.statusCode = 200;
+          const req = new EventEmitter();
+          queueMicrotask(() => {
+            cb(res);
+            res.emit('data', JSON.stringify(body));
+            res.emit('end');
+          });
+          return req;
+        });
+      }
+
+      it('resolves instead of rejecting, since the resolved address is an EVM address', async () => {
+        const get = mockEnsIdeas({ address: '0x4a7C6899cdcB379e284fBFD045462e751DA4C7cE' });
+        const result = await resolveAddress('nansen.eth', 'all');
+        expect(result).toEqual({ address: '0x4a7C6899cdcB379e284fBFD045462e751DA4C7cE', ensName: 'nansen.eth' });
+        expect(get).toHaveBeenCalledTimes(1);
+        expect(get.mock.calls[0][0]).toContain('/ens/resolve/nansen.eth');
+      });
+
+      it('still rejects a non-EVM chain before any lookup', async () => {
+        const get = mockEnsIdeas({ address: '0x4a7C6899cdcB379e284fBFD045462e751DA4C7cE' });
+        await expect(resolveAddress('nansen.eth', 'solana')).rejects.toThrow('EVM chains');
+        expect(get).not.toHaveBeenCalled();
+      });
     });
 
     it('fails with descriptive error for unresolvable names', async () => {
