@@ -1904,7 +1904,12 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         return { evmIntent, hlIntent };
       };
 
-      let preflightResult = guard.dryRun ? preflightPlan() : null;
+      // A plan shown for interactive consent must already be known-safe. Match
+      // trade execute: preview and an actual prompt preflight eagerly, while
+      // --yes/non-TTY retain the established ordering (credentials first,
+      // preflight immediately before signing).
+      const shouldPreflightPlan = guard.dryRun || (guard.isTTY && !guard.assumeYes);
+      let preflightResult = shouldPreflightPlan ? preflightPlan() : null;
 
       // ── Acknowledgement gate: --dry-run / --yes ──────────────────────
       // Placed before the signing credentials are loaded and well before the

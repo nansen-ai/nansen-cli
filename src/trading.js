@@ -2967,30 +2967,37 @@ EXAMPLES:
             'ALL_QUOTES_FAILED',
           );
         }
-        const plans = [];
-        for (const { quote, index } of validatedPlanCandidates) {
-          const planWallet = quoteData.request?.walletAddress
-            || quoteData.response?.metadata?.userWalletAddress
-            || quote.transaction?.from
-            || null;
-          plans.push(await buildTradeExecutionPlan({
-            quoteId,
-            quoteData,
-            quote,
-            chainConfig,
-            quoteIndex: index,
-            quoteCount: allQuotes.length,
-            walletAddress: planWallet,
-            gasless,
-            noSimulate,
-            noVerifyOutcome,
-            probe: shouldPreflightPlan,
-          }));
+        // Non-interactive/--yes execution never consumes the plan, so avoid
+        // building display strings (and their optional read-only probes) on
+        // that unchanged automation path. guardExecution safely ignores the
+        // empty plan whenever no preview or prompt is active.
+        let plan = '';
+        if (shouldPreflightPlan) {
+          const plans = [];
+          for (const { quote, index } of validatedPlanCandidates) {
+            const planWallet = quoteData.request?.walletAddress
+              || quoteData.response?.metadata?.userWalletAddress
+              || quote.transaction?.from
+              || null;
+            plans.push(await buildTradeExecutionPlan({
+              quoteId,
+              quoteData,
+              quote,
+              chainConfig,
+              quoteIndex: index,
+              quoteCount: allQuotes.length,
+              walletAddress: planWallet,
+              gasless,
+              noSimulate,
+              noVerifyOutcome,
+              probe: true,
+            }));
+          }
+          const fallbackNotice = validatedPlanCandidates.length > 1
+            ? '\n  The CLI may try these candidates in order until one broadcasts successfully.'
+            : '';
+          plan = `${plans.join('\n')}${fallbackNotice}`;
         }
-        const fallbackNotice = validatedPlanCandidates.length > 1
-          ? '\n  The CLI may try these candidates in order until one broadcasts successfully.'
-          : '';
-        const plan = `${plans.join('\n')}${fallbackNotice}`;
         // An interactive user only consented to candidates that passed the
         // sign-free preflight and appeared in this plan. Do not later retry a
         // candidate omitted after a transient or deterministic preflight

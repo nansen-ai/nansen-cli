@@ -256,6 +256,30 @@ describe('bridge execute --dry-run / --yes', () => {
     expect(sendCalls()).toHaveLength(0);
   });
 
+  it('rejects an invalid interactive plan before asking for confirmation', async () => {
+    const quoteId = writeQuote('bridge-interactive-tampered');
+    const quote = readQuote(quoteId);
+    quote.response.steps.push({
+      id: 'second-deposit',
+      kind: 'transaction',
+      items: [{
+        status: 'incomplete',
+        data: { from: ADDR, to: ROUTER, data: depositCalldata(ADDR), value: '0', maxFeePerGas: '1000000' },
+      }],
+    });
+    fs.writeFileSync(path.join(quotesDir, `${quoteId}.json`), JSON.stringify(quote, null, 2));
+
+    const promptFn = vi.fn(async () => 'yes');
+    const cmds = buildBridgeCommands({ log: () => {}, promptFn, isTTY: true, env: {} });
+    await expect(cmds.execute([], api, {}, { quote: quoteId, wallet: 'w' }))
+      .rejects.toMatchObject({ code: 'UNEXPECTED_ACTION' });
+
+    expect(promptFn).not.toHaveBeenCalled();
+    expect(exportWallet).not.toHaveBeenCalled();
+    expect(signEvmTransaction).not.toHaveBeenCalled();
+    expect(sendCalls()).toHaveLength(0);
+  });
+
   it('screens before dry-run or confirmation and loads no credentials when blocked', async () => {
     const quoteId = writeQuote('bridge-sanctioned');
     api.request.mockResolvedValueOnce({ results: [{ address: ADDR, sanctioned: true }] });
