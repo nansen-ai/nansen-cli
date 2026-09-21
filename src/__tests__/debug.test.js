@@ -130,6 +130,8 @@ describe('redact', () => {
 
     expect(url).toContain('address=0x0000000000000000000000000000000000000001');
     expect(url).toContain('chain=base');
+    expect(redactUrl('https://api.example.test/api/v1/token-screener')).toContain('/token-screener');
+    expect(redactUrl('https://api.example.test/api/v1/auth/login')).toContain('/auth/login');
     // A request id is an identifier, not a secret — support needs to read it.
     expect(looksLikeSecretValue('6f1c0f2a-0000-4000-8000-0000000000aa')).toBe(false);
     // Prose that merely mentions a credential is not itself one.

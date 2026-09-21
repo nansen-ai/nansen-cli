@@ -210,7 +210,13 @@ export function redactUrl(raw) {
   const path = url.pathname.split('/').map((segment) => {
     let decoded = segment;
     try { decoded = decodeURIComponent(segment); } catch { /* keep raw text */ }
-    return isSecretName(decoded) || looksLikeSecretValue(decoded) ? REDACTED : segment;
+    // Short path names describe API resources (`token-screener`, `auth`)
+    // rather than naming a value, so SECRET_NAME alone would hide the endpoint
+    // users need to diagnose. Long secret-named or credential-shaped dynamic
+    // segments still fail closed.
+    return looksLikeSecretValue(decoded) || (decoded.length >= 32 && isSecretName(decoded))
+      ? REDACTED
+      : segment;
   }).join('/');
   return truncate(`${url.protocol}//${credentials}${url.host}${path}${query}`);
 }

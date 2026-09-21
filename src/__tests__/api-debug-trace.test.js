@@ -55,10 +55,10 @@ describe('request() tracing', () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ requestId: '6f1c0f2a-0000-4000-8000-0000000000aa' })));
     const api = new NansenAPI(FAKE_API_KEY, BASE_URL, FAST_RETRY);
 
-    await api.request('/api/v1/demo', { chain: 'solana' });
+    await api.request('/api/v1/token-screener', { chain: 'solana' });
 
     const output = traced();
-    expect(output).toContain('[nansen:debug] http.request method=POST url=https://api.example.test/api/v1/demo attempt=1/3');
+    expect(output).toContain('[nansen:debug] http.request method=POST url=https://api.example.test/api/v1/token-screener attempt=1/3');
     expect(output).toContain('[nansen:debug] http.response');
     expect(output).toContain('status=200');
     expect(output).toMatch(/duration_ms=\d+/);
