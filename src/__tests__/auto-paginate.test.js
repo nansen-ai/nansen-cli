@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { collectPages, enableAutoPagination, DEFAULT_MAX_PAGES } from '../auto-paginate.js';
+import { collectPages, enableAutoPagination, DEFAULT_MAX_PAGES, locateRows } from '../auto-paginate.js';
 
 // Server with `total` rows of `size` per page under `{ data: [...] }`.
 function server(total, size, extra = {}) {
@@ -8,6 +8,31 @@ function server(total, size, extra = {}) {
     return { ...extra, data: Array.from({ length: Math.max(0, Math.min(size, total - start)) }, (_, i) => ({ id: start + i })) };
   });
 }
+
+describe('locateRows descriptive envelopes', () => {
+  it('does not treat a pagination-only array as row data', () => {
+    expect(locateRows({ pagination: [{ page: 1 }] }, { descriptive: true })).toBeNull();
+  });
+
+  it('ignores an array-valued pagination key when one real data array exists', () => {
+    const page = { trades: [{ id: 1 }], pagination: [{ page: 1 }] };
+    const located = locateRows(page, { descriptive: true });
+
+    expect(located.rows).toEqual(page.trades);
+    expect(located.rebuild([{ id: 2 }])).toEqual({
+      trades: [{ id: 2 }],
+      pagination: page.pagination,
+    });
+  });
+
+  it('keeps multiple real top-level arrays ambiguous', () => {
+    expect(locateRows({
+      trades: [{ id: 1 }],
+      holdings: [{ id: 2 }],
+      pagination: [{ page: 1 }],
+    }, { descriptive: true })).toBeNull();
+  });
+});
 
 describe('collectPages', () => {
   it.each([0, -1, 1.5, 1001, Number.MAX_SAFE_INTEGER])(

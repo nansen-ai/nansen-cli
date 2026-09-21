@@ -45,9 +45,11 @@ export function locateRows(page, { descriptive = false } = {}) {
 
   // Older endpoints use a descriptive top-level key (`trades`, `holdings`,
   // `balances`, etc.) rather than `data`. A single array is unambiguous; do
-  // not guess when an envelope contains several independent arrays.
+  // not count pagination metadata as rows or guess when an envelope contains
+  // several independent data arrays.
   if (descriptive && page && typeof page === 'object' && page.success !== false) {
-    const arrays = Object.entries(page).filter(([, value]) => Array.isArray(value));
+    const arrays = Object.entries(page)
+      .filter(([key, value]) => key !== 'pagination' && Array.isArray(value));
     if (arrays.length === 1) {
       const [key, rows] = arrays[0];
       return { rows, rebuild: mergedRows => ({ ...page, [key]: mergedRows }) };
@@ -132,6 +134,8 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
     const serverSaysComplete = serverPagination?.is_last_page === true
       || serverPagination?.has_more === false
       || (Object.hasOwn(serverPagination || {}, 'next_page') && serverPagination.next_page === null)
+      // Trust a valid server total to avoid a separately billed empty probe;
+      // inconsistent total metadata can therefore cause an under-fetch.
       || (Number.isInteger(totalRows) && effectivePageSize > 0 && page * effectivePageSize >= totalRows);
     const lastPage = located.rows.length === 0
       || fresh === 0
