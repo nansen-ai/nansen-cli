@@ -100,6 +100,8 @@ describe('redact', () => {
     expect(redact(FAKE_BEARER)).toBe(`Bearer ${REDACTED}`);
     expect(redact(`authorization header was ${FAKE_BEARER}`)).toBe(`authorization header was Bearer ${REDACTED}`);
     expect(redact(FAKE_BEARER)).not.toContain('test-token');
+    expect(redact(`https://api.example.test/v1/x ${FAKE_BEARER}`))
+      .toBe(`https://api.example.test/v1/x Bearer ${REDACTED}`);
   });
 
   it('blanks an x402 payment signature even under an innocent-looking field name', () => {

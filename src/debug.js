@@ -132,7 +132,9 @@ export function looksLikeSecretValue(value) {
 }
 
 function redactString(value) {
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return redactUrl(value);
+  // Delegate only when the whole value is a URL. URL-prefixed diagnostic
+  // prose must still pass through the embedded Bearer/JWT/secret scrubbers.
+  if (/^[a-z][a-z0-9+.-]*:\/\/\S+$/i.test(value)) return redactUrl(value);
   // Drop inline credentials first, keeping the scheme label ("Bearer …") so
   // the trace still says what kind of credential was in play. Doing this
   // before the shape checks keeps the surrounding prose readable.
