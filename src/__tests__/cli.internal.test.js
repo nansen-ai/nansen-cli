@@ -7210,4 +7210,23 @@ describe('--paginate / --all flag integration (API-275)', () => {
     ]);
     expect(JSON.parse(outputs[0]).data.data).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
   });
+
+  it('labels a one-page live traversal as a page request', async () => {
+    function MetadataAPI() {
+      this.servedFromCache = false;
+      this.request = vi.fn(async () => {
+        this.lastResponseMeta = { credits: { used: 2, remaining: 20, cost: 2 } };
+        this.lastEndpoint = '/api/v1/smart-money/netflow';
+        return { pagination: { page: 1, total_pages: 1 }, data: [{ id: 1 }] };
+      });
+      this.smartMoneyNetflow = ({ pagination }) => this.request('/api/v1/smart-money/netflow', { pagination });
+    }
+
+    await runCLI(['smart-money', 'netflow', '--limit', '10', '--paginate'], {
+      ...deps(),
+      NansenAPIClass: MetadataAPI,
+    });
+
+    expect(errors).toContain('Credits: 2 (1 page request)');
+  });
 });

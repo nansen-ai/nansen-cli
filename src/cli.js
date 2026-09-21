@@ -2564,7 +2564,8 @@ export async function runCLI(rawArgs, deps = {}) {
       if (paginationMeta?.livePages > 1) scope = `${paginationMeta.livePages} page requests`;
       else if (paginationMeta?.cachedPages > 0 && paginationMeta.livePages > 0) {
         scope = `${paginationMeta.livePages} live of ${paginationMeta.pagesFetched} page requests`;
-      } else if (paginationMeta?.livePages === 0) scope = 'cached traversal';
+      } else if (paginationMeta?.livePages === 1) scope = '1 page request';
+      else if (paginationMeta?.livePages === 0) scope = 'cached traversal';
       errorOutput(`Credits: ${charged.cost} (${scope})`);
     } else if (charged?.source === 'estimate') {
       errorOutput(`Credits: ~${charged.estimate.free} free / ${charged.estimate.pro} pro (estimated)`);
