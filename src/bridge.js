@@ -1457,6 +1457,23 @@ function resolveWalletAddress(walletName) {
   return resolveEvmWallet(walletName, 'Bridging');
 }
 
+// Bridge quote files persist the address used to build the transaction at this
+// exact top-level field (see saveBridgeQuote). A dry run can safely use that
+// public address for screening and transaction preflight without requiring a
+// configured local wallet, but only after checking it is actually an EVM
+// address. Missing legacy data falls back to normal wallet resolution.
+function validateQuotedWalletAddress(quoteId, walletAddress) {
+  if (walletAddress == null || walletAddress === '') return null;
+  const { valid, error } = validateAddress(walletAddress, 'ethereum');
+  if (!valid) {
+    throw new CommandError(
+      `Quote "${quoteId}" is malformed: walletAddress is invalid. ${error} Request a fresh quote with "nansen bridge quote".`,
+      'INVALID_INPUT',
+    );
+  }
+  return walletAddress.trim();
+}
+
 // Destination address for --recipient. Validated against the EVM pattern rather
 // than the destination chain's own rules: every supported destination
 // (base/ethereum/arbitrum/hyperliquid) takes an EVM address, and passing
@@ -1795,27 +1812,32 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
       log(`  Type: ${execution_type}`);
       log(`  Steps: ${steps.length}`);
 
-      // The quote was issued for one wallet, but the signing wallet is resolved
-      // separately from --wallet / the current default — which can have changed
-      // since. Signing with a different wallet than the quote was built for would
-      // screen one address and move funds from another, and the cached tx data
-      // (nonce, from) belongs to the quote's wallet regardless. Refuse instead.
-      const signer = resolveWalletAddress(walletName);
+      // Dry-run preflight needs only the public address persisted alongside the
+      // quote. Prefer it before touching local wallet configuration; legacy
+      // quotes without the field retain the previous wallet-resolution path.
+      // A real execution always resolves the live signer independently and
+      // binds it to the quote before any credentials are loaded.
+      const quotedWalletAddress = validateQuotedWalletAddress(quoteId, quoteData.walletAddress);
+      const signer = guard.dryRun && quotedWalletAddress
+        ? null
+        : resolveWalletAddress(walletName);
+      const signerAddress = signer?.address || quotedWalletAddress;
       if (
-        quoteData.walletAddress &&
-        String(signer.address).toLowerCase() !== String(quoteData.walletAddress).toLowerCase()
+        signer &&
+        quotedWalletAddress &&
+        String(signer.address).toLowerCase() !== quotedWalletAddress.toLowerCase()
       ) {
         throw new Error(
-          `Bridge quote "${quoteId}" was created for ${quoteData.walletAddress} but the signing wallet is ${signer.address}. Pass --wallet for the quote's wallet, or request a new quote.`,
+          `Bridge quote "${quoteId}" was created for ${quotedWalletAddress} but the signing wallet is ${signer.address}. Pass --wallet for the quote's wallet, or request a new quote.`,
         );
       }
 
       // Re-screen the signer and any distinct recipient immediately before
       // signing. Quotes live up to an hour, and the EVM leg broadcasts directly.
       const screenAddresses = recipient
-        && String(recipient).toLowerCase() !== String(signer.address).toLowerCase()
-        ? [signer.address, recipient]
-        : [signer.address];
+        && String(recipient).toLowerCase() !== String(signerAddress).toLowerCase()
+        ? [signerAddress, recipient]
+        : [signerAddress];
       await screenOrThrow(apiInstance, screenAddresses);
 
       // These checks need only the cached quote and public signer address. A
@@ -1829,7 +1851,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         if (execution_type === 'evm_transaction') {
           evmIntent = {
             chain: quoteData.originChain,
-            signerAddress: signer.address,
+            signerAddress,
             requestedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
           };
           preflightEvmBridgeSteps(steps, evmIntent);
@@ -1857,7 +1879,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
           hlIntent = {
             reviewedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
             hlNetwork: 'Mainnet',
-            signerAddress: signer.address,
+            signerAddress,
           };
           preflightHlBridgeSteps(steps, hlIntent);
         } else {
@@ -1880,7 +1902,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         plan: buildBridgeExecutionPlan({
           quoteId,
           quoteData,
-          signerAddress: signer.address,
+          signerAddress,
           overrides: overridesSummary,
         }),
         ...guard,

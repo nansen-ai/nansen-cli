@@ -2248,10 +2248,13 @@ export async function runCLI(rawArgs, deps = {}) {
     isTTY = process.stdout.isTTY,
   } = deps;
 
-  // Confirmation is governed by INPUT interactivity. stdout may be redirected
-  // while a person still answers on stdin, so it must not decide whether an
-  // irreversible command prompts. Callers can split the two signals explicitly
-  // with `isInputTTY`; legacy `isTTY` injection still drives both.
+  // Command-layer interactivity is intentionally governed by stdin. Besides
+  // trade/bridge confirmation, buildCommands' existing `login --human` prompt
+  // consumes this same signal; stdout may be redirected while a person still
+  // answers either prompt on stdin. The separate `isTTY` destructured above
+  // remains the stdout signal for human-vs-structured error rendering. Callers
+  // can split the signals with `isInputTTY`; legacy `isTTY` injection still
+  // drives both for compatibility.
   const isInputTTY = deps.isInputTTY ?? (deps.isTTY ?? process.stdin.isTTY);
 
   // Pass the CLI-owned terminal seams into command modules. Keeping these out

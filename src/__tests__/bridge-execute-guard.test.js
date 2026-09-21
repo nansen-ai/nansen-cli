@@ -165,6 +165,44 @@ describe('bridge execute --dry-run / --yes', () => {
     expect(readQuote(quoteId).executedAt).toBeUndefined();
   });
 
+  it('--dry-run uses the validated quote wallet without resolving a configured wallet', async () => {
+    const quoteId = writeQuote('bridge-dry-run-quote-wallet');
+    const logs = [];
+    getWalletConfig.mockImplementation(() => {
+      throw new Error('wallet configuration must not be read');
+    });
+    showWallet.mockImplementation(() => {
+      throw new Error('wallet lookup must not be reached');
+    });
+    const cmds = buildBridgeCommands({ log: m => logs.push(m), promptFn: vi.fn(), isTTY: false, env: {} });
+
+    await cmds.execute([], api, { 'dry-run': true }, { quote: quoteId });
+
+    expect(logs.join('\n')).toContain(ADDR);
+    expect(getWalletConfig).not.toHaveBeenCalled();
+    expect(showWallet).not.toHaveBeenCalled();
+    expect(exportWallet).not.toHaveBeenCalled();
+    expect(signEvmTransaction).not.toHaveBeenCalled();
+    expect(sendCalls()).toHaveLength(0);
+  });
+
+  it('--dry-run rejects a malformed persisted quote wallet before wallet resolution', async () => {
+    const quoteId = writeQuote('bridge-dry-run-invalid-quote-wallet');
+    const quote = readQuote(quoteId);
+    quote.walletAddress = 'not-an-evm-address';
+    fs.writeFileSync(path.join(quotesDir, `${quoteId}.json`), JSON.stringify(quote, null, 2));
+    const cmds = buildBridgeCommands({ log: () => {}, promptFn: vi.fn(), isTTY: false, env: {} });
+
+    await expect(cmds.execute([], api, { 'dry-run': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'INVALID_INPUT' });
+
+    expect(getWalletConfig).not.toHaveBeenCalled();
+    expect(showWallet).not.toHaveBeenCalled();
+    expect(exportWallet).not.toHaveBeenCalled();
+    expect(signEvmTransaction).not.toHaveBeenCalled();
+    expect(sendCalls()).toHaveLength(0);
+  });
+
   it('--dry-run reports the fee/nonce overrides that would be applied', async () => {
     const quoteId = writeQuote('bridge-dry-run-overrides');
     const logs = [];
