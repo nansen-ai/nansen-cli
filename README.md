@@ -163,6 +163,24 @@ nansen trade execute --quote <quoteId> --gasless      # Relay-only: solver pays 
 nansen trade bridge-status --tx-hash <hash> --from-chain base --to-chain solana
 ```
 
+### Before broadcasting
+
+`trade execute` and `bridge execute` move funds irreversibly, so both accept:
+
+```bash
+nansen trade execute --quote <quoteId> --dry-run   # validate + print the plan, broadcast nothing
+nansen trade execute --quote <quoteId> --yes       # skip the confirmation prompt (also: -y)
+```
+
+`--dry-run` runs every sign-free preflight available from the cached quote, its public signer address, and read-only RPC calls; prints what *would* be sent (chain, tokens, amounts, recipient, approvals, fees); and stops before wallet credentials, signing, or broadcast — no wallet password needed, the quote stays usable, exit code 0. Real execution still resolves and revalidates the live signer before signing.
+
+When stdin is an interactive terminal, execute prints that plan and asks `Broadcast this transaction? [y/N]` first; anything but `y`/`yes` aborts with exit code 1 and nothing signed. `--yes`, or `NANSEN_YES=1`, skips the question. **When stdin is not a terminal — agents, CI, pipes — nothing changes: the command proceeds without prompting**, and `--yes` is accepted as a no-op so it is always safe to pass.
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Broadcast succeeded, or the dry run completed |
+| `1` | Declined at the confirmation prompt, or the execution failed |
+
 Amounts are in base units (lamports, wei) by default — use `--amount-unit token|usd|percent` for friendlier inputs. Common symbols (`SOL`, `ETH`, `USDC`, `USDT`) resolve automatically. A wallet is required — set one with `nansen wallet default <name>`.
 
 ## Limit Orders
@@ -213,11 +231,12 @@ Move USDC between EVM chains and Hyperliquid via `nansen bridge`. Uses the same 
 ```bash
 nansen bridge quote --from-chain base --to-chain hyperliquid --from-token USDC --amount 1000000
 nansen bridge execute --quote <quoteId>
+nansen bridge execute --quote <quoteId> --dry-run                     # preview, nothing is broadcast
 nansen bridge execute --quote <quoteId> --nonce 20 --priority-fee 5   # replace a stuck EVM deposit
 nansen bridge status --request-id <id>
 ```
 
-Supported routes: `base → hyperliquid` (deposit), and `hyperliquid → base`/`ethereum`/`arbitrum` (withdraw). Deposits broadcast an EVM transaction locally, so only Base is offered on the deposit side; run `nansen bridge help` for the current list. `--amount` is a base-unit integer by default; pass `--amount-unit token` for a human amount. `--recipient` defaults to the wallet's own EVM address. `--priority-fee`/`--max-fee` (gwei) and `--nonce` apply only to EVM deposit legs and let a stuck transaction be replaced. Bridge transfers are irreversible once signed.
+Supported routes: `base → hyperliquid` (deposit), and `hyperliquid → base`/`ethereum`/`arbitrum` (withdraw). Deposits broadcast an EVM transaction locally, so only Base is offered on the deposit side; run `nansen bridge help` for the current list. `--amount` is a base-unit integer by default; pass `--amount-unit token` for a human amount. `--recipient` defaults to the wallet's own EVM address. `--priority-fee`/`--max-fee` (gwei) and `--nonce` apply only to EVM deposit legs and let a stuck transaction be replaced. Bridge transfers are irreversible once signed, so `bridge execute` takes the same `--dry-run` and `--yes`/`NANSEN_YES` gate as `trade execute` (see [Before broadcasting](#before-broadcasting)); on a multi-step transfer, a dry run stops before the first step.
 
 ## Wallet
 

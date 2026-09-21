@@ -30,7 +30,7 @@ import {
   buildPagination,
   parseAddressList
 } from '../cli.js';
-import { parseObjectOption } from '../query-options.js';
+import { parseCsvOption, parseObjectOption } from '../query-options.js';
 import {
   formatAlertsTable,
   buildAlertData,
@@ -105,6 +105,27 @@ describe('parseArgs', () => {
   it('should treat flag without value as boolean', () => {
     const result = parseArgs(['--help']);
     expect(result.flags.help).toBe(true);
+  });
+
+  it('rejects inline values for valueless flags instead of creating stale flag names', () => {
+    for (const arg of ['--help=false', '--pretty=true', '--no-cache=1', '--help=']) {
+      expect(() => parseArgs([arg])).toThrowError(
+        expect.objectContaining({ code: 'INVALID_PARAMS' })
+      );
+    }
+  });
+
+  it('always consumes an explicitly inline value even when it starts with a dash', () => {
+    const result = parseArgs(['changelog', '--since=--bad']);
+    expect(result._).toEqual(['changelog']);
+    expect(result.options.since).toBe('--bad');
+    expect(result.flags.since).toBeUndefined();
+  });
+
+  it('keeps repeated valueless flags strictly boolean and idempotent', () => {
+    const result = parseArgs(['--help', '--help', '--pretty', '--pretty']);
+    expect(result.flags.help).toBe(true);
+    expect(result.flags.pretty).toBe(true);
   });
 
   it('should handle flag followed by another flag', () => {
@@ -1980,6 +2001,27 @@ describe('--filters reaches handlers only as an object', () => {
   }
 });
 
+describe('parseCsvOption', () => {
+  it('splits a single comma-separated value', () => {
+    expect(parseCsvOption('defi, nft ,,sports', 'tags')).toEqual(['defi', 'nft', 'sports']);
+  });
+
+  it('flattens a repeated flag whose values are themselves comma-separated', () => {
+    const { options } = parseArgs(['--tags', 'defi,nft', '--tags', 'sports']);
+    expect(options.tags).toEqual(['defi,nft', 'sports']);
+    expect(parseCsvOption(options.tags, 'tags')).toEqual(['defi', 'nft', 'sports']);
+  });
+
+  it('keeps repeated single values and trims them', () => {
+    expect(parseCsvOption([' defi ', 'nft', ''], 'tags')).toEqual(['defi', 'nft']);
+  });
+
+  it('still rejects non-string values', () => {
+    expect(() => parseCsvOption(['defi', 1], 'tags')).toThrow('--tags values must be strings');
+    expect(() => parseCsvOption({ a: 1 }, 'tags')).toThrow('--tags must be a string');
+  });
+});
+
 describe('parseSort', () => {
   it('should return undefined when no sort option', () => {
     expect(parseSort(undefined, undefined)).toBeUndefined();
@@ -2676,6 +2718,68 @@ describe('buildCommands', () => {
     it('should return help for unknown subcommand', async () => {
       const result = await commands['token'](['unknown'], {}, {}, {});
       expect(result.error).toContain('Unknown subcommand');
+    });
+
+    it('should pass top-tokens --limit as a safe integer', async () => {
+      const mockApi = {
+        topTokens: vi.fn().mockResolvedValue({ data: [] })
+      };
+      await commands['token'](['top-tokens'], mockApi, {}, { limit: '10' });
+
+      expect(mockApi.topTokens).toHaveBeenCalledWith({ marketCapGroup: undefined, limit: 10 });
+    });
+
+    it.each(['500abc', '2.5', 'abc'])(
+      'should reject malformed top-tokens --limit value %s before the handler runs',
+      async (limit) => {
+        const mockApi = {
+          topTokens: vi.fn().mockResolvedValue({ data: [] })
+        };
+
+        await expect(commands['token'](['top-tokens'], mockApi, {}, { limit })).rejects.toMatchObject({
+          code: ErrorCode.INVALID_PARAMS,
+        });
+
+        expect(mockApi.topTokens).not.toHaveBeenCalled();
+      },
+    );
+
+    it('should reject unsafe top-tokens --limit before calling the API', async () => {
+      const mockApi = {
+        topTokens: vi.fn().mockResolvedValue({ data: [] })
+      };
+
+      await expect(commands['token'](['top-tokens'], mockApi, {}, { limit: '9007199254740992' }))
+        .rejects.toMatchObject({
+          code: ErrorCode.INVALID_PARAMS,
+          message: '--limit must be a non-negative safe integer; received: 9007199254740992',
+        });
+
+      expect(mockApi.topTokens).not.toHaveBeenCalled();
+    });
+
+    it('should reject negative top-tokens --limit before calling the API', async () => {
+      const mockApi = {
+        topTokens: vi.fn().mockResolvedValue({ data: [] })
+      };
+
+      await expect(commands['token'](['top-tokens'], mockApi, {}, { limit: '-5' }))
+        .rejects.toMatchObject({
+          code: ErrorCode.INVALID_PARAMS,
+        });
+
+      expect(mockApi.topTokens).not.toHaveBeenCalled();
+    });
+
+    it('should reject bare top-tokens --limit', async () => {
+      const mockApi = {
+        topTokens: vi.fn().mockResolvedValue({ data: [] })
+      };
+
+      await expect(commands['token'](['top-tokens'], mockApi, { limit: true }, {}))
+        .rejects.toThrow('--limit requires a non-negative safe integer value');
+
+      expect(mockApi.topTokens).not.toHaveBeenCalled();
     });
 
     it('should call screener with chains and timeframe', async () => {
@@ -4297,13 +4401,17 @@ describe('changelog command --since', () => {
   }
 
   it('rejects a non-numeric --since value with a clear error instead of silently matching nothing', async () => {
-    const out = await runChangelog({ since: 'abc' });
-    expect(out).toBe('Invalid --since value "abc": expected a version like 1.43 or 1.43.0.');
+    await expect(runChangelog({ since: 'abc' })).rejects.toMatchObject({
+      code: 'INVALID_PARAMS',
+      message: 'Invalid --since value "abc": expected a version like 1.43 or 1.43.0.',
+    });
   });
 
   it('rejects a malformed --since value like "1.2.3.4"', async () => {
-    const out = await runChangelog({ since: '1.2.3.4' });
-    expect(out).toContain('Invalid --since value "1.2.3.4"');
+    await expect(runChangelog({ since: '1.2.3.4' })).rejects.toMatchObject({
+      code: 'INVALID_PARAMS',
+      message: 'Invalid --since value "1.2.3.4": expected a version like 1.43 or 1.43.0.',
+    });
   });
 
   it('a --since value missing the patch component reads as .0, not as always-less-than-everything (regression for the "1.43 vs 1.43.1" bug)', async () => {
@@ -4807,6 +4915,62 @@ describe('profiler batch command', () => {
     expect(mockApi.addressBalance).toHaveBeenCalledTimes(2);
   });
 
+  it.each(['500abc', '2.5', 'abc', '9007199254740992'])(
+    'should reject malformed --delay value %s before running profiler batch',
+    async (delay) => {
+      const mockApi = {
+        addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+        addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+      };
+      const commands = buildCommands({});
+
+      await expect(commands['profiler'](['batch'], mockApi, {}, {
+        addresses: '0x0000000000000000000000000000000000000001',
+        delay,
+      })).rejects.toMatchObject({
+        code: ErrorCode.INVALID_PARAMS,
+        message: '--delay must be a non-negative safe integer; received: ' + delay,
+      });
+
+      expect(mockApi.addressLabels).not.toHaveBeenCalled();
+      expect(mockApi.addressBalance).not.toHaveBeenCalled();
+    },
+  );
+
+  it('should reject negative --delay before running profiler batch', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+
+    await expect(commands['profiler'](['batch'], mockApi, {}, {
+      addresses: '0x0000000000000000000000000000000000000001',
+      delay: '-5',
+    })).rejects.toMatchObject({
+      code: ErrorCode.INVALID_PARAMS,
+      message: '--delay must be a non-negative safe integer; received: -5',
+    });
+
+    expect(mockApi.addressLabels).not.toHaveBeenCalled();
+    expect(mockApi.addressBalance).not.toHaveBeenCalled();
+  });
+
+  it('should reject bare --delay before running profiler batch', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+
+    await expect(commands['profiler'](['batch'], mockApi, { delay: true }, {
+      addresses: '0x0000000000000000000000000000000000000001',
+    })).rejects.toThrow('--delay requires a non-negative safe integer value');
+
+    expect(mockApi.addressLabels).not.toHaveBeenCalled();
+    expect(mockApi.addressBalance).not.toHaveBeenCalled();
+  });
+
   it('should parse custom include parameter', async () => {
     const mockApi = {
       addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
@@ -4905,6 +5069,56 @@ describe('profiler trace command', () => {
     expect(mockApi.addressCounterparties).toHaveBeenCalledWith(expect.objectContaining({
       pagination: { page: 1, per_page: 5 },
     }));
+  });
+
+  it.each(['500abc', '2.5', 'abc', '9007199254740992'])(
+    'should reject malformed --delay value %s before tracing counterparties',
+    async (delay) => {
+      const mockApi = {
+        addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      };
+      const commands = buildCommands({});
+
+      await expect(commands['profiler'](['trace'], mockApi, {}, {
+        address: '0x0000000000000000000000000000000000000001',
+        delay,
+      })).rejects.toMatchObject({
+        code: ErrorCode.INVALID_PARAMS,
+        message: '--delay must be a non-negative safe integer; received: ' + delay,
+      });
+
+      expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
+    },
+  );
+
+  it('should reject negative --delay before tracing counterparties', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+    };
+    const commands = buildCommands({});
+
+    await expect(commands['profiler'](['trace'], mockApi, {}, {
+      address: '0x0000000000000000000000000000000000000001',
+      delay: '-5',
+    })).rejects.toMatchObject({
+      code: ErrorCode.INVALID_PARAMS,
+      message: '--delay must be a non-negative safe integer; received: -5',
+    });
+
+    expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
+  });
+
+  it('should reject bare --delay before tracing counterparties', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+    };
+    const commands = buildCommands({});
+
+    await expect(commands['profiler'](['trace'], mockApi, { delay: true }, {
+      address: '0x0000000000000000000000000000000000000001',
+    })).rejects.toThrow('--delay requires a non-negative safe integer value');
+
+    expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
   });
 
   it('should clamp depth to 1-5 range', async () => {

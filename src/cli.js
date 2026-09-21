@@ -50,12 +50,20 @@ export const SCHEMA = { version: VERSION, ...schemaDefinition };
  * Returns true/false/undefined (undefined = not supplied).
  */
 export function resolveBooleanOption(options, flags, key) {
-  if (options[key] !== undefined) {
-    const val = String(options[key]).toLowerCase();
+  const optionValue = options[key];
+  const flagValue = flags[key];
+
+  if (Array.isArray(optionValue) || Array.isArray(flagValue) ||
+      (optionValue !== undefined && flagValue !== undefined)) {
+    throw new NansenError(`--${key} cannot be repeated`, ErrorCode.INVALID_PARAMS);
+  }
+  if (optionValue !== undefined) {
+    const val = String(optionValue).toLowerCase();
     if (val === 'true' || val === '1') return true;
     if (val === 'false' || val === '0') return false;
+    throw new NansenError(`--${key} must be true or false`, ErrorCode.INVALID_PARAMS);
   }
-  if (flags[key] !== undefined) return Boolean(flags[key]);
+  if (flagValue !== undefined) return Boolean(flagValue);
   return undefined;
 }
 
@@ -185,25 +193,51 @@ export const VALUELESS_FLAGS = new Set([
   'enrich', 'full', 'human', 'enabled', 'disabled', 'expert', 'json', 'offline',
   'no-simulate', 'no-verify-outcome', 'no-revoke-excessive-allowance', 'dry-run',
   'send-api-key', 'all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password',
-  'reveal', 'debug',
+  'reveal', 'yes', 'debug',
 ]);
 
 export function parseArgs(args) {
   const result = { _: [], flags: {}, options: {} };
+
+  const addFlag = (key) => {
+    if (key in result.flags) {
+      if (!Array.isArray(result.flags[key])) result.flags[key] = [result.flags[key]];
+      result.flags[key].push(true);
+    } else {
+      result.flags[key] = true;
+    }
+  };
   
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     
     if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      const next = args[i + 1];
+      const equalsIndex = arg.indexOf('=');
+      const inlineKey = equalsIndex === -1 ? null : arg.slice(2, equalsIndex);
+      // `--help=false` is neither help nor a meaningful false value: valueless
+      // switches only accept their bare spelling. Reject it instead of leaking
+      // a stale `flags['help=false']` key that no handler will ever inspect.
+      if (inlineKey !== null && VALUELESS_FLAGS.has(inlineKey)) {
+        throw new NansenError(`--${inlineKey} does not accept a value`, ErrorCode.INVALID_PARAMS);
+      }
+      // Value-taking options, including boolean options handled by
+      // resolveBooleanOption(), accept the conventional `--key=value` spelling.
+      const hasInlineValue = inlineKey !== null;
+      const key = hasInlineValue ? inlineKey : arg.slice(2);
+      const next = hasInlineValue ? arg.slice(equalsIndex + 1) : args[i + 1];
       
       if (VALUELESS_FLAGS.has(key)) {
+        // Repeating a switch is idempotent. Keeping the value strictly true
+        // avoids leaking `[true, true]` into consumers that use `=== true`.
         result.flags[key] = true;
       // `next !== undefined` rather than a truthiness check: an explicit empty
       // string is a real value, and skipping it here left `""` dangling to be
       // picked up as a positional arg on the next iteration.
-      } else if (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next))) {
+      // An inline value was explicitly supplied and is always consumed, even
+      // when it begins with a dash; downstream option validation owns whether
+      // that value is meaningful. The dash guard applies only to two-token
+      // input, where `--key --next` denotes two separate arguments.
+      } else if (hasInlineValue || (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next)))) {
         // Try to parse as JSON so object/array options (`--filters '{}'`,
         // `--order-by '[...]'`) arrive structured. Numbers stay strings to
         // avoid precision loss and scientific notation for large integers
@@ -221,7 +255,7 @@ export function parseArgs(args) {
         } catch {
           // Not JSON: keep the raw string.
         }
-        i++;
+        if (!hasInlineValue) i++;
         // Accumulate repeated options into arrays (supports repeatable flags like --token, --subject)
         if (key in result.options) {
           if (!Array.isArray(result.options[key])) {
@@ -232,10 +266,10 @@ export function parseArgs(args) {
           result.options[key] = parsedValue;
         }
       } else {
-        result.flags[key] = true;
+        addFlag(key);
       }
     } else if (arg.startsWith('-')) {
-      result.flags[arg.slice(1)] = true;
+      addFlag(arg.slice(1));
     } else {
       result._.push(arg);
     }
@@ -1060,7 +1094,7 @@ SUBCOMMANDS:
 USAGE:
   nansen trade quote --chain <chain> --from <token> --to <token> --amount <units> [--wallet <name>]
   nansen trade quote --chain <chain> --to-chain <chain> --from <token> --to <token> --amount <units>
-  nansen trade execute --quote <quoteId> [--wallet <name>]
+  nansen trade execute --quote <quoteId> [--wallet <name>] [--dry-run] [--yes]
   nansen trade bridge-status --tx-hash <hash> --from-chain <chain> --to-chain <chain>
   nansen trade limit-order <create|list|cancel|update> [options]
 
@@ -1076,6 +1110,13 @@ EXAMPLES:
 WALLET:
   --wallet <name>   Use a named wallet, or "walletconnect" / "wc" for WalletConnect.
                     Defaults to the default local wallet if omitted.
+
+BEFORE BROADCASTING (execute only):
+  --dry-run         Validate and print what would be sent, then stop. Nothing is
+                    signed or broadcast and the quote stays usable. Exits 0.
+  --yes, -y         Skip the confirmation prompt (same as NANSEN_YES=1). The prompt
+                    only appears when stdin is a terminal — agents, CI and pipes run
+                    unprompted either way. Declining exits 1 with nothing signed.
 
 SYMBOLS:
   Common tokens resolve automatically: SOL, ETH, USDC, USDT, WETH
@@ -1139,12 +1180,43 @@ export async function prompt(question, hidden = false, { input = process.stdin, 
   });
 }
 
+// Confirmation prompts belong to the CLI adapter rather than trade/bridge
+// core. EOF and Ctrl+C resolve as the safe default ("no") so a closed input
+// cannot leave an irreversible command hanging forever.
+export async function promptForConfirmation(question, { input = process.stdin, output = process.stderr } = {}) {
+  const rl = readline.createInterface({ input, output });
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (answer) => {
+      if (settled) return;
+      settled = true;
+      rl.close();
+      resolve(answer);
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      rl.close();
+      reject(error);
+    };
+
+    rl.once('close', () => finish(''));
+    rl.once('SIGINT', () => finish(''));
+    rl.once('error', fail);
+    rl.question(question, finish);
+  });
+}
+
 // Build command handlers (returns object with handler functions)
 export function buildCommands(deps = {}) {
   // Allow dependency injection for testing
   const {
     api: _api = null,
+    // Password/API-key input belongs to login and may be hidden. Confirmation
+    // is a separate contract: callers must opt into it explicitly so this
+    // prompt can never be reused for an irreversible yes/no decision.
     promptFn = prompt,
+    confirmationPromptFn,
     log = console.log,
     errorOutput: _errorOutput = console.error,
     NansenAPIClass: _NansenAPIClass = NansenAPI,
@@ -1403,8 +1475,10 @@ export function buildCommands(deps = {}) {
         // silently comparing as if it were version 0.0.0, which would show
         // every entry rather than flag the typo.
         if (!/^v?\d+(\.\d+){0,2}$/.test(String(since))) {
-          log(`Invalid --since value "${since}": expected a version like 1.43 or 1.43.0.`);
-          return;
+          throw new NansenError(
+            `Invalid --since value "${since}": expected a version like 1.43 or 1.43.0.`,
+            ErrorCode.INVALID_PARAMS
+          );
         }
         // Show only entries from the given version onwards
         const lines = content.split('\n');
@@ -1603,7 +1677,7 @@ export function buildCommands(deps = {}) {
           }
           const parsedInclude = parseCsvOption(options.include, 'include');
           const include = (parsedInclude && parsedInclude.length > 0) ? parsedInclude : ['labels', 'balance'];
-          const delayMs = options.delay ? parseInt(options.delay) : 1000;
+          const delayMs = parseNonNegativeSafeIntegerOption('delay', options, flags, 1000);
           return batchProfile(apiInstance, { addresses, chain, include, delayMs });
         },
         'trace': () => {
@@ -1617,7 +1691,7 @@ export function buildCommands(deps = {}) {
           }
           const depth = options.depth ?? 2;
           const width = parseNonNegativeSafeIntegerOption('width', options, flags, 10);
-          const delayMs = options.delay ? parseInt(options.delay) : 1000;
+          const delayMs = parseNonNegativeSafeIntegerOption('delay', options, flags, 1000);
           return traceCounterparties(apiInstance, { address, chain, depth, width, days, delayMs });
         },
         'compare': () => {
@@ -1756,7 +1830,7 @@ export function buildCommands(deps = {}) {
         },
         'top-tokens': () => {
           const marketCapGroup = options['market-cap'] || options['market-cap-group'];
-          const limit = options.limit ? parseInt(options.limit) : undefined;
+          const limit = parseNonNegativeSafeIntegerOption('limit', options, flags);
           return apiInstance.topTokens({ marketCapGroup, limit });
         },
         'help': () => ({
@@ -1971,7 +2045,8 @@ export function buildCommands(deps = {}) {
   };
 
   // 'trade' delegates to quote/execute from buildTradingCommands and limit-order from buildLimitOrderCommands
-  const tradingCmds = buildTradingCommands(deps);
+  const executionDeps = { ...deps, promptFn: confirmationPromptFn };
+  const tradingCmds = buildTradingCommands(executionDeps);
   const limitOrderCmds = buildLimitOrderCommands(deps);
   cmds['trade'] = async (args, apiInstance, flags, options) => {
     const sub = args[0];
@@ -2009,7 +2084,7 @@ USAGE:
   };
 
   // 'bridge' delegates to quote/execute/status from buildBridgeCommands
-  const bridgeCmds = buildBridgeCommands(deps);
+  const bridgeCmds = buildBridgeCommands(executionDeps);
   cmds['bridge'] = async (args, apiInstance, flags, options) => {
     const sub = args[0];
     if (!sub || sub === 'help') {
@@ -2022,8 +2097,13 @@ SUBCOMMANDS:
 
 USAGE:
   nansen bridge quote --from-chain base --to-chain hyperliquid --from-token USDC --amount 1000000
-  nansen bridge execute --quote <quoteId>
+  nansen bridge execute --quote <quoteId> [--dry-run] [--yes]
   nansen bridge status --request-id <id>
+
+BEFORE BROADCASTING (execute only):
+  --dry-run   Validate and print what would be signed, then stop. Exits 0.
+  --yes, -y   Skip the confirmation prompt (same as NANSEN_YES=1). The prompt only
+              appears when stdin is a terminal; declining exits 1, signing nothing.
 
 SUPPORTED ROUTES:
   ${formatBridgeRoutes()}`);
@@ -2108,7 +2188,16 @@ export const RESEARCH_CATEGORY_ALIASES = {
 
 // Generate help text for a specific subcommand using SCHEMA
 export function generateSubcommandHelp(command, subcommand, prefix = null) {
-  const cmdSchema = SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command];
+  // `perp` is both a top-level trading command and a research category, and
+  // the two have different subcommands. Look in both places and use whichever
+  // actually holds this subcommand (top-level wins when both do) instead of
+  // stopping at the first schema whose *name* matches — that made
+  // `research perp screener --help` fall back to listing the category's
+  // subcommands, i.e. telling the caller to run the command they just ran.
+  const topSchema = SCHEMA.commands[command];
+  const researchSchema = SCHEMA.commands.research.subcommands[command];
+  const fromResearch = !topSchema?.subcommands?.[subcommand] && Boolean(researchSchema?.subcommands?.[subcommand]);
+  const cmdSchema = fromResearch ? researchSchema : topSchema || researchSchema;
   if (!cmdSchema) return null;
 
   const subSchema = cmdSchema.subcommands?.[subcommand];
@@ -2139,7 +2228,7 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
 
   const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
   const chain = subSchema.options?.chain?.default || 'solana';
-  const cmdPrefix = prefix || (DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command);
+  const cmdPrefix = prefix || (fromResearch || DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command);
   let example = subSchema.examples?.[0] || `nansen ${cmdPrefix} ${subcommand}`;
   if (!subSchema.examples?.length && subSchema.options) {
     for (const [name, opt] of Object.entries(subSchema.options)) {
@@ -2162,12 +2251,45 @@ export async function runCLI(rawArgs, deps = {}) {
     exit = process.exit,
     NansenAPIClass = NansenAPI,
     commandOverrides = {},
-    // Injectable so tests can exercise both renderings; defaults to the real
-    // terminal, which is false under a pipe or in CI.
+    // Output TTY controls human-vs-structured error rendering. Keep the
+    // existing `isTTY` seam for callers/tests that inject both terminal states.
     isTTY = process.stdout.isTTY,
   } = deps;
 
-  const { _: positional, flags, options } = parseArgs(rawArgs);
+  // Command-layer interactivity is intentionally governed by stdin. Besides
+  // trade/bridge confirmation, buildCommands' existing `login --human` prompt
+  // consumes this same signal; stdout may be redirected while a person still
+  // answers either prompt on stdin. The separate `isTTY` destructured above
+  // remains the stdout signal for human-vs-structured error rendering. Callers
+  // can split the signals with `isInputTTY`; legacy `isTTY` injection still
+  // drives both for compatibility.
+  const isInputTTY = deps.isInputTTY ?? (deps.isTTY ?? process.stdin.isTTY);
+
+  // Pass the CLI-owned terminal seams into command modules. Keeping these out
+  // of core means direct/library callers are non-interactive unless they
+  // explicitly provide a prompt.
+  const inputInteractiveDeps = {
+    ...deps,
+    isTTY: isInputTTY,
+    promptFn: deps.promptFn ?? prompt,
+    confirmationPromptFn: deps.confirmationPromptFn ?? promptForConfirmation,
+    confirmationLog: deps.confirmationLog ?? errorOutput,
+  };
+  const topLevelTradingDeps = {
+    ...inputInteractiveDeps,
+    promptFn: inputInteractiveDeps.confirmationPromptFn,
+  };
+
+  let parsed;
+  try {
+    parsed = parseArgs(rawArgs);
+  } catch (error) {
+    const errorData = formatError(error);
+    output(formatOutput(errorData).text);
+    exit(1);
+    return { type: 'error', data: errorData };
+  }
+  const { _: positional, flags, options } = parsed;
 
   // Resolve command aliases
   const rawCommand = positional[0] || 'help';
@@ -2213,7 +2335,11 @@ export async function runCLI(rawArgs, deps = {}) {
 
   // mcp prints its own output via `log`; runCLI callers inject their stdout
   // sink as `output`, so map it across (an explicit `log` dep still wins).
-  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...buildAlertsCommands(deps), ...buildAgentCommands(deps), ...buildMcpCommands({ ...deps, log: deps.log ?? output }), ...buildCompletionCommands({ ...deps, log: deps.log ?? output }), ...commandOverrides };
+  // Only execute/login handlers consume the stdin-interactivity seam. Other
+  // modules retain their existing deps: notably wallet export interprets
+  // `isTTY` as stdout visibility when deciding whether to warn about printing
+  // private keys, so substituting the stdin signal there changes its semantics.
+  const commands = { ...buildCommands(inputInteractiveDeps), ...buildWalletCommands(deps), ...buildTradingCommands(topLevelTradingDeps), ...buildAlertsCommands(deps), ...buildAgentCommands(deps), ...buildMcpCommands({ ...deps, log: deps.log ?? output }), ...buildCompletionCommands({ ...deps, log: deps.log ?? output }), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);

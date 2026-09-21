@@ -138,6 +138,24 @@ describe('wallet export --reveal', () => {
 
     expect(warnings.find((w) => w.includes('interactive terminal'))).toBeUndefined();
   });
+
+  it('keeps wallet export on the stdout TTY signal when stdin is interactive', async () => {
+    createWalletWithKeys('split-tty');
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    await runCLI(['wallet', 'export', 'split-tty', '--reveal'], {
+      output: () => {},
+      log: () => {},
+      errorOutput: () => {},
+      exit: () => {},
+      isTTY: false,
+      isInputTTY: true,
+    });
+    const warnings = stderrSpy.mock.calls.map((c) => String(c[0]));
+    stderrSpy.mockRestore();
+
+    expect(warnings.find((w) => w.includes('interactive terminal'))).toBeUndefined();
+  });
 });
 
 describe('wallet export --file', () => {

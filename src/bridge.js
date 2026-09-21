@@ -22,6 +22,7 @@ import {
   signEvmTransaction,
   waitForReceipt,
 } from './trading.js';
+import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 import { screenOrThrow } from './perp.js';
 import { extractActionErrors } from './hl-client.js';
 import { encodeApproveCalldata } from './trade-validation.js';
@@ -1456,6 +1457,23 @@ function resolveWalletAddress(walletName) {
   return resolveEvmWallet(walletName, 'Bridging');
 }
 
+// Bridge quote files persist the address used to build the transaction at this
+// exact top-level field (see saveBridgeQuote). A dry run can safely use that
+// public address for screening and transaction preflight without requiring a
+// configured local wallet, but only after checking it is actually an EVM
+// address. Missing legacy data falls back to normal wallet resolution.
+function validateQuotedWalletAddress(quoteId, walletAddress) {
+  if (walletAddress == null || walletAddress === '') return null;
+  const { valid, error } = validateAddress(walletAddress, 'ethereum');
+  if (!valid) {
+    throw new CommandError(
+      `Quote "${quoteId}" is malformed: walletAddress is invalid. ${error} Request a fresh quote with "nansen bridge quote".`,
+      'INVALID_INPUT',
+    );
+  }
+  return walletAddress.trim();
+}
+
 // Destination address for --recipient. Validated against the EVM pattern rather
 // than the destination chain's own rules: every supported destination
 // (base/ethereum/arbitrum/hyperliquid) takes an EVM address, and passing
@@ -1495,8 +1513,48 @@ function parseBridgeAmount(raw, amountUnit) {
 
 // ── Command builder ──────────────────────────────────────────────────
 
+/**
+ * Describe the transfer `bridge execute` is about to sign, for the
+ * confirmation prompt and for --dry-run. Built entirely from the cached quote
+ * and the resolved signer — it touches no wallet material.
+ */
+export function buildBridgeExecutionPlan({ quoteId, quoteData, signerAddress, overrides }) {
+  const response = quoteData.response || {};
+  const details = response.details || {};
+  const currencyIn = details.currencyIn || {};
+  const currencyOut = details.currencyOut || {};
+  const relayerFee = response.fees?.relayer || {};
+  const steps = response.steps || [];
+  const sendAmount = currencyIn.amountFormatted
+    || (quoteData.requestedAmountBaseUnits != null ? `${quoteData.requestedAmountBaseUnits} base units` : null);
+  // Keep malformed seam inputs out of user-facing plans. formatPlan omits null
+  // rows, but a template literal would otherwise turn an absent signer into a
+  // visible `undefined (same address)` recipient.
+  const planSignerAddress = signerAddress || null;
+
+  return formatPlan(`Bridge plan — ${quoteData.originChain} → ${quoteData.destinationChain}`, [
+    ['Quote', quoteId],
+    ['Type', response.execution_type],
+    ['Send', [sendAmount, currencyIn.currency?.symbol].filter(Boolean).join(' ') || null],
+    ['Receive', currencyOut.amountFormatted ? `~${[currencyOut.amountFormatted, currencyOut.currency?.symbol].filter(Boolean).join(' ')}` : null],
+    ['Fee', relayerFee.amountUsd ? `$${relayerFee.amountUsd}` : null],
+    ['Wallet', planSignerAddress],
+    ['Recipient', quoteData.recipient || (planSignerAddress ? `${planSignerAddress} (same address)` : null)],
+    ['Steps', steps.map(s => `${s.id} (${s.kind})`).join(', ') || null],
+    ['Overrides', overrides || null],
+  ]);
+}
+
 export function buildBridgeCommands(deps = {}) {
-  const { log = console.log } = deps;
+  const {
+    log = console.log,
+    // Injected so the confirmation prompt (and whether there is anyone to
+    // answer it) can be driven in tests without a terminal.
+    promptFn,
+    confirmationLog = log,
+    isTTY = false,
+    env = process.env,
+  } = deps;
 
   return {
     'quote': async (args, apiInstance, flags, options) => {
@@ -1660,12 +1718,24 @@ OPTIONS:
     'execute': async (args, apiInstance, flags, options) => {
       const quoteId = options.quote || args[0];
       const walletName = options.wallet;
+      const guard = resolveExecuteGuard(flags, { env, isTTY });
 
       if (!quoteId) {
         throw new CommandError(
           `Usage: nansen bridge execute --quote <quoteId> [--wallet <name>]
 
 Execute a cached bridge quote. Signs transactions and broadcasts them.
+
+OPTIONS:
+  --dry-run       Validate and print what would be signed, then stop. Nothing is
+                  broadcast and the quote stays usable.
+  --yes, -y       Skip the confirmation prompt (same as NANSEN_YES=1). The prompt
+                  only appears when stdin is a terminal; agents, CI and pipes are
+                  never prompted, with or without --yes.
+
+EXIT CODES:
+  0  the transfer was submitted, or the dry run completed
+  1  declined at the confirmation prompt, or the execution failed
 
 RECOVERY OPTIONS (EVM deposit legs only):
   --priority-fee  Priority fee in gwei, overriding the quoted one
@@ -1707,6 +1777,14 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         nonceSequence = { next: parseInt(s, 10) };
       }
 
+      // One rendering of the overrides — shown in the execution plan, and
+      // again when the EVM leg actually applies them.
+      const overridesSummary = [
+        feeOverrides.priorityFeeWei ? `priority fee ${feeOverrides.priorityFeeWei} wei` : null,
+        feeOverrides.maxFeeWei ? `fee cap ${feeOverrides.maxFeeWei} wei` : null,
+        nonceSequence ? `starting nonce ${nonceSequence.next}` : null,
+      ].filter(Boolean).join(', ') || null;
+
       const quoteData = loadBridgeQuote(quoteId);
       // A truncated or hand-edited quote file can be missing `response.steps`
       // entirely; guard before destructuring so the operator gets an actionable
@@ -1734,38 +1812,131 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         );
       }
 
-      log(`\n  Executing bridge: ${quoteData.originChain} → ${quoteData.destinationChain}`);
+      log(`\n  ${guard.dryRun ? 'Checking' : 'Executing'} bridge: ${quoteData.originChain} → ${quoteData.destinationChain}`);
       log(`  Type: ${execution_type}`);
       log(`  Steps: ${steps.length}`);
 
-      // The quote was issued for one wallet, but the signing wallet is resolved
-      // separately from --wallet / the current default — which can have changed
-      // since. Signing with a different wallet than the quote was built for would
-      // screen one address and move funds from another, and the cached tx data
-      // (nonce, from) belongs to the quote's wallet regardless. Refuse instead.
-      const signer = resolveWalletAddress(walletName);
+      // Dry-run preflight needs only the public address persisted alongside the
+      // quote. Prefer it before touching local wallet configuration; legacy
+      // quotes without the field retain the previous wallet-resolution path.
+      // A real execution always resolves the live signer independently and
+      // binds it to the quote before any credentials are loaded.
+      const quotedWalletAddress = validateQuotedWalletAddress(quoteId, quoteData.walletAddress);
+      const signer = guard.dryRun && quotedWalletAddress
+        ? null
+        : resolveWalletAddress(walletName);
+      const signerAddress = signer?.address || quotedWalletAddress;
+      // resolveEvmWallet and validateQuotedWalletAddress already guarantee this
+      // in production. Keep an explicit boundary before compliance screening
+      // so a malformed injected seam can never turn into screenOrThrow([undefined]).
+      if (!signerAddress) {
+        throw new CommandError(
+          `Quote "${quoteId}" has no valid signer address. Request a fresh quote with "nansen bridge quote".`,
+          'INVALID_WALLET',
+        );
+      }
       if (
-        quoteData.walletAddress &&
-        String(signer.address).toLowerCase() !== String(quoteData.walletAddress).toLowerCase()
+        signer &&
+        quotedWalletAddress &&
+        String(signer.address).toLowerCase() !== quotedWalletAddress.toLowerCase()
       ) {
         throw new Error(
-          `Bridge quote "${quoteId}" was created for ${quoteData.walletAddress} but the signing wallet is ${signer.address}. Pass --wallet for the quote's wallet, or request a new quote.`,
+          `Bridge quote "${quoteId}" was created for ${quotedWalletAddress} but the signing wallet is ${signer.address}. Pass --wallet for the quote's wallet, or request a new quote.`,
         );
       }
 
       // Re-screen the signer and any distinct recipient immediately before
       // signing. Quotes live up to an hour, and the EVM leg broadcasts directly.
       const screenAddresses = recipient
-        && String(recipient).toLowerCase() !== String(signer.address).toLowerCase()
-        ? [signer.address, recipient]
-        : [signer.address];
+        && String(recipient).toLowerCase() !== String(signerAddress).toLowerCase()
+        ? [signerAddress, recipient]
+        : [signerAddress];
       await screenOrThrow(apiInstance, screenAddresses);
+
+      // These checks need only the cached quote and public signer address. A
+      // dry run must execute them before returning at the gate; a real run
+      // preserves the established password/error ordering by executing them
+      // after credentials resolve. Cache the result so each invocation can run
+      // the preflight at most once even if the guard's control flow changes.
+      const preflightPlan = () => {
+        let evmIntent = null;
+        let hlIntent = null;
+        if (execution_type === 'evm_transaction') {
+          evmIntent = {
+            chain: quoteData.originChain,
+            signerAddress,
+            requestedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
+          };
+          preflightEvmBridgeSteps(steps, evmIntent);
+        } else if (execution_type === 'hyperliquid_signature') {
+          const currencyIn = quoteData.response.details?.currencyIn;
+          if (quoteData.requestedAmountBaseUnits != null && currencyIn?.amount != null) {
+            let currencyInScaled;
+            let requestedScaled;
+            try {
+              currencyInScaled = BigInt(currencyIn.amount);
+              requestedScaled = BigInt(quoteData.requestedAmountBaseUnits);
+            } catch {
+              throw new CommandError(
+                `Quote input "${currencyIn.amount}" is not a valid amount. Request a new quote.`,
+                'AMOUNT_MISMATCH',
+              );
+            }
+            if (currencyInScaled !== requestedScaled) {
+              throw new CommandError(
+                `Quote input ${currencyIn.amount} does not match the requested ${quoteData.requestedAmountBaseUnits}. Request a new quote.`,
+                'AMOUNT_MISMATCH',
+              );
+            }
+          }
+          hlIntent = {
+            reviewedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
+            hlNetwork: 'Mainnet',
+            signerAddress,
+          };
+          preflightHlBridgeSteps(steps, hlIntent);
+        } else {
+          throw new CommandError(
+            `Quote "${quoteId}" has unsupported execution type "${execution_type}". Request a new quote.`,
+            'INVALID_INPUT',
+          );
+        }
+        return { evmIntent, hlIntent };
+      };
+
+      // A plan shown for interactive consent must already be known-safe. Match
+      // trade execute: preview and an actual prompt preflight eagerly, while
+      // --yes/non-TTY retain the established ordering (credentials first,
+      // preflight immediately before signing).
+      const shouldPreflightPlan = guard.dryRun || (guard.isTTY && !guard.assumeYes);
+      let preflightResult = shouldPreflightPlan ? preflightPlan() : null;
+
+      // ── Acknowledgement gate: --dry-run / --yes ──────────────────────
+      // Placed before the signing credentials are loaded and well before the
+      // first of the quote's steps is signed, so a dry run can sign nothing
+      // and a declined confirmation leaves a multi-step transfer untouched.
+      // See src/execute-guard.js for the TTY rules.
+      const proceed = await guardExecution({
+        plan: buildBridgeExecutionPlan({
+          quoteId,
+          quoteData,
+          signerAddress,
+          overrides: overridesSummary,
+        }),
+        ...guard,
+        promptFn,
+        log,
+        confirmationLog,
+      });
+      if (!proceed) return undefined;
 
       // Signing material for the wallet resolved above — not a second lookup.
       // Resolving twice re-read the wallet file and, worse, could pick a
       // different wallet than the one just screened if the default changed in
       // between.
       const creds = resolveSigningCredentials(signer);
+      preflightResult ??= preflightPlan();
+      const { evmIntent, hlIntent } = preflightResult;
 
       // Consume the quote at each INDIVIDUAL broadcast, before any receipt wait.
       // A tx can be accepted by the network and then have waitForReceipt time
@@ -1786,23 +1957,10 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         });
 
       if (execution_type === 'evm_transaction') {
-        const evmIntent = {
-          chain: quoteData.originChain,
-          signerAddress: signer.address,
-          requestedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
-        };
-        // Validate every step's calldata against intent before any step is
-        // signed or broadcast — see preflightEvmBridgeSteps for why this can't
-        // just be the per-step check processEvmStep already does.
-        preflightEvmBridgeSteps(steps, evmIntent);
         // Overrides move real money differently from what was quoted, so say so
         // rather than letting them apply silently.
-        if (feeOverrides.priorityFeeWei || feeOverrides.maxFeeWei || nonceSequence) {
-          const parts = [];
-          if (feeOverrides.priorityFeeWei) parts.push(`priority fee ${feeOverrides.priorityFeeWei} wei`);
-          if (feeOverrides.maxFeeWei) parts.push(`fee cap ${feeOverrides.maxFeeWei} wei`);
-          if (nonceSequence) parts.push(`starting nonce ${nonceSequence.next}`);
-          log(`  Overrides: ${parts.join(', ')}`);
+        if (overridesSummary) {
+          log(`  Overrides: ${overridesSummary}`);
         }
         for (const [index, step] of steps.entries()) {
           await processEvmStep(step, {
@@ -1818,45 +1976,6 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
           markBroadcast(index);
         }
       } else if (execution_type === 'hyperliquid_signature') {
-        // Check E: the quote's own currencyIn.amount — the amount it displayed
-        // and will send through /perp/bridge/quote — must equal what was
-        // actually requested at quote time. The amount cap below (check B) is
-        // anchored to requestedAmountBaseUnits directly, not to this display
-        // field, so this check is UI-consistency defense-in-depth: it catches a
-        // quote whose displayed send amount has drifted from the request,
-        // rather than gating the cap itself.
-        const currencyIn = quoteData.response.details?.currencyIn;
-        if (quoteData.requestedAmountBaseUnits != null && currencyIn?.amount != null) {
-          let currencyInScaled, requestedScaled;
-          try {
-            currencyInScaled = BigInt(currencyIn.amount);
-            requestedScaled = BigInt(quoteData.requestedAmountBaseUnits);
-          } catch {
-            throw new CommandError(
-              `Quote input "${currencyIn.amount}" is not a valid amount. Request a new quote.`,
-              'AMOUNT_MISMATCH',
-            );
-          }
-          if (currencyInScaled !== requestedScaled) {
-            throw new CommandError(
-              `Quote input ${currencyIn.amount} does not match the requested ${quoteData.requestedAmountBaseUnits}. Request a new quote.`,
-              'AMOUNT_MISMATCH',
-            );
-          }
-        }
-        const hlIntent = {
-          // Anchored to what the CLIENT persisted at quote time from the
-          // user's own --amount, not to any server-supplied display field —
-          // see assertHlBridgeActionIntent for why.
-          reviewedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
-          hlNetwork: 'Mainnet',
-          signerAddress: signer.address,
-        };
-        // Validate every step's payload (both the authorize leg and the HL
-        // action leg) before any of them are signed or posted — see
-        // preflightHlBridgeSteps for why this can't just be the per-step
-        // check the loops below already do.
-        preflightHlBridgeSteps(steps, hlIntent);
         if (creds.provider === 'privy') {
           const { PrivyClient } = await import('./privy.js');
           const privyClient = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);

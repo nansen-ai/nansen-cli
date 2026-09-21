@@ -58,7 +58,9 @@ export function parseCsvOption(val, name) {
     if (!val.every(v => typeof v === 'string')) {
       throw new NansenError(`--${name} values must be strings`, ErrorCode.INVALID_PARAMS);
     }
-    return val.map(v => v.trim()).filter(Boolean);
+    // A repeated flag may itself carry a list (`--tags defi,nft --tags sports`),
+    // so split each element the same way a single value is split.
+    return val.flatMap(v => v.split(',')).map(v => v.trim()).filter(Boolean);
   }
   if (typeof val !== 'string') {
     throw new NansenError(`--${name} must be a string`, ErrorCode.INVALID_PARAMS);
