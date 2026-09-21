@@ -320,6 +320,7 @@ nansen research token screener --chain solana 2>trace.log | jq .   # trace to a 
 [nansen:debug] http.request method=POST url=https://api.nansen.ai/api/v1/token-screener attempt=1/4
 [nansen:debug] http.response method=POST url=https://api.nansen.ai/api/v1/token-screener status=429 duration_ms=182 request_id=6f1c0f2a-0000-4000-8000-0000000000aa attempt=1
 [nansen:debug] http.retry method=POST url=https://api.nansen.ai/api/v1/token-screener status=429 attempt=1 reason=retry-after delay_ms=1100 retry_after_ms=1000
+[nansen:debug] http.request method=POST url=https://api.nansen.ai/api/v1/token-screener attempt=2/4
 [nansen:debug] http.response method=POST url=https://api.nansen.ai/api/v1/token-screener status=200 duration_ms=143 request_id=6f1c0f2a-0000-4000-8000-0000000000ab attempt=2
 ```
 
