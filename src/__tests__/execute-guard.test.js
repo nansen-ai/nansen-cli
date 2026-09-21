@@ -369,7 +369,7 @@ describe('trade execute --dry-run / --yes', () => {
       quotes: [{
         aggregator: 'jupiter',
         inputMint: 'So11111111111111111111111111111111111111112',
-        outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        outputMint: 'synthetic-output-mint-for-dry-run-test',
         inAmount: '2000000000',
         inputAmount: '2000000000',
         outAmount: '50000000',
@@ -384,7 +384,7 @@ describe('trade execute --dry-run / --yes', () => {
         walletAddress,
         recipient: null,
         fromToken: 'So11111111111111111111111111111111111111112',
-        toToken: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        toToken: 'synthetic-output-mint-for-dry-run-test',
         swapMode: 'exactIn',
         amount: '1000000000',
         maxInputAmount: '1000000000',
@@ -408,6 +408,27 @@ describe('trade execute --dry-run / --yes', () => {
     expect(out).toContain(`required → ${LIFI_ROUTER}`);
     expect(out).toContain('current allowance is 0');
     expect(out).toContain('runs after the approval transaction lands');
+    expect(executeBodies).toHaveLength(0);
+  });
+
+  it('interactive confirmation probes and displays the current ERC-20 allowance', async () => {
+    stubFetch({ allowance: 0n });
+    const quoteId = erc20Quote('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    const logs = [];
+    const cmds = buildTradingCommands({
+      log: message => logs.push(message),
+      promptFn: async () => 'n',
+      isTTY: true,
+      env: {},
+    });
+
+    await expect(cmds.execute([], null, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'CONFIRMATION_DECLINED' });
+
+    const output = logs.join('\n');
+    expect(output).toContain(`required → ${LIFI_ROUTER}`);
+    expect(output).toContain('current allowance is 0');
+    expect(output).toContain('runs after the approval transaction lands');
     expect(executeBodies).toHaveLength(0);
   });
 

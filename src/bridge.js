@@ -1819,17 +1819,18 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
       await screenOrThrow(apiInstance, screenAddresses);
 
       // These checks need only the cached quote and public signer address. A
-      // dry run exercises them before returning; a real run keeps the existing
-      // password/error ordering and repeats them after credentials resolve but
-      // before any step can sign or broadcast.
+      // dry run must execute them before returning at the gate; a real run
+      // preserves the established password/error ordering by executing them
+      // after credentials resolve. Cache the result so each invocation can run
+      // the preflight at most once even if the guard's control flow changes.
       const preflightPlan = () => {
         let evmIntent = null;
         let hlIntent = null;
         if (execution_type === 'evm_transaction') {
           evmIntent = {
-          chain: quoteData.originChain,
-          signerAddress: signer.address,
-          requestedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
+            chain: quoteData.originChain,
+            signerAddress: signer.address,
+            requestedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
           };
           preflightEvmBridgeSteps(steps, evmIntent);
         } else if (execution_type === 'hyperliquid_signature') {
@@ -1868,8 +1869,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         return { evmIntent, hlIntent };
       };
 
-      // Dry runs return at the gate, so run the sign-free preflight here.
-      if (guard.dryRun) preflightPlan();
+      let preflightResult = guard.dryRun ? preflightPlan() : null;
 
       // ── Acknowledgement gate: --dry-run / --yes ──────────────────────
       // Placed before the signing credentials are loaded and well before the
@@ -1895,7 +1895,8 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
       // different wallet than the one just screened if the default changed in
       // between.
       const creds = resolveSigningCredentials(signer);
-      const { evmIntent, hlIntent } = preflightPlan();
+      preflightResult ??= preflightPlan();
+      const { evmIntent, hlIntent } = preflightResult;
 
       // Consume the quote at each INDIVIDUAL broadcast, before any receipt wait.
       // A tx can be accepted by the network and then have waitForReceipt time

@@ -178,7 +178,7 @@ describe('bridge execute --dry-run / --yes', () => {
     expect(sendCalls()).toHaveLength(0);
   });
 
-  it('--dry-run rejects a tampered later step before loading credentials', async () => {
+  it('--dry-run preflights a tampered later step before credentials', async () => {
     const quoteId = writeQuote('bridge-dry-run-tampered');
     const quote = readQuote(quoteId);
     quote.response.steps.push({
@@ -191,10 +191,12 @@ describe('bridge execute --dry-run / --yes', () => {
     });
     fs.writeFileSync(path.join(quotesDir, `${quoteId}.json`), JSON.stringify(quote, null, 2));
 
-    const cmds = buildBridgeCommands({ log: () => {}, promptFn: vi.fn(), isTTY: true, env: {} });
+    const promptFn = vi.fn();
+    const cmds = buildBridgeCommands({ log: () => {}, promptFn, isTTY: true, env: {} });
     await expect(cmds.execute([], api, { 'dry-run': true }, { quote: quoteId, wallet: 'w' }))
       .rejects.toMatchObject({ code: 'UNEXPECTED_ACTION' });
 
+    expect(promptFn).not.toHaveBeenCalled();
     expect(exportWallet).not.toHaveBeenCalled();
     expect(signEvmTransaction).not.toHaveBeenCalled();
     expect(sendCalls()).toHaveLength(0);

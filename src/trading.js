@@ -2930,7 +2930,7 @@ EXAMPLES:
             gasless,
             noSimulate,
             noVerifyOutcome,
-            probe: guard.dryRun,
+            probe: shouldPreflightPlan,
           }));
         }
         const fallbackNotice = validatedPlanCandidates.length > 1
