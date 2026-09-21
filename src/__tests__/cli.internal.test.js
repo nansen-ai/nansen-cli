@@ -2922,6 +2922,9 @@ describe('buildCommands', () => {
       );
 
       expect(result.data).toEqual(data);
+      expect(mockApi.tokenScreener).toHaveBeenCalledWith(
+        expect.objectContaining({ pagination: { page: 1, per_page: 10 } }),
+      );
     });
 
     it('should widen the search candidate fetch when the requested page is past the default 500', async () => {

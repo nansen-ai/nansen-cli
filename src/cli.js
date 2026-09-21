@@ -1775,14 +1775,24 @@ export function buildCommands(deps = {}) {
           // candidate fetch has to cover every page up to the requested one.
           const requestedLimit = pagination?.per_page || 100;
           const requestedPage = pagination?.page || 1;
+          const paginateAll = flags.paginate || flags.all;
           const searchPagination = search
-            ? { page: 1, per_page: Math.max(500, requestedPage * requestedLimit) }
+            ? {
+                page: 1,
+                // A normal client-side search widens its one candidate fetch.
+                // With --paginate, keep --limit as the server page size: the
+                // traversal already fetches up to --max-pages separately
+                // billed pages, so silently multiplying each one to 500 would
+                // make the flag much more expensive than documented.
+                per_page: paginateAll
+                  ? requestedLimit
+                  : Math.max(500, requestedPage * requestedLimit),
+              }
             : pagination;
           const result = await apiInstance.tokenScreener({ chains, timeframe, filters, orderBy, pagination: searchPagination });
           if (search) {
             const q = search.toLowerCase();
             const offset = (requestedPage - 1) * requestedLimit;
-            const paginateAll = flags.paginate || flags.all;
             const filterArr = (arr) => {
               const matching = arr.filter(t =>
               (t.token_symbol && t.token_symbol.toLowerCase().includes(q)) ||

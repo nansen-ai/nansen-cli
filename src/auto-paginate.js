@@ -117,6 +117,9 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
       rows.push(row);
       fresh++;
     }
+    // Page size is a property of the server response, so learn it from the raw
+    // row count rather than `fresh` (the de-duplicated count). An all-duplicate
+    // page still stops immediately via fresh === 0 below.
     if (pageSize === undefined) pageSize = located.rows.length;
 
     const serverPagination = locatePagination(res);
