@@ -52,6 +52,50 @@ describe('collectPages', () => {
     expect(res.pagination).toEqual({ page: 1, per_page: 10, total_pages: 2, pages_fetched: 2, next_page: null, complete: true });
   });
 
+  it('honours is_last_page and total metadata without an extra billed request', async () => {
+    const byLastFlag = vi.fn(async () => ({
+      pagination: { page: 1, per_page: 2, is_last_page: true },
+      data: [{ id: 1 }, { id: 2 }],
+    }));
+    const flagged = await collectPages(byLastFlag, { page: 1, per_page: 2 }, { maxPages: 1 });
+    expect(byLastFlag).toHaveBeenCalledTimes(1);
+    expect(flagged.pagination).toEqual({
+      page: 1, per_page: 2, is_last_page: true,
+      pages_fetched: 1, next_page: null, complete: true,
+    });
+
+    const byTotal = vi.fn(async () => ({
+      pagination: { page: 1, per_page: 2, total: 2 },
+      data: [{ id: 1 }, { id: 2 }],
+    }));
+    const counted = await collectPages(byTotal, { page: 1, per_page: 2 });
+    expect(byTotal).toHaveBeenCalledTimes(1);
+    expect(counted.pagination.complete).toBe(true);
+  });
+
+  it('honours pagination metadata nested alongside nested data', async () => {
+    const fetchPage = vi.fn(async () => ({
+      data: {
+        data: [{ id: 1 }, { id: 2 }],
+        pagination: { page: 1, per_page: 2, total_pages: 1 },
+      },
+    }));
+    const res = await collectPages(fetchPage, { page: 1, per_page: 2 });
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(res.data.data).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(res.pagination).toMatchObject({ total_pages: 1, pages_fetched: 1, complete: true });
+  });
+
+  it('does not treat null totals as zero-row completion metadata', async () => {
+    const fetchPage = vi.fn(async ({ page }) => ({
+      pagination: { page, per_page: 2, total: null, total_pages: null },
+      data: page === 1 ? [{ id: 1 }, { id: 2 }] : [{ id: 3 }],
+    }));
+    const res = await collectPages(fetchPage, { page: 1, per_page: 2 });
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+    expect(res.data).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+  });
+
   it('stops when a page repeats rows already seen (server ignoring page) and never duplicates items', async () => {
     const fetchPage = vi.fn(async () => ({ data: [{ id: 1 }, { id: 2 }] }));
     const res = await collectPages(fetchPage, { page: 1, per_page: 2 });
@@ -93,6 +137,16 @@ describe('collectPages', () => {
     expect(res.meta).toBe('x');
     expect(res.data.total).toBe(3);
     expect(res.data.data.map(r => r.id)).toEqual([1, 2, 3]);
+  });
+
+  it('merges an unambiguous descriptive top-level list key', async () => {
+    const fetchPage = vi.fn(async ({ page }) => ({
+      pagination: { page, per_page: 2, total_pages: 2 },
+      trades: page === 1 ? [{ id: 1 }, { id: 2 }] : [{ id: 3 }],
+    }));
+    const res = await collectPages(fetchPage, { page: 1, per_page: 2 });
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+    expect(res.trades).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
   });
 
   it('returns a non-list first page unchanged after a single request', async () => {

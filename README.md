@@ -325,7 +325,9 @@ nansen research smart-money netflow --chain solana --fields token_symbol,net_flo
 nansen smart-money netflow --chain solana --limit 100 --paginate --max-pages 5
 ```
 `--limit` is the page size and `--max-pages` (default 10) caps the number of requests — every page is a
-separate, separately billed API call. Rows are de-duplicated and the response gains
+separate, separately billed API call. Server completion metadata (`total_pages`, `total`, or
+`is_last_page`) is honoured so a known final page is not fetched again. Rows are de-duplicated and
+the response gains
 `pagination: { page, pages_fetched, next_page, complete }`; when `complete` is `false`, resume with
 `--page <next_page>`. Combine with `--stream` for NDJSON.
 

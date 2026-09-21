@@ -2620,7 +2620,7 @@
     },
     "paginate": {
       "type": "boolean",
-      "description": "Fetch every page of a list-returning command and return one merged response (alias: --all). Starts at --page (default 1) and uses --limit as the page size; stops on a short or empty page, when the server's pagination.total_pages is reached, when a page repeats rows already seen, or after --max-pages requests. The merged response keeps the first page's shape (a bare array is wrapped as { data: [...] }) with rows de-duplicated, plus pagination: { page, pages_fetched, next_page, complete } — next_page is null when complete, otherwise the page to resume from. Each page is a separate, separately billed API call. Works with --stream (NDJSON), --table, --format csv and --fields. Commands without pagination are unaffected."
+      "description": "Fetch every page of a list-returning command and return one merged response (alias: --all). Starts at --page (default 1) and uses --limit as the page size; stops on a short or empty page, when server pagination metadata (total_pages, total, is_last_page, has_more, or next_page) says the traversal is complete, when a page repeats rows already seen, or after --max-pages requests. The merged response keeps the first page's shape (a bare array is wrapped as { data: [...] }) with rows de-duplicated, plus pagination: { page, pages_fetched, next_page, complete } — next_page is null when complete, otherwise the page to resume from. Each page is a separate, separately billed API call. Works with --stream (NDJSON), --table, --format csv and --fields. Commands without pagination are unaffected."
     },
     "max-pages": {
       "type": "integer",

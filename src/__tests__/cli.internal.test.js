@@ -6307,12 +6307,16 @@ describe('--paginate / --all flag integration (API-275)', () => {
   // is the method --paginate wraps. 23 rows served 10 per page.
   function MockAPI() {
     this.request = vi.fn(async (endpoint, body) => {
+      if (!body.pagination) return { data: [{ kind: 'single-page' }] };
       const { page, per_page = 10 } = body.pagination;
       const start = (page - 1) * per_page;
       return { data: Array.from({ length: Math.max(0, Math.min(per_page, 23 - start)) }, (_, i) => ({ id: start + i })) };
     });
     this.smartMoneyNetflow = function ({ chains, pagination }) {
       return this.request('/api/v1/smart-money/netflow', { chains, filters: {}, order_by: undefined, pagination });
+    };
+    this.tokenOhlcv = function ({ tokenAddress, chain, timeframe }) {
+      return this.request('/api/v1/tgm/token-ohlcv', { token_address: tokenAddress, chain, timeframe });
     };
   }
 
@@ -6354,12 +6358,29 @@ describe('--paginate / --all flag integration (API-275)', () => {
     expect(result.data.pagination).toEqual({ page: 1, pages_fetched: 2, next_page: 3, complete: false });
   });
 
+  it('does not paginate an endpoint whose request omits pagination', async () => {
+    const result = await runCLI(['token', 'ohlcv', '--token', 'abc', '--paginate'], deps());
+    expect(result.data).toEqual({ data: [{ kind: 'single-page' }] });
+  });
+
   it('streams all merged rows as NDJSON with --stream', async () => {
     const result = await runCLI(['smart-money', 'netflow', '--limit', '10', '--paginate', '--stream'], deps());
     expect(result.type).toBe('stream');
     const lines = outputs[0].split('\n');
     expect(lines).toHaveLength(23);
     expect(JSON.parse(lines[22]).id).toBe(22);
+  });
+
+  it('formats nested data.data rows individually for stream, table, and CSV', () => {
+    const nested = {
+      data: { data: [{ id: 1, name: 'one' }, { id: 2, name: 'two' }] },
+      pagination: { complete: true },
+    };
+
+    expect(formatStream(nested).split('\n').map(JSON.parse)).toEqual(nested.data.data);
+    expect(formatTable(nested)).toContain('one  │ 1');
+    expect(formatTable(nested)).toContain('two  │ 2');
+    expect(formatCsv(nested)).toBe('id,name\n1,one\n2,two');
   });
 
   it('rejects an invalid --max-pages with the machine-readable error envelope', async () => {

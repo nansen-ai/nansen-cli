@@ -10,7 +10,7 @@
 export const DEFAULT_MAX_PAGES = 10;
 
 // Where list endpoints keep their rows. Mirrors formatTable/formatStream in cli.js.
-function locateRows(page) {
+export function locateRows(page, { descriptive = false } = {}) {
   if (Array.isArray(page)) return { rows: page, rebuild: rows => ({ data: rows }) };
   if (Array.isArray(page?.data)) return { rows: page.data, rebuild: rows => ({ ...page, data: rows }) };
   if (Array.isArray(page?.results)) return { rows: page.results, rebuild: rows => ({ ...page, results: rows }) };
@@ -20,13 +20,35 @@ function locateRows(page) {
   if (Array.isArray(page?.data?.results)) {
     return { rows: page.data.results, rebuild: rows => ({ ...page, data: { ...page.data, results: rows } }) };
   }
+
+  // Older endpoints use a descriptive top-level key (`trades`, `holdings`,
+  // `balances`, etc.) rather than `data`. A single array is unambiguous; do
+  // not guess when an envelope contains several independent arrays.
+  if (descriptive && page && typeof page === 'object' && page.success !== false) {
+    const arrays = Object.entries(page).filter(([, value]) => Array.isArray(value));
+    if (arrays.length === 1) {
+      const [key, rows] = arrays[0];
+      return { rows, rebuild: mergedRows => ({ ...page, [key]: mergedRows }) };
+    }
+  }
   return null;
+}
+
+function locatePagination(page) {
+  if (page?.pagination && typeof page.pagination === 'object') return page.pagination;
+  if (page?.data?.pagination && typeof page.data.pagination === 'object') return page.data.pagination;
+  return null;
+}
+
+function numericMetadata(value) {
+  if (value === null || value === undefined || value === '') return NaN;
+  return Number(value);
 }
 
 /**
  * Fetch pages starting at `pagination.page` (default 1) until one of:
  *   - a page is empty or shorter than the page size (last page),
- *   - the server's `pagination.total_pages` is reached,
+ *   - the server's pagination metadata says the traversal is complete,
  *   - a page adds no new rows (server ignored `page` / repeated cursor),
  *   - `maxPages` requests have been made (result marked `complete: false`).
  * Rows are de-duplicated by JSON identity so overlapping pages never repeat an
@@ -36,7 +58,7 @@ function locateRows(page) {
  */
 export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_MAX_PAGES } = {}) {
   const startPage = Math.max(1, Number(pagination?.page) || 1);
-  // ponytail: page size is learned from the first page when --limit is absent;
+  // The page size is learned from the first page when --limit is absent;
   // a short page then means "last page". Endpoints that ignore `page` return
   // the same rows again and stop on the duplicate check instead.
   let pageSize = pagination?.per_page;
@@ -46,14 +68,16 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
   let page = startPage;
   let pagesFetched = 0;
   let complete = false;
+  let firstPagination;
 
   while (pagesFetched < maxPages) {
     const res = await fetchPage({ ...pagination, page });
     pagesFetched++;
-    const located = locateRows(res);
+    const located = locateRows(res, { descriptive: true });
     if (first === undefined) {
       if (!located) return res;
       first = located;
+      firstPagination = locatePagination(res);
     }
     if (!located) { complete = true; break; }
 
@@ -67,10 +91,21 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
     }
     if (pageSize === undefined) pageSize = located.rows.length;
 
-    const totalPages = Number(res?.pagination?.total_pages);
+    const serverPagination = locatePagination(res);
+    const totalPages = numericMetadata(serverPagination?.total_pages);
+    const totalRows = numericMetadata(serverPagination?.total);
+    const serverPageSize = numericMetadata(serverPagination?.per_page);
+    const effectivePageSize = Number.isInteger(serverPageSize) && serverPageSize > 0
+      ? serverPageSize
+      : pageSize;
+    const serverSaysComplete = serverPagination?.is_last_page === true
+      || serverPagination?.has_more === false
+      || (Object.hasOwn(serverPagination || {}, 'next_page') && serverPagination.next_page === null)
+      || (Number.isInteger(totalRows) && effectivePageSize > 0 && page * effectivePageSize >= totalRows);
     const lastPage = located.rows.length === 0
       || fresh === 0
       || located.rows.length < pageSize
+      || serverSaysComplete
       || (Number.isInteger(totalPages) && page >= totalPages);
     if (lastPage) { complete = true; break; }
     page++;
@@ -78,7 +113,7 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
 
   const merged = first.rebuild(rows);
   merged.pagination = {
-    ...(merged.pagination && typeof merged.pagination === 'object' ? merged.pagination : {}),
+    ...(firstPagination || {}),
     page: startPage,
     pages_fetched: pagesFetched,
     next_page: complete ? null : page,

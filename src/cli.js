@@ -15,7 +15,7 @@ import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
 import { buildPagination, parseSort, parseCsvOption, rejectBlankOption } from './query-options.js';
-import { enableAutoPagination, DEFAULT_MAX_PAGES } from './auto-paginate.js';
+import { enableAutoPagination, DEFAULT_MAX_PAGES, locateRows } from './auto-paginate.js';
 export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
 import { compareSemver } from './semver.js';
@@ -366,16 +366,9 @@ export function formatValue(val) {
 // Table formatter for human-readable output
 export function formatTable(data) {
   // Extract array of records from various response shapes
-  let records = [];
-  if (Array.isArray(data)) {
-    records = data;
-  } else if (data?.data && Array.isArray(data.data)) {
-    records = data.data;
-  } else if (data?.results && Array.isArray(data.results)) {
-    records = data.results;
-  } else if (data?.data?.results && Array.isArray(data.data.results)) {
-    records = data.data.results;
-  } else if (typeof data === 'object' && data !== null) {
+  const located = locateRows(data, { descriptive: true });
+  let records = located?.rows || [];
+  if (!located && typeof data === 'object' && data !== null) {
     // Single object - convert to array
     records = [data];
   }
@@ -438,16 +431,9 @@ export function formatTable(data) {
  */
 export function formatCsv(data) {
   // Extract array of records from various response shapes
-  let records = [];
-  if (Array.isArray(data)) {
-    records = data;
-  } else if (data?.data && Array.isArray(data.data)) {
-    records = data.data;
-  } else if (data?.results && Array.isArray(data.results)) {
-    records = data.results;
-  } else if (data?.data?.results && Array.isArray(data.data.results)) {
-    records = data.data.results;
-  } else if (typeof data === 'object' && data !== null) {
+  const located = locateRows(data, { descriptive: true });
+  let records = located?.rows || [];
+  if (!located && typeof data === 'object' && data !== null) {
     records = [data];
   }
 
@@ -540,16 +526,9 @@ export function formatError(error) {
  */
 export function formatStream(data) {
   // Extract array of records from various response shapes
-  let records = [];
-  if (Array.isArray(data)) {
-    records = data;
-  } else if (data?.data && Array.isArray(data.data)) {
-    records = data.data;
-  } else if (data?.results && Array.isArray(data.results)) {
-    records = data.results;
-  } else if (data?.data?.results && Array.isArray(data.data.results)) {
-    records = data.data.results;
-  } else if (typeof data === 'object' && data !== null) {
+  const located = locateRows(data, { descriptive: true });
+  let records = located?.rows || [];
+  if (!located && typeof data === 'object' && data !== null) {
     // Single object - output as single line
     records = [data];
   }
