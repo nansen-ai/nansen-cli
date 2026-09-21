@@ -143,6 +143,8 @@ describe('redact', () => {
     expect(redactUrl(`https://api.example.test/reset/${FAKE_API_KEY}#apikey=${FAKE_API_KEY}`)).toBe(`https://api.example.test/reset/${REDACTED}`);
     expect(redactUrl(`/v1/x?secret=${FAKE_API_KEY}&chain=base`)).toBe(`/v1/x?secret=${REDACTED}&chain=base`);
     expect(redactUrl('/v1/x?note=%ZZ&chain=base')).toBe('/v1/x?note=%ZZ&chain=base');
+    expect(redactUrl(`/v1/x?note=ok?apikey=${FAKE_API_KEY}`))
+      .toBe(`/v1/x?note=ok?apikey=${REDACTED}`);
   });
 
   it('blanks credentials embedded in diagnostic prose', () => {

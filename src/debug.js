@@ -77,6 +77,9 @@ const EMBEDDED_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi;
 const EMBEDDED_NAMED_SECRET = /\b([\w-]*(?:key|token|secret|signature|password|passphrase|mnemonic|seed|auth|credential|cookie|private)[\w-]*)\s*([=:])\s*([^\s,;]+)/gi;
 const EMBEDDED_HEX_32_BYTES = /(?<![0-9a-fA-F])(?:0x)?[0-9a-fA-F]{64}(?![0-9a-fA-F])/g;
 const EMBEDDED_JWT = /\bey[\w-]{8,}\.[\w-]{4,}\.[\w-]+\b/g;
+// NOTE: This intentionally also hides public long identifiers in error prose
+// (for example Solana transaction signatures and block hashes). See README
+// "Debugging"; do not loosen the threshold without auditing credential leaks.
 const EMBEDDED_LONG_OPAQUE = /(?<![A-Za-z0-9_\-+/=.])[A-Za-z0-9_\-+/=.]{64,}(?![A-Za-z0-9_\-+/=.])/g;
 
 let forcedEnabled = null;
@@ -196,8 +199,10 @@ export function redactUrl(raw) {
   } catch {
     // Not parseable (a relative path, or a malformed URL). Fall back to a
     // textual pass over the query string so nothing leaks from the odd case.
-    const [base, query] = text.split('?');
-    if (!query) return truncate(text);
+    const queryIndex = text.indexOf('?');
+    if (queryIndex === -1) return truncate(text);
+    const base = text.slice(0, queryIndex);
+    const query = text.slice(queryIndex + 1);
     return truncate(`${base}?${redactQueryText(query)}`);
   }
 
@@ -233,7 +238,9 @@ function redactQueryText(query) {
       const value = pair.slice(index + 1);
       let decoded = value;
       try { decoded = decodeURIComponent(value); } catch { /* keep malformed encoding readable */ }
-      return `${key}=${isSecretName(key) || looksLikeSecretValue(decoded) ? REDACTED : value}`;
+      if (isSecretName(key)) return `${key}=${REDACTED}`;
+      const safe = redactString(decoded);
+      return `${key}=${safe === decoded ? value : safe}`;
     })
     .join('&');
 }
