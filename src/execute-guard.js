@@ -99,11 +99,18 @@ export async function guardExecution({
   confirmationLog(plan);
   const answer = await promptFn(question);
   if (!isAffirmative(answer)) {
-    throw new CommandError(
+    const error = new CommandError(
       'Aborted at the confirmation prompt — nothing was signed or broadcast. '
         + 'Pass --yes (or set NANSEN_YES=1) to skip this confirmation, or --dry-run to preview without broadcasting.',
       'CONFIRMATION_DECLINED',
     );
+    // The interactive user is looking at the same terminal channel as the
+    // prompt, so report the decline there exactly once. runCLI sees `reported`
+    // and does not also serialize an agent-oriented JSON envelope to stdout.
+    // Direct callers still receive the complete CommandError below.
+    confirmationLog(error.message);
+    error.reported = true;
+    throw error;
   }
   return true;
 }

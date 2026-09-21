@@ -118,8 +118,24 @@ describe('guardExecution', () => {
   });
 
   it('tells the aborting user how to skip the prompt next time', async () => {
-    await expect(guardExecution({ plan, isTTY: true, promptFn: async () => 'n', log: () => {} }))
-      .rejects.toThrow(/--yes.*NANSEN_YES=1.*--dry-run/s);
+    const confirmationLogs = [];
+    let caught;
+    try {
+      await guardExecution({
+        plan,
+        isTTY: true,
+        promptFn: async () => 'n',
+        log: () => {},
+        confirmationLog: message => confirmationLogs.push(message),
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toMatchObject({ code: 'CONFIRMATION_DECLINED', reported: true });
+    expect(caught.message).toMatch(/--yes.*NANSEN_YES=1.*--dry-run/s);
+    expect(confirmationLogs).toHaveLength(2);
+    expect(confirmationLogs[1]).toBe(caught.message);
   });
 
   it('fails closed when the prompt throws', async () => {
@@ -619,19 +635,22 @@ describe('trade execute --dry-run / --yes', () => {
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
     const quoteId = nativeQuote(showWallet('default').evm);
 
-    const out = [];
+    const stdout = [];
+    const stderr = [];
     const exit = vi.fn();
     await runCLI(['trade', 'execute', '--quote', quoteId], {
-      output: m => out.push(m),
-      errorOutput: () => {},
-      log: m => out.push(m),
+      output: m => stdout.push(m),
+      errorOutput: m => stderr.push(m),
+      log: m => stdout.push(m),
       exit,
       isTTY: true,
-      promptFn: async () => 'n',
+      confirmationPromptFn: async () => 'n',
     });
 
     expect(exit).toHaveBeenCalledWith(1);
-    expect(out.join('\n')).toContain('CONFIRMATION_DECLINED');
+    expect(stderr.join('\n')).toContain('Aborted at the confirmation prompt');
+    expect(stdout.join('\n')).not.toContain('CONFIRMATION_DECLINED');
+    expect(stdout.join('\n')).not.toContain('"success": false');
     expect(executeBodies).toHaveLength(0);
   });
 
@@ -653,7 +672,7 @@ describe('trade execute --dry-run / --yes', () => {
         errorOutput: message => stderr.push(message),
         log: message => stdout.push(message),
         exit,
-        promptFn,
+        confirmationPromptFn: promptFn,
       });
 
       expect(promptFn).toHaveBeenCalledTimes(1);

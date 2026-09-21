@@ -1209,7 +1209,11 @@ export function buildCommands(deps = {}) {
   // Allow dependency injection for testing
   const {
     api: _api = null,
+    // Password/API-key input belongs to login and may be hidden. Confirmation
+    // is a separate contract: callers must opt into it explicitly so this
+    // prompt can never be reused for an irreversible yes/no decision.
     promptFn = prompt,
+    confirmationPromptFn,
     log = console.log,
     errorOutput: _errorOutput = console.error,
     NansenAPIClass: _NansenAPIClass = NansenAPI,
@@ -2038,7 +2042,8 @@ export function buildCommands(deps = {}) {
   };
 
   // 'trade' delegates to quote/execute from buildTradingCommands and limit-order from buildLimitOrderCommands
-  const tradingCmds = buildTradingCommands(deps);
+  const executionDeps = { ...deps, promptFn: confirmationPromptFn };
+  const tradingCmds = buildTradingCommands(executionDeps);
   const limitOrderCmds = buildLimitOrderCommands(deps);
   cmds['trade'] = async (args, apiInstance, flags, options) => {
     const sub = args[0];
@@ -2076,7 +2081,7 @@ USAGE:
   };
 
   // 'bridge' delegates to quote/execute/status from buildBridgeCommands
-  const bridgeCmds = buildBridgeCommands(deps);
+  const bridgeCmds = buildBridgeCommands(executionDeps);
   cmds['bridge'] = async (args, apiInstance, flags, options) => {
     const sub = args[0];
     if (!sub || sub === 'help') {
@@ -2263,8 +2268,13 @@ export async function runCLI(rawArgs, deps = {}) {
   const inputInteractiveDeps = {
     ...deps,
     isTTY: isInputTTY,
-    promptFn: deps.promptFn ?? promptForConfirmation,
+    promptFn: deps.promptFn ?? prompt,
+    confirmationPromptFn: deps.confirmationPromptFn ?? promptForConfirmation,
     confirmationLog: deps.confirmationLog ?? errorOutput,
+  };
+  const topLevelTradingDeps = {
+    ...inputInteractiveDeps,
+    promptFn: inputInteractiveDeps.confirmationPromptFn,
   };
 
   let parsed;
@@ -2323,7 +2333,7 @@ export async function runCLI(rawArgs, deps = {}) {
   // modules retain their existing deps: notably wallet export interprets
   // `isTTY` as stdout visibility when deciding whether to warn about printing
   // private keys, so substituting the stdin signal there changes its semantics.
-  const commands = { ...buildCommands(inputInteractiveDeps), ...buildWalletCommands(deps), ...buildTradingCommands(inputInteractiveDeps), ...buildAlertsCommands(deps), ...buildAgentCommands(deps), ...buildMcpCommands({ ...deps, log: deps.log ?? output }), ...buildCompletionCommands({ ...deps, log: deps.log ?? output }), ...commandOverrides };
+  const commands = { ...buildCommands(inputInteractiveDeps), ...buildWalletCommands(deps), ...buildTradingCommands(topLevelTradingDeps), ...buildAlertsCommands(deps), ...buildAgentCommands(deps), ...buildMcpCommands({ ...deps, log: deps.log ?? output }), ...buildCompletionCommands({ ...deps, log: deps.log ?? output }), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);

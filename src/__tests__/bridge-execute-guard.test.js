@@ -8,7 +8,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('../wallet.js', () => ({
+vi.mock('../wallet.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   showWallet: vi.fn(),
   getWalletConfig: vi.fn(() => ({})),
   exportWallet: vi.fn(),
@@ -38,6 +39,7 @@ import path from 'path';
 
 import { exportWallet, getWalletConfig, showWallet } from '../wallet.js';
 import { buildBridgeCommands, buildBridgeExecutionPlan } from '../bridge.js';
+import { buildCommands } from '../cli.js';
 
 const ADDR = '0x' + 'ab'.repeat(20);
 // Real Base -> Hyperliquid deposit router/selector — the preflight rejects
@@ -275,6 +277,25 @@ describe('bridge execute --dry-run / --yes', () => {
       .rejects.toMatchObject({ code: 'UNEXPECTED_ACTION' });
 
     expect(promptFn).not.toHaveBeenCalled();
+    expect(exportWallet).not.toHaveBeenCalled();
+    expect(signEvmTransaction).not.toHaveBeenCalled();
+    expect(sendCalls()).toHaveLength(0);
+  });
+
+  it('does not reuse buildCommands password input as a confirmation prompt', async () => {
+    const quoteId = writeQuote('bridge-direct-build-commands');
+    const passwordPromptFn = vi.fn(async () => 'yes');
+    const cmds = buildCommands({
+      log: () => {},
+      promptFn: passwordPromptFn,
+      isTTY: true,
+      env: {},
+    });
+
+    await expect(cmds.bridge(['execute'], api, {}, { quote: quoteId, wallet: 'w' }))
+      .rejects.toMatchObject({ code: 'CONFIRMATION_UNAVAILABLE' });
+
+    expect(passwordPromptFn).not.toHaveBeenCalled();
     expect(exportWallet).not.toHaveBeenCalled();
     expect(signEvmTransaction).not.toHaveBeenCalled();
     expect(sendCalls()).toHaveLength(0);
