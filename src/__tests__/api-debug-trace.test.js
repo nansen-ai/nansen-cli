@@ -14,6 +14,9 @@ import { NansenAPI } from '../api.js';
 import { runCLI, parseArgs } from '../cli.js';
 import { isDebugEnabled, setDebugEnabled } from '../debug.js';
 
+// Deliberately shorter than the opaque-value redaction threshold: these
+// transport tests prove API-key header values are never traced at all, rather
+// than passing only because this fixture happens to look credential-shaped.
 const FAKE_API_KEY = 'test-key-00000000000000000000000000000000';
 const FAKE_PAYMENT_SIGNATURE = 'ZmFrZS14NDAyLXBheW1lbnQtc2lnbmF0dXJlLWZvci10ZXN0cy1vbmx5LW5vdC1yZWFs';
 const BASE_URL = 'https://api.example.test';
