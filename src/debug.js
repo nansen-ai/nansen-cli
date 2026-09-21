@@ -41,6 +41,8 @@ const SECRET_NAME = /key|token|secret|signature|password|passphrase|mnemonic|see
 // value-shape rules below already cover a real payment signature — keeping them in
 // this pattern only garbled prose like "payment was transmitted".
 // The value must look like a credential (8+ chars) so "Bearer token" stays readable.
+// Keep this matcher stateless (no /g): looksLikeSecretValue calls .test() on
+// it, while INLINE_SCHEME_ALL below is the separate global replacement copy.
 const INLINE_SCHEME = /\b(Bearer|Basic)\s+[\w.~+/=-]{8,}/i;
 const INLINE_SCHEME_ALL = new RegExp(INLINE_SCHEME.source, 'gi');
 
