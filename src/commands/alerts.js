@@ -132,7 +132,7 @@ function parseFiniteNumber(raw, name) {
 /**
  * Validate a single-value string filter option (e.g. --chain, --token-address).
  * Empty string/undefined mean "not provided"; any other non-string value
- * (e.g. `--chain true`, from parseArgs' JSON.parse of option values) is
+ * (e.g. `--chain '{}'`, from parseArgs' JSON.parse of option values) is
  * rejected instead of crashing on .toLowerCase() or being silently dropped
  * by a falsy check.
  */

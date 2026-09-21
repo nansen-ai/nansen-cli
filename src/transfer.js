@@ -957,7 +957,6 @@ function getExplorerUrl(chain, txHash) {
     bnb: 'https://bscscan.com/tx/',
     avalanche: 'https://snowtrace.io/tx/',
     linea: 'https://lineascan.build/tx/',
-    scroll: 'https://scrollscan.com/tx/',
     mantle: 'https://mantlescan.xyz/tx/',
   };
   const base = explorers[chain] || explorers.ethereum;

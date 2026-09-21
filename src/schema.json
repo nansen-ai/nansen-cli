@@ -387,10 +387,23 @@
             "nonce": {
               "type": "string",
               "description": "Sign at this nonce instead of the next one, to replace a stuck transaction (EVM deposit legs only)"
+            },
+            "dry-run": {
+              "type": "boolean",
+              "description": "Run every sign-free preflight available from the cached quote, its public signer address and read-only RPC calls; print the transfer that would be signed; then stop before wallet credentials and the first signature. Nothing is broadcast, no wallet password is needed, and the quote stays usable. Real execution still resolves and revalidates the live signer. Exits 0."
+            },
+            "yes": {
+              "type": "boolean",
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
           },
+          "examples": [
+            "nansen bridge execute --quote bridge-1708900000000-abc123",
+            "nansen bridge execute --quote bridge-1708900000000-abc123 --dry-run",
+            "nansen bridge execute --quote bridge-1708900000000-abc123 --yes"
+          ],
           "prerequisites": [
-            "A wallet must be configured. Run: nansen wallet create"
+            "A wallet must be configured for real execution. Dry-run can use the public signer saved in the cached quote."
           ]
         },
         "status": {
@@ -2026,6 +2039,9 @@
       "subcommands": {
         "quote": {
           "description": "Get a DEX swap quote (same-chain or cross-chain). Explicitly blank --swap-mode, --wallet, --to-chain, --aggregator, and --amount-unit values are rejected.",
+          "apiEndpoints": [
+            "/api/v1/sanctions/screen"
+          ],
           "options": {
             "chain": {
               "type": "string",
@@ -2091,11 +2107,15 @@
             }
           },
           "prerequisites": [
-            "A local wallet must be configured. Run: nansen wallet create"
+            "A local wallet must be configured. Run: nansen wallet create",
+            "API access is required for pre-trade compliance screening. Run: nansen login (or set NANSEN_API_KEY)"
           ]
         },
         "execute": {
           "description": "Sign and broadcast a quoted trade. Explicitly blank --wallet values are rejected.",
+          "apiEndpoints": [
+            "/api/v1/sanctions/screen"
+          ],
           "options": {
             "quote": {
               "type": "string",
@@ -2130,8 +2150,24 @@
             "no-revoke-excessive-allowance": {
               "type": "boolean",
               "description": "Skip revoking an existing on-chain ERC-20 allowance before re-approving when it exceeds 10x this trade's scoped amount. By default, an oversized or legacy allowance is revoked to zero and a fresh trade-scoped allowance is granted. WalletConnect users will see separate wallet prompts for the revoke and re-approval."
+            },
+            "dry-run": {
+              "type": "boolean",
+              "description": "Run every sign-free preflight available from the cached quote, its public signer address and read-only RPC calls; plan the approval and print what would be sent; then stop before wallet credentials or signing. Nothing is signed or broadcast, no wallet password is needed, and the quote stays usable. Real execution still resolves and revalidates the live signer. On EVM preview also reads the current allowance and runs the pre-broadcast revert simulation when no approval is outstanding. Exits 0."
+            },
+            "yes": {
+              "type": "boolean",
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
-          }
+          },
+          "examples": [
+            "nansen trade execute --quote 1708900000000-abc123",
+            "nansen trade execute --quote 1708900000000-abc123 --dry-run",
+            "nansen trade execute --quote 1708900000000-abc123 --yes"
+          ],
+          "prerequisites": [
+            "API access is required for pre-trade compliance screening. Run: nansen login (or set NANSEN_API_KEY)"
+          ]
         },
         "bridge-status": {
           "description": "Check cross-chain bridge transaction status. Aggregator (Li.Fi or Relay) is auto-detected from a local tx record saved at execute time (kept 30 days); pass --aggregator to override when polling from a different machine.",
@@ -2309,10 +2345,18 @@
               "type": "boolean",
               "description": "Skip encryption; private keys are stored unencrypted on disk (local only)"
             }
-          }
+          },
+          "examples": [
+            "nansen wallet create --name trading",
+            "nansen wallet create --name agent-wallet --provider privy"
+          ]
         },
         "list": {
-          "description": "List all wallets"
+          "description": "List all wallets",
+          "examples": [
+            "nansen wallet list",
+            "nansen wallet list --pretty"
+          ]
         },
         "show": {
           "description": "Show wallet details",
@@ -2320,7 +2364,10 @@
             "name": {
               "description": "Wallet name"
             }
-          }
+          },
+          "examples": [
+            "nansen wallet show <name>"
+          ]
         },
         "send": {
           "description": "Send tokens or native currency. Explicitly blank --token and --wallet values are rejected; omit them for native currency and the default wallet.",
@@ -2344,7 +2391,11 @@
               "type": "boolean",
               "description": "Send the entire spendable balance instead of --amount"
             }
-          }
+          },
+          "examples": [
+            "nansen wallet send --to <address> --amount 1.5 --chain evm",
+            "nansen wallet send --to <address> --max --chain solana"
+          ]
         },
         "export": {
           "description": "Export private keys (redacted by default; pass --reveal or --file <path> for the actual keys)",
@@ -2357,13 +2408,36 @@
               "type": "string",
               "description": "Write private keys to this path instead of stdout (created with 0600 permissions, refuses to overwrite)"
             }
-          }
+          },
+          "examples": [
+            "nansen wallet export <name>",
+            "nansen wallet export <name> --file backup.json"
+          ]
         },
         "delete": {
-          "description": "Delete a wallet"
+          "description": "Delete a wallet",
+          "examples": [
+            "nansen wallet delete <name>"
+          ]
         },
         "default": {
-          "description": "Set default wallet"
+          "description": "Set default wallet",
+          "examples": [
+            "nansen wallet default <name>"
+          ]
+        },
+        "forget-password": {
+          "description": "Forget the saved wallet password, removing it from the OS keychain and from the local credentials file. Later commands fall back to NANSEN_WALLET_PASSWORD or an interactive prompt (--human).",
+          "examples": [
+            "nansen wallet forget-password"
+          ]
+        },
+        "secure": {
+          "description": "Move a wallet password that is held in the local credentials file or in NANSEN_WALLET_PASSWORD into the OS keychain, then delete the plaintext copy. Verifies the password against the stored hash first, reports success when it is already in the keychain, and fails with KEYCHAIN_UNAVAILABLE when no OS keychain is reachable.",
+          "examples": [
+            "nansen wallet secure",
+            "NANSEN_WALLET_PASSWORD=<password> nansen wallet secure"
+          ]
         }
       }
     },
@@ -2661,24 +2735,42 @@
     }
   },
   "chains": [
-    "ethereum",
-    "solana",
-    "base",
-    "bnb",
+    "algorand",
+    "aptos",
     "arbitrum",
-    "polygon",
-    "optimism",
+    "arc",
     "avalanche",
-    "linea",
-    "scroll",
-    "mantle",
-    "ronin",
-    "sei",
-    "plasma",
-    "sonic",
-    "monad",
+    "base",
+    "bitcoin",
+    "bitlayer",
+    "bnb",
+    "chiliz",
+    "citrea",
+    "ethereum",
+    "gravity",
     "hyperevm",
-    "iotaevm"
+    "hyperliquid",
+    "injective",
+    "iotaevm",
+    "linea",
+    "mantle",
+    "mantra",
+    "monad",
+    "near",
+    "optimism",
+    "plasma",
+    "polygon",
+    "robinhood",
+    "sei",
+    "solana",
+    "sonic",
+    "stacks",
+    "starknet",
+    "stellar",
+    "sui",
+    "ton",
+    "tron",
+    "viction"
   ],
   "smartMoneyLabels": [
     "Fund",

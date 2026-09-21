@@ -43,7 +43,7 @@ function intHeader(response, name) {
  * Read a header as a trimmed non-empty string, or null when absent.
  * Tolerates any header bag with a .get() — a real Headers, or a Map in tests.
  */
-function stringHeader(response, name) {
+export function stringHeader(response, name) {
   const raw = response?.headers?.get?.(name);
   if (raw == null) return null;
   const value = String(raw).trim();

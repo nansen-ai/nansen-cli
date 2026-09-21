@@ -581,6 +581,25 @@ export async function deleteWallet(name, password) {
 // ============= CLI Command Builder =============
 
 /**
+ * Every `nansen wallet` subcommand the dispatcher below accepts, in the order
+ * they are advertised to users. `help` is deliberately absent: it is the
+ * fallback, not a capability. The top-level help banner builds its wallet line
+ * from this list, and command-surface.test.js checks the handlers, README and
+ * src/schema.json against it so the four cannot drift apart.
+ */
+export const WALLET_SUBCOMMANDS = [
+  'create',
+  'list',
+  'show',
+  'export',
+  'default',
+  'delete',
+  'send',
+  'forget-password',
+  'secure',
+];
+
+/**
  * Build wallet command handlers for integration into CLI.
  */
 export function buildWalletCommands(deps = {}) {
@@ -762,10 +781,10 @@ export function buildWalletCommands(deps = {}) {
             throw new CommandError('Usage: nansen wallet export <name> [--reveal | --file <path>]', 'MISSING_ARGS');
           }
 
-          // Bare `--file` parses as flags.file, `--file true` JSON-parses to a
-          // boolean, and `--file ""` (an unset shell variable) is an empty path
-          // that would only fail at open time — reject all of them before any
-          // secret is decrypted.
+          // Bare `--file` parses as flags.file, a repeated or JSON-array `--file`
+          // arrives as a non-string, and `--file ""` (an unset shell variable) is
+          // an empty path that would only fail at open time — reject all of them
+          // before any secret is decrypted.
           const wantsFile = options.file !== undefined || flags.file;
           if (wantsFile && (typeof options.file !== 'string' || options.file === '')) {
             throw new CommandError('--file requires a path: nansen wallet export <name> --file <path>', 'INVALID_INPUT');

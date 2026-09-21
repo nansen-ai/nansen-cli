@@ -72,7 +72,7 @@ Plus the `historical-*` point-in-time commands — run `nansen research help` fo
 
 **Trade:** `quote`, `execute`, `bridge-status`, `limit-order` — DEX swaps on Solana and Base, cross-chain bridges, and Solana limit orders.
 
-**Wallet:** `create`, `list`, `show`, `export`, `default`, `delete`, `send` — local or Privy server-side wallets (EVM + Solana).
+**Wallet:** `create`, `list`, `show`, `export`, `default`, `delete`, `send`, `forget-password`, `secure` — local or Privy server-side wallets (EVM + Solana).
 
 Run `nansen schema --pretty` for the full subcommand and field reference.
 
@@ -163,6 +163,24 @@ nansen trade execute --quote <quoteId> --gasless      # Relay-only: solver pays 
 nansen trade bridge-status --tx-hash <hash> --from-chain base --to-chain solana
 ```
 
+### Before broadcasting
+
+`trade execute` and `bridge execute` move funds irreversibly, so both accept:
+
+```bash
+nansen trade execute --quote <quoteId> --dry-run   # validate + print the plan, broadcast nothing
+nansen trade execute --quote <quoteId> --yes       # skip the confirmation prompt (also: -y)
+```
+
+`--dry-run` runs every sign-free preflight available from the cached quote, its public signer address, and read-only RPC calls; prints what *would* be sent (chain, tokens, amounts, recipient, approvals, fees); and stops before wallet credentials, signing, or broadcast — no wallet password needed, the quote stays usable, exit code 0. Real execution still resolves and revalidates the live signer before signing.
+
+When stdin is an interactive terminal, execute prints that plan and asks `Broadcast this transaction? [y/N]` first; anything but `y`/`yes` aborts with exit code 1 and nothing signed. `--yes`, or `NANSEN_YES=1`, skips the question. **When stdin is not a terminal — agents, CI, pipes — nothing changes: the command proceeds without prompting**, and `--yes` is accepted as a no-op so it is always safe to pass.
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Broadcast succeeded, or the dry run completed |
+| `1` | Declined at the confirmation prompt, or the execution failed |
+
 Amounts are in base units (lamports, wei) by default — use `--amount-unit token|usd|percent` for friendlier inputs. Common symbols (`SOL`, `ETH`, `USDC`, `USDT`) resolve automatically. A wallet is required — set one with `nansen wallet default <name>`.
 
 ## Limit Orders
@@ -213,11 +231,12 @@ Move USDC between EVM chains and Hyperliquid via `nansen bridge`. Uses the same 
 ```bash
 nansen bridge quote --from-chain base --to-chain hyperliquid --from-token USDC --amount 1000000
 nansen bridge execute --quote <quoteId>
+nansen bridge execute --quote <quoteId> --dry-run                     # preview, nothing is broadcast
 nansen bridge execute --quote <quoteId> --nonce 20 --priority-fee 5   # replace a stuck EVM deposit
 nansen bridge status --request-id <id>
 ```
 
-Supported routes: `base → hyperliquid` (deposit), and `hyperliquid → base`/`ethereum`/`arbitrum` (withdraw). Deposits broadcast an EVM transaction locally, so only Base is offered on the deposit side; run `nansen bridge help` for the current list. `--amount` is a base-unit integer by default; pass `--amount-unit token` for a human amount. `--recipient` defaults to the wallet's own EVM address. `--priority-fee`/`--max-fee` (gwei) and `--nonce` apply only to EVM deposit legs and let a stuck transaction be replaced. Bridge transfers are irreversible once signed.
+Supported routes: `base → hyperliquid` (deposit), and `hyperliquid → base`/`ethereum`/`arbitrum` (withdraw). Deposits broadcast an EVM transaction locally, so only Base is offered on the deposit side; run `nansen bridge help` for the current list. `--amount` is a base-unit integer by default; pass `--amount-unit token` for a human amount. `--recipient` defaults to the wallet's own EVM address. `--priority-fee`/`--max-fee` (gwei) and `--nonce` apply only to EVM deposit legs and let a stuck transaction be replaced. Bridge transfers are irreversible once signed, so `bridge execute` takes the same `--dry-run` and `--yes`/`NANSEN_YES` gate as `trade execute` (see [Before broadcasting](#before-broadcasting)); on a multi-step transfer, a dry run stops before the first step.
 
 ## Wallet
 
@@ -227,6 +246,8 @@ nansen wallet create --name my-wallet --provider privy  # server-side via Privy
 nansen wallet list
 nansen wallet default <name>
 nansen wallet send --wallet <name> --to <addr> --amount <n> --chain <chain>
+nansen wallet secure                         # move a saved password into the OS keychain
+nansen wallet forget-password                # drop the saved password from every store
 ```
 
 **Local wallets** are password-encrypted. Set `NANSEN_WALLET_PASSWORD` to skip the prompt.
@@ -296,7 +317,7 @@ after upgrading the CLI to pick up new commands.
 | `--chain <chain>` | Blockchain to query |
 | `--limit <n>` | Result count |
 | `--timeframe <tf>` | Time window: `5m` `1h` `6h` `24h` `7d` `30d` |
-| `--fields <list>` | Comma-separated fields (reduces response size) |
+| `--fields <list>` | Comma-separated fields (reduces response size); a bare name matches at any depth, a dotted path such as `data.results.address` only at that position |
 | `--sort <field:dir>` | Sort results, e.g. `--sort value_usd:desc` |
 | `--pretty` | Human-readable JSON |
 | `--table` | Table format |
@@ -307,7 +328,7 @@ after upgrading the CLI to pick up new commands.
 
 ## Supported Chains
 
-`ethereum` `solana` `base` `bnb` `arbitrum` `polygon` `optimism` `avalanche` `linea` `scroll` `mantle` `ronin` `sei` `plasma` `sonic` `monad` `hyperevm` `iotaevm`
+`algorand` `aptos` `arbitrum` `arc` `avalanche` `base` `bitcoin` `bitlayer` `bnb` `chiliz` `citrea` `ethereum` `gravity` `hyperevm` `hyperliquid` `injective` `iotaevm` `linea` `mantle` `mantra` `monad` `near` `optimism` `plasma` `polygon` `robinhood` `sei` `solana` `sonic` `stacks` `starknet` `stellar` `sui` `ton` `tron` `viction`
 
 > Run `nansen schema` to get the current chain list (source of truth).
 
@@ -349,8 +370,12 @@ counted as charges. Combine with `--stream` for NDJSON.
 | `UNAUTHORIZED` | Wrong or missing key. Re-auth. |
 | `RATE_LIMITED` | Auto-retried by CLI. `details.rateLimit.resetSeconds` is how long the window needs to drain. |
 | `UNSUPPORTED_FILTER` | Remove the filter and retry. |
+| `PLAN_UPGRADE_REQUIRED` | The endpoint or option needs a higher subscription plan. Do not retry. |
+| `GEO_BLOCKED` | Not available in your region. Do not retry. |
 | `SERVER_ERROR` | Not your fault. Quote `details.requestId` when reporting it. |
 | `COMMAND_UNAVAILABLE` | The command is no longer available. For points leaderboard, run `nansen research` to explore other analytics commands. |
+
+Every code documented on the API's [error-handling page](https://docs.nansen.ai/getting-started/error-handling) maps onto a stable CLI error code; a code the CLI does not recognise is passed through unchanged.
 
 **Error metadata.** When the API reports them, `details` carries:
 

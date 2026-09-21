@@ -42,6 +42,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # The default checkout is one detached commit with no `main` ref, which left
+      # the changeset check in `pretest` nothing to diff against, so it skipped
+      # itself on every PR. Fetch just the tip of main: the check compares trees,
+      # so it does not need history.
+      - name: Fetch main for the changeset check
+        run: git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
