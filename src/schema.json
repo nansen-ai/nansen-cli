@@ -390,7 +390,7 @@
             },
             "dry-run": {
               "type": "boolean",
-              "description": "Validate the quote, wallet and recipient, print the transfer that would be signed, then stop before the first signature. Nothing is broadcast, no wallet password is needed, and the quote stays usable. Exits 0."
+              "description": "Run every sign-free preflight available from the cached quote, its public signer address and read-only RPC calls; print the transfer that would be signed; then stop before wallet credentials and the first signature. Nothing is broadcast, no wallet password is needed, and the quote stays usable. Real execution still resolves and revalidates the live signer. Exits 0."
             },
             "yes": {
               "type": "boolean",
@@ -403,7 +403,7 @@
             "nansen bridge execute --quote bridge-1708900000000-abc123 --yes"
           ],
           "prerequisites": [
-            "A wallet must be configured. Run: nansen wallet create"
+            "A wallet must be configured for real execution. Dry-run can use the public signer saved in the cached quote."
           ]
         },
         "status": {
@@ -2153,7 +2153,7 @@
             },
             "dry-run": {
               "type": "boolean",
-              "description": "Validate the quote, plan the approval and print what would be sent, then stop before signing. Nothing is signed or broadcast, no wallet password is needed, and the quote stays usable. On EVM it also reads the current allowance and runs the pre-broadcast revert simulation when no approval is outstanding. Exits 0."
+              "description": "Run every sign-free preflight available from the cached quote, its public signer address and read-only RPC calls; plan the approval and print what would be sent; then stop before wallet credentials or signing. Nothing is signed or broadcast, no wallet password is needed, and the quote stays usable. Real execution still resolves and revalidates the live signer. On EVM preview also reads the current allowance and runs the pre-broadcast revert simulation when no approval is outstanding. Exits 0."
             },
             "yes": {
               "type": "boolean",

@@ -172,7 +172,7 @@ nansen trade execute --quote <quoteId> --dry-run   # validate + print the plan, 
 nansen trade execute --quote <quoteId> --yes       # skip the confirmation prompt (also: -y)
 ```
 
-`--dry-run` runs the same validation as a real execute, prints what *would* be sent (chain, tokens, amounts, recipient, approvals, fees) and stops before signing — no wallet password needed, the quote stays usable, exit code 0.
+`--dry-run` runs every sign-free preflight available from the cached quote, its public signer address, and read-only RPC calls; prints what *would* be sent (chain, tokens, amounts, recipient, approvals, fees); and stops before wallet credentials, signing, or broadcast — no wallet password needed, the quote stays usable, exit code 0. Real execution still resolves and revalidates the live signer before signing.
 
 When stdin is an interactive terminal, execute prints that plan and asks `Broadcast this transaction? [y/N]` first; anything but `y`/`yes` aborts with exit code 1 and nothing signed. `--yes`, or `NANSEN_YES=1`, skips the question. **When stdin is not a terminal — agents, CI, pipes — nothing changes: the command proceeds without prompting**, and `--yes` is accepted as a no-op so it is always safe to pass.
 

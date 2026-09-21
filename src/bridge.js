@@ -1518,7 +1518,7 @@ function parseBridgeAmount(raw, amountUnit) {
  * confirmation prompt and for --dry-run. Built entirely from the cached quote
  * and the resolved signer — it touches no wallet material.
  */
-function buildBridgeExecutionPlan({ quoteId, quoteData, signerAddress, overrides }) {
+export function buildBridgeExecutionPlan({ quoteId, quoteData, signerAddress, overrides }) {
   const response = quoteData.response || {};
   const details = response.details || {};
   const currencyIn = details.currencyIn || {};
@@ -1527,6 +1527,10 @@ function buildBridgeExecutionPlan({ quoteId, quoteData, signerAddress, overrides
   const steps = response.steps || [];
   const sendAmount = currencyIn.amountFormatted
     || (quoteData.requestedAmountBaseUnits != null ? `${quoteData.requestedAmountBaseUnits} base units` : null);
+  // Keep malformed seam inputs out of user-facing plans. formatPlan omits null
+  // rows, but a template literal would otherwise turn an absent signer into a
+  // visible `undefined (same address)` recipient.
+  const planSignerAddress = signerAddress || null;
 
   return formatPlan(`Bridge plan — ${quoteData.originChain} → ${quoteData.destinationChain}`, [
     ['Quote', quoteId],
@@ -1534,8 +1538,8 @@ function buildBridgeExecutionPlan({ quoteId, quoteData, signerAddress, overrides
     ['Send', [sendAmount, currencyIn.currency?.symbol].filter(Boolean).join(' ') || null],
     ['Receive', currencyOut.amountFormatted ? `~${[currencyOut.amountFormatted, currencyOut.currency?.symbol].filter(Boolean).join(' ')}` : null],
     ['Fee', relayerFee.amountUsd ? `$${relayerFee.amountUsd}` : null],
-    ['Wallet', signerAddress],
-    ['Recipient', quoteData.recipient || `${signerAddress} (same address)`],
+    ['Wallet', planSignerAddress],
+    ['Recipient', quoteData.recipient || (planSignerAddress ? `${planSignerAddress} (same address)` : null)],
     ['Steps', steps.map(s => `${s.id} (${s.kind})`).join(', ') || null],
     ['Overrides', overrides || null],
   ]);
@@ -1822,6 +1826,15 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         ? null
         : resolveWalletAddress(walletName);
       const signerAddress = signer?.address || quotedWalletAddress;
+      // resolveEvmWallet and validateQuotedWalletAddress already guarantee this
+      // in production. Keep an explicit boundary before compliance screening
+      // so a malformed injected seam can never turn into screenOrThrow([undefined]).
+      if (!signerAddress) {
+        throw new CommandError(
+          `Quote "${quoteId}" has no valid signer address. Request a fresh quote with "nansen bridge quote".`,
+          'INVALID_WALLET',
+        );
+      }
       if (
         signer &&
         quotedWalletAddress &&

@@ -58,7 +58,7 @@ nansen trade execute --quote <quote-id> --dry-run   # preview only, nothing is b
 nansen trade execute --quote <quote-id> --yes       # skip the confirmation prompt
 ```
 
-**`--dry-run`** runs the same validation as a real execute, prints the trade that *would* be sent (chain, tokens, amounts, recipient, approval, fees) and stops before anything is signed. No wallet password is needed, the quote is not consumed, and the command exits 0. On Base it also reads the current token allowance and runs the pre-broadcast revert simulation when no approval is outstanding.
+**`--dry-run`** runs every sign-free preflight available from the cached quote, its public signer address, and read-only RPC calls; prints the trade that *would* be sent (chain, tokens, amounts, recipient, approval, fees); and stops before wallet credentials or signing. No wallet password is needed, the quote is not consumed, and the command exits 0. Real execution still resolves and revalidates the live signer. On Base, preview also reads the current token allowance and runs the pre-broadcast revert simulation when no approval is outstanding.
 
 **Confirmation.** When stdin is an interactive terminal, `execute` prints the plan and asks `Broadcast this transaction? [y/N]` before broadcasting. Answering anything but `y`/`yes` aborts with exit code 1 and nothing signed. Pass `--yes` (`-y`), or set `NANSEN_YES=1`, to skip the question.
 

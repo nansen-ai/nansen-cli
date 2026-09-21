@@ -2913,6 +2913,12 @@ EXAMPLES:
         const planUsesWalletConnect = quoteData.signerType === 'walletconnect'
           || walletName === 'walletconnect' || walletName === 'wc';
         if (guard.dryRun) {
+          // The live signer is intentionally unavailable here: dry-run reaches
+          // this gate before wallet material or a WalletConnect session is
+          // resolved. Screen the public signer recorded in the cached request
+          // (or legacy response metadata) plus its distinct recipient for the
+          // preview. Real execution resolves the live signer below and screens
+          // it again immediately before signing.
           const previewScreenAddresses = tradeScreeningAddresses(
             quoteData.request?.walletAddress || quoteData.response?.metadata?.userWalletAddress,
             quoteData.request?.recipient,
@@ -2985,6 +2991,13 @@ EXAMPLES:
           ? '\n  The CLI may try these candidates in order until one broadcasts successfully.'
           : '';
         const plan = `${plans.join('\n')}${fallbackNotice}`;
+        // An interactive user only consented to candidates that passed the
+        // sign-free preflight and appeared in this plan. Do not later retry a
+        // candidate omitted after a transient or deterministic preflight
+        // failure; it could otherwise recover and broadcast unseen.
+        const consentedCandidateIndexes = shouldPreflightPlan
+          ? new Set(validatedPlanCandidates.map(({ index }) => index))
+          : null;
         const proceed = await guardExecution({
           plan,
           ...guard,
@@ -3102,6 +3115,7 @@ EXAMPLES:
         const verifiedTargets = new Set();
 
         for (let qi = startIndex; qi < endIndex; qi++) {
+          if (consentedCandidateIndexes && !consentedCandidateIndexes.has(qi)) continue;
           const currentQuote = allQuotes[qi];
           if (!currentQuote) continue;
 

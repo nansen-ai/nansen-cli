@@ -2260,7 +2260,7 @@ export async function runCLI(rawArgs, deps = {}) {
   // Pass the CLI-owned terminal seams into command modules. Keeping these out
   // of core means direct/library callers are non-interactive unless they
   // explicitly provide a prompt.
-  const commandDeps = {
+  const inputInteractiveDeps = {
     ...deps,
     isTTY: isInputTTY,
     promptFn: deps.promptFn ?? promptForConfirmation,
@@ -2319,7 +2319,11 @@ export async function runCLI(rawArgs, deps = {}) {
 
   // mcp prints its own output via `log`; runCLI callers inject their stdout
   // sink as `output`, so map it across (an explicit `log` dep still wins).
-  const commands = { ...buildCommands(commandDeps), ...buildWalletCommands(commandDeps), ...buildTradingCommands(commandDeps), ...buildAlertsCommands(commandDeps), ...buildAgentCommands(commandDeps), ...buildMcpCommands({ ...commandDeps, log: deps.log ?? output }), ...buildCompletionCommands({ ...commandDeps, log: deps.log ?? output }), ...commandOverrides };
+  // Only execute/login handlers consume the stdin-interactivity seam. Other
+  // modules retain their existing deps: notably wallet export interprets
+  // `isTTY` as stdout visibility when deciding whether to warn about printing
+  // private keys, so substituting the stdin signal there changes its semantics.
+  const commands = { ...buildCommands(inputInteractiveDeps), ...buildWalletCommands(deps), ...buildTradingCommands(inputInteractiveDeps), ...buildAlertsCommands(deps), ...buildAgentCommands(deps), ...buildMcpCommands({ ...deps, log: deps.log ?? output }), ...buildCompletionCommands({ ...deps, log: deps.log ?? output }), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);

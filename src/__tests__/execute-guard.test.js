@@ -499,6 +499,59 @@ describe('trade execute --dry-run / --yes', () => {
     expect(executeBodies).toHaveLength(0);
   });
 
+  it('never broadcasts a fallback candidate omitted from the confirmation plan', async () => {
+    stubFetch({ allowBroadcast: true });
+    const baseFetch = globalThis.fetch;
+    let ethCallCount = 0;
+    const codeTargets = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      if (body.method === 'eth_getCode') codeTargets.push(body.params?.[0]);
+      if (body.method === 'eth_call' && ++ethCallCount === 1) {
+        return {
+          ok: true,
+          text: async () => JSON.stringify({
+            jsonrpc: '2.0',
+            id: body.id || 1,
+            error: { message: 'execution reverted: transient preflight failure' },
+          }),
+        };
+      }
+      return baseFetch(url, opts);
+    }));
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    const walletAddress = showWallet('default').evm;
+    const quoteId = nativeQuote(walletAddress);
+    const quotePath = path.join(tmpHome, '.nansen', 'quotes', `${quoteId}.json`);
+    const saved = JSON.parse(fs.readFileSync(quotePath, 'utf8'));
+    const consentedTarget = '0x' + 'cd'.repeat(20);
+    saved.response.quotes.push({
+      ...saved.response.quotes[0],
+      aggregator: 'relay',
+      transaction: {
+        ...saved.response.quotes[0].transaction,
+        to: consentedTarget,
+        data: '0x87654321',
+      },
+    });
+    fs.writeFileSync(quotePath, JSON.stringify(saved, null, 2));
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      log: message => logs.push(message),
+      promptFn: async () => 'yes',
+      isTTY: true,
+      env: {},
+    });
+    await cmds.execute([], api, { 'no-verify-outcome': true }, { quote: quoteId });
+
+    expect(logs.join('\n')).not.toContain('(quote 1 of 2)');
+    expect(logs.join('\n')).toContain('(quote 2 of 2)');
+    expect(codeTargets.at(-1)).toBe(consentedTarget);
+    expect(executeBodies).toHaveLength(1);
+  });
+
   it('broadcasts after an interactive "y"', async () => {
     stubFetch({ allowBroadcast: true });
     createWallet('default', 'testpass');

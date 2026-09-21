@@ -37,7 +37,7 @@ import os from 'os';
 import path from 'path';
 
 import { exportWallet, getWalletConfig, showWallet } from '../wallet.js';
-import { buildBridgeCommands } from '../bridge.js';
+import { buildBridgeCommands, buildBridgeExecutionPlan } from '../bridge.js';
 
 const ADDR = '0x' + 'ab'.repeat(20);
 // Real Base -> Hyperliquid deposit router/selector — the preflight rejects
@@ -110,6 +110,22 @@ describe('bridge execute --dry-run / --yes', () => {
 
   const sendCalls = () =>
     evmRpcCall.mock.calls.filter(([, method]) => method === 'eth_sendRawTransaction');
+
+  it('omits wallet and derived recipient rows when a signer seam is malformed', () => {
+    const plan = buildBridgeExecutionPlan({
+      quoteId: 'malformed-signer-plan',
+      quoteData: {
+        originChain: 'base',
+        destinationChain: 'hyperliquid',
+        response: { execution_type: 'evm_transaction', steps: [] },
+      },
+      signerAddress: undefined,
+    });
+
+    expect(plan).not.toContain('Wallet:');
+    expect(plan).not.toContain('Recipient:');
+    expect(plan).not.toContain('undefined');
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
