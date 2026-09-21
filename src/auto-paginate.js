@@ -17,10 +17,26 @@ export function locateRows(page, { descriptive = false } = {}) {
   if (Array.isArray(page?.data)) return { rows: page.data, rebuild: rows => ({ ...page, data: rows }) };
   if (Array.isArray(page?.results)) return { rows: page.results, rebuild: rows => ({ ...page, results: rows }) };
   if (Array.isArray(page?.data?.data)) {
-    return { rows: page.data.data, rebuild: rows => ({ ...page, data: { ...page.data, data: rows } }) };
+    return {
+      rows: page.data.data,
+      rebuild: rows => {
+        const data = { ...page.data, data: rows };
+        // The traversal summary is canonical at the top level. Keeping the
+        // first page's nested pagination would expose stale next-page state.
+        delete data.pagination;
+        return { ...page, data };
+      },
+    };
   }
   if (Array.isArray(page?.data?.results)) {
-    return { rows: page.data.results, rebuild: rows => ({ ...page, data: { ...page.data, results: rows } }) };
+    return {
+      rows: page.data.results,
+      rebuild: rows => {
+        const data = { ...page.data, results: rows };
+        delete data.pagination;
+        return { ...page, data };
+      },
+    };
   }
 
   // Older endpoints use a descriptive top-level key (`trades`, `holdings`,

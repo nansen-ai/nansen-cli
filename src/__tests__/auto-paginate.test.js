@@ -101,7 +101,23 @@ describe('collectPages', () => {
     const res = await collectPages(fetchPage, { page: 1, per_page: 2 });
     expect(fetchPage).toHaveBeenCalledTimes(1);
     expect(res.data.data).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(res.data.pagination).toBeUndefined();
     expect(res.pagination).toMatchObject({ total_pages: 1, pages_fetched: 1, complete: true });
+  });
+
+  it('removes stale nested pagination from a data.results envelope', async () => {
+    const fetchPage = vi.fn(async () => ({
+      data: {
+        results: [{ id: 1 }],
+        pagination: { page: 1, per_page: 1, next_page: null },
+      },
+    }));
+
+    const res = await collectPages(fetchPage, { page: 1, per_page: 1 });
+
+    expect(res.data.results).toEqual([{ id: 1 }]);
+    expect(res.data.pagination).toBeUndefined();
+    expect(res.pagination).toMatchObject({ page: 1, pages_fetched: 1, complete: true });
   });
 
   it('does not treat null totals as zero-row completion metadata', async () => {

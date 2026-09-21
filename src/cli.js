@@ -371,6 +371,10 @@ function parseNonNegativeSafeIntegerOption(name, options, flags, defaultValue) {
     'non-negative safe integer',
   );
 
+  // Callers without an option or default intentionally receive undefined.
+  // Do not rely on JavaScript's `undefined < 0` coercion for that contract.
+  if (value === undefined) return undefined;
+
   if (value < 0) {
     throw new NansenError(
       `--${name} must be a non-negative safe integer; received: ${value}`,
@@ -389,6 +393,10 @@ function parsePositiveSafeIntegerOption(name, options, flags, defaultValue) {
     defaultValue,
     'positive safe integer',
   );
+
+  // Keep the helper safe for future optional callers even though
+  // --max-pages currently always supplies DEFAULT_MAX_PAGES.
+  if (value === undefined) return undefined;
 
   if (value < 1) {
     throw new NansenError(
