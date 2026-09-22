@@ -1805,6 +1805,9 @@ export function buildCommands(deps = {}) {
           if (search) {
             const q = search.toLowerCase();
             const offset = (requestedPage - 1) * requestedLimit;
+            // Filtering only replaces the row array. With --paginate, the
+            // preserved pagination metadata describes candidate traversal,
+            // not the number of client-side matches.
             const filterArr = (arr) => {
               const matching = arr.filter(t =>
               (t.token_symbol && t.token_symbol.toLowerCase().includes(q)) ||

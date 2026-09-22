@@ -162,6 +162,19 @@ describe('collectPages', () => {
     expect(res.pagination).toMatchObject({ page: 10, pages_fetched: 1, complete: true });
   });
 
+  it('completes a partial start page when its endpoint reaches total', async () => {
+    const fetchPage = vi.fn(async ({ page }) => ({
+      data: Array.from({ length: 5 }, (_, i) => ({ id: 21 + i })),
+      pagination: { page, per_page: 10, total: 25 },
+    }));
+
+    const res = await collectPages(fetchPage, { page: 3, per_page: 10 });
+
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(res.data.map(row => row.id)).toEqual([21, 22, 23, 24, 25]);
+    expect(res.pagination).toMatchObject({ page: 3, pages_fetched: 1, next_page: null, complete: true });
+  });
+
   it('fetches page 11 from start page 10 when total extends beyond row 1000', async () => {
     const fetchPage = vi.fn(async ({ page }) => {
       const firstId = (page - 1) * 100 + 1;

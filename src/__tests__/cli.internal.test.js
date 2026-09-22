@@ -2913,7 +2913,8 @@ describe('buildCommands', () => {
 
     it('returns every matching client-side search result with --paginate', async () => {
       const data = Array.from({ length: 30 }, (_, i) => ({ token_symbol: `PEPE${i}`, price_usd: i }));
-      const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data }) };
+      const pagination = { page: 1, pages_fetched: 3, next_page: null, complete: true };
+      const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data, pagination }) };
 
       const result = await commands['token'](
         ['screener'],
@@ -2923,6 +2924,7 @@ describe('buildCommands', () => {
       );
 
       expect(result.data).toEqual(data);
+      expect(result.pagination).toBe(pagination);
       expect(mockApi.tokenScreener).toHaveBeenCalledWith(
         expect.objectContaining({ pagination: { page: 1, per_page: 10 } }),
       );

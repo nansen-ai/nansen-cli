@@ -92,6 +92,8 @@ function failedPageError(response, page) {
 }
 
 function canonicalRowKey(value) {
+  // TODO: Consider a streaming hash only if bounded MAX_PAGES traversals show
+  // material memory pressure; canonical strings keep identity deterministic.
   if (Array.isArray(value)) return JSON.stringify(value.map(canonicalRowValue));
   return JSON.stringify(canonicalRowValue(value));
 }
