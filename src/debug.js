@@ -72,7 +72,15 @@ const LONG_BASE58 = /^[1-9A-HJ-NP-Za-km-z]{80,}$/;
  */
 const LONG_OPAQUE = /^[A-Za-z0-9_\-+/=.]{64,}$/;
 
-/** Credential-shaped substrings inside otherwise useful diagnostic prose. */
+/**
+ * Credential-shaped substrings inside otherwise useful diagnostic prose.
+ *
+ * IMPORTANT: every module-level /g regex in this block, plus
+ * INLINE_SCHEME_ALL above, is replacement-only. Use these only with
+ * String.prototype.replace — never RegExp.test() or RegExp.exec(), whose
+ * stateful lastIndex would make results depend on earlier trace calls. Add a
+ * separate non-/g matcher (as INLINE_SCHEME does) if matching is ever needed.
+ */
 const EMBEDDED_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi;
 const EMBEDDED_NAMED_SECRET = /\b([\w-]*(?:key|token|secret|signature|password|passphrase|mnemonic|seed|auth|credential|cookie|private)[\w-]*)\s*([=:])\s*([^\s,;]+)/gi;
 const EMBEDDED_HEX_32_BYTES = /(?<![0-9a-fA-F])(?:0x)?[0-9a-fA-F]{64}(?![0-9a-fA-F])/g;
