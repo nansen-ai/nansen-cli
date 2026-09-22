@@ -206,9 +206,11 @@ export function enableAutoPagination(api, opts = {}) {
   if (typeof api?.request !== 'function') return api;
   const request = api.request.bind(api);
   api.request = async (endpoint, body = {}, options = {}) => {
-    api.paginatedResponseMeta = null;
     if (!body || typeof body !== 'object' || !('pagination' in body)) return request(endpoint, body, options);
 
+    // Only a new traversal supersedes the previous aggregate. Auxiliary
+    // non-list requests may run afterward and must not erase its credit scope.
+    api.paginatedResponseMeta = null;
     const pageMetadata = [];
     const recordPageMetadata = (meta = api.lastResponseMeta) => {
       pageMetadata.push({

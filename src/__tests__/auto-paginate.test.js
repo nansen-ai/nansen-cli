@@ -149,6 +149,19 @@ describe('collectPages', () => {
     expect(counted.pagination.complete).toBe(true);
   });
 
+  it('trusts an inconsistent total of zero and stops after a non-empty first page', async () => {
+    const fetchPage = vi.fn(async () => ({
+      data: [{ id: 1 }, { id: 2 }],
+      pagination: { page: 1, per_page: 2, total: 0 },
+    }));
+
+    const res = await collectPages(fetchPage, { page: 1, per_page: 2 });
+
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(res.data).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(res.pagination).toMatchObject({ pages_fetched: 1, next_page: null, complete: true });
+  });
+
   it('uses the 1-based page endpoint when total ends exactly on start page 10', async () => {
     const fetchPage = vi.fn(async ({ page }) => ({
       data: Array.from({ length: 100 }, (_, i) => ({ id: (page - 1) * 100 + i + 1 })),
@@ -438,6 +451,7 @@ describe('enableAutoPagination', () => {
     const api = {
       lastResponseMeta: null,
       servedFromCache: false,
+      paginatedResponseMeta: { stale: true },
       request: vi.fn(async (_endpoint, body) => {
         const page = body.pagination.page;
         api.lastResponseMeta = {
@@ -464,6 +478,52 @@ describe('enableAutoPagination', () => {
       rateLimit: { limit: 100, remaining: 98, resetSeconds: 60 },
       notices: { planNotice: 'Plan notice' },
       pagination: { pagesFetched: 2, livePages: 2, cachedPages: 0 },
+    });
+  });
+
+  it('preserves a traversal aggregate across non-list requests and replaces it on the next traversal', async () => {
+    let traversal = 0;
+    const api = {
+      lastResponseMeta: null,
+      servedFromCache: false,
+      paginatedResponseMeta: { sentinel: true },
+      request: vi.fn(async (endpoint, body) => {
+        if (!body.pagination) {
+          api.lastResponseMeta = { requestId: `info-${endpoint}` };
+          return { single: true };
+        }
+        const page = body.pagination.page;
+        api.lastResponseMeta = {
+          requestId: `traversal-${traversal}-page-${page}`,
+          credits: { used: traversal, remaining: 100 - traversal, cost: traversal },
+        };
+        return { data: [{ traversal, page }], pagination: { page, total_pages: 1 } };
+      }),
+    };
+    enableAutoPagination(api);
+
+    await api.request('/info-before', {});
+    expect(api.paginatedResponseMeta).toEqual({ sentinel: true });
+
+    traversal = 2;
+    await api.request('/first-list', { pagination: { page: 1, per_page: 1 } });
+    const firstAggregate = api.paginatedResponseMeta;
+    expect(firstAggregate).toMatchObject({
+      requestId: 'traversal-2-page-1',
+      credits: { used: 2, remaining: 98, cost: 2 },
+      pagination: { pagesFetched: 1, livePages: 1, cachedPages: 0 },
+    });
+
+    await api.request('/info-after', { chain: 'solana' });
+    expect(api.paginatedResponseMeta).toBe(firstAggregate);
+
+    traversal = 7;
+    await api.request('/second-list', { pagination: { page: 1, per_page: 1 } });
+    expect(api.paginatedResponseMeta).not.toBe(firstAggregate);
+    expect(api.paginatedResponseMeta).toMatchObject({
+      requestId: 'traversal-7-page-1',
+      credits: { used: 7, remaining: 93, cost: 7 },
+      pagination: { pagesFetched: 1, livePages: 1, cachedPages: 0 },
     });
   });
 
@@ -497,6 +557,7 @@ describe('enableAutoPagination', () => {
     const api = {
       lastResponseMeta: null,
       servedFromCache: false,
+      paginatedResponseMeta: { stale: true },
       request: vi.fn(async (_endpoint, body) => {
         const page = body.pagination.page;
         if (page === 1) {
