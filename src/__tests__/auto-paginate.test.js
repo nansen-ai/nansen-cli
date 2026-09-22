@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { collectPages, enableAutoPagination, DEFAULT_MAX_PAGES, locateRows } from '../auto-paginate.js';
+import { RESPONSE_META } from '../api.js';
 
 // Server with `total` rows of `size` per page under `{ data: [...] }`.
 function server(total, size, extra = {}) {
@@ -76,6 +77,20 @@ describe('collectPages', () => {
 
     expect(fetchPage).toHaveBeenCalledTimes(2);
     expect(res.data).toEqual([{ id: 1, metadata: { symbol: 'SOL', rank: 2 } }]);
+    expect(res.pagination.complete).toBe(true);
+  });
+
+  it('uses a type-tagged stable identity for BigInt rows without throwing', async () => {
+    const fetchPage = vi.fn(async ({ page }) => ({
+      data: page === 1
+        ? [{ id: 1n, value: '1' }, { id: '1', value: 1n }]
+        : [{ value: '1', id: 1n }],
+    }));
+
+    const res = await collectPages(fetchPage, { page: 1, per_page: 2 });
+
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+    expect(res.data).toEqual([{ id: 1n, value: '1' }, { id: '1', value: 1n }]);
     expect(res.pagination.complete).toBe(true);
   });
 
@@ -428,6 +443,22 @@ describe('enableAutoPagination', () => {
     expect(raw.mock.calls[0][1]).toEqual({ chain: 'solana' });
   });
 
+  it('passes internal pagination bodies straight through when auto-pagination is disabled', async () => {
+    const api = fakeApi();
+    const raw = api.request;
+    enableAutoPagination(api);
+
+    const result = await api.request(
+      '/list',
+      { pagination: { page: 1, per_page: 2 } },
+      { autoPaginate: false },
+    );
+
+    expect(result.data).toHaveLength(2);
+    expect(raw).toHaveBeenCalledTimes(1);
+    expect(api.paginatedResponseMeta).toBeUndefined();
+  });
+
   it.each([
     ['top-level data', { success: false, error: 'bad', data: [] }],
     ['nested data', { success: false, error: 'bad', data: { data: [] } }],
@@ -508,6 +539,7 @@ describe('enableAutoPagination', () => {
     traversal = 2;
     await api.request('/first-list', { pagination: { page: 1, per_page: 1 } });
     const firstAggregate = api.paginatedResponseMeta;
+    expect(api.paginatedEndpoint).toBe('/first-list');
     expect(firstAggregate).toMatchObject({
       requestId: 'traversal-2-page-1',
       credits: { used: 2, remaining: 98, cost: 2 },
@@ -516,6 +548,7 @@ describe('enableAutoPagination', () => {
 
     await api.request('/info-after', { chain: 'solana' });
     expect(api.paginatedResponseMeta).toBe(firstAggregate);
+    expect(api.paginatedEndpoint).toBe('/first-list');
 
     traversal = 7;
     await api.request('/second-list', { pagination: { page: 1, per_page: 1 } });
@@ -525,6 +558,58 @@ describe('enableAutoPagination', () => {
       credits: { used: 7, remaining: 93, cost: 7 },
       pagination: { pagesFetched: 1, livePages: 1, cachedPages: 0 },
     });
+    expect(api.paginatedEndpoint).toBe('/second-list');
+  });
+
+  it('serializes concurrent traversals while non-pagination requests remain direct', async () => {
+    let releaseFirst;
+    let markFirstStarted;
+    const firstStarted = new Promise(resolve => { markFirstStarted = resolve; });
+    const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+    const events = [];
+    const api = {
+      responseMetadataOnPayload: true,
+      lastResponseMeta: null,
+      servedFromCache: false,
+      request: vi.fn(async (endpoint, body) => {
+        if (!body.pagination) {
+          events.push(`direct:${endpoint}`);
+          return { single: true };
+        }
+        events.push(`start:${endpoint}`);
+        if (endpoint === '/first') {
+          markFirstStarted();
+          await firstGate;
+        }
+        const meta = { requestId: endpoint, credits: { used: 1, remaining: 9, cost: 1 } };
+        api.lastResponseMeta = meta;
+        const result = {
+          data: [{ endpoint }],
+          pagination: { page: 1, total_pages: 1 },
+        };
+        result[RESPONSE_META] = meta;
+        events.push(`end:${endpoint}`);
+        return result;
+      }),
+    };
+    enableAutoPagination(api);
+
+    const first = api.request('/first', { pagination: { page: 1, per_page: 1 } });
+    await firstStarted;
+    const second = api.request('/second', { pagination: { page: 1, per_page: 1 } });
+    await api.request('/info', {});
+    expect(events).toEqual(['start:/first', 'direct:/info']);
+
+    releaseFirst();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult.data).toEqual([{ endpoint: '/first' }]);
+    expect(secondResult.data).toEqual([{ endpoint: '/second' }]);
+    expect(events).toEqual([
+      'start:/first', 'direct:/info', 'end:/first', 'start:/second', 'end:/second',
+    ]);
+    expect(api.paginatedEndpoint).toBe('/second');
+    expect(api.paginatedResponseMeta.requestId).toBe('/second');
   });
 
   it('does not charge cached pages or replace the freshest live metadata with stale cache state', async () => {

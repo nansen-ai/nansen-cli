@@ -702,7 +702,11 @@ async function enrichTransfers(result, apiInstance, chain) {
   const labelMap = {};
   for (const addr of addrs) {
     try {
-      const labelsResult = await apiInstance.addressLabels({ address: addr, chain });
+      const labelsResult = await apiInstance.addressLabels({
+        address: addr,
+        chain,
+        requestOptions: { autoPaginate: false },
+      });
       labelMap[addr] = Array.isArray(labelsResult?.data)
         ? labelsResult.data.map(item => item.label)
         : labelsResult?.labels || [];
@@ -813,7 +817,11 @@ export async function batchProfile(api, params = {}) {
     }
     try {
       if (include.includes('labels')) {
-        const labelsResult = await api.addressLabels({ address, chain });
+        const labelsResult = await api.addressLabels({
+          address,
+          chain,
+          requestOptions: { autoPaginate: false },
+        });
         entry.labels = Array.isArray(labelsResult?.data)
           ? labelsResult.data
           : labelsResult?.labels || [];
@@ -822,7 +830,11 @@ export async function batchProfile(api, params = {}) {
         entry.balance = await api.addressBalance({ address, chain });
       }
       if (include.includes('pnl')) {
-        entry.pnl = await api.addressPnl({ address, chain });
+        entry.pnl = await api.addressPnl({
+          address,
+          chain,
+          requestOptions: { autoPaginate: false },
+        });
       }
     } catch (err) {
       entry.error = err.message;
@@ -880,6 +892,7 @@ export async function traceCounterparties(api, params = {}) {
       const result = await api.addressCounterparties({
         address: addr, chain, days,
         pagination: { page: 1, per_page: width },
+        requestOptions: { autoPaginate: false },
       });
 
       const counterparties = result?.data?.results || result?.counterparties || result?.data || [];
@@ -934,8 +947,12 @@ export async function compareWallets(api, params = {}) {
   // error cannot masquerade as "no overlap" / "0 USD".
   const settle = (promise) => promise.then(value => ({ value }), error => ({ error }));
   const [cp1, cp2] = await Promise.all([
-    settle(api.addressCounterparties({ address: addr1, chain, days })),
-    settle(api.addressCounterparties({ address: addr2, chain, days })),
+    settle(api.addressCounterparties({
+      address: addr1, chain, days, requestOptions: { autoPaginate: false },
+    })),
+    settle(api.addressCounterparties({
+      address: addr2, chain, days, requestOptions: { autoPaginate: false },
+    })),
   ]);
   await sleep(delayMs);
   const [bal1, bal2] = await Promise.all([
@@ -1790,7 +1807,7 @@ export function buildCommands(deps = {}) {
           const paginateAll = flags.paginate || flags.all;
           const searchPagination = search
             ? {
-                page: 1,
+                page: paginateAll ? requestedPage : 1,
                 // A normal client-side search widens its one candidate fetch.
                 // With --paginate, keep --limit as the server page size: the
                 // traversal already fetches up to --max-pages separately
@@ -1908,10 +1925,12 @@ export function buildCommands(deps = {}) {
         // pagination body. Preserve the primary transfer traversal metadata
         // that runCLI reports after the command completes.
         const transferPaginationMeta = apiInstance.paginatedResponseMeta;
+        const transferPaginationEndpoint = apiInstance.paginatedEndpoint;
         try {
           result = await enrichTransfers(result, apiInstance, chain);
         } finally {
           apiInstance.paginatedResponseMeta = transferPaginationMeta;
+          apiInstance.paginatedEndpoint = transferPaginationEndpoint;
         }
       }
 
@@ -2285,6 +2304,31 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
   return lines.join('\n');
 }
 
+function emitResponseMetadata(api, errorOutput) {
+  if (!api) return;
+  const responseMeta = api.paginatedResponseMeta || api.lastResponseMeta;
+  const lowCredits = creditWarning(responseMeta);
+  if (lowCredits) errorOutput(lowCredits);
+  for (const notice of noticeWarnings(responseMeta)) errorOutput(notice);
+
+  // An aggregate belongs to the primary paginated endpoint even if a composite
+  // handler made auxiliary requests afterward and changed lastEndpoint.
+  const endpoint = api.paginatedResponseMeta ? api.paginatedEndpoint : api.lastEndpoint;
+  const charged = creditsCharged(responseMeta, endpoint);
+  if (charged?.source === 'header') {
+    const paginationMeta = responseMeta?.pagination;
+    let scope = 'this call';
+    if (paginationMeta?.cachedPages > 0 && paginationMeta.livePages > 0) {
+      scope = `${paginationMeta.livePages} live of ${paginationMeta.pagesFetched} page requests`;
+    } else if (paginationMeta?.livePages > 1) scope = `${paginationMeta.livePages} page requests`;
+    else if (paginationMeta?.livePages === 1) scope = '1 page request';
+    else if (paginationMeta?.livePages === 0) scope = 'cached traversal';
+    errorOutput(`Credits: ${charged.cost} (${scope})`);
+  } else if (charged?.source === 'estimate') {
+    errorOutput(`Credits: ~${charged.estimate.free} free / ${charged.estimate.pro} pro (estimated)`);
+  }
+}
+
 // Run CLI with given args (returns result, allows custom output/exit handlers)
 export async function runCLI(rawArgs, deps = {}) {
   const {
@@ -2323,6 +2367,13 @@ export async function runCLI(rawArgs, deps = {}) {
   };
 
   let parsed;
+  let api;
+  let responseMetadataEmitted = false;
+  const emitResponseMetadataOnce = () => {
+    if (responseMetadataEmitted) return;
+    responseMetadataEmitted = true;
+    emitResponseMetadata(api, errorOutput);
+  };
   try {
     parsed = parseArgs(rawArgs);
   } catch (error) {
@@ -2547,7 +2598,7 @@ export async function runCLI(rawArgs, deps = {}) {
     if (options['x402-payment-signature']) {
       defaultHeaders['Payment-Signature'] = options['x402-payment-signature'];
     }
-    const api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders });
+    api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders });
 
     // --all aliases --paginate; wrapping api.request gives every list handler
     // the same max-pages bound while leaving non-list requests untouched.
@@ -2585,26 +2636,7 @@ export async function runCLI(rawArgs, deps = {}) {
     // stderr so it never contaminates the JSON on stdout that agents parse.
     // Placed before every return path below so it fires for operational
     // commands too, which print their own output and return undefined.
-    const responseMeta = api.paginatedResponseMeta || api.lastResponseMeta;
-    const lowCredits = creditWarning(responseMeta);
-    if (lowCredits) errorOutput(lowCredits);
-    for (const notice of noticeWarnings(responseMeta)) errorOutput(notice);
-
-    // What this call cost — authoritative header when the API sent one, else
-    // the cached spec estimate. stderr only, so stdout JSON stays pure.
-    const charged = creditsCharged(responseMeta, api.lastEndpoint);
-    if (charged?.source === 'header') {
-      const paginationMeta = responseMeta?.pagination;
-      let scope = 'this call';
-      if (paginationMeta?.cachedPages > 0 && paginationMeta.livePages > 0) {
-        scope = `${paginationMeta.livePages} live of ${paginationMeta.pagesFetched} page requests`;
-      } else if (paginationMeta?.livePages > 1) scope = `${paginationMeta.livePages} page requests`;
-      else if (paginationMeta?.livePages === 1) scope = '1 page request';
-      else if (paginationMeta?.livePages === 0) scope = 'cached traversal';
-      errorOutput(`Credits: ${charged.cost} (${scope})`);
-    } else if (charged?.source === 'estimate') {
-      errorOutput(`Credits: ~${charged.estimate.free} free / ${charged.estimate.pro} pro (estimated)`);
-    }
+    emitResponseMetadataOnce();
 
     // Commands that handle their own output return undefined
     if (result === undefined) {
@@ -2650,6 +2682,9 @@ export async function runCLI(rawArgs, deps = {}) {
     await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: fromCache, flags: usedFlags, chain });
     return { type: csv ? 'csv' : 'success', data: result };
   } catch (error) {
+    // A failed later page can still have incurred charges on earlier pages.
+    // Emit the aggregate on stderr before serializing the unchanged error.
+    emitResponseMetadataOnce();
     // Unified error envelope across all command families (perp/bridge/trade):
     // every failure serializes through formatError as
     // {success:false, error, code, status, details}. A CommandError's structured

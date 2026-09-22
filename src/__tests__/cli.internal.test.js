@@ -31,7 +31,7 @@ import {
   parseAddressList
 } from '../cli.js';
 import { parseCsvOption, parseObjectOption } from '../query-options.js';
-import { MAX_PAGES_LIMIT } from '../auto-paginate.js';
+import { enableAutoPagination, MAX_PAGES_LIMIT } from '../auto-paginate.js';
 import {
   formatAlertsTable,
   buildAlertData,
@@ -2930,6 +2930,21 @@ describe('buildCommands', () => {
       );
     });
 
+    it('starts paginated client-side search traversal at the requested page', async () => {
+      const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [] }) };
+
+      await commands['token'](
+        ['screener'],
+        mockApi,
+        { paginate: true },
+        { chain: 'ethereum', search: 'pepe', limit: '10', page: '3' },
+      );
+
+      expect(mockApi.tokenScreener).toHaveBeenCalledWith(
+        expect.objectContaining({ pagination: { page: 3, per_page: 10 } }),
+      );
+    });
+
     it('should widen the search candidate fetch when the requested page is past the default 500', async () => {
       const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [] }) };
       await commands['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: 'pepe', limit: '100', page: '7' });
@@ -3244,6 +3259,23 @@ describe('runCLI', () => {
     expect(errors).toEqual(['ℹ️  Plan notice', 'Credits: 7 (this call)']);
     expect(outputs).toHaveLength(1);
     expect(JSON.parse(outputs[0])).toEqual({ success: true, data: { data: [] } });
+  });
+
+  it('does not duplicate response metadata when post-request formatting fails', async () => {
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI() {
+        this.lastResponseMeta = { credits: { used: 5, remaining: 100, cost: 7 } };
+        this.lastEndpoint = '/api/v1/smart-money/netflow';
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue({ data: [] });
+      },
+    };
+
+    const result = await runCLI(['smart-money', 'netflow', '--fields', '[]'], deps);
+
+    expect(result.type).toBe('error');
+    expect(errors).toEqual(['Credits: 7 (this call)']);
+    expect(outputs).toHaveLength(1);
   });
 });
 
@@ -5794,6 +5826,9 @@ describe('batchProfile', () => {
     expect(result.results).toHaveLength(2);
     expect(result.results[0].labels).toBeDefined();
     expect(result.results[0].balance).toBeDefined();
+    expect(mockApi.addressLabels).toHaveBeenCalledWith(expect.objectContaining({
+      requestOptions: { autoPaginate: false },
+    }));
   });
 
   it('should unwrap the v1 labels response into a labels array', async () => {
@@ -5863,11 +5898,45 @@ describe('batchProfile', () => {
     });
 
     expect(result.results[0].pnl).toBeDefined();
-    expect(mockApi.addressPnl).toHaveBeenCalled();
+    expect(mockApi.addressPnl).toHaveBeenCalledWith(expect.objectContaining({
+      requestOptions: { autoPaginate: false },
+    }));
   });
 });
 
 describe('traceCounterparties', () => {
+  it('keeps each width-bounded internal lookup to one request under the global wrapper', async () => {
+    const rawRequest = vi.fn(async (_endpoint, body) => ({
+      counterparties: [
+        { counterparty_address: '0x0000000000000000000000000000000000000002' },
+        { counterparty_address: '0x0000000000000000000000000000000000000003' },
+      ],
+      pagination: { page: body.pagination.page, per_page: 2, has_more: true },
+    }));
+    const api = {
+      request: rawRequest,
+      addressCounterparties({ address, chain, days, pagination, requestOptions }) {
+        return this.request('/api/v1/profiler/address/counterparties', {
+          address, chain, days, pagination,
+        }, requestOptions);
+      },
+    };
+    enableAutoPagination(api, { maxPages: 5 });
+
+    const result = await traceCounterparties(api, {
+      address: '0x0000000000000000000000000000000000000001',
+      chain: 'ethereum',
+      depth: 1,
+      width: 2,
+      delayMs: 0,
+    });
+
+    expect(rawRequest).toHaveBeenCalledTimes(1);
+    expect(rawRequest.mock.calls[0][1].pagination).toEqual({ page: 1, per_page: 2 });
+    expect(rawRequest.mock.calls[0][2]).toEqual({ autoPaginate: false });
+    expect(result.edges).toHaveLength(2);
+  });
+
   it('should return graph structure', async () => {
     const mockApi = {
       addressCounterparties: vi.fn()
@@ -7281,6 +7350,41 @@ describe('--paginate / --all flag integration (API-275)', () => {
     expect(JSON.parse(outputs[0]).data.data).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
   });
 
+  it('reports charges from completed pages when a later page fails', async () => {
+    function FailingMetadataAPI() {
+      this.servedFromCache = false;
+      this.lastResponseMeta = null;
+      this.request = vi.fn(async (_endpoint, body) => {
+        const { page } = body.pagination;
+        this.lastEndpoint = '/api/v1/smart-money/netflow';
+        if (page === 1) {
+          this.lastResponseMeta = { credits: { used: 2, remaining: 20, cost: 2 } };
+          return { data: [{ id: 1 }, { id: 2 }] };
+        }
+        throw new NansenError('Page two failed', ErrorCode.RATE_LIMITED, 429, {
+          credits: { used: 4, remaining: 16, cost: 4 },
+          requestId: 'failed-page-2',
+        });
+      });
+      this.smartMoneyNetflow = ({ pagination }) => this.request(
+        '/api/v1/smart-money/netflow', { pagination },
+      );
+    }
+
+    const result = await runCLI(['smart-money', 'netflow', '--limit', '2', '--paginate'], {
+      ...deps(),
+      NansenAPIClass: FailingMetadataAPI,
+    });
+
+    expect(result.type).toBe('error');
+    expect(JSON.parse(outputs[0])).toMatchObject({
+      success: false,
+      error: 'Page two failed',
+      code: 'RATE_LIMITED',
+    });
+    expect(errors).toEqual(['Credits: 6 (2 page requests)']);
+  });
+
   it('labels a one-page live traversal as a page request', async () => {
     function MetadataAPI() {
       this.servedFromCache = false;
@@ -7372,6 +7476,8 @@ describe('--paginate / --all flag integration (API-275)', () => {
       credits: { used: 10, remaining: 10, cost: 10 },
       pagination: { pagesFetched: 2, livePages: 2, cachedPages: 0 },
     });
+    expect(instance.lastEndpoint).toBe('/api/v1/profiler/address/labels');
+    expect(instance.paginatedEndpoint).toBe('/api/v1/tgm/transfers');
     expect(errors).toContain('Credits: 10 (2 page requests)');
     expect(errors).not.toContain('Credits: 1 (1 page request)');
   });

@@ -1138,6 +1138,34 @@ describe('NansenAPI', () => {
       });
     });
 
+    it('passes internal request options through bounded composite profiler helpers', async () => {
+      const requestOptions = { autoPaginate: false };
+      const request = vi.spyOn(api, 'request').mockResolvedValue({ data: [] });
+      try {
+        await api.addressLabels({
+          address: TEST_DATA.ethereum.address, requestOptions,
+        });
+        await api.addressPnl({
+          address: TEST_DATA.ethereum.address, requestOptions,
+        });
+        await api.addressCounterparties({
+          address: TEST_DATA.ethereum.address, requestOptions,
+        });
+
+        expect(request).toHaveBeenNthCalledWith(
+          1, '/api/v1/profiler/address/labels', expect.any(Object), requestOptions,
+        );
+        expect(request).toHaveBeenNthCalledWith(
+          2, '/api/v1/profiler/address/pnl', expect.any(Object), requestOptions,
+        );
+        expect(request).toHaveBeenNthCalledWith(
+          3, '/api/v1/profiler/address/counterparties', expect.any(Object), requestOptions,
+        );
+      } finally {
+        request.mockRestore();
+      }
+    });
+
     describe('addressCounterpartiesBatch', () => {
       const WALLET_A = TEST_DATA.ethereum.address;
       const WALLET_B = '0x21a31ee1afc51d94c2efccaa2092ad1028285549';

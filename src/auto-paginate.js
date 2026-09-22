@@ -8,7 +8,7 @@
  */
 
 import { aggregatePaginatedResponseMeta } from './response-meta.js';
-import { ErrorCode, NansenError } from './api.js';
+import { ErrorCode, NansenError, RESPONSE_META } from './api.js';
 
 export const DEFAULT_MAX_PAGES = 10;
 // Rows and their serialized de-duplication keys stay resident until traversal
@@ -94,16 +94,16 @@ function failedPageError(response, page) {
 function canonicalRowKey(value) {
   // TODO: Consider a streaming hash only if bounded MAX_PAGES traversals show
   // material memory pressure; canonical strings keep identity deterministic.
-  if (Array.isArray(value)) return JSON.stringify(value.map(canonicalRowValue));
-  return JSON.stringify(canonicalRowValue(value));
-}
-
-function canonicalRowValue(value) {
-  if (Array.isArray(value)) return value.map(canonicalRowValue);
-  if (!isPlainObject(value)) return value;
-  return Object.fromEntries(
-    Object.keys(value).sort().map(key => [key, canonicalRowValue(value[key])]),
-  );
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return `array:[${value.map(canonicalRowKey).join(',')}]`;
+  if (isPlainObject(value)) {
+    return `object:{${Object.keys(value).sort().map(key => (
+      `${JSON.stringify(key)}:${canonicalRowKey(value[key])}`
+    )).join(',')}}`;
+  }
+  if (typeof value === 'bigint') return `bigint:${value.toString()}`;
+  if (typeof value === 'number' && Object.is(value, -0)) return 'number:-0';
+  return `${typeof value}:${JSON.stringify(value)}`;
 }
 
 /**
@@ -205,36 +205,68 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
 export function enableAutoPagination(api, opts = {}) {
   if (typeof api?.request !== 'function') return api;
   const request = api.request.bind(api);
+  let traversalQueue = Promise.resolve();
   api.request = async (endpoint, body = {}, options = {}) => {
-    if (!body || typeof body !== 'object' || !('pagination' in body)) return request(endpoint, body, options);
-
-    // Only a new traversal supersedes the previous aggregate. Auxiliary
-    // non-list requests may run afterward and must not erase its credit scope.
-    api.paginatedResponseMeta = null;
-    const pageMetadata = [];
-    const recordPageMetadata = (meta = api.lastResponseMeta) => {
-      pageMetadata.push({
-        cached: api.servedFromCache === true,
-        meta: api.servedFromCache === true ? null : meta,
-      });
-    };
-    try {
-      return await collectPages(async pagination => {
-        const previousMeta = api.lastResponseMeta;
-        try {
-          const pageResult = await request(endpoint, { ...body, pagination }, options);
-          recordPageMetadata();
-          return pageResult;
-        } catch (error) {
-          // A transport failure may leave the prior page's metadata in place;
-          // count the attempt, but only attribute metadata newly set by it.
-          recordPageMetadata(api.lastResponseMeta === previousMeta ? null : api.lastResponseMeta);
-          throw error;
-        }
-      }, body.pagination, opts);
-    } finally {
-      api.paginatedResponseMeta = aggregatePaginatedResponseMeta(pageMetadata);
+    if (options.autoPaginate === false
+      || !body || typeof body !== 'object' || !('pagination' in body)) {
+      return request(endpoint, body, options);
     }
+
+    const traverse = async () => {
+      // Only a new traversal supersedes the previous aggregate. Auxiliary
+      // non-list requests may run afterward and must not erase its credit scope.
+      api.paginatedResponseMeta = null;
+      api.paginatedEndpoint = null;
+      const pageMetadata = [];
+      const recordPageMetadata = (meta, cached = false) => {
+        pageMetadata.push({ cached, meta: cached ? null : meta });
+      };
+      try {
+        return await collectPages(async pagination => {
+          const previousMeta = api.lastResponseMeta;
+          try {
+            const pageResult = await request(endpoint, { ...body, pagination }, options);
+            // The payload belongs to this exact request, unlike the instance's
+            // last-* fields which concurrent non-list calls can overwrite.
+            const cached = pageResult?._meta?.fromCache === true
+              || (api.responseMetadataOnPayload !== true && api.servedFromCache === true);
+            const payloadMeta = pageResult?.[RESPONSE_META];
+            const meta = payloadMeta ?? (
+              api.responseMetadataOnPayload === true ? null : api.lastResponseMeta
+            );
+            recordPageMetadata(meta, cached);
+            return pageResult;
+          } catch (error) {
+            const details = error?.details;
+            const errorMeta = details && typeof details === 'object'
+              ? {
+                  ...(details.requestId && { requestId: details.requestId }),
+                  ...(details.credits && { credits: details.credits }),
+                  ...(details.rateLimit && { rateLimit: details.rateLimit }),
+                }
+              : null;
+            const hasErrorMeta = errorMeta && Object.keys(errorMeta).length > 0;
+            // A transport failure may leave the prior page's metadata in place;
+            // count the attempt, but only use shared state when the error itself
+            // carries no metadata and this request demonstrably replaced it.
+            recordPageMetadata(hasErrorMeta
+              ? errorMeta
+              : (api.lastResponseMeta === previousMeta ? null : api.lastResponseMeta));
+            throw error;
+          }
+        }, body.pagination, opts);
+      } finally {
+        api.paginatedResponseMeta = aggregatePaginatedResponseMeta(pageMetadata);
+        api.paginatedEndpoint = endpoint;
+      }
+    };
+
+    // Shared instance metadata has one command-level slot. Serialize only
+    // traversals so two callers cannot interleave pages and overwrite it;
+    // ordinary and explicitly bypassed requests remain direct.
+    const pending = traversalQueue.then(traverse, traverse);
+    traversalQueue = pending.catch(() => {});
+    return pending;
   };
   return api;
 }

@@ -751,12 +751,16 @@ export class NansenAPI {
      * low-credit warning wants.
      */
     this.lastResponseMeta = null;
+    /** Live response objects carry RESPONSE_META, allowing request-local attribution. */
+    this.responseMetadataOnPayload = true;
     /**
      * Command-level aggregate populated only by the auto-pagination wrapper.
      * lastResponseMeta above deliberately remains the metadata for the final
      * individual response.
      */
     this.paginatedResponseMeta = null;
+    /** API path paired with paginatedResponseMeta for fallback cost estimates. */
+    this.paginatedEndpoint = null;
     /** API path of the most recent request(), for pairing lastResponseMeta with a cost estimate. */
     this.lastEndpoint = null;
     /**
@@ -1326,13 +1330,13 @@ export class NansenAPI {
   }
 
   async addressLabels(params = {}) {
-    const { address, chain = 'ethereum', pagination = { page: 1, per_page: 100 } } = params;
+    const { address, chain = 'ethereum', pagination = { page: 1, per_page: 100 }, requestOptions } = params;
     if (address) requireValidAddress(address, chain);
     return this.request('/api/v1/profiler/address/labels', {
       address,
       chain,
       pagination
-    });
+    }, requestOptions);
   }
 
   async addressPremiumLabels(params = {}) {
@@ -1360,7 +1364,7 @@ export class NansenAPI {
   }
 
   async addressPnl(params = {}) {
-    const { address, chain = 'ethereum', date, days = 30, filters = {}, orderBy, pagination } = params;
+    const { address, chain = 'ethereum', date, days = 30, filters = {}, orderBy, pagination, requestOptions } = params;
     if (address) requireValidAddress(address, chain);
     const dateRange = date || buildDateRange(days);
     return this.request('/api/v1/profiler/address/pnl', {
@@ -1370,7 +1374,7 @@ export class NansenAPI {
       filters,
       order_by: orderBy,
       pagination
-    });
+    }, requestOptions);
   }
 
   async entitySearch(params = {}) {
@@ -1459,7 +1463,7 @@ export class NansenAPI {
   }
 
   async addressCounterparties(params = {}) {
-    const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30 } = params;
+    const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30, requestOptions } = params;
     if (address) requireValidAddress(address, chain);
     return this.request('/api/v1/profiler/address/counterparties', {
       address,
@@ -1468,7 +1472,7 @@ export class NansenAPI {
       filters,
       order_by: orderBy,
       pagination
-    });
+    }, requestOptions);
   }
 
   /**
