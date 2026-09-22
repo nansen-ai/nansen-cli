@@ -89,12 +89,16 @@ describe('request() tracing', () => {
   });
 
   it('traces a transport failure with its duration', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connect ECONNREFUSED'); }));
+    const fetchMock = vi.fn(async () => { throw new Error('connect ECONNREFUSED'); });
+    vi.stubGlobal('fetch', fetchMock);
     const api = new NansenAPI(FAKE_API_KEY, BASE_URL, FAST_RETRY);
 
     await expect(api.request('/api/v1/demo', {}, { retry: false })).rejects.toThrow(/Network error/);
 
     const output = traced();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(output).toContain('attempt=1/1');
+    expect(output).not.toMatch(/attempt=[2-9]\d*\/1/);
     expect(output).toContain('http.error');
     expect(output).toContain('connect ECONNREFUSED');
     expect(output).toMatch(/duration_ms=\d+/);

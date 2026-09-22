@@ -923,7 +923,9 @@ export class NansenAPI {
 
     const maxAttempts = (shouldRetry ? maxRetries : 0) + 1;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // Bound the loop by the displayed attempt count so retry:false can never
+    // produce a trace such as attempt=2/1, even if a future branch continues.
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       let response;
       const startedAt = Date.now();
       traceRequest({ method, url, attempt: attempt + 1, maxAttempts });
