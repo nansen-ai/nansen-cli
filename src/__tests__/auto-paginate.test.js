@@ -135,6 +135,36 @@ describe('collectPages', () => {
     expect(counted.pagination.complete).toBe(true);
   });
 
+  it('uses the 1-based page endpoint when total ends exactly on start page 10', async () => {
+    const fetchPage = vi.fn(async ({ page }) => ({
+      data: Array.from({ length: 100 }, (_, i) => ({ id: (page - 1) * 100 + i + 1 })),
+      pagination: { page, per_page: 100, total: 1000 },
+    }));
+
+    const res = await collectPages(fetchPage, { page: 10, per_page: 100 });
+
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(res.data.map(row => row.id)).toEqual(Array.from({ length: 100 }, (_, i) => 901 + i));
+    expect(res.pagination).toMatchObject({ page: 10, pages_fetched: 1, complete: true });
+  });
+
+  it('fetches page 11 from start page 10 when total extends beyond row 1000', async () => {
+    const fetchPage = vi.fn(async ({ page }) => {
+      const firstId = (page - 1) * 100 + 1;
+      const count = Math.max(0, Math.min(100, 1050 - firstId + 1));
+      return {
+        data: Array.from({ length: count }, (_, i) => ({ id: firstId + i })),
+        pagination: { page, per_page: 100, total: 1050 },
+      };
+    });
+
+    const res = await collectPages(fetchPage, { page: 10, per_page: 100 });
+
+    expect(fetchPage.mock.calls.map(([pagination]) => pagination.page)).toEqual([10, 11]);
+    expect(res.data.map(row => row.id)).toEqual(Array.from({ length: 150 }, (_, i) => 901 + i));
+    expect(res.pagination).toMatchObject({ page: 10, pages_fetched: 2, complete: true });
+  });
+
   it('honours pagination metadata nested alongside nested data', async () => {
     const fetchPage = vi.fn(async () => ({
       data: {
@@ -432,6 +462,44 @@ describe('enableAutoPagination', () => {
     expect(api.paginatedResponseMeta).toEqual({
       credits: { used: 2, remaining: 8, cost: 3 },
       pagination: { pagesFetched: 2, livePages: 1, cachedPages: 1 },
+    });
+  });
+
+  it('keeps partial live/cache credit metadata and rethrows the original mid-traversal error', async () => {
+    const failure = Object.assign(new Error('page three failed'), { code: 'RATE_LIMITED' });
+    const api = {
+      lastResponseMeta: null,
+      servedFromCache: false,
+      request: vi.fn(async (_endpoint, body) => {
+        const page = body.pagination.page;
+        if (page === 1) {
+          api.servedFromCache = false;
+          api.lastResponseMeta = { credits: { used: 2, remaining: 8, cost: 2 } };
+          return { data: [{ id: 1 }] };
+        }
+        if (page === 2) {
+          api.servedFromCache = true;
+          return { data: [{ id: 2 }] };
+        }
+        api.servedFromCache = false;
+        api.lastResponseMeta = { credits: { used: 4, remaining: 3, cost: 4 } };
+        throw failure;
+      }),
+    };
+    enableAutoPagination(api);
+
+    let caught;
+    try {
+      await api.request('/list', { pagination: { page: 1, per_page: 1 } });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(failure);
+    expect(caught.code).toBe('RATE_LIMITED');
+    expect(api.paginatedResponseMeta).toEqual({
+      credits: { used: 6, remaining: 3, cost: 6 },
+      pagination: { pagesFetched: 3, livePages: 2, cachedPages: 1 },
     });
   });
 

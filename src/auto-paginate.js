@@ -157,8 +157,9 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
     const serverSaysComplete = serverPagination?.is_last_page === true
       || serverPagination?.has_more === false
       || (Object.hasOwn(serverPagination || {}, 'next_page') && serverPagination.next_page === null)
-      // Trust a valid server total to avoid a separately billed empty probe;
-      // inconsistent total metadata can therefore cause an under-fetch.
+      // Pages are 1-based, so page * size is the current page's inclusive row
+      // endpoint. Trust the server total to avoid a separately billed empty
+      // probe; inconsistent total metadata can therefore cause an under-fetch.
       || (Number.isInteger(totalRows) && effectivePageSize > 0 && page * effectivePageSize >= totalRows);
     const lastPage = located.rows.length === 0
       || fresh === 0
@@ -193,16 +194,29 @@ export function enableAutoPagination(api, opts = {}) {
     if (!body || typeof body !== 'object' || !('pagination' in body)) return request(endpoint, body, options);
 
     const pageMetadata = [];
-    const result = await collectPages(async pagination => {
-      const pageResult = await request(endpoint, { ...body, pagination }, options);
+    const recordPageMetadata = (meta = api.lastResponseMeta) => {
       pageMetadata.push({
         cached: api.servedFromCache === true,
-        meta: api.servedFromCache === true ? null : api.lastResponseMeta,
+        meta: api.servedFromCache === true ? null : meta,
       });
-      return pageResult;
-    }, body.pagination, opts);
-    api.paginatedResponseMeta = aggregatePaginatedResponseMeta(pageMetadata);
-    return result;
+    };
+    try {
+      return await collectPages(async pagination => {
+        const previousMeta = api.lastResponseMeta;
+        try {
+          const pageResult = await request(endpoint, { ...body, pagination }, options);
+          recordPageMetadata();
+          return pageResult;
+        } catch (error) {
+          // A transport failure may leave the prior page's metadata in place;
+          // count the attempt, but only attribute metadata newly set by it.
+          recordPageMetadata(api.lastResponseMeta === previousMeta ? null : api.lastResponseMeta);
+          throw error;
+        }
+      }, body.pagination, opts);
+    } finally {
+      api.paginatedResponseMeta = aggregatePaginatedResponseMeta(pageMetadata);
+    }
   };
   return api;
 }
