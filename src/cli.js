@@ -1901,7 +1901,15 @@ export function buildCommands(deps = {}) {
 
       // Enrich transfers with Nansen labels for from/to addresses
       if (subcommand === 'transfers' && (options.enrich || flags.enrich)) {
-        result = await enrichTransfers(result, apiInstance, chain);
+        // Label lookups are auxiliary requests and may themselves carry a
+        // pagination body. Preserve the primary transfer traversal metadata
+        // that runCLI reports after the command completes.
+        const transferPaginationMeta = apiInstance.paginatedResponseMeta;
+        try {
+          result = await enrichTransfers(result, apiInstance, chain);
+        } finally {
+          apiInstance.paginatedResponseMeta = transferPaginationMeta;
+        }
       }
 
       return result;

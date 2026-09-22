@@ -7328,4 +7328,49 @@ describe('--paginate / --all flag integration (API-275)', () => {
     expect(errors).toContain('Credits: 6 (3 live of 4 page requests)');
     expect(errors).not.toContain('Credits: 6 (3 page requests)');
   });
+
+  it('preserves transfer traversal metadata across paginated enrichment lookups', async () => {
+    let instance;
+    function EnrichedTransfersAPI() {
+      instance = this;
+      this.servedFromCache = false;
+      this.lastResponseMeta = null;
+      this.paginatedResponseMeta = null;
+      this.request = vi.fn(async (endpoint, body) => {
+        const { page, per_page: perPage } = body.pagination;
+        this.servedFromCache = false;
+        this.lastEndpoint = endpoint;
+        if (endpoint === '/api/v1/tgm/transfers') {
+          this.lastResponseMeta = { credits: { used: 5, remaining: page === 1 ? 15 : 10, cost: 5 } };
+          const transfers = page === 1
+            ? [{ id: 1, from: '0xaaa', to: '0xbbb' }, { id: 2, from: '0xaaa', to: '0xbbb' }]
+            : [{ id: 3, from: '0xaaa', to: '0xbbb' }];
+          return { transfers };
+        }
+        this.lastResponseMeta = { credits: { used: 1, remaining: 9, cost: 1 } };
+        return {
+          data: [{ label: 'Smart Trader' }],
+          pagination: { page, per_page: perPage, total_pages: 1 },
+        };
+      });
+      this.tokenTransfers = ({ pagination }) => this.request('/api/v1/tgm/transfers', { pagination });
+      this.addressLabels = ({ address, chain }) => this.request('/api/v1/profiler/address/labels', {
+        address, chain, pagination: { page: 1, per_page: 100 },
+      });
+    }
+
+    const result = await runCLI([
+      'token', 'transfers', '--token', '0xabc', '--limit', '2', '--paginate', '--enrich',
+    ], { ...deps(), NansenAPIClass: EnrichedTransfersAPI });
+
+    expect(result.type).toBe('success');
+    expect(result.data.transfers).toHaveLength(3);
+    expect(result.data.transfers[0].from_labels).toEqual(['Smart Trader']);
+    expect(instance.paginatedResponseMeta).toEqual({
+      credits: { used: 10, remaining: 10, cost: 10 },
+      pagination: { pagesFetched: 2, livePages: 2, cachedPages: 0 },
+    });
+    expect(errors).toContain('Credits: 10 (2 page requests)');
+    expect(errors).not.toContain('Credits: 1 (1 page request)');
+  });
 });
