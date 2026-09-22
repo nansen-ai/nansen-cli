@@ -7086,6 +7086,9 @@ describe('--paginate / --all flag integration (API-275)', () => {
   // The mock mirrors NansenAPI: handler methods route through request(), which
   // is the method --paginate wraps. 23 rows served 10 per page.
   function MockAPI() {
+    this.servedFromCache = false;
+    this.lastResponseMeta = null;
+    this.paginatedResponseMeta = null;
     this.request = vi.fn(async (endpoint, body) => {
       if (!body.pagination) return { data: [{ kind: 'single-page' }] };
       const { page, per_page = 10 } = body.pagination;
@@ -7266,5 +7269,36 @@ describe('--paginate / --all flag integration (API-275)', () => {
     });
 
     expect(errors).toContain('Credits: 2 (1 page request)');
+  });
+
+  it('labels multiple live requests within a partly cached traversal', async () => {
+    function MetadataAPI() {
+      this.servedFromCache = false;
+      this.lastResponseMeta = null;
+      this.paginatedResponseMeta = null;
+      this.request = vi.fn(async (_endpoint, body) => {
+        const { page } = body.pagination;
+        this.servedFromCache = page === 2;
+        if (!this.servedFromCache) {
+          this.lastResponseMeta = { credits: { used: 2, remaining: 50, cost: 2 } };
+        }
+        this.lastEndpoint = '/api/v1/smart-money/netflow';
+        return {
+          data: [{ id: page }],
+          pagination: { page, per_page: 1, total_pages: 4 },
+        };
+      });
+      this.smartMoneyNetflow = ({ pagination }) => this.request(
+        '/api/v1/smart-money/netflow', { pagination },
+      );
+    }
+
+    await runCLI(['smart-money', 'netflow', '--limit', '1', '--paginate'], {
+      ...deps(),
+      NansenAPIClass: MetadataAPI,
+    });
+
+    expect(errors).toContain('Credits: 6 (3 live of 4 page requests)');
+    expect(errors).not.toContain('Credits: 6 (3 page requests)');
   });
 });

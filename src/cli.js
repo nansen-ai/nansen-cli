@@ -2578,10 +2578,10 @@ export async function runCLI(rawArgs, deps = {}) {
     if (charged?.source === 'header') {
       const paginationMeta = responseMeta?.pagination;
       let scope = 'this call';
-      if (paginationMeta?.livePages > 1) scope = `${paginationMeta.livePages} page requests`;
-      else if (paginationMeta?.cachedPages > 0 && paginationMeta.livePages > 0) {
+      if (paginationMeta?.cachedPages > 0 && paginationMeta.livePages > 0) {
         scope = `${paginationMeta.livePages} live of ${paginationMeta.pagesFetched} page requests`;
-      } else if (paginationMeta?.livePages === 1) scope = '1 page request';
+      } else if (paginationMeta?.livePages > 1) scope = `${paginationMeta.livePages} page requests`;
+      else if (paginationMeta?.livePages === 1) scope = '1 page request';
       else if (paginationMeta?.livePages === 0) scope = 'cached traversal';
       errorOutput(`Credits: ${charged.cost} (${scope})`);
     } else if (charged?.source === 'estimate') {
