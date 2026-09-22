@@ -8,6 +8,7 @@
  */
 
 import { aggregatePaginatedResponseMeta } from './response-meta.js';
+import { ErrorCode, NansenError } from './api.js';
 
 export const DEFAULT_MAX_PAGES = 10;
 // Rows and their serialized de-duplication keys stay resident until traversal
@@ -70,6 +71,19 @@ function numericMetadata(value) {
   return Number(value);
 }
 
+function failedPageError(response, page) {
+  const nested = response?.error && typeof response.error === 'object'
+    ? response.error
+    : null;
+  const message = typeof response?.error === 'string'
+    ? response.error
+    : nested?.message || response?.message || `Pagination request failed on page ${page}`;
+  const code = response?.code || nested?.code || ErrorCode.UNKNOWN;
+  const status = response?.status ?? nested?.status ?? null;
+  const details = response?.details ?? nested?.details ?? response?.data ?? null;
+  return new NansenError(message, code, status, details);
+}
+
 /**
  * Fetch pages starting at `pagination.page` (default 1) until one of:
  *   - a page is empty or shorter than the page size (last page),
@@ -101,6 +115,7 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
   while (pagesFetched < maxPages) {
     const res = await fetchPage({ ...pagination, page });
     pagesFetched++;
+    if (res?.success === false) throw failedPageError(res, page);
     const located = locateRows(res, { descriptive: true });
     if (first === undefined) {
       if (!located) return res;

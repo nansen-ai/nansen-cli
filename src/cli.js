@@ -2530,7 +2530,8 @@ export async function runCLI(rawArgs, deps = {}) {
     }
     const api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders });
 
-    // Wrapping api.request lets every list handler inherit --paginate/--all.
+    // --all aliases --paginate; wrapping api.request gives every list handler
+    // the same max-pages bound while leaving non-list requests untouched.
     const maxPages = parsePositiveSafeIntegerOption(
       'max-pages', options, flags, DEFAULT_MAX_PAGES, { max: MAX_PAGES_LIMIT },
     );

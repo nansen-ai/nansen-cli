@@ -251,6 +251,48 @@ describe('collectPages', () => {
     expect(fetchPage).toHaveBeenCalledTimes(1);
   });
 
+  it('throws a structured first-page failure instead of returning it as a result', async () => {
+    const failure = {
+      success: false,
+      error: 'Invalid list filter',
+      code: 'INVALID_PARAMS',
+      status: 400,
+      details: { field: 'filters' },
+      data: [],
+    };
+    const fetchPage = vi.fn(async () => failure);
+
+    await expect(collectPages(fetchPage, { page: 1, per_page: 10 })).rejects.toMatchObject({
+      name: 'NansenError',
+      message: 'Invalid list filter',
+      code: 'INVALID_PARAMS',
+      status: 400,
+      details: { field: 'filters' },
+    });
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws a mid-traversal failure without returning the rows collected so far', async () => {
+    const fetchPage = vi.fn(async ({ page }) => {
+      if (page === 1) return { data: [{ id: 1 }, { id: 2 }] };
+      return {
+        success: false,
+        error: { message: 'Page cursor expired', code: 'INVALID_PARAMS', details: { cursor: 'old' } },
+        status: 409,
+        data: { data: [] },
+      };
+    });
+
+    await expect(collectPages(fetchPage, { page: 1, per_page: 2 })).rejects.toMatchObject({
+      name: 'NansenError',
+      message: 'Page cursor expired',
+      code: 'INVALID_PARAMS',
+      status: 409,
+      details: { cursor: 'old' },
+    });
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+  });
+
   it('propagates a mid-traversal error unchanged', async () => {
     const fetchPage = vi.fn(async ({ page }) => {
       if (page === 2) throw Object.assign(new Error('boom'), { code: 'RATE_LIMITED' });
@@ -298,13 +340,13 @@ describe('enableAutoPagination', () => {
     ['top-level data', { success: false, error: 'bad', data: [] }],
     ['nested data', { success: false, error: 'bad', data: { data: [] } }],
     ['nested results', { success: false, error: 'bad', data: { results: [] } }],
-  ])('passes a failed %s envelope through unchanged', async (_name, failure) => {
+  ])('rejects a failed %s envelope instead of returning it as data', async (_name, failure) => {
     const raw = vi.fn(async () => failure);
     const api = { request: raw, lastResponseMeta: null, servedFromCache: false };
     enableAutoPagination(api);
 
     await expect(api.request('/list', { pagination: { page: 1, per_page: 10 } }))
-      .resolves.toBe(failure);
+      .rejects.toMatchObject({ name: 'NansenError', message: 'bad', code: 'UNKNOWN' });
     expect(raw).toHaveBeenCalledTimes(1);
   });
 
