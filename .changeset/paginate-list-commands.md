@@ -6,4 +6,6 @@ Add `--paginate` (alias `--all`) to fetch every page of a list-returning command
 
 Table, CSV, and stream output now intentionally use the same row extraction as pagination: they render rows inside nested `{ data: { data: [...] } }` and `{ data: { results: [...] } }` envelopes, and inside an unambiguous descriptive top-level array key such as `trades` or `holdings`, individually instead of treating the envelope as one row. Envelopes with multiple top-level arrays are not guessed.
 
+This remains a minor release because the default JSON contract is unchanged; only the opt-in table, CSV, and NDJSON handling of a previously inconsistent, undocumented envelope shape is normalized.
+
 With `token screener --search --paginate`, `--limit` remains the server page size and each candidate page is separately billed up to `--max-pages`; the merged candidate set is then filtered client-side without slicing it back to one page.

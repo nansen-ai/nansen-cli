@@ -375,7 +375,9 @@ separate, separately billed API call. Server completion metadata (`total_pages`,
 the response gains
 `pagination: { page, pages_fetched, next_page, complete }`; when `complete` is `false`, resume with
 `--page <next_page>`. The stderr credit summary totals the live page requests; cached pages are not
-counted as charges. Combine with `--stream` for NDJSON.
+counted as charges. Traversal trusts the server's `total`; if a live dataset changes or reports
+inconsistent totals while pages are being fetched, later rows can be omitted. Combine with
+`--stream` for NDJSON.
 
 **ENS names** work anywhere `--address` is accepted: `--address vitalik.eth`
 
