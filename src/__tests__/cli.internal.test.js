@@ -7082,6 +7082,7 @@ describe('--paginate / --all flag integration (API-275)', () => {
   let outputs;
   let errors;
   let exitCode;
+  let requestBodies;
 
   // The mock mirrors NansenAPI: handler methods route through request(), which
   // is the method --paginate wraps. 23 rows served 10 per page.
@@ -7090,6 +7091,7 @@ describe('--paginate / --all flag integration (API-275)', () => {
     this.lastResponseMeta = null;
     this.paginatedResponseMeta = null;
     this.request = vi.fn(async (endpoint, body) => {
+      requestBodies.push(body);
       if (!body.pagination) return { data: [{ kind: 'single-page' }] };
       const { page, per_page = 10 } = body.pagination;
       const start = (page - 1) * per_page;
@@ -7110,7 +7112,7 @@ describe('--paginate / --all flag integration (API-275)', () => {
     NansenAPIClass: MockAPI,
   });
 
-  beforeEach(() => { outputs = []; errors = []; exitCode = null; });
+  beforeEach(() => { outputs = []; errors = []; exitCode = null; requestBodies = []; });
 
   it('keeps the default single-page behaviour without the flag', async () => {
     const d = deps();
@@ -7166,16 +7168,18 @@ describe('--paginate / --all flag integration (API-275)', () => {
     expect(formatCsv(nested)).toBe('id,name\n1,one\n2,two');
   });
 
-  it('formats a descriptive single-array-key envelope for stream, table, and CSV', () => {
+  it('formats a descriptive single-array-key envelope as individual rows without --paginate', () => {
     const descriptive = {
-      trades: [{ id: 1, side: 'buy' }, { id: 2, side: 'sell' }],
-      pagination: { complete: true },
+      trades: [{ id: 1 }, { id: 2 }],
+      pagination: {},
     };
 
     expect(formatStream(descriptive).split('\n').map(JSON.parse)).toEqual(descriptive.trades);
-    expect(formatTable(descriptive)).toContain('1  │ buy');
-    expect(formatTable(descriptive)).toContain('2  │ sell');
-    expect(formatCsv(descriptive)).toBe('id,side\n1,buy\n2,sell');
+    expect(formatStream(descriptive)).not.toContain('trades');
+    const table = formatTable(descriptive);
+    expect(table.split('\n').slice(2).map(line => line.trim())).toEqual(['1', '2']);
+    expect(table).not.toContain('trades');
+    expect(formatCsv(descriptive)).toBe('id\n1\n2');
   });
 
   it.each(['0', '-1', '1.5', '9007199254740992', 'Infinity', 'false', '', '   '])(
@@ -7207,11 +7211,26 @@ describe('--paginate / --all flag integration (API-275)', () => {
     expect(JSON.parse(outputs[0]).error).toBe('--max-pages may only be specified once');
   });
 
-  it('validates --max-pages even when --paginate is omitted', async () => {
-    const result = await runCLI(['smart-money', 'netflow', '--max-pages', '0'], deps());
-    expect(result.type).toBe('error');
-    expect(JSON.parse(outputs[0]).error).toBe('--max-pages must be a positive safe integer; received: 0');
-  });
+  it.each([
+    ['zero', ['--max-pages', '0']],
+    ['non-numeric', ['--max-pages', 'not-a-number']],
+    ['over-ceiling', ['--max-pages', '1001']],
+    ['valueless', ['--max-pages']],
+    ['repeated', ['--max-pages', '2', '--max-pages', '3']],
+  ])(
+    'ignores an invalid %s --max-pages when pagination is disabled without leaking it upstream',
+    async (_case, maxPageArgs) => {
+      const result = await runCLI(
+        ['smart-money', 'netflow', '--limit', '10', ...maxPageArgs], deps(),
+      );
+      expect(result.type).toBe('success');
+      expect(result.data.data).toHaveLength(10);
+      expect(requestBodies).toHaveLength(1);
+      expect(requestBodies[0]).not.toHaveProperty('max-pages');
+      expect(requestBodies[0]).not.toHaveProperty('max_pages');
+      expect(requestBodies[0].pagination).toEqual({ page: 1, per_page: 10 });
+    },
+  );
 
   it('caps --max-pages to bound traversal memory and billed requests', async () => {
     const result = await runCLI(['smart-money', 'netflow', '--paginate', '--max-pages', '1001'], deps());

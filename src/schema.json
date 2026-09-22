@@ -2705,7 +2705,7 @@
       "minimum": 1,
       "maximum": 1000,
       "default": 10,
-      "description": "Positive safe-integer page-request cap. This option is parsed and validated whenever supplied, even when neither --paginate nor --all is set. During pagination, hitting the cap sets pagination.complete to false and pagination.next_page to the page to resume from."
+      "description": "Positive safe-integer page-request cap for --paginate/--all. It is parsed and validated only when pagination is active, and is otherwise ignored. Hitting the cap sets pagination.complete to false and pagination.next_page to the page to resume from."
     },
     "no-retry": {
       "type": "boolean",

@@ -394,8 +394,8 @@ function parsePositiveSafeIntegerOption(name, options, flags, defaultValue, { ma
     'positive safe integer',
   );
 
-  // Keep the helper safe for future optional callers even though
-  // --max-pages currently always supplies DEFAULT_MAX_PAGES.
+  // Keep the helper safe for future optional callers; the current pagination
+  // caller supplies DEFAULT_MAX_PAGES whenever this parser is activated.
   if (value === undefined) return undefined;
 
   if (value < 1) {
@@ -2532,10 +2532,10 @@ export async function runCLI(rawArgs, deps = {}) {
 
     // --all aliases --paginate; wrapping api.request gives every list handler
     // the same max-pages bound while leaving non-list requests untouched.
-    const maxPages = parsePositiveSafeIntegerOption(
-      'max-pages', options, flags, DEFAULT_MAX_PAGES, { max: MAX_PAGES_LIMIT },
-    );
     if (flags.paginate || flags.all) {
+      const maxPages = parsePositiveSafeIntegerOption(
+        'max-pages', options, flags, DEFAULT_MAX_PAGES, { max: MAX_PAGES_LIMIT },
+      );
       enableAutoPagination(api, { maxPages });
     }
 

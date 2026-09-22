@@ -322,7 +322,7 @@ after upgrading the CLI to pick up new commands.
 | `--pretty` | Human-readable JSON |
 | `--table` | Table format |
 | `--stream` | NDJSON output for large results |
-| `--paginate` | Fetch every page of a list command (alias `--all`); bound with `--max-pages <n>` (default 10) |
+| `--paginate` | Fetch every page of a list command (alias `--all`); bound with `--max-pages <n>` (default 10; ignored without pagination) |
 | `--labels <label>` | Smart Money label filter |
 | `--smart-money` | Filter for Smart Money addresses only |
 
@@ -345,7 +345,7 @@ nansen research smart-money netflow --chain solana --fields token_symbol,net_flo
 ```bash
 nansen smart-money netflow --chain solana --limit 100 --paginate --max-pages 5
 ```
-`--limit` is the page size and `--max-pages` (default 10) caps the number of requests — every page is a
+`--limit` is the page size and `--max-pages` (default 10; ignored without pagination) caps the number of requests — every page is a
 separate, separately billed API call. Server completion metadata (`total_pages`, `total`, or
 `is_last_page`) is honoured so a known final page is not fetched again. Rows are de-duplicated and
 the response gains
