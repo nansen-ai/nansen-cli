@@ -328,7 +328,7 @@ after upgrading the CLI to pick up new commands.
 
 ## Debugging
 
-`--debug` (or `NANSEN_DEBUG=1`) prints one line per HTTP request to **stderr**, so stdout stays pure JSON/CSV and stays pipeable:
+`--debug` (or `NANSEN_DEBUG=1`) prints HTTP trace events to **stderr**, so stdout stays pure JSON/CSV and stays pipeable:
 
 ```bash
 nansen research token screener --chain solana --debug
@@ -344,6 +344,8 @@ nansen research token screener --chain solana 2>trace.log | jq .   # trace to a 
 ```
 
 Events: `http.request`, `http.response`, `http.retry`, `http.error`, `http.cache_hit` (answered from the local cache, no request made).
+
+For `http.response`, `duration_ms` is the elapsed time from starting the attempt until response headers arrive (time to first byte / TTFB). It deliberately excludes downloading and parsing the response body. For `http.error`, `duration_ms` is the elapsed time until the transport failed before any response headers arrived.
 
 **What the trace never contains.** No API keys, wallet keys, mnemonics or payment signatures; no `Authorization`, `apikey` or `Payment-Signature` header values (header values are not traced at all); no request or response bodies. Query-string values are blanked whenever the parameter name mentions a key, token, secret, signature, password or auth, and any remaining credential-shaped value is blanked too. Redaction deliberately fails closed: bare 64-character hex URL segments and long opaque/base58 identifiers are hidden even when they are public transaction, block, or Solana signature identifiers, because they are indistinguishable from key material without endpoint-specific assumptions. Long values are truncated. Paste a trace into a bug report as-is — but a quick read before you share is always wise.
 

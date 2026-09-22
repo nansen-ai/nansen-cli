@@ -2712,7 +2712,7 @@
     },
     "debug": {
       "type": "boolean",
-      "description": "Trace every HTTP request on stderr: method, redacted URL, response status, latency, retry decisions and request id. Also enabled by NANSEN_DEBUG=1. Never prints credentials or response bodies."
+      "description": "Trace HTTP request events on stderr: method, redacted URL, response status, time-to-response-headers (TTFB), retry decisions and request id. Also enabled by NANSEN_DEBUG=1. Response timing excludes body download/parsing. Never prints credentials or response bodies."
     },
     "format": {
       "type": "string",

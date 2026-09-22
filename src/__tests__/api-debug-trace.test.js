@@ -2,7 +2,7 @@
  * Request-trace coverage for the HTTP transports in api.js.
  *
  * Two things are proved for each transport: the trace says something useful
- * (status, latency, retry decision, request id), and the credential the
+ * (status, time-to-headers, retry decision, request id), and the credential the
  * request carried never reaches the trace. Fixtures are fake.
  */
 
@@ -54,7 +54,7 @@ afterEach(() => {
 });
 
 describe('request() tracing', () => {
-  it('traces method, status, latency and request id without the API key', async () => {
+  it('traces method, status, time-to-headers and request id without the API key', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ requestId: '6f1c0f2a-0000-4000-8000-0000000000aa' })));
     const api = new NansenAPI(FAKE_API_KEY, BASE_URL, FAST_RETRY);
 
@@ -67,6 +67,29 @@ describe('request() tracing', () => {
     expect(output).toMatch(/duration_ms=\d+/);
     expect(output).toContain('request_id=6f1c0f2a-0000-4000-8000-0000000000aa');
     expect(output).not.toContain(FAKE_API_KEY);
+  });
+
+  it('emits response duration when headers arrive, before the body is read', async () => {
+    let releaseBody;
+    const bodyPending = new Promise((resolve) => { releaseBody = resolve; });
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ...jsonResponse(),
+      json: async () => bodyPending,
+    })));
+    const api = new NansenAPI(FAKE_API_KEY, BASE_URL, FAST_RETRY);
+
+    let settled = false;
+    const request = api.request('/api/v1/demo', { chain: 'solana' }).then((value) => {
+      settled = true;
+      return value;
+    });
+
+    await vi.waitFor(() => expect(traced()).toContain('[nansen:debug] http.response'));
+    expect(traced()).toMatch(/duration_ms=\d+/);
+    expect(settled).toBe(false);
+
+    releaseBody({ data: [] });
+    await request;
   });
 
   it('traces the retry decision: which attempt, why, and how long it waits', async () => {

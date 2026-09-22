@@ -1043,7 +1043,8 @@ OPTIONS: --chain --limit --sort field:dir --fields a,b --days N --filters '{}'
 FORMAT:  --pretty --table --format csv --stream (NDJSON)
 RETRY:   --no-retry --retries N --cache --cache-ttl N
 DEBUG:   --debug (or NANSEN_DEBUG=1) traces each request on stderr: method, URL,
-         status, latency, retries, request id. Never prints credentials or bodies.
+         status, time-to-headers (TTFB), retries, request id. Never prints
+         credentials or bodies.
 
 TRADING:
   nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
