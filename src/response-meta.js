@@ -116,6 +116,8 @@ export function aggregatePaginatedResponseMeta(pages) {
   const result = latest ? { ...latest } : {};
 
   const sumKnown = (key) => {
+    // This all-pages guard makes the unchecked access in reduce safe: it only
+    // runs when every page has credits[key] and that value is a safe integer.
     if (metas.some(meta => !Number.isSafeInteger(meta?.credits?.[key]))) return null;
     return metas.reduce((sum, meta) => sum + meta.credits[key], 0);
   };

@@ -60,9 +60,15 @@ export function locateRows(page, { descriptive = false } = {}) {
   return null;
 }
 
+function isPlainObject(value) {
+  if (value === null || typeof value !== 'object') return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 function locatePagination(page) {
-  if (page?.pagination && typeof page.pagination === 'object') return page.pagination;
-  if (page?.data?.pagination && typeof page.data.pagination === 'object') return page.data.pagination;
+  if (isPlainObject(page?.pagination)) return page.pagination;
+  if (isPlainObject(page?.data?.pagination)) return page.data.pagination;
   return null;
 }
 

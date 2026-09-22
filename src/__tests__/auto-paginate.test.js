@@ -234,6 +234,28 @@ describe('collectPages', () => {
     expect(res.data.data.map(r => r.id)).toEqual([1, 2, 3]);
   });
 
+  it.each([
+    ['top-level', rows => ({ data: rows, pagination: [{ total_pages: 1 }] })],
+    ['nested', rows => ({ data: { data: rows, pagination: [{ total_pages: 1 }] } })],
+  ])('ignores array-valued %s pagination metadata without leaking numeric keys', async (_shape, response) => {
+    const fetchPage = vi.fn(async ({ page }) => response(
+      page === 1 ? [{ id: 1 }, { id: 2 }] : [{ id: 3 }],
+    ));
+
+    const res = await collectPages(fetchPage, { page: 1, per_page: 2 });
+
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+    expect(res.data?.data || res.data).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+    expect(res.pagination).toEqual({
+      page: 1,
+      pages_fetched: 2,
+      next_page: null,
+      complete: true,
+    });
+    expect(res.pagination).not.toHaveProperty('0');
+    expect(res.data?.pagination).toBeUndefined();
+  });
+
   it('merges an unambiguous descriptive top-level list key', async () => {
     const fetchPage = vi.fn(async ({ page }) => ({
       pagination: { page, per_page: 2, total_pages: 2 },
