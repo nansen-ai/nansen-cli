@@ -3572,6 +3572,118 @@ describe('NansenAPI', () => {
       vi.useRealTimers();
     });
 
+    it('should wait at least as long as a Retry-After longer than maxDelayMs', async () => {
+      if (LIVE_TEST) return;
+
+      vi.useFakeTimers();
+      const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+
+      const rateLimitResponse = {
+        ok: false,
+        status: 429,
+        headers: new Map([['retry-after', '60']]),
+        json: async () => ({ error: 'Rate limited' })
+      };
+      rateLimitResponse.headers.get = (name) => (name.toLowerCase() === 'retry-after' ? '60' : null);
+      const successResponse = { ok: true, json: async () => ({ data: [] }) };
+      mockFetch.mockResolvedValueOnce(rateLimitResponse).mockResolvedValueOnce(successResponse);
+
+      let result;
+      const promise = api.smartMoneyNetflow({ chains: ['solana'] }).then(r => { result = r; });
+      // The default maxDelayMs is 30s; nothing may happen before the 60s the server asked for.
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      await vi.runAllTimersAsync();
+      await promise;
+
+      expect(result).toBeDefined();
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const delays = setTimeoutSpy.mock.calls.map(c => c[1]).filter(ms => typeof ms === 'number' && ms >= 1000);
+      expect(Math.min(...delays)).toBeGreaterThanOrEqual(60_000);
+      setTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it('should retry right away on Retry-After: 0 instead of falling back to exponential backoff', async () => {
+      if (LIVE_TEST) return;
+
+      vi.useFakeTimers();
+      const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+      const rateLimitResponse = {
+        ok: false,
+        status: 429,
+        headers: new Map([['retry-after', '0']]),
+        json: async () => ({ error: 'Rate limited' })
+      };
+      rateLimitResponse.headers.get = (name) => (name.toLowerCase() === 'retry-after' ? '0' : null);
+      const successResponse = { ok: true, json: async () => ({ data: [] }) };
+      mockFetch.mockResolvedValueOnce(rateLimitResponse).mockResolvedValueOnce(successResponse);
+
+      const promise = api.smartMoneyNetflow({ chains: ['solana'] });
+      await vi.runAllTimersAsync();
+      await promise;
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const delays = setTimeoutSpy.mock.calls.map(c => c[1]).filter(ms => typeof ms === 'number');
+      // only the jitter (< 1s), not baseDelayMs * 2^attempt
+      expect(delays.length).toBeGreaterThan(0);
+      expect(Math.max(...delays)).toBeLessThan(1000);
+      setTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it('should still retry a 5xx whose Retry-After exceeds maxRetryAfterMs, capped at maxDelayMs', async () => {
+      if (LIVE_TEST) return;
+
+      vi.useFakeTimers();
+      const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+      const serverErrorResponse = {
+        ok: false,
+        status: 503,
+        headers: new Map([['retry-after', '3600']]),
+        json: async () => ({ error: 'Service unavailable' })
+      };
+      serverErrorResponse.headers.get = (name) => (name.toLowerCase() === 'retry-after' ? '3600' : null);
+      const successResponse = { ok: true, json: async () => ({ data: [] }) };
+      mockFetch.mockResolvedValueOnce(serverErrorResponse).mockResolvedValueOnce(successResponse);
+
+      let result;
+      const promise = api.smartMoneyNetflow({ chains: ['solana'] }).then(r => { result = r; });
+      // A 5xx Retry-After is advisory: the wait is capped at maxDelayMs (30s), not 3600s.
+      // 30s cap + up to 1s jitter, so advance comfortably past 31s.
+      await vi.advanceTimersByTimeAsync(32_000);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      await vi.runAllTimersAsync();
+      await promise;
+
+      expect(result).toBeDefined();
+      const delays = setTimeoutSpy.mock.calls.map(c => c[1]).filter(ms => typeof ms === 'number' && ms >= 1000);
+      expect(delays.length).toBeGreaterThan(0);
+      expect(Math.max(...delays)).toBeLessThanOrEqual(31_000);
+      setTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it('should not retry when Retry-After exceeds maxRetryAfterMs', async () => {
+      if (LIVE_TEST) return;
+
+      const rateLimitResponse = {
+        ok: false,
+        status: 429,
+        headers: new Map([['retry-after', '3600']]),
+        json: async () => ({ error: 'Rate limited' })
+      };
+      rateLimitResponse.headers.get = (name) => (name.toLowerCase() === 'retry-after' ? '3600' : null);
+      mockFetch.mockResolvedValue(rateLimitResponse);
+
+      const error = await api.smartMoneyNetflow({ chains: ['solana'] }).catch(e => e);
+
+      expect(error.code).toBe(ErrorCode.RATE_LIMITED);
+      expect(error.status).toBe(429);
+      expect(error.details.retryAfterMs).toBe(3_600_000);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
     it('should handle missing retry-after header', async () => {
       if (LIVE_TEST) return;
       
@@ -4101,6 +4213,46 @@ describe('NansenAPI', () => {
       const result = await api.alertsUpdate({ id: 'alert-1', name: 'Updated Alert' });
       expectFetchCalledWith('/api/v1/smart-alert', { id: 'alert-1', name: 'Updated Alert' }, 'PATCH');
       expect(result).toHaveProperty('name', 'Updated Alert');
+    });
+
+    it('alertsUpdate should not retry after an ambiguous network failure', async () => {
+      if (LIVE_TEST) return;
+      vi.useFakeTimers();
+      let patches = 0;
+      mockFetch.mockImplementation(async () => {
+        patches += 1;
+        throw new Error('response lost after update');
+      });
+
+      let thrownError;
+      const promise = api.alertsUpdate({ id: 'alert-1', channels: [{ type: 'telegram', id: '123' }] })
+        .catch(error => { thrownError = error; });
+      await vi.runAllTimersAsync();
+      await promise;
+
+      expect(thrownError?.message).toContain('response lost after update');
+      expect(patches).toBe(1);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('alertsUpdate should not retry a retryable HTTP status', async () => {
+      if (LIVE_TEST) return;
+      vi.useFakeTimers();
+      mockFetch.mockImplementation(async () => ({
+        ok: false,
+        status: 503,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ error: 'upstream unavailable' }),
+        text: async () => JSON.stringify({ error: 'upstream unavailable' }),
+      }));
+
+      let thrownError;
+      const promise = api.alertsUpdate({ id: 'alert-1', name: 'Renamed' }).catch(error => { thrownError = error; });
+      await vi.runAllTimersAsync();
+      await promise;
+
+      expect(thrownError).toBeDefined();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it('alertsToggle should PATCH /api/v1/smart-alert/toggle', async () => {

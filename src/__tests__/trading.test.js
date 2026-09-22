@@ -826,6 +826,24 @@ describe('buildApprovalTransaction', () => {
     expect(() => buildApprovalTransaction('0xabc', '0xdef', wallet.privateKey, 'polygon', 0))
       .toThrow('Unsupported chain');
   });
+
+  // An approval used to default to 1,000,000 wei (0.001 gwei) when the quote
+  // carried no gas price. That transaction never mines, and the swap queued
+  // behind it can never be sent — the same failure signEvmTransaction refuses.
+  it('should refuse to sign an approval without a gas price', () => {
+    const wallet = generateEvmWallet();
+    for (const gasPrice of [undefined, null, '', 0]) {
+      expect(() => buildApprovalTransaction(
+        '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        '0x57df6092665eb6058de53939612413ff4b09114e',
+        wallet.privateKey,
+        'base',
+        0,
+        gasPrice,
+        1000000n,
+      )).toThrow(/no gas price.*Refusing to sign/s);
+    }
+  });
 });
 
 // ============= Approval amount scoping (security hardening) =============
@@ -2350,7 +2368,7 @@ describe('Privy execute support', () => {
         outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
         inAmount: '1000000000000000000',
         outAmount: '3000000000',
-        transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000' },
+        transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000', maxFeePerGas: '6600000', maxPriorityFeePerGas: '1100000' },
       }],
     }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
       swapMode: 'exactIn',
@@ -2422,6 +2440,81 @@ describe('Privy execute support', () => {
     expect(logs.every(l => !l.includes('Enter wallet password'))).toBe(true);
   });
 
+  // The Privy branch used to default a fee-less quote to 1,000,000 wei
+  // (0.001 gwei) and sign anyway — a transaction that never mines and leaves
+  // the wallet's nonce stuck — while the local-wallet signer already refused.
+  // Both paths must refuse before anything reaches Privy.
+  it('refuses to sign a quote with no fee information via Privy', async () => {
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'lifi',
+        inputMint: BASE_ETH,
+        outputMint: BASE_USDC,
+        inAmount: '1000000000000000000',
+        outAmount: '3000000000',
+        transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000' },
+      }],
+    }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({
+        walletAddress: '0xPrivyAddr',
+        fromToken: BASE_ETH,
+        toToken: BASE_USDC,
+        amount: '1000000000000000000',
+        maxInputAmount: '1000000000000000000',
+      }),
+    });
+
+    const privySignCalls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.includes('privy.io') && opts?.method === 'GET') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 'wl_evm_1', address: '0xPrivyAddr', chain_type: 'ethereum' }),
+        });
+      }
+      if (urlStr.includes('privy.io') && opts?.method === 'POST') {
+        privySignCalls.push(JSON.parse(opts.body));
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ data: { signed_transaction: '0xdeadbeef01' } }),
+        });
+      }
+      if (urlStr.includes('base') || urlStr.includes('mainnet')) {
+        const body = opts?.body ? JSON.parse(opts.body) : {};
+        if (body.method === 'eth_getTransactionCount') {
+          return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5' })) });
+        }
+        if (body.method === 'eth_getCode') {
+          return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x6080604052' })) });
+        }
+        if (body.method === 'eth_call') {
+          return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x' })) });
+        }
+        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: null })) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }));
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      log: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({
+      code: 'ALL_QUOTES_FAILED',
+      message: expect.stringMatching(/no gas price.*Refusing to sign/s),
+    });
+
+    // Nothing was handed to Privy to sign, so nothing could have been broadcast.
+    expect(privySignCalls).toHaveLength(0);
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+  });
+
   it('aborts (does not try the next quote) when the signed tx cannot be hashed after a successful broadcast', async () => {
     // The wallet (here Privy) hands back malformed signed bytes; /execute reports
     // Success, but we then cannot derive a local hash for what we just broadcast.
@@ -2433,12 +2526,12 @@ describe('Privy execute support', () => {
         {
           aggregator: 'lifi', inputMint: BASE_ETH, outputMint: BASE_USDC,
           inAmount: '1000000000000000000', outAmount: '3000000000',
-          transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000' },
+          transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000', maxFeePerGas: '6600000', maxPriorityFeePerGas: '1100000' },
         },
         {
           aggregator: 'lifi', inputMint: BASE_ETH, outputMint: BASE_USDC,
           inAmount: '1000000000000000000', outAmount: '3000000000',
-          transaction: { to: LIFI_ROUTER, data: '0x87654321', value: '1000000000000000000', gas: '210000' },
+          transaction: { to: LIFI_ROUTER, data: '0x87654321', value: '1000000000000000000', gas: '210000', maxFeePerGas: '6600000', maxPriorityFeePerGas: '1100000' },
         },
       ],
     }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {

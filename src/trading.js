@@ -795,16 +795,56 @@ export function signEvmTransaction(txData, privateKeyHex, chain, nonce) {
     }, privateKeyHex);
   }
 
-  // Previously this fell back to a gasPrice of 1 wei, which signs a transaction
-  // that can never be mined and burns the nonce. Refuse instead: a quote with no
-  // fee information at all is a bug upstream, not something to sign through.
-  if (!txData.gasPrice) {
-    throw new Error(
-      'Quote supplied no gas price (expected gasPrice or maxFeePerGas), so any signed transaction would be unmineable. Refusing to sign.',
-    );
-  }
+  // A gasPrice-only quote stays a legacy transaction; a quote with no fee
+  // information at all is refused (see NO_QUOTE_FEE_MESSAGE).
+  if (!txData.gasPrice) throw new Error(NO_QUOTE_FEE_MESSAGE);
 
   return signLegacyTransaction({ ...common, gasPrice: toHex(txData.gasPrice) }, privateKeyHex);
+}
+
+// Previously the signers fell back to a hardcoded gas price (1 wei here, then
+// 1,000,000 wei = 0.001 gwei in the Privy/approval paths), which signs a
+// transaction that can never be mined and leaves the nonce stuck for every
+// later attempt. Refuse instead: a quote with no fee information at all is a
+// bug upstream, not something to sign through. signEvmTransaction refuses it
+// directly; the Privy swap path and the approval/revoke transactions that
+// precede a swap resolve their fee fields through the two helpers below so the
+// refusal is uniform.
+const NO_QUOTE_FEE_MESSAGE =
+  'Quote supplied no gas price (expected gasPrice or maxFeePerGas), so any signed transaction would be unmineable. Refusing to sign.';
+
+/**
+ * Resolve the fee fields for an EIP-1559 (type 2) signer from a quote's
+ * transaction. A legacy-only quote (gasPrice, no maxFeePerGas) is lifted into
+ * type 2 by using gasPrice as the fee cap. A zero priority fee is a valid choice
+ * but not a sane default, so it falls back to the fee cap rather than to
+ * nothing when the quote omits it.
+ *
+ * @param {object} txData - Quote transaction fields
+ * @returns {{ maxFeePerGas: string|number, maxPriorityFeePerGas: string|number }}
+ * @throws {Error} when the quote carries neither maxFeePerGas nor gasPrice
+ */
+export function resolveQuoteEip1559Fees(txData) {
+  const maxFeePerGas = txData?.maxFeePerGas || txData?.gasPrice;
+  if (!maxFeePerGas) throw new Error(NO_QUOTE_FEE_MESSAGE);
+  return {
+    maxFeePerGas,
+    maxPriorityFeePerGas: txData.maxPriorityFeePerGas || maxFeePerGas,
+  };
+}
+
+/**
+ * Resolve the gas price for a legacy (type 0) signer from a quote's
+ * transaction. An EIP-1559-only quote is flattened to its fee cap.
+ *
+ * @param {object} txData - Quote transaction fields
+ * @returns {string|number} gas price in wei
+ * @throws {Error} when the quote carries neither gasPrice nor maxFeePerGas
+ */
+export function resolveQuoteLegacyGasPrice(txData) {
+  const gasPrice = txData?.gasPrice || txData?.maxFeePerGas;
+  if (!gasPrice) throw new Error(NO_QUOTE_FEE_MESSAGE);
+  return gasPrice;
 }
 
 /**
@@ -1615,6 +1655,10 @@ export function buildApprovalTransaction(tokenAddress, spenderAddress, privateKe
   const chainConfig = CHAIN_MAP[chain];
   if (!chainConfig) throw new Error(`Unsupported chain: ${chain}`);
 
+  // An approval broadcast at a placeholder fee never mines and blocks the swap
+  // behind it, so require a real gas price the same way signEvmTransaction does.
+  if (!gasPrice) throw new Error(NO_QUOTE_FEE_MESSAGE);
+
   // Scope the approval to the swap's input amount so a malicious or buggy quote
   // can drain at most this one trade, never the wallet's full token balance.
   // encodeApproveCalldata enforces a valid 20-byte spender, a bounded (< MAX)
@@ -1623,7 +1667,7 @@ export function buildApprovalTransaction(tokenAddress, spenderAddress, privateKe
 
   const tx = {
     nonce,
-    gasPrice: toHex(gasPrice || '1000000'),
+    gasPrice: toHex(gasPrice),
     gasLimit: '0x186a0', // 100000
     to: tokenAddress,
     value: '0x0',
@@ -3294,8 +3338,8 @@ EXAMPLES:
                   }
                   log(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
                 } else {
-                  const approvalMaxFee = currentQuote.transaction?.maxFeePerGas || currentQuote.transaction?.gasPrice || '1000000';
-                  const approvalPriorityFee = currentQuote.transaction?.maxPriorityFeePerGas || '1000000';
+                  const { maxFeePerGas: approvalMaxFee, maxPriorityFeePerGas: approvalPriorityFee } =
+                    resolveQuoteEip1559Fees(currentQuote.transaction);
 
                   if (shouldRevoke) {
                     log(`  ⚠ Existing allowance (${existingAllowance}) for ${quoteName} is excessive (>${OVERSIZED_ALLOWANCE_MULTIPLIER}x this trade) — revoking before re-approving`);
@@ -3445,8 +3489,7 @@ EXAMPLES:
               const nonce = await getEvmNonce(chain, walletAddress);
 
               // Privy signs EIP-1559 (type 2) transactions, so convert gasPrice to EIP-1559 fields
-              const maxFee = txData.maxFeePerGas || txData.gasPrice || '1000000';
-              const priorityFee = txData.maxPriorityFeePerGas || '1000000';
+              const { maxFeePerGas: maxFee, maxPriorityFeePerGas: priorityFee } = resolveQuoteEip1559Fees(txData);
 
               log('  Signing EVM transaction via Privy...');
               const signResult = await privyClient.signEvmTransaction(evmWalletId, {
@@ -4000,7 +4043,7 @@ EXAMPLES:
                   }
                   log(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
                 } else {
-                  const approvalGasPrice = currentQuote.transaction?.gasPrice || currentQuote.transaction?.maxFeePerGas || '1000000';
+                  const approvalGasPrice = resolveQuoteLegacyGasPrice(currentQuote.transaction);
 
                   if (shouldRevoke) {
                     log(`  ⚠ Existing allowance (${existingAllowance}) for ${quoteName} is excessive (>${OVERSIZED_ALLOWANCE_MULTIPLIER}x this trade) — revoking before re-approving`);
