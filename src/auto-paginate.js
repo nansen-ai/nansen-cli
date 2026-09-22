@@ -16,7 +16,8 @@ export const DEFAULT_MAX_PAGES = 10;
 // unbounded memory and billed API work from a long-running agent.
 export const MAX_PAGES_LIMIT = 1000;
 
-// Where list endpoints keep their rows. Mirrors formatTable/formatStream in cli.js.
+// Shared by collectPages and cli.js's formatTable/formatCsv/formatStream so
+// pagination and output formatting recognise the same row shapes.
 export function locateRows(page, { descriptive = false } = {}) {
   if (page?.success === false) return null;
   if (Array.isArray(page)) return { rows: page, rebuild: rows => ({ data: rows }) };
