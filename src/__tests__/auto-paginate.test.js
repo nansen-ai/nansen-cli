@@ -65,6 +65,20 @@ describe('collectPages', () => {
     expect(res.pagination).toEqual({ page: 1, pages_fetched: 3, next_page: null, complete: true });
   });
 
+  it('de-duplicates semantically equal rows whose object keys arrive in a different order', async () => {
+    const fetchPage = vi.fn(async ({ page }) => ({
+      data: page === 1
+        ? [{ id: 1, metadata: { symbol: 'SOL', rank: 2 } }]
+        : [{ metadata: { rank: 2, symbol: 'SOL' }, id: 1 }],
+    }));
+
+    const res = await collectPages(fetchPage, { page: 1, per_page: 1 });
+
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+    expect(res.data).toEqual([{ id: 1, metadata: { symbol: 'SOL', rank: 2 } }]);
+    expect(res.pagination.complete).toBe(true);
+  });
+
   it('stops on an empty page when the last page was full', async () => {
     const fetchPage = server(20, 10);
     const res = await collectPages(fetchPage, { page: 1, per_page: 10 });

@@ -711,7 +711,15 @@ EXAMPLES:
           const tokenInfo = await getTokenInfo(CHAIN_RPCS.solana, from);
           decimals = tokenInfo.decimals;
         }
-        amountBaseUnits = String(parseAmount(String(amount), decimals));
+        try {
+          amountBaseUnits = String(parseAmount(String(amount), decimals));
+        } catch (err) {
+          // parseAmount rejects an amount that truncates to zero base units at
+          // this token's precision — a decimals problem only in name.
+          log(`Error: ${err.message}`);
+          exit(1);
+          return;
+        }
       } catch (err) {
         log(`Error: Could not resolve decimals for ${from}: ${err.message}`);
         exit(1);

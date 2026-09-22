@@ -15,10 +15,12 @@ import { encodeApproveCalldata } from './trade-validation.js';
 const SOLANA_MAINNET_CHAIN = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
 
 /**
- * Extract the first JSON line from walletconnect CLI output.
- * The CLI may print status messages before the JSON result.
+ * Extract the first JSON object from walletconnect CLI output.
+ * The CLI may print status messages before the JSON result, and may
+ * pretty-print the result across several lines. Shared with the x402
+ * payment path so both read the CLI's output the same way.
  */
-function parseWcJson(output) {
+export function parseWcJson(output) {
   const lines = output.split('\n');
   const startIdx = lines.findIndex(l => l.trimStart().startsWith('{'));
   if (startIdx === -1) throw new Error('No JSON output from walletconnect');

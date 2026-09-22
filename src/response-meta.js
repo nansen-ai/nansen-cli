@@ -174,7 +174,11 @@ export function creditWarning(meta) {
   // The cost header is the authoritative charge; used is the fallback.
   const charged = cost ?? used;
   if (charged !== null && charged > 0 && remaining < charged) {
-    return `⚠️  ${remaining} API credit${remaining === 1 ? '' : 's'} left — less than this call cost (${charged}). Top up at https://app.nansen.ai/api?tab=api`;
+    const livePages = meta?.pagination?.livePages;
+    const costScope = livePages > 1
+      ? `the aggregate cost of ${livePages} live page requests`
+      : 'this call cost';
+    return `⚠️  ${remaining} API credit${remaining === 1 ? '' : 's'} left — less than ${costScope} (${charged}). Top up at https://app.nansen.ai/api?tab=api`;
   }
   return null;
 }

@@ -325,6 +325,30 @@ after upgrading the CLI to pick up new commands.
 | `--paginate` | Fetch every page of a list command (alias `--all`); bound with `--max-pages <n>` (default 10; ignored without pagination) |
 | `--labels <label>` | Smart Money label filter |
 | `--smart-money` | Filter for Smart Money addresses only |
+| `--debug` | Trace every HTTP request on stderr (see [Debugging](#debugging)) |
+
+## Debugging
+
+`--debug` (or `NANSEN_DEBUG=1`) prints HTTP trace events to **stderr**, so stdout stays pure JSON/CSV and stays pipeable:
+
+```bash
+nansen research token screener --chain solana --debug
+nansen research token screener --chain solana 2>trace.log | jq .   # trace to a file, JSON to jq
+```
+
+```
+[nansen:debug] http.request method=POST url=https://api.nansen.ai/api/v1/token-screener attempt=1/4
+[nansen:debug] http.response method=POST url=https://api.nansen.ai/api/v1/token-screener status=429 duration_ms=182 request_id=6f1c0f2a-0000-4000-8000-0000000000aa attempt=1
+[nansen:debug] http.retry method=POST url=https://api.nansen.ai/api/v1/token-screener status=429 attempt=1 reason=retry-after delay_ms=1100 retry_after_ms=1000
+[nansen:debug] http.request method=POST url=https://api.nansen.ai/api/v1/token-screener attempt=2/4
+[nansen:debug] http.response method=POST url=https://api.nansen.ai/api/v1/token-screener status=200 duration_ms=143 request_id=6f1c0f2a-0000-4000-8000-0000000000ab attempt=2
+```
+
+Events: `http.request`, `http.response`, `http.retry`, `http.error`, `http.cache_hit` (answered from the local cache, no request made).
+
+For `http.response`, `duration_ms` is the elapsed time from starting the attempt until response headers arrive (time to first byte / TTFB). It deliberately excludes downloading and parsing the response body. For `http.error`, `duration_ms` is the elapsed time until the transport failed before any response headers arrived.
+
+**What the trace never contains.** No API keys, wallet keys, mnemonics or payment signatures; no `Authorization`, `apikey` or `Payment-Signature` header values (header values are not traced at all); no request or response bodies. Query-string values are blanked whenever the parameter name mentions a key, token, secret, signature, password or auth, and any remaining credential-shaped value is blanked too. This intentionally includes public identifiers under names such as `token` and `token_address`, so use the original command—not the trace alone—to confirm which token was queried. Redaction deliberately fails closed: bare 64-character hex URL segments and long opaque/base58 identifiers are hidden even when they are public transaction, block, or Solana signature identifiers, because they are indistinguishable from key material without endpoint-specific assumptions. Long values are truncated. Paste a trace into a bug report as-is — but a quick read before you share is always wise.
 
 ## Supported Chains
 

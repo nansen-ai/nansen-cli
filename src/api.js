@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { EVM_CHAINS } from './chain-ids.js';
 import { getAnonymousId, TELEMETRY_DISABLED } from './telemetry.js';
 import { readResponseMeta, stringHeader } from './response-meta.js';
+import { trace, traceRequest, traceResponse, traceError, traceRetry, traceCacheHit } from './debug.js';
 
 /**
  * Key for the credit/rate-limit metadata attached to a successful response.
@@ -631,6 +632,10 @@ const DEFAULT_RETRY_OPTIONS = {
   maxRetries: 3,
   baseDelayMs: 1000,
   maxDelayMs: 30000,
+  // Longest server Retry-After we are willing to wait out. A longer one is not
+  // retried at all: retrying earlier than the server asked only burns the
+  // remaining attempts on more 429s.
+  maxRetryAfterMs: 120000,
   retryOnStatus: [429, 500, 502, 503, 504],
 };
 
@@ -667,10 +672,12 @@ export function sleep(ms) {
  * Calculate delay with exponential backoff and jitter
  */
 function calculateBackoff(attempt, baseDelayMs, maxDelayMs, retryAfterMs = null) {
-  // If server specifies retry-after, use it (with some jitter)
-  if (retryAfterMs) {
+  // If server specifies retry-after, wait at least that long (plus some jitter).
+  // maxDelayMs only bounds the local exponential backoff; the caller decides
+  // whether a Retry-After is too long to wait for at all.
+  if (retryAfterMs !== null && retryAfterMs !== undefined) {
     const jitter = Math.random() * 1000;
-    return Math.min(retryAfterMs + jitter, maxDelayMs);
+    return retryAfterMs + jitter;
   }
   
   // Exponential backoff: base * 2^attempt + random jitter
@@ -698,6 +705,20 @@ function parseRetryAfter(headerValue) {
   }
   
   return null;
+}
+
+/**
+ * Server-side request id for a response, or null when it carries none.
+ * Read straight off the header so the debug trace can name the id on every
+ * attempt without paying for a full metadata parse. Tolerates any header bag
+ * with a .get() — a real Headers, or a Map in tests.
+ */
+function requestIdOf(response) {
+  try {
+    return response?.headers?.get?.('x-request-id') ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -790,6 +811,9 @@ export class NansenAPI {
     const method = options.method || 'POST';
     const isGet = method === 'GET';
     let paidResponse;
+    const startedAt = Date.now();
+    // The signature itself is never traced — only that a paid retry went out.
+    traceRequest({ method, url, attempt: 1, payment: 'x402' });
     try {
       paidResponse = await fetch(url, {
         method,
@@ -806,6 +830,7 @@ export class NansenAPI {
         ...(!isGet && method !== 'DELETE' && { body: JSON.stringify(NansenAPI.cleanBody(body)) }),
       });
     } catch (err) {
+      traceError({ method, url, durationMs: Date.now() - startedAt, attempt: 1, error: err.message });
       // The signature was already on the wire when the connection failed —
       // the server may have received and settled it before we lost the
       // response. Fail closed rather than let the caller sign and send a
@@ -815,6 +840,17 @@ export class NansenAPI {
         ErrorCode.PAYMENT_AMBIGUOUS,
       );
     }
+    // fetch resolves when response headers are available, before body parsing;
+    // duration_ms therefore reports time-to-headers (TTFB), not full download.
+    traceResponse({
+      method,
+      url,
+      status: paidResponse.status,
+      durationMs: Date.now() - startedAt,
+      requestId: requestIdOf(paidResponse),
+      attempt: 1,
+      payment: 'x402',
+    });
     if (!paidResponse.ok) {
       // A 5xx doesn't prove the payment was rejected — the server could have
       // processed it before failing to respond. Only a readable non-5xx
@@ -868,7 +904,7 @@ export class NansenAPI {
   async request(endpoint, body = {}, options = {}) {
     this.lastEndpoint = endpoint;
     const url = `${this.baseUrl}${endpoint}`;
-    const { maxRetries, baseDelayMs, maxDelayMs, retryOnStatus } = this.retryOptions;
+    const { maxRetries, baseDelayMs, maxDelayMs, maxRetryAfterMs, retryOnStatus } = this.retryOptions;
     const shouldRetry = options.retry !== false; // Allow disabling retry per-request
     
     // Check cache first (if enabled and not bypassed)
@@ -891,6 +927,7 @@ export class NansenAPI {
       const cached = getCachedResponse(endpoint, body, cacheTtl, cacheContext);
       if (cached) {
         this.servedFromCache = true;
+        traceCacheHit({ method, url });
         return cached;
       }
     }
@@ -898,8 +935,14 @@ export class NansenAPI {
 
     let lastError;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const maxAttempts = (shouldRetry ? maxRetries : 0) + 1;
+
+    // Bound the loop by the displayed attempt count so retry:false can never
+    // produce a trace such as attempt=2/1, even if a future branch continues.
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       let response;
+      const startedAt = Date.now();
+      traceRequest({ method, url, attempt: attempt + 1, maxAttempts });
       try {
         const isGet = method === 'GET';
         response = await fetch(url, {
@@ -918,20 +961,33 @@ export class NansenAPI {
         });
       } catch (err) {
         // Network-level errors - retry these too
+        traceError({ method, url, durationMs: Date.now() - startedAt, attempt: attempt + 1, error: err.message });
         lastError = new NansenError(
           `Network error: ${err.message}`,
           ErrorCode.NETWORK_ERROR,
           null,
           { originalError: err.message, attempt: attempt + 1 }
         );
-        
+
         if (shouldRetry && attempt < maxRetries) {
           const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs);
+          traceRetry({ method, url, attempt: attempt + 1, reason: 'network-error', delayMs });
           await sleep(delayMs);
           continue;
         }
         throw lastError;
       }
+
+      // Keep response timing independent of body size: this is elapsed time to
+      // response headers (TTFB), before readBody downloads/parses the payload.
+      traceResponse({
+        method,
+        url,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+        requestId: requestIdOf(response),
+        attempt: attempt + 1,
+      });
 
       let data;
       try {
@@ -960,6 +1016,7 @@ export class NansenAPI {
         // that answers in plain text or HTML is still a 429/5xx.
         if (shouldRetry && attempt < maxRetries && retryOnStatus.includes(response.status)) {
           const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs, retryAfterMs);
+          traceRetry({ method, url, status: response.status, attempt: attempt + 1, reason: 'unparseable-response', delayMs, retryAfterMs });
           await sleep(delayMs);
           lastError = error;
           continue;
@@ -1004,7 +1061,7 @@ export class NansenAPI {
                 defaultWalletProvider = wallet.provider || 'local';
               }
             } catch (err) {
-              if (process.env.DEBUG) console.error(`[x402] Failed to detect wallet provider: ${err.message}`);
+              trace('x402.wallet_provider_lookup_failed', { error: err.message });
             }
 
             if (defaultWalletProvider === 'privy') {
@@ -1110,9 +1167,27 @@ export class NansenAPI {
           ...(meta?.rateLimit && { rateLimit: meta.rateLimit })
         });
         
-        // Retry on specific status codes
-        if (shouldRetry && attempt < maxRetries && retryOnStatus.includes(response.status)) {
-          const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs, retryAfterMs);
+        // Retry on specific status codes. A 429 Retry-After is binding: retrying
+        // earlier only burns attempts on more 429s, so wait it out in full or,
+        // if it is longer than we are willing to block, give up right away (the
+        // error already carries retryAfterMs so the caller can come back later).
+        // A Retry-After on a 5xx is only advisory and keeps the old maxDelayMs cap.
+        const isRateLimit = response.status === 429;
+        if (shouldRetry && attempt < maxRetries && retryOnStatus.includes(response.status)
+          && !(isRateLimit && retryAfterMs !== null && retryAfterMs > maxRetryAfterMs)) {
+          const serverDelayMs = retryAfterMs === null || isRateLimit
+            ? retryAfterMs
+            : Math.min(retryAfterMs, maxDelayMs);
+          const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs, serverDelayMs);
+          traceRetry({
+            method,
+            url,
+            status: response.status,
+            attempt: attempt + 1,
+            reason: retryAfterMs ? 'retry-after' : 'retryable-status',
+            delayMs,
+            retryAfterMs,
+          });
           await sleep(delayMs);
           continue;
         }
@@ -2118,7 +2193,10 @@ export class NansenAPI {
   }
 
   async alertsUpdate(params = {}) {
-    return this.request('/api/v1/smart-alert', params, { method: 'PATCH', cache: false });
+    // Same hazard as alertsCreate: an update that sets channels makes the
+    // server re-send the channel welcome message, so a lost response after a
+    // committed update must not resend the PATCH through the retry loop.
+    return this.request('/api/v1/smart-alert', params, { method: 'PATCH', cache: false, retry: false });
   }
 
   async alertsToggle(params = {}) {

@@ -91,14 +91,28 @@ function failedPageError(response, page) {
   return new NansenError(message, code, status, details);
 }
 
+function canonicalRowKey(value) {
+  if (Array.isArray(value)) return JSON.stringify(value.map(canonicalRowValue));
+  return JSON.stringify(canonicalRowValue(value));
+}
+
+function canonicalRowValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalRowValue);
+  if (!isPlainObject(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value).sort().map(key => [key, canonicalRowValue(value[key])]),
+  );
+}
+
 /**
  * Fetch pages starting at `pagination.page` (default 1) until one of:
  *   - a page is empty or shorter than the page size (last page),
  *   - the server's pagination metadata says the traversal is complete,
  *   - a page adds no new rows (server ignored `page` / repeated cursor),
  *   - `maxPages` requests have been made (result marked `complete: false`).
- * Rows are de-duplicated by JSON identity so overlapping pages never repeat an
- * item. Returns the first page's envelope with the merged rows and a
+ * Rows are de-duplicated by canonical JSON identity (object keys are sorted
+ * recursively) so overlapping pages never repeat a semantically equal item.
+ * Returns the first page's envelope with the merged rows and a
  * `pagination` summary: { page, pages_fetched, next_page, complete, ...server fields }.
  * A first page with no recognisable rows array is returned unchanged.
  */
@@ -136,7 +150,7 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
 
     let fresh = 0;
     for (const row of located.rows) {
-      const key = JSON.stringify(row);
+      const key = canonicalRowKey(row);
       if (seen.has(key)) continue;
       seen.add(key);
       rows.push(row);

@@ -4756,6 +4756,14 @@ describe('formatStream', () => {
     expect(JSON.parse(result)).toEqual({ single: true, value: 42 });
   });
 
+  it('should keep a failed envelope with row-like data on one JSON line', () => {
+    const failure = { success: false, error: 'partial failure', data: [{ id: 1 }, { id: 2 }] };
+    const result = formatStream(failure);
+
+    expect(result).toBe(JSON.stringify(failure));
+    expect(result.split('\n')).toHaveLength(1);
+  });
+
   it('should return empty string for empty array', () => {
     expect(formatStream([])).toBe('');
   });
@@ -7265,7 +7273,7 @@ describe('--paginate / --all flag integration (API-275)', () => {
     await runCLI(['smart-money', 'netflow', '--limit', '2', '--paginate'], d);
 
     expect(errors).toEqual([
-      '⚠️  3 API credits left — less than this call cost (8). Top up at https://app.nansen.ai/api?tab=api',
+      '⚠️  3 API credits left — less than the aggregate cost of 2 live page requests (8). Top up at https://app.nansen.ai/api?tab=api',
       'Credits: 8 (2 page requests)',
     ]);
     expect(JSON.parse(outputs[0]).data.data).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);

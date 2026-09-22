@@ -21,6 +21,7 @@ import {
   buildEIP712TypedData,
   buildPaymentSignatureHeader,
 } from "./walletconnect-x402.js";
+import { trace } from "./debug.js";
 
 // ============= Constants =============
 
@@ -239,7 +240,7 @@ async function getPrivyEvmWallet(client) {
     }
   } catch (err) {
     // Fall through to list-based detection
-    if (process.env.DEBUG) console.error(`[x402] Default wallet lookup failed: ${err.message}`);
+    trace("x402.default_wallet_lookup_failed", { error: err.message });
   }
 
   const result = await client.listWallets();
@@ -269,7 +270,7 @@ async function getPrivySolanaWallet(client) {
       }
     }
   } catch (err) {
-    if (process.env.DEBUG) console.error(`[x402] Solana wallet lookup failed: ${err.message}`);
+    trace("x402.solana_wallet_lookup_failed", { error: err.message });
   }
 
   const result = await client.listWallets();

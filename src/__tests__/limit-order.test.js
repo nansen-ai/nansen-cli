@@ -819,6 +819,23 @@ describe('buildLimitOrderCommands', () => {
       expect(exit).toHaveBeenCalledWith(1);
     });
 
+    // One digit past USDC's 6-decimal precision passed the Number(amount) > 0
+    // gate, truncated to 0 base units, and created a phantom order with
+    // inputAmount "0" — reported as "✓ Limit order created".
+    it('rejects a positive amount that rounds to zero base units for an SPL token', async () => {
+      const logs = [];
+      const exit = vi.fn();
+      const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+      global.fetch = vi.fn();
+      await cmds.create([], null, {}, {
+        from: 'USDC', to: 'SOL', amount: '0.0000001',
+        'trigger-mint': 'SOL', 'trigger-condition': 'below', 'trigger-price': '80',
+      });
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(logs.some(l => /below the smallest unit/.test(l))).toBe(true);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
     it('rejects non-numeric amount', async () => {
       const logs = [];
       const exit = vi.fn();
