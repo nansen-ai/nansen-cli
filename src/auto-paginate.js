@@ -17,6 +17,7 @@ export const MAX_PAGES_LIMIT = 1000;
 
 // Where list endpoints keep their rows. Mirrors formatTable/formatStream in cli.js.
 export function locateRows(page, { descriptive = false } = {}) {
+  if (page?.success === false) return null;
   if (Array.isArray(page)) return { rows: page, rebuild: rows => ({ data: rows }) };
   if (Array.isArray(page?.data)) return { rows: page.data, rebuild: rows => ({ ...page, data: rows }) };
   if (Array.isArray(page?.results)) return { rows: page.results, rebuild: rows => ({ ...page, results: rows }) };
@@ -47,7 +48,7 @@ export function locateRows(page, { descriptive = false } = {}) {
   // `balances`, etc.) rather than `data`. A single array is unambiguous; do
   // not count pagination metadata as rows or guess when an envelope contains
   // several independent data arrays.
-  if (descriptive && page && typeof page === 'object' && page.success !== false) {
+  if (descriptive && page && typeof page === 'object') {
     const arrays = Object.entries(page)
       .filter(([key, value]) => key !== 'pagination' && Array.isArray(value));
     if (arrays.length === 1) {

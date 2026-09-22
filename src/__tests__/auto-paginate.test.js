@@ -10,6 +10,15 @@ function server(total, size, extra = {}) {
 }
 
 describe('locateRows descriptive envelopes', () => {
+  it.each([
+    ['top-level data', { success: false, error: 'bad', data: [] }],
+    ['top-level results', { success: false, error: 'bad', results: [] }],
+    ['nested data', { success: false, error: 'bad', data: { data: [] } }],
+    ['nested results', { success: false, error: 'bad', data: { results: [] } }],
+  ])('rejects a failed %s envelope before inspecting row arrays', (_name, page) => {
+    expect(locateRows(page, { descriptive: true })).toBeNull();
+  });
+
   it('does not treat a pagination-only array as row data', () => {
     expect(locateRows({ pagination: [{ page: 1 }] }, { descriptive: true })).toBeNull();
   });
@@ -283,6 +292,20 @@ describe('enableAutoPagination', () => {
     expect(await api.info()).toEqual({ single: true });
     expect(raw).toHaveBeenCalledTimes(1);
     expect(raw.mock.calls[0][1]).toEqual({ chain: 'solana' });
+  });
+
+  it.each([
+    ['top-level data', { success: false, error: 'bad', data: [] }],
+    ['nested data', { success: false, error: 'bad', data: { data: [] } }],
+    ['nested results', { success: false, error: 'bad', data: { results: [] } }],
+  ])('passes a failed %s envelope through unchanged', async (_name, failure) => {
+    const raw = vi.fn(async () => failure);
+    const api = { request: raw, lastResponseMeta: null, servedFromCache: false };
+    enableAutoPagination(api);
+
+    await expect(api.request('/list', { pagination: { page: 1, per_page: 10 } }))
+      .resolves.toBe(failure);
+    expect(raw).toHaveBeenCalledTimes(1);
   });
 
   it('is a no-op on an object without request()', () => {
