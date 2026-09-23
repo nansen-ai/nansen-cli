@@ -223,7 +223,11 @@ function appendAuditLine(record) {
   const dir = getLedgerDir();
   const auditFile = path.join(dir, 'payments.jsonl');
   if (fs.existsSync(auditFile)) {
-    fs.chmodSync(auditFile, 0o600);
+    try {
+      fs.chmodSync(auditFile, 0o600);
+    } catch (err) {
+      if (err.code !== 'ENOENT' && err.code !== 'EPERM') throw err;
+    }
   }
   fs.appendFileSync(auditFile, JSON.stringify(record) + '\n', { mode: 0o600 });
 }
