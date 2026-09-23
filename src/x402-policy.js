@@ -212,5 +212,5 @@ export function evaluatePaymentRequirement(requirement) {
     };
   }
 
-  return { ok: true, usd, symbol: known.symbol };
+  return { ok: true, usd, symbol: known.symbol, network, asset, payTo, amountRaw };
 }

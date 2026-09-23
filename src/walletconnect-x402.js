@@ -164,6 +164,24 @@ export async function handleX402Payment(paymentRequirements) {
     throw new Error(decision.reason);
   }
 
+  const { assertCumulativeSpendAllowed, recordPaymentAttempt } = await import('./x402-ledger.js');
+  let capCheck;
+  try {
+    capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
+  } catch (err) {
+    // Surface a [x402] stderr line before the error propagates, consistent
+    // with the local-wallet (x402.js) and Privy (privy.js) paths.
+    console.error(`[x402] ${err.message}`);
+    throw err;
+  }
+  if (!capCheck.ok) {
+    // Emit the actionable cap reason to stderr before throwing: for x402-only
+    // users (no API key) api.js replaces the thrown message with a generic
+    // "No API key configured" note, so this is the user's only explanation.
+    console.error(`[x402] ${capCheck.reason}`);
+    throw new NansenError(capCheck.reason, ErrorCode.PAYMENT_REQUIRED, 402);
+  }
+
   // 3. Resolve the WalletConnect signer scoped to this exact chain. EVM
   // addresses are identical across chains, so "some account exists in the
   // session" can't prove the session was actually approved for THIS chain --
@@ -234,6 +252,18 @@ export async function handleX402Payment(paymentRequirements) {
     accepted: requirement,
   });
 
+  const paymentId = recordPaymentAttempt({
+    provider: 'walletconnect',
+    walletLabel: 'WalletConnect',
+    network: decision.network,
+    asset: decision.asset,
+    symbol: decision.symbol,
+    amountUsd: decision.usd,
+    amountRaw: decision.amountRaw,
+    payTo: decision.payTo,
+    requestUrl: (paymentRequirements.resource || {}).url || null,
+  });
+
   process.stderr.write(`x402: Payment signed successfully.\n`);
-  return headerValue;
+  return { signature: headerValue, paymentId, network: requirement.network, asset: requirement.asset };
 }
