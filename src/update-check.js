@@ -158,7 +158,7 @@ export function scheduleUpdateCheck() {
     // Check staleness
     if (fs.existsSync(CACHE_FILE)) {
       const { checkedAt } = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-      if (checkedAt && Date.now() - checkedAt < STALE_MS) return;
+      if (Number.isFinite(checkedAt) && checkedAt !== 0 && Date.now() - checkedAt < STALE_MS) return;
     }
 
     const child = childProcess.spawn(process.execPath, ['-e', buildCheckScript(CONFIG_DIR, CACHE_FILE)], {

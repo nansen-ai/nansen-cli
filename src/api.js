@@ -351,8 +351,8 @@ export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL
     const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
     const age = (Date.now() - cached.timestamp) / 1000;
     
-    if (ttlSeconds <= 0 || age > ttlSeconds) {
-      // Cache expired or TTL is 0, delete it
+    if (!Number.isFinite(cached.timestamp) || ttlSeconds <= 0 || age > ttlSeconds) {
+      // Delete entries with invalid timestamps, expired entries, or disabled entries.
       fs.unlinkSync(cacheFile);
       return null;
     }

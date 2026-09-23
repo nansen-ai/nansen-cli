@@ -83,7 +83,7 @@ export async function refreshCostMapIfStale() {
   try {
     if (fs.existsSync(CACHE_FILE)) {
       const { fetchedAt } = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-      if (fetchedAt && Date.now() - fetchedAt < STALE_MS) return;
+      if (Number.isFinite(fetchedAt) && fetchedAt !== 0 && Date.now() - fetchedAt < STALE_MS) return;
     }
 
     const controller = new AbortController();

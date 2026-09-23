@@ -101,7 +101,9 @@ function readTimestamp(file, field) {
   }
   try {
     const value = JSON.parse(raw)?.[field];
-    return { timestampMs: Number.isFinite(value) ? value : null };
+    // Auxiliary cache readers treat a zero timestamp as missing metadata.
+    const valid = Number.isFinite(value) && (field === 'timestamp' || value !== 0);
+    return { timestampMs: valid ? value : null };
   } catch {
     // A corrupt cache is dead to its owner and therefore already expired.
     return { timestampMs: null };
@@ -171,8 +173,21 @@ function listEntries(ns, options) {
  * oldest and newest entry, the effective TTL, and how many entries are already
  * past it. `responseTtlSeconds` is the TTL this invocation would apply
  * (--cache-ttl), so the expiry count matches what the next call would see.
+ *
+ * @param {object} [options]
+ * @param {number} [options.responseTtlSeconds] Non-negative safe integer seconds.
+ * Invalid TTL values use DEFAULT_CACHE_TTL. Zero disables response cache reads.
+ * @param {number} [options.now] Safe integer milliseconds since the Unix epoch.
+ * Invalid clock values throw INVALID_PARAMS before any file access.
  */
 export function collectCacheStats({ responseTtlSeconds = DEFAULT_CACHE_TTL, now = Date.now() } = {}) {
+  if (!Number.isSafeInteger(responseTtlSeconds) || responseTtlSeconds < 0) {
+    responseTtlSeconds = DEFAULT_CACHE_TTL;
+  }
+  if (!Number.isSafeInteger(now)) {
+    throw new NansenError('now must be a safe integer timestamp in milliseconds.', ErrorCode.INVALID_PARAMS);
+  }
+
   const caches = [];
   let totalEntries = 0;
   let totalBytes = 0;
@@ -204,8 +219,11 @@ export function collectCacheStats({ responseTtlSeconds = DEFAULT_CACHE_TTL, now 
       ttl_seconds: ttlSeconds,
       oldest_age_seconds: oldestAge,
       newest_age_seconds: newestAge,
-      // A TTL of 0 disables cache reads, so every entry is already dead.
-      expired_entries: rawAges.filter(age => age == null || ttlSeconds <= 0 || age > ttlSeconds).length,
+      // Response reads allow an age equal to the TTL. Auxiliary caches refresh
+      // at that boundary. A response TTL of zero disables all cache reads.
+      expired_entries: rawAges.filter(age => (
+        age == null || ttlSeconds === 0 || (ns.kind === 'file' ? age >= ttlSeconds : age > ttlSeconds)
+      )).length,
     });
   }
 

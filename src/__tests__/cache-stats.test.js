@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import childProcess from 'node:child_process';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Fixture payload. Everything here is invented; none of it may reach stdout.
@@ -72,6 +73,7 @@ afterEach(() => {
   vi.resetModules();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe('cache stats', () => {
@@ -138,6 +140,131 @@ describe('cache stats', () => {
     // A TTL of 0 disables cache reads outright, so nothing on disk is live.
     expect(atZero.caches[0].expired_entries).toBe(1);
   });
+
+  it.each([
+    null, NaN, Infinity, -Infinity, -1, 0.5, Number.MAX_SAFE_INTEGER + 1,
+    '60', '', true, false, [], {}, 1n,
+  ].map(value => [value]))('uses the default TTL for invalid input %s', async responseTtlSeconds => {
+    const now = 1_800_000_000_000;
+    for (const [index, age] of [0, 120, 600].entries()) {
+      writeResponseEntry(index.toString(16).padStart(64, '0'), { timestamp: now - age * 1000, data: [] });
+    }
+    const { collectCacheStats } = await freshModule('../cache-inspect.js');
+
+    const response = collectCacheStats({ responseTtlSeconds, now }).caches[0];
+    expect(response.ttl_seconds).toBe(300);
+    expect(response.expired_entries).toBe(1);
+  });
+
+  it.each([undefined, 0, 1, 300, Number.MAX_SAFE_INTEGER])('preserves a valid TTL of %j', async responseTtlSeconds => {
+    const { collectCacheStats } = await freshModule('../cache-inspect.js');
+    expect(collectCacheStats({ responseTtlSeconds }).caches[0].ttl_seconds).toBe(responseTtlSeconds ?? 300);
+  });
+
+  it.each([null, NaN, Infinity, -Infinity, '123', true, {}, [], 0.5, Number.MAX_SAFE_INTEGER + 1].map(value => [value]))(
+    'rejects an invalid clock value %s before reading files', async now => {
+      const { collectCacheStats } = await freshModule('../cache-inspect.js');
+      const lstat = vi.spyOn(fs, 'lstatSync');
+      expect(() => collectCacheStats({ now })).toThrow(/now must be a safe integer/);
+      expect(lstat).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([0, -1000, Number.MAX_SAFE_INTEGER])('accepts a valid clock value %s', async now => {
+    writeResponseEntry(CACHE_KEY, { timestamp: now, data: [] });
+    const { collectCacheStats } = await freshModule('../cache-inspect.js');
+    const response = collectCacheStats({ now }).caches[0];
+    expect(response.oldest_age_seconds).toBe(0);
+    expect(response.expired_entries).toBe(0);
+  });
+
+  it.each([
+    { ageMs: -1000, ttl: 300, expired: 0 },
+    { ageMs: 0, ttl: 0, expired: 1 },
+    { ageMs: -1000, ttl: 0, expired: 1 },
+    { ageMs: 299_999, ttl: 300, expired: 0 },
+    { ageMs: 300_000, ttl: 300, expired: 0 },
+    { ageMs: 300_001, ttl: 300, expired: 1 },
+  ])('matches the response reader at age $ageMs ms and TTL $ttl', async ({ ageMs, ttl, expired }) => {
+    const now = 1_800_000_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now - ageMs);
+    const { collectCacheStats } = await freshModule('../cache-inspect.js');
+    const { setCachedResponse, getCachedResponse } = await import('../api.js');
+    setCachedResponse('/test', {}, { ok: true });
+    clock.mockReturnValue(now);
+
+    const response = collectCacheStats({ responseTtlSeconds: ttl, now }).caches[0];
+    expect(response.expired_entries).toBe(expired);
+    expect(response.oldest_age_seconds).toBe(Math.round(Math.max(0, ageMs / 1000)));
+    expect(getCachedResponse('/test', {}, ttl) === null).toBe(expired === 1);
+  });
+
+  it.each([
+    { ageMs: -1000, expired: 0 },
+    { ageMs: 86_399_999, expired: 0 },
+    { ageMs: 86_400_000, expired: 1 },
+    { ageMs: 86_400_001, expired: 1 },
+  ])('matches auxiliary cache refreshes at age $ageMs ms', async ({ ageMs, expired }) => {
+    const now = 1_800_000_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    vi.stubEnv('NO_UPDATE_NOTIFIER', '');
+    vi.stubEnv('CI', '');
+    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ paths: {} }) }));
+    vi.stubGlobal('fetch', fetch);
+    const spawn = vi.spyOn(childProcess, 'spawn').mockReturnValue({ unref: vi.fn() });
+    fs.mkdirSync(nansenDir(), { recursive: true });
+    fs.writeFileSync(path.join(nansenDir(), 'cost-map.json'), JSON.stringify({ costs: {}, fetchedAt: now - ageMs }));
+    fs.writeFileSync(path.join(nansenDir(), 'update-check.json'), JSON.stringify({ latest: '1.0.0', checkedAt: now - ageMs }));
+    const { collectCacheStats } = await freshModule('../cache-inspect.js');
+    const { refreshCostMapIfStale } = await import('../cost-cache.js');
+    const { scheduleUpdateCheck } = await import('../update-check.js');
+
+    const stats = collectCacheStats({ now });
+    await refreshCostMapIfStale();
+    scheduleUpdateCheck();
+    expect(fetch).toHaveBeenCalledTimes(expired);
+    expect(spawn).toHaveBeenCalledTimes(expired);
+    expect(stats.caches[1].expired_entries).toBe(expired);
+    expect(stats.caches[2].expired_entries).toBe(expired);
+  });
+
+  it.each([undefined, null, '1800000000000', true, {}, []].map(value => [value]))(
+    'treats invalid response timestamps as expired in both stats and reads: %j', async timestamp => {
+      const { collectCacheStats } = await freshModule('../cache-inspect.js');
+      const { setCachedResponse, getCachedResponse } = await import('../api.js');
+      setCachedResponse('/test', {}, { ok: true });
+      const file = path.join(responseCacheDir(), fs.readdirSync(responseCacheDir())[0]);
+      fs.writeFileSync(file, JSON.stringify({ timestamp, data: { ok: true } }));
+
+      expect(collectCacheStats().caches[0].expired_entries).toBe(1);
+      expect(getCachedResponse('/test', {})).toBeNull();
+    },
+  );
+
+  it.each([undefined, null, '1800000000000', true, {}, [], 0].map(value => [value]))(
+    'treats invalid auxiliary timestamps as stale: %j', async timestamp => {
+      vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+      vi.stubEnv('NO_UPDATE_NOTIFIER', '');
+      vi.stubEnv('CI', '');
+      const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ paths: {} }) }));
+      vi.stubGlobal('fetch', fetch);
+      const spawn = vi.spyOn(childProcess, 'spawn').mockReturnValue({ unref: vi.fn() });
+      fs.mkdirSync(nansenDir(), { recursive: true });
+      fs.writeFileSync(path.join(nansenDir(), 'cost-map.json'), JSON.stringify({ costs: {}, fetchedAt: timestamp }));
+      fs.writeFileSync(path.join(nansenDir(), 'update-check.json'), JSON.stringify({ latest: '1.0.0', checkedAt: timestamp }));
+      const { collectCacheStats } = await freshModule('../cache-inspect.js');
+      const { refreshCostMapIfStale } = await import('../cost-cache.js');
+      const { scheduleUpdateCheck } = await import('../update-check.js');
+
+      const stats = collectCacheStats();
+      expect(stats.caches[1].expired_entries).toBe(1);
+      expect(stats.caches[2].expired_entries).toBe(1);
+      await refreshCostMapIfStale();
+      scheduleUpdateCheck();
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(spawn).toHaveBeenCalledOnce();
+    },
+  );
 
   it('uses the cache timestamp rather than mtime when deciding expiry', async () => {
     const file = writeResponseEntry(CACHE_KEY, { data: [1] }, 600);
@@ -336,12 +463,26 @@ describe('cache clear', () => {
     const outsider = path.join(tempHome, 'important.json');
     fs.writeFileSync(outsider, JSON.stringify({ keep: true }));
     fs.mkdirSync(responseCacheDir(), { recursive: true });
-    fs.symlinkSync(outsider, path.join(responseCacheDir(), 'link.json'));
+    fs.symlinkSync(outsider, path.join(responseCacheDir(), `${CACHE_KEY}.json`));
 
     const { collectCacheStats, clearCaches } = await freshModule('../cache-inspect.js');
 
     expect(collectCacheStats().caches[0].entries).toBe(0);
     clearCaches('responses');
+    expect(fs.existsSync(outsider)).toBe(true);
+  });
+
+  it.each(['cost-map', 'update-check'])('skips a symlinked %s cache', async name => {
+    fs.mkdirSync(nansenDir(), { recursive: true });
+    const outsider = path.join(tempHome, 'important.json');
+    fs.writeFileSync(outsider, JSON.stringify({ fetchedAt: Date.now(), checkedAt: Date.now() }));
+    const link = path.join(nansenDir(), `${name}.json`);
+    fs.symlinkSync(outsider, link);
+    const { collectCacheStats, clearCaches } = await freshModule('../cache-inspect.js');
+
+    expect(collectCacheStats().caches.find(cache => cache.name === name).entries).toBe(0);
+    expect(clearCaches(name).total_entries).toBe(0);
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
     expect(fs.existsSync(outsider)).toBe(true);
   });
 
