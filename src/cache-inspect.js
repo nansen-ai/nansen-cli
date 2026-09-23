@@ -16,7 +16,7 @@
  * named files. Directories and symlinks are skipped rather than followed, so a
  * clear cannot reach outside the cache it was pointed at. Everything else under
  * ~/.nansen (config.json, wallets/, quotes/, telemetry-id, saved auth) is never
- * read and never deleted.
+ * read or deleted by the inspector. CLI startup loads config separately.
  */
 
 import fs from 'fs';
@@ -183,7 +183,14 @@ export function collectCacheStats({ responseTtlSeconds = DEFAULT_CACHE_TTL, now 
     const ttlSeconds = ns.name === 'responses' ? responseTtlSeconds : ns.ttlSeconds;
     // A file stamped in the future (clock skew) is 0s old, never negative.
     const rawAges = entries.map(e => e.timestampMs == null ? null : Math.max(0, (now - e.timestampMs) / SECOND));
-    const ages = rawAges.filter(age => age != null).map(Math.round);
+    let oldestAge = null;
+    let newestAge = null;
+    for (const age of rawAges) {
+      if (age == null) continue;
+      const roundedAge = Math.round(age);
+      oldestAge = oldestAge == null ? roundedAge : Math.max(oldestAge, roundedAge);
+      newestAge = newestAge == null ? roundedAge : Math.min(newestAge, roundedAge);
+    }
     const bytes = entries.reduce((sum, e) => sum + e.bytes, 0);
 
     totalEntries += entries.length;
@@ -196,8 +203,8 @@ export function collectCacheStats({ responseTtlSeconds = DEFAULT_CACHE_TTL, now 
       entries: entries.length,
       bytes,
       ttl_seconds: ttlSeconds,
-      oldest_age_seconds: ages.length ? Math.max(...ages) : null,
-      newest_age_seconds: ages.length ? Math.min(...ages) : null,
+      oldest_age_seconds: oldestAge,
+      newest_age_seconds: newestAge,
       // A TTL of 0 disables cache reads, so every entry is already dead.
       expired_entries: rawAges.filter(age => age == null || ttlSeconds <= 0 || age > ttlSeconds).length,
     });

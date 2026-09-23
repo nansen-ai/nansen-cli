@@ -182,6 +182,32 @@ describe('cache stats', () => {
     expect(report).toContain('nansen cache clear');
   });
 
+  it('reports large caches without exceeding the function argument limit', async () => {
+    const file = writeResponseEntry(CACHE_KEY, { data: [1] }, 60);
+    const { collectCacheStats } = await freshModule('../cache-inspect.js');
+    const stat = fs.lstatSync(file);
+    const directoryStat = fs.lstatSync(responseCacheDir());
+    const names = Array.from({ length: 150_000 }, (_, i) => `${i.toString(16).padStart(64, '0')}.json`);
+    const originalLstat = fs.lstatSync.bind(fs);
+    vi.spyOn(fs, 'readdirSync').mockReturnValue(names);
+    vi.spyOn(fs, 'lstatSync').mockImplementation(target => {
+      if (target === responseCacheDir()) return directoryStat;
+      if (path.dirname(target) === responseCacheDir()) return stat;
+      return originalLstat(target);
+    });
+    vi.spyOn(fs, 'openSync').mockReturnValue(123);
+    vi.spyOn(fs, 'fstatSync').mockReturnValue(stat);
+    vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ timestamp: Date.now() - 60_000 }));
+    vi.spyOn(fs, 'closeSync').mockReturnValue(undefined);
+
+    const response = collectCacheStats().caches[0];
+    expect(response.entries).toBe(names.length);
+    expect(response.bytes).toBe(stat.size * names.length);
+    expect(response.oldest_age_seconds).toBeGreaterThanOrEqual(60);
+    expect(response.newest_age_seconds).toBeGreaterThanOrEqual(60);
+    expect(response.expired_entries).toBe(0);
+  });
+
   it('states plainly that hit and miss counts are not recorded', async () => {
     const { collectCacheStats } = await freshModule('../cache-inspect.js');
 
@@ -413,6 +439,21 @@ describe('cache command', () => {
     expect(text).toContain('--no-cache');
     expect(text).toContain('NANSEN_NO_CACHE=1');
     expect(text).toContain('WHAT CACHES');
+  });
+
+  it.each(['toString', 'constructor', '__proto__'])('rejects inherited subcommand %s', async subcommand => {
+    await expect(runCacheCommand([subcommand])).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+  });
+
+  it.each([
+    ['clear', 'responses', 'wallets'],
+    ['clear', 'all', 'wallets'],
+    ['clear', ''],
+    ['stats', 'responses'],
+  ])('rejects invalid arguments without deleting entries: %j', async (...args) => {
+    const file = writeResponseEntry(CACHE_KEY, { data: [1] });
+    await expect(runCacheCommand(args)).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    expect(fs.existsSync(file)).toBe(true);
   });
 
   it('rejects an unknown subcommand', async () => {

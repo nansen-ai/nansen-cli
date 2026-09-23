@@ -338,10 +338,7 @@ nansen cache clear                 # delete cached API responses
 nansen cache clear cost-map        # or update-check, or all
 ```
 
-`nansen cache stats` reports aggregates only — it uses timestamp metadata, but
-no cached payload, request parameter or cache key is ever printed. `nansen
-cache clear` only ever deletes files in the cache it was pointed at:
-credentials, wallets, saved quotes and config are never touched.
+`nansen cache stats` reports totals and ages. It reads timestamp metadata but does not print cached payloads, request parameters, or cache keys. `nansen cache clear` deletes only files in the selected cache. Credentials, wallets, saved quotes, and config are never changed. CLI startup loads the saved config as usual.
 
 | Cache | Location | TTL |
 |-------|----------|-----|

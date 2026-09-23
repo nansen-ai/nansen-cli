@@ -2634,7 +2634,7 @@
       }
     },
     "cache": {
-      "description": "Inspect and clear the caches the CLI keeps under ~/.nansen. Reads and deletes local files only: no network call, no credits, and credentials, wallets, saved quotes and config are never touched.",
+      "description": "Inspect and clear the caches the CLI keeps under ~/.nansen. Reads and deletes local files only: no network call, no credits, and credentials, wallets, saved quotes and config are never changed. CLI startup loads the saved config as usual.",
       "subcommands": {
         "stats": {
           "description": "Report what each cache holds: entry count, bytes on disk, age of the oldest and newest entry, the effective TTL, and how many entries are already expired. Aggregates only — no cached payload, request parameter or cache key is printed.",

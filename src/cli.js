@@ -1021,7 +1021,8 @@ EXAMPLES:
 
 Saved trade quotes are not a cache and are never touched by "cache clear": they
 expire on their own, and an unexecuted quote is still spendable. Credentials,
-wallets and config are never read and never deleted by this command.`;
+wallets and config are never changed by this command. CLI startup loads the saved
+config as usual.`;
 
 // Usage text for the `trade` command group. Shared by the trade handler and the
 // --help path in runCLI, so `nansen trade`, `nansen trade <sub> --help`, and the
@@ -1434,7 +1435,7 @@ export function buildCommands(deps = {}) {
     },
 
     'cache': async (args, _apiInstance, flags, options) => {
-      const subcommand = args[0] || 'help';
+      const subcommand = args[0] ?? 'help';
 
       const handlers = {
         'stats': () => {
@@ -1449,7 +1450,7 @@ export function buildCommands(deps = {}) {
           // Deleting local state needs an explicit target. The default is the
           // response cache alone — the one cache that is always safely
           // refetchable — and wiping everything requires saying "all".
-          const target = args[1] || 'responses';
+          const target = args[1] ?? 'responses';
           log(formatCacheClear(clearCaches(target)));
         },
         'help': () => {
@@ -1457,13 +1458,20 @@ export function buildCommands(deps = {}) {
         }
       };
 
-      if (!handlers[subcommand]) {
+      if (!Object.hasOwn(handlers, subcommand)) {
         throw new NansenError(
           `Unknown cache subcommand: ${subcommand}. Use one of: stats, clear`,
           ErrorCode.INVALID_PARAMS,
         );
       }
 
+      const maxArgs = subcommand === 'clear' ? 2 : 1;
+      if (args.length > maxArgs) {
+        throw new NansenError(
+          `Too many cache arguments. Use: nansen cache ${subcommand}${subcommand === 'clear' ? ' [responses|cost-map|update-check|all]' : ''}`,
+          ErrorCode.INVALID_PARAMS,
+        );
+      }
       return handlers[subcommand]();
     },
 
