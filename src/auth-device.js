@@ -222,7 +222,7 @@ export async function refreshSession(bundle, { signal, now = Date.now, fetchFn =
     if ((response.status === 429 && data?.error === 'rate_limited') ||
         (response.status === 401 && ['use_dpop_nonce', 'use_dpop_proof', 'invalid_dpop_proof'].includes(data?.error))) {
       const seconds = Number(response.headers.get('retry-after'));
-      throw Object.assign(new AuthError('SESSION_REFRESH_RETRYABLE', 'Session renewal was refused before rotation. Check connectivity and system time, then retry later.'), {
+      throw Object.assign(new AuthError('SESSION_REFRESH_RETRYABLE', 'Session renewal was refused before rotation. Check connectivity and system time, then retry later, or run nansen login to start a new approval.'), {
         retryNotBefore: now() + (Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 86400) * 1000 : 1000),
       });
     }

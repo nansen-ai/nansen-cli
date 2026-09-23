@@ -1,10 +1,10 @@
 {
   "status": "NOT_READY",
-  "purpose": "Repository-only preparation; no promotion, publication, deployment or cohort acceptance. Null means missing evidence, not a passed gate.",
+  "purpose": "Release preparation with source-attributed dev evidence. No publication, production enablement or cohort acceptance. Historical null gates are not passed by narrower current checks.",
   "source": {
     "api508Head": null,
     "api508HeadNote": "Fill from reviewed PR head; this document cannot hash its own containing commit.",
-    "cliDependency": "be92d1185b4dc9c50c8c6d66bccdfd0c3fe1878b",
+    "cliDependency": "575cc31c03dc6faf59cb7d4c4e4888e9cd17be40",
     "cliAuthBase": "294a51130b98acd89e283d765f7088b1d6fb290d",
     "api505ContractHead": "9190ae3decbba98c7513dbaa47695394ccd4515f",
     "api505SourceEquivalentFinalHead": "bcbae999ba3e8a59ec56fd145832ff34319e541f",
@@ -13,7 +13,7 @@
     "apiPermissionParityHead": "1d7bcc9efad02277554f563837450023b2c2a7f5",
     "historicalContractNote": "API50558-route source fields and all existing evidence records are historical read-scope proof, not the revised nansen:api contract or permission list.",
     "previousCliDependency": "77efe0e4612eb1d5e2f357a4b753981519f7d98e",
-    "currentParentNote": "September 23 merge-forward includes browser login parent 1d38498b2ed916bc6de07b6532974e53bfcedcd1. Historical evidence below remains tied to its original source heads; current package and independent review acceptance must be recorded separately.",
+    "currentParentNote": "Current parent includes the default-off publication gate, explicit proposed preview scope and fresh-login guidance during refresh cooldowns. September23 native evidence remains pinned to tested e0cb320 archive; it is not relabeled to this later head.",
     "mergeForwardParent": "7649cd1f2a21b7fa16a19f3b8851813caf39898c"
   },
   "evidence": [
@@ -291,7 +291,7 @@
     "operatorCommandRecord": null
   },
   "acceptanceNotes": {
-    "exactHeadNativeRenewal": "Current repaired candidate/package acceptance remains missing. Root local unpublished956764b archive proof is separately source-attributed under evidence, not this new head or rollout acceptance.",
+    "exactHeadNativeRenewal": "See currentDevValidation for tested e0cb320 archive: live macOS and synthetic Linux. Later source changes require a scoped comparison; historical evidence is not relabeled.",
     "fullSessionAccessTokenInvalidation": "Required before rollout: actual logout invalidates original, rotated and copied tokens for that session; other sessions/accounts/API keys unaffected. Refresh-only retirement or natural expiry does not satisfy this gate.",
     "measuredRevocationPropagationAndDurability": "Deployed issuer/gateway/API observed rejection, measured propagation, restart/outage fail-closed behavior and durable retained feed/anchors; recorded/pending receipt is not observed rejection."
   },
@@ -318,7 +318,7 @@
   "permissionRevision": {
     "contract": "Browser nansen:api uses API-key-equivalent account/API permissions, no browser route allowlist. Existing nansen:read semantics unchanged.",
     "rollout": "Account-only and default-off non-account API admission remain separate. No deployment state inferred.",
-    "remaining": "API1967 1d7bcc9efad02277554f563837450023b2c2a7f5 has root-reported CI6511 passed/4skipped and clean A. Final cross-stack proof at repaired immutable heads remains root-pending; no rollout acceptance."
+    "remaining": "Server companion changes are merged. Current dev billing/native evidence is recorded separately. Full route parity, operational acceptance and release decisions are not inferred from a token-screener walkthrough."
   },
   "priorPermissionDependencyVerification": {
     "sourceHead": "5e44ef0e79b7a8448e5af7dea76b533be468a3b6",
@@ -337,8 +337,33 @@
     "sha256": "769225ccbcee71dc0055329bf7e272bc1c3c294d8f9e91fc392332dddace3729",
     "integrity": "sha512-iMBmPYSJQp52NlnHZlagBJuU06+cdo5DPYV8R0fjij1Lmd437hRra49kunllNwwzdh2nh00lrGPVhc+2Fyp4mw==",
     "published": false,
-    "sourceHead": null,
-    "sourceHeadNote": "Containing commit recorded with the archive/source comparison in cli659-forward/package-final.json; this document cannot hash its own containing commit.",
-    "limits": "Source version 1.46.0; unpublished archive only, not an accepted prerelease or recovery release. No native/live acceptance."
+    "sourceHead": "e0cb3202e21da6c2ac7dc8d051eb5608c4e986e3",
+    "sourceHeadNote": "The tested archive belongs to this immutable head, not later source revisions. Release docs are excluded from the package.",
+    "limits": "Unpublished archive. Live macOS and synthetic Linux native results are recorded below; Windows, live remote ceremony, accepted cohort and recovery release are not established."
+  },
+  "currentDevValidation": {
+    "date": "2026-09-23",
+    "cliHead": "e0cb3202e21da6c2ac7dc8d051eb5608c4e986e3",
+    "archiveSha256": "769225ccbcee71dc0055329bf7e272bc1c3c294d8f9e91fc392332dddace3729",
+    "apiHead": "6459790735a2e7775f376cfedb013630dd90da0e",
+    "issuerHead": "9263e2e41087c0b4b59e71aef61dac6886ea032c",
+    "ticket": "https://linear.app/nansen/issue/API-503",
+    "commentIds": [
+      "3cd9dbe4-6523-4bf1-aa8e-fa6af3ff4a10",
+      "9e6e747e-bff0-4669-8a56-8fd14f145f2f"
+    ],
+    "macOS": "Real installed CLI and native Keychain: browser login, free account, process restart, two research debits, natural-expiry concurrent renewal, logout and local cleanup passed. One stored-generation transition observed; issuer request count not measured.",
+    "linux": "Same archive, synthetic issuer and retirement with real isolated Secret Service: custody, refresh, locked refusal, daemon restart and cleanup passed. No live remote ceremony.",
+    "billing": "Same external account, two browser and two API-key matching token-screener calls. Four one-credit ledger rows matched request IDs. Separate installed-CLI calls added two one-credit rows, attributed by ledger difference and command windows.",
+    "revocation": "Original and refreshed tokens returned 401 while unexpired about25seconds after actual CLI logout. Two earlier503samples have unknown cause; outage durability not established.",
+    "devHoldRestoredAt": "2026-09-23T13:54:52.949Z",
+    "zeroCredit": "Waived by Di, not passed.",
+    "remaining": [
+      "Windows and supported remote live walkthrough",
+      "Desktop cancellation and OS login/PAM/reboot",
+      "Distributed abuse and alert delivery",
+      "Revocation outage durability and unexplained503samples",
+      "Release owner, opt-in distribution and compatible recovery artifact"
+    ]
   }
 }

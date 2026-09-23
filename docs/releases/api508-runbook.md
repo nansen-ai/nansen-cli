@@ -1,10 +1,34 @@
 # Browser onboarding release preparation — NOT READY
 
-## September 23 reconciliation
+## September 23 status
 
-The current source includes renewal parent `be92d1185b4dc9c50c8c6d66bccdfd0c3fe1878b` and browser login parent `1d38498b2ed916bc6de07b6532974e53bfcedcd1`. Main merge, publication and native-platform acceptance remain on hold. An unpublished package check does not authorize distribution. The September 20 records below retain their original heads and limitations; statements about missing deployment evidence describe that snapshot, not a new assessment of live services. Current server validation belongs in the separate dated dev report.
+The source stack is [#657](https://github.com/nansen-ai/nansen-cli/pull/657), [#658](https://github.com/nansen-ai/nansen-cli/pull/658), then this PR. Publication and production browser admission remain on hold. Production enablement continues to use the existing `releaseCliBrowserLogin` LaunchDarkly flag plus the API deployment admission settings; the flag is not a package-publication switch. Source merge requires a separate release decision; passing dev checks does not lift that hold.
 
-Current unpublished candidate: `nansen-cli-1.46.0.tgz`, SHA256 `769225ccbcee71dc0055329bf7e272bc1c3c294d8f9e91fc392332dddace3729`. Every archived file was compared with this source tree; the exact containing commit is recorded in the external `cli659-forward/package-final.json` report. This is package-integrity evidence only: no publication, native-platform acceptance or compatible recovery release is claimed.
+### What passed in dev
+
+The unpublished `nansen-cli-1.46.0.tgz` from `e0cb3202e21da6c2ac7dc8d051eb5608c4e986e3` has SHA256 `769225ccbcee71dc0055329bf7e272bc1c3c294d8f9e91fc392332dddace3729`. All 98 installed files matched the archive and source. This version is not a published prerelease or a recovery release.
+
+- Real macOS Keychain login, account verification and process restart passed with an isolated CLI home and a user-approved external dev account.
+- Two installed-CLI research calls each charged one credit. Ledger free quota moved 91 to 89; purchased credits and the internal account were unchanged. The ledger entries fall within each command's execution window. The CLI did not expose request IDs directly.
+- Separate same-account browser/API-key calls used identical token-screener requests. All four charged one credit, with matching request IDs in the ledger. This proves parity for those requests, not every endpoint or billing condition.
+- Near natural access-token expiry, two concurrent installed commands succeeded with one observed stored-generation transition. A third process reused the replacement. Issuer refresh-request count was not independently measured.
+- Actual CLI logout caused both original and refreshed access tokens to return 401 about 25 seconds later, while both were unexpired. Two 503 samples preceded the 401s. Available logs did not establish their cause; availability during that interval remains unverified.
+- Cleanup removed the selected credential, journals and both native generations. The 98 scanned regular files contained no actual token or private-key bytes. Dev admission was restored off on both ready replicas at 13:54:52 UTC.
+- The same archive passed synthetic Linux Secret Service write/read, refresh, locked-store refusal, daemon restart and cleanup. This was not a live remote browser-login walkthrough.
+
+Redacted results are posted on [API-503](https://linear.app/nansen/issue/API-503), including comments `3cd9dbe4-6523-4bf1-aa8e-fa6af3ff4a10` and `9e6e747e-bff0-4669-8a56-8fd14f145f2f`. The [manifest](api508-evidence.json) retains exact source attribution. The live zero-credit test was waived by Di, not passed. Windows, desktop cancellation, OS login/PAM/reboot, distributed abuse, alert delivery and outage durability remain unverified. Older evidence below remains tied to its original revisions.
+
+### Source merge and publication are separate
+
+The workflow gate added in #657 requires repository variable `CLI_PUBLICATION_ENABLED` to equal `true` before Changesets versioning/publication or ClawHub sync runs. Missing or false skips those jobs while lint and tests continue. Both reusable and manual ClawHub paths on the updated revision use the gate. The variable was absent at both repository and inherited organization levels during preparation; no value was changed.
+
+This hold pauses all CLI releases and Version Packages updates, including unrelated work. Di owns the release decision. Keep the gate off until the opt-in distribution and recovery plan is accepted. It does not stop older ungated workflow revisions, already queued runs or manual npm commands. Before relying on it, verify there is no older publication run in progress and do not dispatch old revisions. `releaseCliBrowserLogin` remains the separate production feature gate; disabling browser access during an incident must still permit an explicitly authorized CLI repair release.
+
+When publication is deliberately enabled, Changesets updates the Version Packages PR while nonempty changesets remain. Merging that version PR consumes the changesets and can publish the version; there is no prerelease mode today. Main requires one approval and dismisses stale reviews when a PR diff changes. [Version Packages #689](https://github.com/nansen-ai/nansen-cli/pull/689) had no auto-merge request at the September 23 check. Neither the variable nor a code review authorizes merging that release PR.
+
+After source approval, merge the source stack in order. Bring each child onto main only after its parent lands and run its hosted Node 20/22/24 checks. Confirm publication jobs stay skipped, npm `latest` remains unchanged and ClawHub does not publish. Do not enable publication to obtain test evidence.
+
+Before distribution, select the opt-in version/tag or controlled archive channel, supported cohort and owner. Prepare and rehearse an integrity-pinned v2-compatible recovery package. These decisions are still open. The dev tests above do not authorize normal release or production enablement.
 
 ## Historical preparation record
 
@@ -53,7 +77,7 @@ The operator must have authority and documented commands for issuer issuance/ren
 
 ## Pipeline constraints
 
-`.github/workflows/ci.yml` tests PRs targeting main only. A stacked draft on `hulk/api-507-session-refresh` has no automatic matrix guarantee. Its main push path can run Changesets publication and then `sync-clawhub.yml`; the workflow filename participates in trusted publishing. Do not merge/retarget just to obtain CI, edit workflows, dispatch publication, switch credentials or work around missing App workflow permission. Record local tests and arrange permitted independent exact-head checks. Preserve the existing major changeset for plain-login and selected-key402 behavior; API508 adds guidance, not a second auth owner or payment path.
+`.github/workflows/ci.yml` tests PRs targeting main only. A stacked draft on `hulk/api-507-session-refresh` has no automatic matrix guarantee. Its main push path can run Changesets publication and then `sync-clawhub.yml`; the workflow filename participates in trusted publishing. Do not merge/retarget just to obtain CI, dispatch publication, switch credentials or work around missing App workflow permission. The user-authorized publication gate in #657 is the only release-workflow change in this preparation. Record local tests and arrange permitted independent exact-head checks. Preserve the existing major changeset for plain-login and selected-key402 behavior; API508 adds guidance, not a second auth owner or payment path.
 
 ## Skill credential prerequisites
 

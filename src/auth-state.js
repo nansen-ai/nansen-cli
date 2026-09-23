@@ -428,7 +428,7 @@ export function createAuthState({ directory = authDirectory(), store = createAut
         journal = rotationFor(config);
         if (journal?.phase === 'blocked') throw renewalError(journal.reason);
         if (journal?.phase === 'retryable' && journal.retryNotBefore > now()) {
-          if (bundle.expiresAt <= now()) throw new AuthError('SESSION_REFRESH_RETRYABLE', 'Session renewal is rate limited or temporarily refused. Retry later.');
+          if (bundle.expiresAt <= now()) throw new AuthError('SESSION_REFRESH_RETRYABLE', 'Session renewal is rate limited or temporarily refused. Retry later, or run nansen login to start a new approval.');
           validateSession(bundle, now());
           return bundle;
         }
@@ -465,7 +465,7 @@ export function createAuthState({ directory = authDirectory(), store = createAut
             ? { retryNotBefore: Math.max(error.retryNotBefore, now() + 1000 * 2 ** (retryFailures - 1)) }
             : { reason: retryable ? 'retry_exhausted' : blockedReason(error) }) };
           await atomic(journalPath(journal.id), next);
-          if (canRetry) throw new AuthError('SESSION_REFRESH_RETRYABLE', 'Session renewal was refused before rotation. Check connectivity and system time, then retry later.');
+          if (canRetry) throw new AuthError('SESSION_REFRESH_RETRYABLE', 'Session renewal was refused before rotation. Check connectivity and system time, then retry later, or run nansen login to start a new approval.');
           throw renewalError(next.reason);
         }
         check();

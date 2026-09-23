@@ -77,12 +77,12 @@ describe('owner-managed renewal', () => {
     }
     expect(f.fetchFn).toHaveBeenCalledOnce(); expect(f.retire).not.toHaveBeenCalled();
   });
-  it('keeps definitive 429 retry state and does not sleep under ownership or use expired access', async () => {
-    const f = await fixture(); f.fetchFn.mockResolvedValueOnce(response(429, { error: 'rate_limited' }, { 'retry-after': '60' }));
-    await expect(f.acquire()).rejects.toMatchObject({ code: 'SESSION_REFRESH_RETRYABLE' });
+  it.each([60, 86400])('keeps definitive 429 retry state for %ss and provides login recovery without using expired access', async seconds => {
+    const f = await fixture(); f.fetchFn.mockResolvedValueOnce(response(429, { error: 'rate_limited' }, { 'retry-after': String(seconds) }));
+    await expect(f.acquire()).rejects.toMatchObject({ code: 'SESSION_REFRESH_RETRYABLE', message: expect.stringContaining('nansen login') });
     expect((await f.acquire()).accessToken).toBe(f.old.accessToken);
-    f.advance(20000); await expect(f.acquire()).rejects.toMatchObject({ code: 'SESSION_REFRESH_RETRYABLE' });
-    expect(f.fetchFn).toHaveBeenCalledOnce(); f.advance(60000); await f.acquire(); expect(f.fetchFn).toHaveBeenCalledTimes(2);
+    f.advance(20000); await expect(f.acquire()).rejects.toMatchObject({ code: 'SESSION_REFRESH_RETRYABLE', message: expect.stringContaining('nansen login') });
+    expect(f.fetchFn).toHaveBeenCalledOnce(); f.advance(seconds * 1000); await f.acquire(); expect(f.fetchFn).toHaveBeenCalledTimes(2);
   });
   it('lost response requires login and actual logout can retire through the retained parent', async () => {
     const f = await fixture(); f.fetchFn.mockRejectedValue(new Error('raw-secret-echo'));
