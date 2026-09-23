@@ -172,6 +172,29 @@ describe('zero-rounded order values', () => {
   });
 });
 
+// perp.js documents that every input guard throws a coded CommandError so an
+// agent can branch on `code`; the TP/SL side checks were the one set that
+// still threw a bare Error with code undefined.
+describe('take-profit / stop-loss side validation', () => {
+  const long = params => buildOrderAction({ isBuy: true, orderType: 'limit', size: 0.01, price: 2000, ...params }, ETH);
+  const short = params => buildOrderAction({ isBuy: false, orderType: 'limit', size: 0.01, price: 2000, ...params }, ETH);
+
+  it.each([
+    ['long stop-loss at or above entry', () => long({ stopLoss: 2000 }), /Stop-loss for a long must be below/],
+    ['long take-profit at or below entry', () => long({ takeProfit: 1900 }), /Take-profit for a long must be above/],
+    ['short stop-loss at or below entry', () => short({ stopLoss: 2000 }), /Stop-loss for a short must be above/],
+    ['short take-profit at or above entry', () => short({ takeProfit: 2100 }), /Take-profit for a short must be below/],
+  ])('rejects a %s with a coded CommandError', (_label, build, message) => {
+    expect(build).toThrow(expect.objectContaining({ name: 'CommandError', code: 'INVALID_INPUT' }));
+    expect(build).toThrow(message);
+  });
+
+  it('accepts protective legs on the correct side of entry', () => {
+    expect(() => long({ stopLoss: 1900, takeProfit: 2100 })).not.toThrow();
+    expect(() => short({ stopLoss: 2100, takeProfit: 1900 })).not.toThrow();
+  });
+});
+
 describe('encodeMsgpack primitives', () => {
   it('positive fixint', () => {
     expect(encodeMsgpack(0).equals(Buffer.from([0x00]))).toBe(true);

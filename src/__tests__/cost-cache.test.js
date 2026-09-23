@@ -64,6 +64,15 @@ describe('creditsCharged', () => {
     expect(creditsCharged({ credits: { used: 5, cost: null } }, '/api/v1/unknown')).toBeNull();
     expect(creditsCharged({ rateLimit: { limit: 1, remaining: 1, resetSeconds: 1 } }, null)).toBeNull();
   });
+
+  it('scales the fallback estimate by the number of live paginated requests', () => {
+    seedCache({ '/api/v1/foo': { free: 3, pro: 5 } });
+    const result = creditsCharged(
+      { pagination: { pagesFetched: 4, livePages: 3, cachedPages: 1 } },
+      '/api/v1/foo',
+    );
+    expect(result).toEqual({ estimate: { free: 9, pro: 15 }, source: 'estimate' });
+  });
 });
 
 describe('refreshCostMapIfStale', () => {

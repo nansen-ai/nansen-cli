@@ -18,6 +18,7 @@ import {
   sendTransactionViaWalletConnect,
   sendSolanaTransactionViaWalletConnect,
   sendApprovalViaWalletConnect,
+  parseWcJson,
 } from '../walletconnect-trading.js';
 
 function mockExecFile(stdout, err = null) {
@@ -32,6 +33,49 @@ function mockExecFile(stdout, err = null) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+// ============= parseWcJson =============
+
+describe('parseWcJson', () => {
+  it('reads a single-line result after status lines', () => {
+    expect(parseWcJson('Connecting...\nWaiting for approval\n{"txHash":"0xabc"}'))
+      .toEqual({ txHash: '0xabc' });
+  });
+
+  it('reads a pretty-printed result', () => {
+    const out = 'Waiting for approval...\n' + JSON.stringify({ txHash: '0xabc', chainId: 8453 }, null, 2);
+    expect(parseWcJson(out)).toEqual({ txHash: '0xabc', chainId: 8453 });
+  });
+
+  // The scanner counted every literal brace, including ones inside string
+  // values, so a wallet message containing "}" ended the object one line
+  // early and a valid result failed to parse.
+  it('ignores braces inside string values', () => {
+    const payload = { txHash: '0xabc', walletMessage: 'note: nonce gap detected, retried } ok' };
+    expect(parseWcJson('Waiting...\n' + JSON.stringify(payload, null, 2))).toEqual(payload);
+    const inline = { txHash: '0xdef', note: '}{' };
+    expect(parseWcJson(JSON.stringify(inline, null, 2))).toEqual(inline);
+  });
+
+  it('handles escaped quotes and backslashes inside strings', () => {
+    const payload = { message: 'he said "}" loudly', path: 'C:\\tmp\\' };
+    expect(parseWcJson(JSON.stringify(payload, null, 2))).toEqual(payload);
+  });
+
+  it('stops at the end of the first object and ignores trailing output', () => {
+    const out = JSON.stringify({ txHash: '0xabc' }, null, 2) + '\nSession closed.';
+    expect(parseWcJson(out)).toEqual({ txHash: '0xabc' });
+  });
+
+  it('keeps nested objects intact', () => {
+    const payload = { result: { inner: { depth: 2 } }, note: '}' };
+    expect(parseWcJson(JSON.stringify(payload, null, 2))).toEqual(payload);
+  });
+
+  it('throws when the output contains no JSON', () => {
+    expect(() => parseWcJson('Request rejected by wallet')).toThrow('No JSON output from walletconnect');
+  });
 });
 
 // ============= getWalletConnectAddress =============

@@ -29,8 +29,18 @@ export function parseSort(sortOption, orderByOption) {
     throw new NansenError('--sort must be "field" or "field:direction"', ErrorCode.INVALID_PARAMS);
   }
   const parts = sortOption.split(':');
-  const field = parts[0];
-  const direction = (parts[1] || 'desc').toUpperCase();
+  const field = parts[0].trim();
+  const rawDirection = (parts[1] || '').trim();
+  const direction = (rawDirection || 'desc').toUpperCase();
+  if (!field) {
+    throw new NansenError('--sort needs a field name, e.g. --sort value_usd:desc', ErrorCode.INVALID_PARAMS);
+  }
+  if (direction !== 'ASC' && direction !== 'DESC') {
+    throw new NansenError(
+      `--sort direction must be asc or desc, got "${rawDirection}" (e.g. --sort ${field}:desc)`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
   return [{ field, direction }];
 }
 
@@ -48,12 +58,31 @@ export function parseCsvOption(val, name) {
     if (!val.every(v => typeof v === 'string')) {
       throw new NansenError(`--${name} values must be strings`, ErrorCode.INVALID_PARAMS);
     }
-    return val.map(v => v.trim()).filter(Boolean);
+    // A repeated flag may itself carry a list (`--tags defi,nft --tags sports`),
+    // so split each element the same way a single value is split.
+    return val.flatMap(v => v.split(',')).map(v => v.trim()).filter(Boolean);
   }
   if (typeof val !== 'string') {
     throw new NansenError(`--${name} must be a string`, ErrorCode.INVALID_PARAMS);
   }
   return val.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+/**
+ * Normalise a `--filters '<json>'` option into a plain object, or `{}` when
+ * absent. parseArgs already JSON-parses the value, so anything that is not a
+ * plain object here (`--filters '[]'`, `--filters abc`, a repeated flag) would
+ * otherwise go straight into the request body and fail upstream with a 422.
+ */
+export function parseObjectOption(val, name) {
+  if (val === undefined || val === '') return {};
+  if (val === null || typeof val !== 'object' || Array.isArray(val)) {
+    throw new NansenError(
+      `--${name} must be a JSON object, e.g. --${name} '{"key": "value"}'`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  return val;
 }
 
 /** Reject explicit blank strings before a handler selects an omitted-option default. */

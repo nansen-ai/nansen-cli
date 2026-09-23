@@ -56,6 +56,37 @@ describe('compliance screening is never served from cache', () => {
     expect(api.calls[0].endpoint).toContain('/api/v1/sanctions/screen');
     expect(api.calls[0].options.cache).toBe(false);
   });
+
+  it('accepts EVM result addresses with different casing', async () => {
+    const api = recordingApi(() => ({
+      results: [{ address: WALLET.toUpperCase(), sanctioned: false }],
+    }));
+    await expect(screenOrThrow(api, [WALLET])).resolves.toBeUndefined();
+  });
+
+  it('fails closed when a Solana result differs only by case', async () => {
+    const solana = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+    const api = recordingApi(() => ({
+      results: [{ address: solana.toLowerCase(), sanctioned: false }],
+    }));
+    await expect(screenOrThrow(api, [solana])).rejects.toMatchObject({
+      code: 'SCREENING_UNAVAILABLE',
+    });
+  });
+
+  it.each([
+    {},
+    { sanctioned: null },
+    { sanctioned: 0 },
+    { sanctioned: 'false' },
+  ])('fails closed on a matching result without a boolean verdict: %j', async verdict => {
+    const api = recordingApi(() => ({
+      results: [{ address: WALLET, ...verdict }],
+    }));
+    await expect(screenOrThrow(api, [WALLET])).rejects.toMatchObject({
+      code: 'SCREENING_UNAVAILABLE',
+    });
+  });
 });
 
 describe('bridge request options', () => {

@@ -63,7 +63,13 @@ export function getCostForEndpoint(endpoint) {
 export function creditsCharged(meta, endpoint) {
   const charged = meta?.credits?.cost;
   if (charged != null) return { cost: charged, source: 'header' };
-  const estimate = endpoint ? getCostForEndpoint(endpoint) : null;
+  let estimate = endpoint ? getCostForEndpoint(endpoint) : null;
+  const livePages = meta?.pagination?.livePages;
+  if (estimate != null && Number.isSafeInteger(livePages) && livePages > 1) {
+    estimate = Object.fromEntries(
+      Object.entries(estimate).map(([plan, cost]) => [plan, typeof cost === 'number' ? cost * livePages : cost])
+    );
+  }
   if (estimate != null) return { estimate, source: 'estimate' };
   return null;
 }

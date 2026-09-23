@@ -268,7 +268,7 @@
     },
     "bridge": {
       "description": "Move funds between Base and Hyperliquid",
-      "notes": "Supported routes: base -> hyperliquid (deposit); hyperliquid -> base, hyperliquid -> ethereum, hyperliquid -> arbitrum (withdrawal). Any other combination is rejected. Deposits broadcast an EVM transaction from the local wallet, so they require a locally signable origin chain; withdrawals sign a Hyperliquid action and never transact on the destination chain.",
+      "notes": "Supported routes: base -> hyperliquid (deposit); hyperliquid -> base, hyperliquid -> ethereum, hyperliquid -> arbitrum (withdrawal). Any other combination is rejected. base -> hyperliquid deposits currently support USDC only — a non-USDC --from-token is rejected with INVALID_INPUT before the quote is created. Deposits broadcast an EVM transaction from the local wallet, so they require a locally signable origin chain; withdrawals sign a Hyperliquid action and never transact on the destination chain.",
       "routes": [
         {
           "origin": "base",
@@ -319,7 +319,7 @@
             "from-token": {
               "type": "string",
               "required": true,
-              "description": "Source token symbol (USDC) or address (alias: --token)"
+              "description": "Source token symbol or address (alias: --token). Base -> Hyperliquid deposits require USDC; a non-USDC token is rejected before the quote is created."
             },
             "to-token": {
               "type": "string",
@@ -387,10 +387,23 @@
             "nonce": {
               "type": "string",
               "description": "Sign at this nonce instead of the next one, to replace a stuck transaction (EVM deposit legs only)"
+            },
+            "dry-run": {
+              "type": "boolean",
+              "description": "Run every sign-free preflight available from the cached quote, its public signer address and read-only RPC calls; print the transfer that would be signed; then stop before wallet credentials and the first signature. Nothing is broadcast, no wallet password is needed, and the quote stays usable. Real execution still resolves and revalidates the live signer. Exits 0."
+            },
+            "yes": {
+              "type": "boolean",
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
           },
+          "examples": [
+            "nansen bridge execute --quote bridge-1708900000000-abc123",
+            "nansen bridge execute --quote bridge-1708900000000-abc123 --dry-run",
+            "nansen bridge execute --quote bridge-1708900000000-abc123 --yes"
+          ],
           "prerequisites": [
-            "A wallet must be configured. Run: nansen wallet create"
+            "A wallet must be configured for real execution. Dry-run can use the public signer saved in the cached quote."
           ]
         },
         "status": {
@@ -788,9 +801,8 @@
                 },
                 "width": {
                   "type": "integer",
-                  "minimum": 0,
                   "default": 10,
-                  "description": "Counterparties to follow at each hop"
+                  "description": "Counterparties to follow at each hop (1-50); valid integers outside the range are clamped. Traversal stops expanding after 1000 nodes and reports stats.truncated"
                 },
                 "days": {
                   "type": "integer",
@@ -1140,6 +1152,10 @@
                 "include-stablecoins": {
                   "description": "Whether to include stablecoins in screener results (default true on API side)",
                   "default": true
+                },
+                "search": {
+                  "type": "string",
+                  "description": "Filter screener candidates client-side by token name, symbol, or exact address. With --paginate/--all, the fully traversed candidate pool is filtered after traversal; pagination metadata describes the upstream candidate-page traversal, not the number of matches after filtering."
                 }
               }
             },
@@ -2026,6 +2042,9 @@
       "subcommands": {
         "quote": {
           "description": "Get a DEX swap quote (same-chain or cross-chain). Explicitly blank --swap-mode, --wallet, --to-chain, --aggregator, and --amount-unit values are rejected.",
+          "apiEndpoints": [
+            "/api/v1/sanctions/screen"
+          ],
           "options": {
             "chain": {
               "type": "string",
@@ -2091,11 +2110,15 @@
             }
           },
           "prerequisites": [
-            "A local wallet must be configured. Run: nansen wallet create"
+            "A local wallet must be configured. Run: nansen wallet create",
+            "API access is required for pre-trade compliance screening. Run: nansen login (or set NANSEN_API_KEY)"
           ]
         },
         "execute": {
           "description": "Sign and broadcast a quoted trade. Explicitly blank --wallet values are rejected.",
+          "apiEndpoints": [
+            "/api/v1/sanctions/screen"
+          ],
           "options": {
             "quote": {
               "type": "string",
@@ -2130,8 +2153,24 @@
             "no-revoke-excessive-allowance": {
               "type": "boolean",
               "description": "Skip revoking an existing on-chain ERC-20 allowance before re-approving when it exceeds 10x this trade's scoped amount. By default, an oversized or legacy allowance is revoked to zero and a fresh trade-scoped allowance is granted. WalletConnect users will see separate wallet prompts for the revoke and re-approval."
+            },
+            "dry-run": {
+              "type": "boolean",
+              "description": "Run every sign-free preflight available from the cached quote, its public signer address and read-only RPC calls; plan the approval and print what would be sent; then stop before wallet credentials or signing. Nothing is signed or broadcast, no wallet password is needed, and the quote stays usable. Real execution still resolves and revalidates the live signer. On EVM preview also reads the current allowance and runs the pre-broadcast revert simulation when no approval is outstanding. Exits 0."
+            },
+            "yes": {
+              "type": "boolean",
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
-          }
+          },
+          "examples": [
+            "nansen trade execute --quote 1708900000000-abc123",
+            "nansen trade execute --quote 1708900000000-abc123 --dry-run",
+            "nansen trade execute --quote 1708900000000-abc123 --yes"
+          ],
+          "prerequisites": [
+            "API access is required for pre-trade compliance screening. Run: nansen login (or set NANSEN_API_KEY)"
+          ]
         },
         "bridge-status": {
           "description": "Check cross-chain bridge transaction status. Aggregator (Li.Fi or Relay) is auto-detected from a local tx record saved at execute time (kept 30 days); pass --aggregator to override when polling from a different machine.",
@@ -2714,6 +2753,17 @@
       "default": 1,
       "description": "1-based page number for list-returning research commands; maps to pagination.page. Supported by smart-money, profiler, token, perp, points, prediction-market, and supported research historical-* commands. Trade, wallet, and operational commands ignore it; token ohlcv, profiler perp-positions, and historical-token-flow-summary do not support pagination. profiler labels defaults to page 1 when omitted."
     },
+    "paginate": {
+      "type": "boolean",
+      "description": "Fetch every page of a list-returning command and return one merged response (alias: --all). Starts at --page (default 1) and uses --limit as the page size; stops on a short or empty page, when server pagination metadata (total_pages, total, is_last_page, has_more, or next_page) says the traversal is complete, when a page repeats rows already seen, or after --max-pages requests. Server total metadata is trusted, so a live dataset that changes or reports inconsistent totals during traversal can omit later rows. The merged response keeps the first page's shape (a bare array is wrapped as { data: [...] }) with rows de-duplicated, plus pagination: { page, pages_fetched, next_page, complete } — next_page is null when complete, otherwise the page to resume from. Each page is a separate, separately billed API call. Works with --stream (NDJSON), --table, --format csv and --fields. Commands without pagination are unaffected."
+    },
+    "max-pages": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "default": 10,
+      "description": "Positive safe-integer page-request cap for --paginate/--all. It is parsed and validated only when pagination is active, and is otherwise ignored. Hitting the cap sets pagination.complete to false and pagination.next_page to the page to resume from."
+    },
     "no-retry": {
       "type": "boolean",
       "description": "Disable automatic retry on rate limits/errors"
@@ -2739,6 +2789,10 @@
       "maximum": 9007199254740991,
       "default": 300,
       "description": "Cache TTL in seconds (non-negative safe integer; 0 disables cache reads)"
+    },
+    "debug": {
+      "type": "boolean",
+      "description": "Trace HTTP request events on stderr: method, redacted URL, response status, time-to-response-headers (TTFB), retry decisions and request id. Also enabled by NANSEN_DEBUG=1. Response timing excludes body download/parsing. Never prints credentials or response bodies."
     },
     "format": {
       "type": "string",

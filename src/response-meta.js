@@ -43,7 +43,7 @@ function intHeader(response, name) {
  * Read a header as a trimmed non-empty string, or null when absent.
  * Tolerates any header bag with a .get() — a real Headers, or a Map in tests.
  */
-function stringHeader(response, name) {
+export function stringHeader(response, name) {
   const raw = response?.headers?.get?.(name);
   if (raw == null) return null;
   const value = String(raw).trim();
@@ -94,6 +94,57 @@ export function readResponseMeta(response) {
 }
 
 /**
+ * Combine response metadata from the individual requests in one paginated CLI
+ * command. Credit usage/cost is additive, while balance, rate-limit state, and
+ * request id keep their normal "freshest response" meaning. Cached pages cost
+ * nothing and do not replace the freshest live server metadata.
+ */
+export function aggregatePaginatedResponseMeta(pages) {
+  if (!Array.isArray(pages) || pages.length === 0) return null;
+
+  const livePages = pages.filter(page => !page.cached);
+  const metas = livePages.map(page => page.meta);
+  const present = metas.filter(Boolean);
+  if (livePages.length === 0) {
+    return {
+      credits: { used: 0, remaining: null, cost: 0 },
+      pagination: { pagesFetched: pages.length, livePages: 0, cachedPages: pages.length },
+    };
+  }
+
+  const latest = present.at(-1) || null;
+  const result = latest ? { ...latest } : {};
+
+  const sumKnown = (key) => {
+    // This all-pages guard makes the unchecked access in reduce safe: it only
+    // runs when every page has credits[key] and that value is a safe integer.
+    if (metas.some(meta => !Number.isSafeInteger(meta?.credits?.[key]))) return null;
+    return metas.reduce((sum, meta) => sum + meta.credits[key], 0);
+  };
+  const used = sumKnown('used');
+  const cost = sumKnown('cost');
+  const latestCredits = [...present].reverse().find(meta => meta.credits)?.credits;
+  if (used !== null || cost !== null || latestCredits) {
+    result.credits = {
+      used,
+      remaining: latestCredits?.remaining ?? null,
+      cost,
+    };
+  }
+
+  const notices = {};
+  for (const meta of present) Object.assign(notices, meta.notices || {});
+  if (Object.keys(notices).length > 0) result.notices = notices;
+
+  result.pagination = {
+    pagesFetched: pages.length,
+    livePages: livePages.length,
+    cachedPages: pages.length - livePages.length,
+  };
+  return result;
+}
+
+/**
  * Yield notice strings for any server-set advisory headers.
  * Each yields a `⚠️  <message>` line for stderr.
  * Order: apiKeyNotice (most urgent) → upgradeHint → planNotice.
@@ -123,7 +174,11 @@ export function creditWarning(meta) {
   // The cost header is the authoritative charge; used is the fallback.
   const charged = cost ?? used;
   if (charged !== null && charged > 0 && remaining < charged) {
-    return `⚠️  ${remaining} API credit${remaining === 1 ? '' : 's'} left — less than this call cost (${charged}). Top up at https://app.nansen.ai/api?tab=api`;
+    const livePages = meta?.pagination?.livePages;
+    const costScope = livePages > 1
+      ? `the aggregate cost of ${livePages} live page requests`
+      : 'this call cost';
+    return `⚠️  ${remaining} API credit${remaining === 1 ? '' : 's'} left — less than ${costScope} (${charged}). Top up at https://app.nansen.ai/api?tab=api`;
   }
   return null;
 }

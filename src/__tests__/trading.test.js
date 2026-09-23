@@ -75,6 +75,19 @@ const OUT_TOKEN = '0x4200000000000000000000000000000000000006';
 const LIFI_ROUTER = '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae';
 const RELAY_ROUTER = '0xf5042e6ffac5a625d4e7848e0b01373d8eb9e222';
 
+// `trade quote` / `trade execute` screen the wallet against the sanctions list
+// through the API instance before requesting a quote or signing (the gate itself
+// is covered in trading-sanctions-screening.test.js). Tests here exercise other
+// behaviour, so they get an API instance whose screen always reports clean.
+const screenApi = {
+  request: async (endpoint, body) => {
+    if (endpoint.startsWith('/api/v1/sanctions/screen')) {
+      return { results: (body?.addresses || []).map(address => ({ address, sanctioned: false })) };
+    }
+    throw new Error(`unexpected endpoint ${endpoint}`);
+  },
+};
+
 function evmIntent({ walletAddress, fromToken = BASE_USDC, toToken = OUT_TOKEN, amount = '1000000', maxInputAmount = amount, swapMode = 'exactIn', toChain = null, recipient = null } = {}) {
   return {
     chain: 'base',
@@ -813,6 +826,24 @@ describe('buildApprovalTransaction', () => {
     expect(() => buildApprovalTransaction('0xabc', '0xdef', wallet.privateKey, 'polygon', 0))
       .toThrow('Unsupported chain');
   });
+
+  // An approval used to default to 1,000,000 wei (0.001 gwei) when the quote
+  // carried no gas price. That transaction never mines, and the swap queued
+  // behind it can never be sent — the same failure signEvmTransaction refuses.
+  it('should refuse to sign an approval without a gas price', () => {
+    const wallet = generateEvmWallet();
+    for (const gasPrice of [undefined, null, '', 0]) {
+      expect(() => buildApprovalTransaction(
+        '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        '0x57df6092665eb6058de53939612413ff4b09114e',
+        wallet.privateKey,
+        'base',
+        0,
+        gasPrice,
+        1000000n,
+      )).toThrow(/no gas price.*Refusing to sign/s);
+    }
+  });
 });
 
 // ============= Approval amount scoping (security hardening) =============
@@ -1031,7 +1062,7 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await expect(cmds.quote([], null, {}, {})).rejects.toThrow('Usage: nansen trade quote');
+    await expect(cmds.quote([], screenApi, {}, {})).rejects.toThrow('Usage: nansen trade quote');
   });
 
   it('should show help when quote-id missing for execute', async () => {
@@ -1040,12 +1071,12 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await expect(cmds.execute([], null, {}, {})).rejects.toThrow(/Usage: nansen trade execute/);
+    await expect(cmds.execute([], screenApi, {}, {})).rejects.toThrow(/Usage: nansen trade execute/);
   });
 
   it('rejects an invalid --swap-mode at the CLI boundary', async () => {
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'solana',
       from: 'So11111111111111111111111111111111111111112',
       to: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
@@ -1067,7 +1098,7 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'solana',
       from: 'So11111111111111111111111111111111111111112',
       to: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
@@ -1107,7 +1138,7 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/);
     expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(true);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
@@ -1140,7 +1171,7 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/);
     expect(logs.some(l => l.includes('missing the input amount'))).toBe(true);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
@@ -1175,7 +1206,7 @@ describe('buildTradingCommands', () => {
 
     // Execution will fail later (e.g. at signing/broadcast), but should NOT
     // fail at the value validation step
-    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch { /* expected */ }
+    try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* expected */ }
     expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(false);
     expect(logs.some(l => l.includes('value mismatch'))).toBe(false);
 
@@ -1214,7 +1245,7 @@ describe('buildTradingCommands', () => {
     });
 
     // Execution fails later (signing/broadcast), but must NOT abort at the value guard.
-    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch { /* expected */ }
+    try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* expected */ }
     expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(false);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
@@ -1247,7 +1278,7 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/);
     expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(true);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
@@ -1282,7 +1313,7 @@ describe('buildTradingCommands', () => {
 
     // Execution will fail later (e.g. at signing/broadcast), but should NOT
     // fail at the value validation step
-    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch { /* expected */ }
+    try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* expected */ }
     expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(false);
     expect(logs.some(l => l.includes('value mismatch'))).toBe(false);
 
@@ -1316,7 +1347,7 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/);
     expect(logs.some(l => l.includes('value mismatch'))).toBe(true);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
@@ -1334,7 +1365,7 @@ describe('buildTradingCommands', () => {
       exit: () => {},
     });
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/transaction data/);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/transaction data/);
   });
 });
 
@@ -1387,7 +1418,7 @@ describe('WalletConnect quote support', () => {
       exit: () => {},
     });
 
-    await cmds.quote([], null, {}, {
+    await cmds.quote([], screenApi, {}, {
       chain: 'solana',
       from: 'So11111111111111111111111111111111111111112',
       to: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
@@ -1414,7 +1445,7 @@ describe('WalletConnect quote support', () => {
       exit: () => {},
     });
 
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'base',
       from: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
       to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
@@ -1433,7 +1464,7 @@ describe('WalletConnect quote support', () => {
       exit: () => {},
     });
 
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'base',
       from: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
       to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
@@ -1489,7 +1520,7 @@ describe('WalletConnect execute support', () => {
     // Should not require NANSEN_WALLET_PASSWORD since it's walletconnect
     delete process.env.NANSEN_WALLET_PASSWORD;
 
-    await cmds.execute([], null, {}, { quote: quoteId });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
 
     // Should have reached "Sending transaction via WalletConnect..." without password
     expect(logs.some(l => l.includes('WalletConnect'))).toBe(true);
@@ -1547,7 +1578,7 @@ describe('WalletConnect execute support', () => {
     const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
     delete process.env.NANSEN_WALLET_PASSWORD;
 
-    await cmds.execute([], null, { 'no-verify-outcome': true }, { quote: quoteId });
+    await cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ gas: '31500' }));
     expect(logs.some(l => l.includes('Using estimated gas 31500 (quote had no gas)'))).toBe(true);
@@ -1572,7 +1603,7 @@ describe('WalletConnect execute support', () => {
       exit: () => {},
     });
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/No WalletConnect session active/);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/No WalletConnect session active/);
 
     vi.restoreAllMocks();
   });
@@ -1612,7 +1643,7 @@ describe('WalletConnect execute support', () => {
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     delete process.env.NANSEN_WALLET_PASSWORD;
 
-    await cmds.execute([], null, {}, { quote: quoteId });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
 
     // Base's chain ID (8453), not just "some EVM account" -- the call right
     // before signing/broadcasting must be scoped to the chain being used.
@@ -1659,7 +1690,7 @@ describe('WalletConnect execute support', () => {
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     delete process.env.NANSEN_WALLET_PASSWORD;
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow('No WalletConnect session active for chain "base"');
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow('No WalletConnect session active for chain "base"');
 
     vi.restoreAllMocks();
   });
@@ -1706,7 +1737,7 @@ describe('WalletConnect execute support', () => {
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     delete process.env.NANSEN_WALLET_PASSWORD;
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow('No WalletConnect session for this chain');
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow('No WalletConnect session for this chain');
     expect(calls).toBeGreaterThanOrEqual(2);
 
     vi.restoreAllMocks();
@@ -1769,7 +1800,7 @@ describe('WalletConnect execute support', () => {
 
     // Execution may fail at a later step (e.g. base58 decode of mock data),
     // but it should reach the WalletConnect signing path
-    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch { /* expected */ }
+    try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* expected */ }
 
     // Should have used WalletConnect path
     expect(logs.some(l => l.includes('WalletConnect'))).toBe(true);
@@ -1919,7 +1950,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
     const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
 
     try {
-      await cmds.execute([], null, { 'no-verify-outcome': true }, { quote: quoteId });
+      await cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId });
     } catch {
       // May fail at broadcast; gas resolution is what we're testing.
     }
@@ -1960,7 +1991,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await cmds.execute([], null, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
+    await cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(approvalSpy).not.toHaveBeenCalled();
     expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ gas: '31500' }));
@@ -1998,7 +2029,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
-    await cmds.execute([], null, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
+    await cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(logs.some(l => l.includes('Using estimated gas 31500 (quote had no gas)'))).toBe(true);
   });
@@ -2037,7 +2068,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
-    await cmds.execute([], null, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
+    await cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(executeBodies).toHaveLength(1);
     expect(logs.some(l => l.includes('Sufficient allowance exists for #1, skipping approval'))).toBe(true);
@@ -2077,7 +2108,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await cmds.execute([], null, { 'no-verify-outcome': true }, { quote: quoteId });
+    await cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ gas: '210000' }));
   });
@@ -2118,7 +2149,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
     const logs = [];
     const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
     try {
-      await cmds.execute([], null, { 'no-verify-outcome': true }, { quote: quoteId });
+      await cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId });
     } catch { /* broadcast may fail */ }
 
     expect(logs.some(l => l.includes('Using estimated gas 210000 (quote had no gas)'))).toBe(true);
@@ -2166,7 +2197,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
-    await cmds.execute([], null, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
+    await cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(rpcMethods).toContain('eth_estimateGas');
     expect(logs.some(l => l.includes('Using estimated gas 31500 (quote had no gas)'))).toBe(true);
@@ -2210,7 +2241,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
-    await cmds.execute([], null, { 'no-verify-outcome': true }, { quote: quoteId });
+    await cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(logs.some(l => l.includes('Transaction successful'))).toBe(true);
     expect(rpcMethods).not.toContain('eth_estimateGas');
@@ -2252,7 +2283,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
-    await cmds.execute([], null, { 'no-verify-outcome': true }, { quote: quoteId });
+    await cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(logs.some(l => l.includes('Using estimated gas 31500 (quote had no gas)'))).toBe(true);
     expect(rpcMethods).toContain('eth_estimateGas');
@@ -2298,7 +2329,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
-    await cmds.execute([], null, { 'no-verify-outcome': true }, { quote: quoteId });
+    await cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(rpcMethods).not.toContain('eth_estimateGas');
     expect(logs.some(l => l.includes('quote had no gas'))).toBe(false);
@@ -2337,7 +2368,7 @@ describe('Privy execute support', () => {
         outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
         inAmount: '1000000000000000000',
         outAmount: '3000000000',
-        transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000' },
+        transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000', maxFeePerGas: '6600000', maxPriorityFeePerGas: '1100000' },
       }],
     }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
       swapMode: 'exactIn',
@@ -2401,12 +2432,87 @@ describe('Privy execute support', () => {
     });
 
     delete process.env.NANSEN_WALLET_PASSWORD;
-    await cmds.execute([], null, {}, { quote: quoteId });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
 
     // Should have signed via Privy without password
     expect(logs.some(l => l.includes('Signing EVM transaction via Privy'))).toBe(true);
     expect(logs.some(l => l.includes('Transaction successful'))).toBe(true);
     expect(logs.every(l => !l.includes('Enter wallet password'))).toBe(true);
+  });
+
+  // The Privy branch used to default a fee-less quote to 1,000,000 wei
+  // (0.001 gwei) and sign anyway — a transaction that never mines and leaves
+  // the wallet's nonce stuck — while the local-wallet signer already refused.
+  // Both paths must refuse before anything reaches Privy.
+  it('refuses to sign a quote with no fee information via Privy', async () => {
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'lifi',
+        inputMint: BASE_ETH,
+        outputMint: BASE_USDC,
+        inAmount: '1000000000000000000',
+        outAmount: '3000000000',
+        transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000' },
+      }],
+    }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({
+        walletAddress: '0xPrivyAddr',
+        fromToken: BASE_ETH,
+        toToken: BASE_USDC,
+        amount: '1000000000000000000',
+        maxInputAmount: '1000000000000000000',
+      }),
+    });
+
+    const privySignCalls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.includes('privy.io') && opts?.method === 'GET') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 'wl_evm_1', address: '0xPrivyAddr', chain_type: 'ethereum' }),
+        });
+      }
+      if (urlStr.includes('privy.io') && opts?.method === 'POST') {
+        privySignCalls.push(JSON.parse(opts.body));
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ data: { signed_transaction: '0xdeadbeef01' } }),
+        });
+      }
+      if (urlStr.includes('base') || urlStr.includes('mainnet')) {
+        const body = opts?.body ? JSON.parse(opts.body) : {};
+        if (body.method === 'eth_getTransactionCount') {
+          return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5' })) });
+        }
+        if (body.method === 'eth_getCode') {
+          return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x6080604052' })) });
+        }
+        if (body.method === 'eth_call') {
+          return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x' })) });
+        }
+        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: null })) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }));
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      log: (msg) => logs.push(msg),
+      exit: () => {},
+    });
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({
+      code: 'ALL_QUOTES_FAILED',
+      message: expect.stringMatching(/no gas price.*Refusing to sign/s),
+    });
+
+    // Nothing was handed to Privy to sign, so nothing could have been broadcast.
+    expect(privySignCalls).toHaveLength(0);
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
   });
 
   it('aborts (does not try the next quote) when the signed tx cannot be hashed after a successful broadcast', async () => {
@@ -2420,12 +2526,12 @@ describe('Privy execute support', () => {
         {
           aggregator: 'lifi', inputMint: BASE_ETH, outputMint: BASE_USDC,
           inAmount: '1000000000000000000', outAmount: '3000000000',
-          transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000' },
+          transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000', maxFeePerGas: '6600000', maxPriorityFeePerGas: '1100000' },
         },
         {
           aggregator: 'lifi', inputMint: BASE_ETH, outputMint: BASE_USDC,
           inAmount: '1000000000000000000', outAmount: '3000000000',
-          transaction: { to: LIFI_ROUTER, data: '0x87654321', value: '1000000000000000000', gas: '210000' },
+          transaction: { to: LIFI_ROUTER, data: '0x87654321', value: '1000000000000000000', gas: '210000', maxFeePerGas: '6600000', maxPriorityFeePerGas: '1100000' },
         },
       ],
     }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
@@ -2465,7 +2571,7 @@ describe('Privy execute support', () => {
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
     delete process.env.NANSEN_WALLET_PASSWORD;
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
       .rejects.toMatchObject({ code: 'INVALID_SIGNED_TX' });
 
     // Exactly one broadcast, and the derivation failure reached the user rather
@@ -2528,7 +2634,7 @@ describe('Privy execute support', () => {
     });
 
     delete process.env.NANSEN_WALLET_PASSWORD;
-    await cmds.execute([], null, {}, { quote: quoteId });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
 
     expect(logs.some(l => l.includes('Signing Solana transaction via Privy'))).toBe(true);
     expect(logs.some(l => l.includes('Transaction successful'))).toBe(true);
@@ -2618,7 +2724,7 @@ describe('Privy execute support', () => {
     });
 
     delete process.env.NANSEN_WALLET_PASSWORD;
-    await cmds.execute([], null, {}, { quote: quoteId });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
 
     // Verify approval receipt was waited for (eth_getTransactionReceipt called for approval)
     expect(logs.some(l => l.includes('Waiting for approval confirmation'))).toBe(true);
@@ -2697,7 +2803,7 @@ describe('Privy execute support', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
-    await expect(cmds.execute([], null, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     expect(executeBodies).toHaveLength(0);
     expect(logs.some(l => l.includes('Privy returned no signed transaction'))).toBe(true);
@@ -2786,7 +2892,7 @@ describe('Privy execute support', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
-    await expect(cmds.execute([], null, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     // Only the revoke was broadcast; the swap was never signed or sent.
     expect(executeBodies).toHaveLength(1);
@@ -2902,7 +3008,7 @@ describe('quote handler rejects decimal amounts before API call', () => {
       exit: () => {},
     });
 
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'solana', from: 'So11111111111111111111111111111111111111112', to: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', amount: '0.005',
     })).rejects.toThrow('base units');
     expect(global.fetch).not.toHaveBeenCalled();
@@ -2918,7 +3024,7 @@ describe('exactOut --max-input requirement applies to every chain', () => {
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
 
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'base', from: 'USDC', to: 'ETH', amount: '990000', 'swap-mode': 'exactOut',
     })).rejects.toThrow(/requires --max-input/i);
     expect(global.fetch).not.toHaveBeenCalled();
@@ -2935,7 +3041,7 @@ describe('exactOut --max-input requirement applies to every chain', () => {
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
 
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'solana', from: 'SOL', to: 'USDC', amount: '1000000', 'swap-mode': 'exactOut',
     })).rejects.toThrow(/requires --max-input/i);
     expect(global.fetch).not.toHaveBeenCalled();
@@ -3072,7 +3178,7 @@ describe('quote command with --amount-unit token', () => {
       exit: () => {},
     });
 
-    await cmds.quote([], null, {}, {
+    await cmds.quote([], screenApi, {}, {
       chain: 'solana',
       from: 'SOL',
       to: 'USDC',
@@ -3115,7 +3221,7 @@ describe('quote command with --amount-unit token', () => {
     });
 
     // exactOut: "I want exactly 1 USDC out" — should resolve decimals against USDC (6), not SOL (9)
-    await cmds.quote([], null, {}, {
+    await cmds.quote([], screenApi, {}, {
       chain: 'solana',
       from: 'SOL',
       to: 'USDC',
@@ -3143,7 +3249,7 @@ describe('quote command with --amount-unit token', () => {
       exit: () => {},
     });
 
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'solana', from: 'SOL', to: 'USDC', amount: '0.5', 'amount-unit': 'foo',
     })).rejects.toThrow('Supported values: token, base');
     expect(global.fetch).not.toHaveBeenCalled();
@@ -3160,7 +3266,7 @@ describe('quote command with --amount-unit token', () => {
       exit: () => {},
     });
 
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'solana', from: 'SOL', to: 'USDC', amount: '0.5',
     })).rejects.toThrow('base units');
     expect(global.fetch).not.toHaveBeenCalled();
@@ -3196,6 +3302,7 @@ describe('quote command with --amount-unit usd', () => {
 
     // Mock API instance with generalSearch returning SOL price
     const mockApiInstance = {
+      request: screenApi.request,
       generalSearch: vi.fn().mockResolvedValue({
         tokens: [{ address: 'So11111111111111111111111111111111111111112', chain: 'solana', price: 82.72 }],
       }),
@@ -3233,6 +3340,47 @@ describe('quote command with --amount-unit usd', () => {
     delete process.env.NANSEN_WALLET_PASSWORD;
   });
 
+  // validateQuoteInput checks the raw dollar figure (positive), then the usd
+  // branch pre-rounds with toFixed(decimals) before convertToBaseUnits sees
+  // the value — so its "meaningful digits lost" guard never fires and a tiny
+  // but positive --amount silently became amount=0 in the quote request.
+  it('should refuse a USD amount that rounds to zero base units', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+
+    const origFetch = global.fetch;
+    const fetchCalls = [];
+    global.fetch = vi.fn(async (url, opts) => {
+      fetchCalls.push({ url: url.toString(), opts });
+      return { ok: true, text: async () => JSON.stringify({ success: true, quotes: [] }) };
+    });
+
+    const mockApiInstance = {
+      request: screenApi.request,
+      generalSearch: vi.fn().mockResolvedValue({
+        tokens: [{ address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', chain: 'solana', price: 1 }],
+      }),
+    };
+
+    const cmds = buildTradingCommands({ log: vi.fn(), exit: vi.fn() });
+    await expect(cmds.quote([], mockApiInstance, {}, {
+      chain: 'solana',
+      from: 'USDC',
+      to: 'SOL',
+      amount: '0.0000001',
+      'amount-unit': 'usd',
+    })).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+      message: expect.stringMatching(/resolves to 0 base units.*swap of nothing/s),
+    });
+
+    // No quote request may be sent for a zero amount.
+    expect(fetchCalls.find(c => c.url.includes('quote'))).toBeUndefined();
+
+    global.fetch = origFetch;
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
   it('should price the --to token in exactOut mode', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
@@ -3253,6 +3401,7 @@ describe('quote command with --amount-unit usd', () => {
     }));
 
     const mockApiInstance = {
+      request: screenApi.request,
       generalSearch: vi.fn().mockResolvedValue({
         tokens: [{ address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', chain: 'solana', price: 1.0 }],
       }),
@@ -3304,6 +3453,7 @@ describe('quote command with --amount-unit usd', () => {
     });
 
     const mockApiInstance = {
+      request: screenApi.request,
       generalSearch: vi.fn().mockResolvedValue({
         tokens: [{ address: 'So11111111111111111111111111111111111111112', chain: 'solana', price: 84.0 }],
       }),
@@ -3341,6 +3491,7 @@ describe('quote command with --amount-unit usd', () => {
     });
 
     const mockApiInstance = {
+      request: screenApi.request,
       generalSearch: vi.fn().mockResolvedValue({
         tokens: [{ address: 'So11111111111111111111111111111111111111112', chain: 'solana', price: 84.0 }],
       }),
@@ -3384,6 +3535,7 @@ describe('quote command with --amount-unit usd', () => {
     }));
 
     const mockApiInstance = {
+      request: screenApi.request,
       generalSearch: vi.fn().mockResolvedValue({
         tokens: [{ address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', chain: 'solana', price: 1.0 }],
       }),
@@ -3420,6 +3572,7 @@ describe('quote command with --amount-unit usd', () => {
     global.fetch = vi.fn();
 
     const mockApiInstance = {
+      request: screenApi.request,
       generalSearch: vi.fn().mockResolvedValue({ tokens: [] }),
     };
 
@@ -3481,7 +3634,7 @@ describe('quote command with --amount-unit percent', () => {
       exit: () => {},
     });
 
-    await cmds.quote([], null, {}, {
+    await cmds.quote([], screenApi, {}, {
       chain: 'solana',
       from: 'SOL',
       to: 'USDC',
@@ -3507,7 +3660,7 @@ describe('quote command with --amount-unit percent', () => {
       exit: () => {},
     });
 
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'solana',
       from: 'SOL',
       to: 'USDC',
@@ -3558,7 +3711,7 @@ describe('quote command with --amount-unit percent', () => {
       exit: () => {},
     });
 
-    await cmds.quote([], null, {}, {
+    await cmds.quote([], screenApi, {}, {
       chain: 'solana',
       from: 'SOL',
       to: 'USDC',
@@ -3584,7 +3737,7 @@ describe('quote command with --amount-unit percent', () => {
       exit: () => {},
     });
 
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'solana',
       from: 'SOL',
       to: 'USDC',
@@ -4163,7 +4316,7 @@ describe('Relay aggregator: empty approvalAddress', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch { /* may fail at bridge-poll, that's fine */ }
+    try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* may fail at bridge-poll, that's fine */ }
 
     // No approval message
     expect(logs.some(l => l.includes('Approval required'))).toBe(false);
@@ -4246,7 +4399,7 @@ describe('confirmEvmBroadcast: binds receipt confirmation to the locally-derived
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
       .rejects.toMatchObject({ code: 'TXHASH_MISMATCH' });
 
     // TXHASH_MISMATCH is a broadcaster-integrity failure, not a bad quote:
@@ -4319,7 +4472,7 @@ describe('confirmEvmBroadcast: binds receipt confirmation to the locally-derived
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await cmds.execute([], null, {}, { quote: quoteId });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
 
     const localHash = evmTxHash(executeBodies[0].signedTransaction);
     expect(queriedHashes.length).toBeGreaterThan(0);
@@ -4385,7 +4538,7 @@ describe('confirmEvmBroadcast: binds receipt confirmation to the locally-derived
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await cmds.execute([], null, { gasless: true }, { quote: quoteId });
+    await cmds.execute([], screenApi, { gasless: true }, { quote: quoteId });
 
     expect(executeBodies).toHaveLength(1);
     expect(logs.some(l => l.includes('Transaction successful'))).toBe(true);
@@ -4533,7 +4686,7 @@ describe('confirmEvmBroadcast: binds receipt confirmation to the locally-derived
 
     // Shrink the receipt-poll window so the timeout fires fast instead of at 180s.
     vi.useFakeTimers();
-    const p = cmds.execute([], null, {}, { quote: quoteId });
+    const p = cmds.execute([], screenApi, {}, { quote: quoteId });
     const settle = expect(p).rejects.toMatchObject({ code: 'RECEIPT_TIMEOUT' });
     await vi.advanceTimersByTimeAsync(200000); // past the 180s waitForReceipt window
     await settle;
@@ -4595,7 +4748,7 @@ describe('Swap target validation blocks a poisoned quote (security hardening)', 
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     // The swap was never broadcast.
     const executeCalls = fetchCalls.filter(c => c.url.includes('trading-api') && c.url.endsWith('/execute'));
@@ -4649,7 +4802,7 @@ describe('Swap target validation blocks a poisoned quote (security hardening)', 
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     // Nothing broadcast to the Trading API — crucially, NO approval tx either,
     // which proves the target guard runs before the approval step.
@@ -4706,7 +4859,7 @@ describe('Swap target validation blocks a poisoned quote (security hardening)', 
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     // Nothing broadcast, and no allowance check — the intent guard fired first.
     const executeCalls = fetchCalls.filter(c => c.url.includes('trading-api') && c.url.endsWith('/execute'));
@@ -4760,7 +4913,7 @@ describe('Swap target validation blocks a poisoned quote (security hardening)', 
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     const executeCalls = fetchCalls.filter(c => c.url.includes('trading-api') && c.url.endsWith('/execute'));
     expect(executeCalls.length).toBe(0);
@@ -4814,7 +4967,7 @@ describe('Swap target validation blocks a poisoned quote (security hardening)', 
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     const executeCalls = fetchCalls.filter(c => c.url.includes('trading-api') && c.url.endsWith('/execute'));
     expect(executeCalls.length).toBe(0);
@@ -4867,7 +5020,7 @@ describe('Swap target validation blocks a poisoned quote (security hardening)', 
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     const executeCalls = fetchCalls.filter(c => c.url.includes('trading-api') && c.url.endsWith('/execute'));
     expect(executeCalls.length).toBe(0);
@@ -4923,7 +5076,7 @@ describe('Swap target validation blocks a poisoned quote (security hardening)', 
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     // No zero-amount approve() broadcast.
     const executeCalls = fetchCalls.filter(c => c.url.includes('trading-api') && c.url.endsWith('/execute'));
@@ -5085,7 +5238,7 @@ describe('ERC-20 excessive allowance handling', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await cmds.execute([], null, { 'no-simulate': true }, { quote: quoteId });
+    await cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId });
 
     expect(executeBodies).toHaveLength(3);
     expect(executeBodies[0].signedTransaction).toContain(approveSelector);
@@ -5140,7 +5293,7 @@ describe('ERC-20 excessive allowance handling', () => {
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
 
     vi.useFakeTimers();
-    const p = cmds.execute([], null, { 'no-simulate': true }, { quote: quoteId });
+    const p = cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId });
     const settle = expect(p).rejects.toMatchObject({ code: 'RECEIPT_TIMEOUT' });
     await vi.advanceTimersByTimeAsync(200000); // past the 180s waitForReceipt window
     await settle;
@@ -5169,7 +5322,7 @@ describe('ERC-20 excessive allowance handling', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     expect(executeBodies).toHaveLength(2);
     expect(executeBodies[0].signedTransaction).toContain(amountWord(0n));
@@ -5212,7 +5365,7 @@ describe('ERC-20 excessive allowance handling', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     // Only the revoke was broadcast; the reapproval and swap never ran.
     expect(executeBodies).toHaveLength(1);
@@ -5261,7 +5414,7 @@ describe('ERC-20 excessive allowance handling', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     // Both the revoke and the reapproval were broadcast; the swap never ran.
     expect(executeBodies).toHaveLength(2);
@@ -5305,7 +5458,7 @@ describe('ERC-20 excessive allowance handling', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     expect(executeBodies).toHaveLength(1);
     expect(logs.some(l => l.includes('invalid allowance() return data: 0x'))).toBe(true);
@@ -5343,7 +5496,7 @@ describe('ERC-20 excessive allowance handling', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await cmds.execute([], null, { 'no-simulate': true }, { quote: quoteId });
+    await cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId });
 
     expect(executeBodies).toHaveLength(1);
     expect(executeBodies[0].signedTransaction).not.toContain(approveSelector);
@@ -5364,7 +5517,7 @@ describe('ERC-20 excessive allowance handling', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await cmds.execute([], null, { 'no-simulate': true, 'no-revoke-excessive-allowance': true }, { quote: quoteId });
+    await cmds.execute([], screenApi, { 'no-simulate': true, 'no-revoke-excessive-allowance': true }, { quote: quoteId });
 
     expect(executeBodies).toHaveLength(1);
     expect(executeBodies[0].signedTransaction).not.toContain(approveSelector);
@@ -5388,7 +5541,7 @@ describe('ERC-20 excessive allowance handling', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     expect(approvalSpy).toHaveBeenCalledTimes(1);
     expect(approvalSpy).toHaveBeenCalledWith(
@@ -5424,7 +5577,7 @@ describe('ERC-20 excessive allowance handling', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
 
     // Both the revoke and the reapproval were attempted; the swap was never sent.
     expect(approvalSpy).toHaveBeenCalledTimes(2);
@@ -5492,7 +5645,7 @@ describe('Solana execute: static instruction safety check', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow();
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow();
 
     expect(fetchCalls.some(u => u.includes('trading-api') && u.endsWith('/execute'))).toBe(false);
     expect(logs.some(l => l.includes('reclaimed rent'))).toBe(true);
@@ -5524,7 +5677,7 @@ describe('Solana execute: static instruction safety check', () => {
     }, 'solana', 'local');
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
       .rejects.toThrow(/Could not resolve the local wallet's Solana address/);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
@@ -5596,7 +5749,7 @@ describe('Relay aggregator: --gasless flag dispatch', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    try { await cmds.execute([], null, { gasless: true }, { quote: quoteId }); } catch { /* bridge polling may fail in test, that's fine */ }
+    try { await cmds.execute([], screenApi, { gasless: true }, { quote: quoteId }); } catch { /* bridge polling may fail in test, that's fine */ }
 
     expect(executeBodies.length).toBeGreaterThanOrEqual(1);
     const body = executeBodies[0];
@@ -5672,7 +5825,7 @@ describe('Relay aggregator: --gasless flag dispatch', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, { gasless: true }, { quote: quoteId })).rejects.toThrow();
+    await expect(cmds.execute([], screenApi, { gasless: true }, { quote: quoteId })).rejects.toThrow();
 
     expect(executePosts).toBe(1); // no retry — the gasless authorization is not re-POSTed
 
@@ -5699,7 +5852,7 @@ describe('Relay aggregator: --gasless flag dispatch', () => {
     }, 'base', 'local', null, 'solana');
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, { gasless: true }, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, { gasless: true }, { quote: quoteId }))
       .rejects.toThrow(/only supported for Relay quotes/);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
@@ -5723,7 +5876,7 @@ describe('Relay aggregator: --gasless flag dispatch', () => {
     }, 'base', 'walletconnect', null, 'solana');
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, { gasless: true }, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, { gasless: true }, { quote: quoteId }))
       .rejects.toThrow(/not supported via WalletConnect/);
 
     vi.restoreAllMocks();
@@ -5961,7 +6114,7 @@ describe('Relay aggregator: EVM execute forwards requestId', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch { /* may fail later, ok */ }
+    try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* may fail later, ok */ }
 
     expect(executeBodies.length).toBeGreaterThanOrEqual(1);
     // Non-gasless EVM Relay: the backend's /execute schema rejects both
@@ -6031,7 +6184,7 @@ describe('Relay aggregator: EVM execute forwards requestId', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    try { await cmds.execute([], null, { gasless: true }, { quote: quoteId }); } catch { /* ok */ }
+    try { await cmds.execute([], screenApi, { gasless: true }, { quote: quoteId }); } catch { /* ok */ }
 
     expect(executeBodies.length).toBeGreaterThanOrEqual(1);
     expect(executeBodies[0].aggregator).toBe('relay');
@@ -6167,7 +6320,7 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch { /* bridge poll may fail, ok */ }
+    try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* bridge poll may fail, ok */ }
 
     expect(executeBodies.length).toBeGreaterThanOrEqual(1);
     // Critical: backend treats requestId as a Jupiter Ultra intent ID and 502s on
@@ -6219,7 +6372,7 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch { /* ok */ }
+    try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* ok */ }
 
     expect(executeBodies.length).toBeGreaterThanOrEqual(1);
     expect(executeBodies[0].requestId).toBe('jupiter-ultra-req'); // Jupiter Ultra still needs it
@@ -6268,7 +6421,7 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch { /* ok */ }
+    try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* ok */ }
 
     expect(executeBodies.length).toBeGreaterThanOrEqual(1);
     expect(executeBodies[0].quoteId).toBe('aggregator-jupiter-quote-id');
@@ -6297,7 +6450,7 @@ describe('Relay aggregator: --aggregator filter on trade quote', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await cmds.quote([], null, {}, {
+    await cmds.quote([], screenApi, {}, {
       chain: 'base',
       'to-chain': 'solana',
       from: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
@@ -6330,7 +6483,7 @@ describe('Relay aggregator: --aggregator filter on trade quote', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'base',
       'to-chain': 'solana',
       from: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
@@ -6348,7 +6501,7 @@ describe('Relay aggregator: --aggregator filter on trade quote', () => {
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'base',
       'to-chain': 'solana',
       from: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
@@ -6366,7 +6519,7 @@ describe('Relay aggregator: --aggregator filter on trade quote', () => {
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     // "3" is almost certainly meant as 3% but reads as 300% — reject it.
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'base',
       'to-chain': 'solana',
       from: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
@@ -6381,7 +6534,7 @@ describe('Relay aggregator: --aggregator filter on trade quote', () => {
   it('rejects exactOut with --auto-slippage but no --max-auto-slippage', async () => {
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     // Uncapped auto-slippage leaves the exactOut approval buffer unbounded → require a cap.
-    await expect(cmds.quote([], null, { 'auto-slippage': true }, {
+    await expect(cmds.quote([], screenApi, { 'auto-slippage': true }, {
       chain: 'base',
       from: 'USDC',
       to: 'ETH',
@@ -6395,7 +6548,7 @@ describe('Relay aggregator: --aggregator filter on trade quote', () => {
     // `--max-auto-slippage ""` reaches the handler as an empty string, which
     // Number() turns into 0: in range, not null, and then falsy when the request
     // is built, so the exactOut cap requirement would pass with no cap sent.
-    await expect(cmds.quote([], null, { 'auto-slippage': true }, {
+    await expect(cmds.quote([], screenApi, { 'auto-slippage': true }, {
       chain: 'base',
       from: 'USDC',
       to: 'ETH',
@@ -6407,7 +6560,7 @@ describe('Relay aggregator: --aggregator filter on trade quote', () => {
 
   it('rejects a blank --slippage rather than reading it as zero', async () => {
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.quote([], null, {}, {
+    await expect(cmds.quote([], screenApi, {}, {
       chain: 'base',
       from: 'USDC',
       to: 'ETH',
@@ -6553,7 +6706,7 @@ describe('exactOut max-input enforcement (adversarial)', () => {
       const logs = [];
       const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
 
-      await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/exceeds your maximum input/i);
+      await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/exceeds your maximum input/i);
       noBroadcast(calls);
       // Never reached the approval/broadcast stage.
       expect(logs.some(l => /Approval required|Sending approval|Broadcasting/.test(l))).toBe(false);
@@ -6570,7 +6723,7 @@ describe('exactOut max-input enforcement (adversarial)', () => {
 
       const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
 
-      await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/exceeds your maximum input/i);
+      await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/exceeds your maximum input/i);
       noPrivySign(calls); // no signEvmTransaction (privy.io POST)
       noBroadcast(calls); // no /execute broadcast
 
@@ -6590,7 +6743,7 @@ describe('exactOut max-input enforcement (adversarial)', () => {
 
       const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
 
-      await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/exceeds your maximum input/i);
+      await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/exceeds your maximum input/i);
       expect(approvalSpy).not.toHaveBeenCalled();
       expect(sendSpy).not.toHaveBeenCalled();
       noBroadcast(calls);
@@ -6621,7 +6774,7 @@ describe('exactOut max-input enforcement (adversarial)', () => {
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
 
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/built for wallet .* but the signer is/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/built for wallet .* but the signer is/i);
     noBroadcast(calls);
     expect(logs.some(l => /Approval required|Sending approval|Broadcasting/.test(l))).toBe(false);
   });
@@ -6824,7 +6977,7 @@ describe('Solana intent binding (adversarial)', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/sell token .* does not match/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/sell token .* does not match/i);
     noBroadcast(calls);
   });
 
@@ -6849,7 +7002,7 @@ describe('Solana intent binding (adversarial)', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/buy token .* does not match the requested token/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/buy token .* does not match the requested token/i);
     noBroadcast(calls);
   });
 
@@ -6874,7 +7027,7 @@ describe('Solana intent binding (adversarial)', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/does not match the requested input/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/does not match the requested input/i);
     noBroadcast(calls);
   });
 
@@ -6900,7 +7053,7 @@ describe('Solana intent binding (adversarial)', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/built for wallet .* but the signer is/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/built for wallet .* but the signer is/i);
     noBroadcast(calls);
   });
 
@@ -6918,7 +7071,7 @@ describe('Solana intent binding (adversarial)', () => {
     }, 'solana', 'local');
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/missing request intent/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/missing request intent/i);
     noBroadcast(calls);
   });
 
@@ -6944,7 +7097,7 @@ describe('Solana intent binding (adversarial)', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/built for wallet .* but the signer is/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/built for wallet .* but the signer is/i);
     // Never reached signSolanaTransaction (the only privy.io POST on this path).
     expect(calls.some(c => c.url.includes('privy.io') && c.method === 'POST')).toBe(false);
     expect(calls.some(c => c.url.includes('/execute'))).toBe(false);
@@ -6982,7 +7135,7 @@ describe('Solana intent binding (adversarial)', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/does not match the requested input/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/does not match the requested input/i);
     // Never reached signSolanaTransaction (the only privy.io POST on this path).
     expect(calls.some(c => c.url.includes('privy.io') && c.method === 'POST')).toBe(false);
     expect(calls.some(c => c.url.includes('/execute'))).toBe(false);
@@ -7001,7 +7154,7 @@ describe('Solana intent binding (adversarial)', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/built for wallet .* but the signer is/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/built for wallet .* but the signer is/i);
     expect(sendSpy).not.toHaveBeenCalled();
   });
 
@@ -7033,7 +7186,7 @@ describe('Solana intent binding (adversarial)', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await cmds.execute([], null, {}, { quote: quoteId });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
 
     expect(logs.some(l => l.includes('Transaction successful'))).toBe(true);
   });
@@ -7337,7 +7490,7 @@ describe('Solana execute: swap-outcome verification blocks signing (adversarial)
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/outcome verification failed/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/outcome verification failed/i);
     expect(calls.some((c) => c.includes('/execute'))).toBe(false);
   });
 
@@ -7383,7 +7536,7 @@ describe('Solana execute: swap-outcome verification blocks signing (adversarial)
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/outcome verification failed/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/outcome verification failed/i);
     expect(calls.some((c) => c.url.includes('privy.io') && c.method === 'POST')).toBe(false);
     expect(calls.some((c) => c.url.includes('/execute'))).toBe(false);
   });
@@ -7419,7 +7572,7 @@ describe('Solana execute: swap-outcome verification blocks signing (adversarial)
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow(/outcome verification failed/i);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/outcome verification failed/i);
     expect(sendSpy).not.toHaveBeenCalled();
   });
 
@@ -7461,7 +7614,7 @@ describe('Solana execute: swap-outcome verification blocks signing (adversarial)
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await cmds.execute([], null, {}, { quote: quoteId });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
 
     expect(logs.some((l) => l.includes('Swap outcome verified'))).toBe(true);
     expect(logs.some((l) => l.includes('Transaction successful'))).toBe(true);
@@ -7493,7 +7646,7 @@ describe('Solana exactOut ceiling — requires an explicit --max-input', () => {
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
 
-    await cmds.quote([], null, {}, {
+    await cmds.quote([], screenApi, {}, {
       chain: 'solana', from: 'SOL', to: 'USDC', amount: '50000000', 'swap-mode': 'exactOut', 'max-input': '2000000000',
     });
 
@@ -7586,7 +7739,7 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    try { await cmds.execute([], null, {}, { quote: quoteId }); } catch { /* bridge polling may fail in test, that's fine */ }
+    try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* bridge polling may fail in test, that's fine */ }
 
     expect(executeBodies.length).toBeGreaterThanOrEqual(1);
     // The signed transaction the API actually receives should decode to a

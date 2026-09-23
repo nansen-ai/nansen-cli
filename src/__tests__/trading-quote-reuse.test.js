@@ -33,6 +33,19 @@ const BASE_ETH = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const LIFI_ROUTER = '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae';
 
+// `trade quote` / `trade execute` screen the wallet against the sanctions list
+// through the API instance before requesting a quote or signing (the gate itself
+// is covered in trading-sanctions-screening.test.js). Tests here exercise other
+// behaviour, so they get an API instance whose screen always reports clean.
+const screenApi = {
+  request: async (endpoint, body) => {
+    if (endpoint.startsWith('/api/v1/sanctions/screen')) {
+      return { results: (body?.addresses || []).map(address => ({ address, sanctioned: false })) };
+    }
+    throw new Error(`unexpected endpoint ${endpoint}`);
+  },
+};
+
 function evmIntent({ walletAddress, fromToken, toToken, amount, maxInputAmount = amount }) {
   return {
     chain: 'base',
@@ -141,13 +154,13 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
     const flags = { 'no-simulate': true, 'no-verify-outcome': true };
 
     // First run: broadcasts and confirms normally.
-    await cmds.execute([], null, flags, { quote: quoteId });
+    await cmds.execute([], screenApi, flags, { quote: quoteId });
     expect(executeBodies).toHaveLength(1);
 
     // Second run against the SAME quote id must be refused by loadQuote's
     // `data.executedAt` check (markQuoteExecuted recorded the first broadcast)
     // before it ever reaches /execute again.
-    await expect(cmds.execute([], null, flags, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
       .rejects.toThrow(/already executed/i);
 
     expect(executeBodies).toHaveLength(1);
@@ -198,7 +211,7 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
     // First run: broadcasts successfully, then the receipt wait times out and
     // the command exits with RECEIPT_TIMEOUT — the tx may still be pending.
     vi.useFakeTimers();
-    const firstRun = cmds.execute([], null, flags, { quote: quoteId });
+    const firstRun = cmds.execute([], screenApi, flags, { quote: quoteId });
     const firstSettle = expect(firstRun).rejects.toMatchObject({ code: 'RECEIPT_TIMEOUT' });
     await vi.advanceTimersByTimeAsync(200000); // past the 180s waitForReceipt window
     await firstSettle;
@@ -213,7 +226,7 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
 
     // Second run — the natural retry after seeing a non-zero exit — must be
     // refused before it ever re-signs and re-broadcasts under a fresh nonce.
-    await expect(cmds.execute([], null, flags, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
       .rejects.toThrow(/already executed/i);
 
     expect(executeBodies).toHaveLength(1);
@@ -255,7 +268,7 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
     const flags = { 'no-simulate': true, 'no-verify-outcome': true };
 
     // Single-candidate quote, so the Failed result exhausts the loop.
-    await expect(cmds.execute([], null, flags, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
       .rejects.toThrow(/all quotes failed/i);
     expect(executeBodies).toHaveLength(1);
 
@@ -264,7 +277,7 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
     expect(quoteFile.broadcasts?.[0]?.txHash).toBeTruthy();
 
     // A retry must be refused, not re-broadcast under a fresh nonce.
-    await expect(cmds.execute([], null, flags, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
       .rejects.toThrow(/already executed/i);
     expect(executeBodies).toHaveLength(1);
   });
@@ -319,7 +332,7 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     const flags = { 'no-simulate': true, 'no-verify-outcome': true };
 
-    await expect(cmds.execute([], null, flags, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
       .rejects.toThrow(/502|bad gateway/i);
 
     // Only the FIRST candidate was ever posted (its retries) — every /execute
@@ -335,7 +348,7 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
 
     // A cross-process retry (or an agent auto-retry) is refused before re-signing.
     const postCount = executeBodies.length;
-    await expect(cmds.execute([], null, flags, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
       .rejects.toThrow(/already executed/i);
     expect(executeBodies.length).toBe(postCount);
   });
@@ -387,14 +400,14 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     const flags = { 'no-simulate': true, 'no-verify-outcome': true };
 
-    await expect(cmds.execute([], null, flags, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
       .rejects.toThrow(/socket hang up|failed/i);
 
     // The quote is marked spent, and a re-execute is refused.
     const quoteFile = JSON.parse(fs.readFileSync(path.join(getQuotesDir(), `${quoteId}.json`), 'utf8'));
     expect(quoteFile.executedAt).toBeTypeOf('number');
     const attemptsAfterFirst = executeAttempts;
-    await expect(cmds.execute([], null, flags, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
       .rejects.toThrow(/already executed/i);
     expect(executeAttempts).toBe(attemptsAfterFirst);
   });
@@ -444,14 +457,14 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     const flags = { 'no-simulate': true, 'no-verify-outcome': true };
 
-    await expect(cmds.execute([], null, flags, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
       .rejects.toThrow(/502|broadcast/i);
 
     // Only the first candidate was posted (its retries) — same signed tx every time.
     expect(new Set(executeBodies.map(b => b.signedTransaction)).size).toBe(1);
     const quoteFile = JSON.parse(fs.readFileSync(path.join(getQuotesDir(), `${quoteId}.json`), 'utf8'));
     expect(quoteFile.executedAt).toBeTypeOf('number');
-    await expect(cmds.execute([], null, flags, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
       .rejects.toThrow(/already executed/i);
   });
 
@@ -499,14 +512,14 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     const flags = { 'no-simulate': true, 'no-verify-outcome': true };
 
-    await expect(cmds.execute([], null, flags, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
       .rejects.toThrow(/body read failed|aborted/i);
 
     // Second candidate never signed/posted; quote marked spent; re-execute refused.
     expect(new Set(executeBodies.map(b => b.signedTransaction)).size).toBe(1);
     const quoteFile = JSON.parse(fs.readFileSync(path.join(getQuotesDir(), `${quoteId}.json`), 'utf8'));
     expect(quoteFile.executedAt).toBeTypeOf('number');
-    await expect(cmds.execute([], null, flags, { quote: quoteId }))
+    await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
       .rejects.toThrow(/already executed/i);
   });
 });

@@ -55,7 +55,18 @@ function parseAmount(amountStr, decimals) {
   const parts = str.split('.');
   const whole = parts[0] || '0';
   let frac = (parts[1] || '').padEnd(decimals, '0').slice(0, decimals);
-  return BigInt(whole) * (10n ** BigInt(decimals)) + BigInt(frac);
+  const raw = BigInt(whole) * (10n ** BigInt(decimals)) + BigInt(frac);
+  // Zero base units would still be signed and broadcast: a native send that
+  // pays gas to move nothing, a token transfer of 0, or a limit order created
+  // with inputAmount "0". Refuse both a literal zero and a positive amount
+  // that truncates to zero at this token's precision.
+  if (raw === 0n) {
+    if (/^0+(\.0+)?$/.test(str)) throw new Error('Amount must be greater than zero');
+    throw new Error(
+      `Amount ${str} is below the smallest unit of this token (${decimals} decimals) and would send nothing. Use at least ${decimals === 0 ? '1' : '0.' + '0'.repeat(decimals - 1) + '1'}.`,
+    );
+  }
+  return raw;
 }
 
 function formatAmount(rawAmount, decimals) {
@@ -76,17 +87,47 @@ async function rpcCall(url, method, params = []) {
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
   const data = await response.json();
-  if (data.error) throw new Error(friendlyRpcError(data.error));
+  if (data.error) {
+    const err = new Error(friendlyRpcError(data.error, method));
+    // Classified from the raw RPC text, before any rewording, so callers can
+    // branch on it without depending on the friendly message's wording.
+    err.transactionWouldFail = isTransactionFailureMessage(data.error);
+    throw err;
+  }
   return data.result;
 }
 
 /**
- * Convert raw RPC errors into actionable messages.
+ * True when an RPC error says the transaction itself cannot succeed
+ * (insufficient funds, execution reverted), as opposed to the node failing
+ * to answer.
  */
-function friendlyRpcError(error) {
+function isTransactionFailureMessage(error) {
+  const lower = String(error?.message || JSON.stringify(error)).toLowerCase();
+  return lower.includes('insufficient funds')
+    || lower.includes('insufficient lamports')
+    // geth/op-geth phrase every EVM revert as "execution reverted[: reason]";
+    // a bare "reverted" would also catch unrelated wording.
+    || lower.includes('execution reverted');
+}
+
+/**
+ * Convert raw RPC errors into actionable messages.
+ *
+ * rpcCall serves both rails, so the method name decides which chain's advice
+ * applies: EVM JSON-RPC methods are `eth_*`, Solana's are bare camelCase.
+ * geth rejects an underfunded transaction with "insufficient funds for gas *
+ * price + value", which used to match the Solana branch and tell a Base or
+ * Ethereum user to top up SOL.
+ */
+function friendlyRpcError(error, method = '') {
   const msg = error.message || JSON.stringify(error);
   const lower = msg.toLowerCase();
+  const isEvm = typeof method === 'string' && method.toLowerCase().startsWith('eth_');
 
+  if (isEvm && lower.includes('insufficient funds')) {
+    return `Insufficient native balance to cover gas and value for this transaction. Top up the wallet with the chain's native gas token (ETH on most EVM chains). RPC said: ${msg}`;
+  }
   if (lower.includes('no record of a prior credit') || lower.includes('accountnotfound')) {
     return 'Insufficient SOL for transaction fees. Send at least 0.01 SOL to your wallet.';
   }
@@ -106,6 +147,17 @@ function friendlyRpcError(error) {
   return `RPC error: ${msg}`;
 }
 
+
+/**
+ * eth_estimateGas fails for two very different reasons: the node could not run
+ * the estimate (transient — fall back to a default gas limit), or it ran the
+ * call and the transaction cannot succeed (insufficient funds, execution
+ * reverted). Broadcasting the second kind with a default gas limit only burns
+ * gas on a transaction the node already said will fail, so let it propagate.
+ */
+function isDoomedTransactionError(err) {
+  return err?.transactionWouldFail === true;
+}
 
 function bigIntToHex(n) {
   if (n === 0n) return '0x';
@@ -203,7 +255,10 @@ async function buildEvmTransaction({ to, amount, token, privateKey, chain, max =
           { from, to, value: '0x1' },
         ]);
         estGasLimit = BigInt(dummyEstimate) * 120n / 100n;
-      } catch {
+      } catch (err) {
+        // A node that rejects even a 1-wei transfer to this recipient is
+        // telling us the send cannot succeed; do not paper over it.
+        if (isDoomedTransactionError(err)) throw err;
         estGasLimit = 21000n;
       }
       // Reserve: L2 gas (gasLimit * maxFee) + L1 data fee buffer
@@ -231,7 +286,8 @@ async function buildEvmTransaction({ to, amount, token, privateKey, chain, max =
     const gasEstimate = await rpcCall(rpcUrl, 'eth_estimateGas', [estimateParams]);
     // Add 20% buffer for safety
     gasLimit = BigInt(gasEstimate) * 120n / 100n;
-  } catch {
+  } catch (err) {
+    if (isDoomedTransactionError(err)) throw err;
     // Fallback to safe defaults if estimation fails
     gasLimit = token ? 100000n : 21000n;
   }
@@ -334,7 +390,16 @@ export async function getTokenInfo(rpcUrl, mint) {
   if (!info || !info.value) throw new Error(`Token mint ${mint} not found`);
   const owner = info.value.owner;
   const decimals = info.value.data?.parsed?.info?.decimals;
-  return { tokenProgram: owner, decimals: decimals ?? 9 };
+  // The decimals scale every human-readable --amount into base units, so a
+  // guess is never safe. When the RPC cannot jsonParse the mint (an owner
+  // program it does not know, or raw base64 data) the account is not a mint
+  // we can size a transfer for — say so instead of assuming 9 decimals.
+  if (!Number.isInteger(decimals) || decimals < 0) {
+    throw new Error(
+      `Could not determine decimals for token mint ${mint}: the RPC did not return parsed token data (owner ${owner ?? 'unknown'}). Check that the address is an SPL token mint, or try a different Solana RPC.`,
+    );
+  }
+  return { tokenProgram: owner, decimals };
 }
 
 /**
@@ -876,7 +941,8 @@ async function sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRu
           { from: wcAddress, to, value: '0x1' },
         ]);
         estGasLimit = BigInt(dummyEstimate) * 120n / 100n;
-      } catch {
+      } catch (err) {
+        if (isDoomedTransactionError(err)) throw err;
         estGasLimit = 21000n;
       }
       const feeHistory = await rpcCall(rpcUrl, 'eth_feeHistory', [4, 'latest', [50]]);
@@ -910,7 +976,8 @@ async function sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRu
     if (txValue && txValue !== '0') estimateParams.value = '0x' + BigInt(txValue).toString(16);
     const gasEstimate = await rpcCall(rpcUrl, 'eth_estimateGas', [estimateParams]);
     gasLimit = (BigInt(gasEstimate) * 120n / 100n).toString(); // 20% buffer
-  } catch {
+  } catch (err) {
+    if (isDoomedTransactionError(err)) throw err;
     gasLimit = token ? '100000' : '21000'; // fallback
   }
 
