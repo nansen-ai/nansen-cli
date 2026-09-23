@@ -228,11 +228,15 @@ it.each([[false, true], [true, false]])('runCLI uses output TTY %s independently
 it.each(['', '   '])('legacy --human prompts when the environment key is blank (%j)', async value => {
   const f = fixture(); const promptFn = vi.fn().mockResolvedValue('synthetic-key');
   f.env.NANSEN_API_KEY = value;
+  const log = vi.fn();
   class API { async getAccount() { return { user_id: 'synthetic-account' }; } }
-  const commands = buildCommands({ env: f.env, authState: f.state, stdinTTY: true, promptFn, NansenAPIClass: API, log: vi.fn() });
+  const commands = buildCommands({ env: f.env, authState: f.state, stdinTTY: true, promptFn, NansenAPIClass: API, log });
   await commands.login([], null, { human: true }, {});
   expect(promptFn).toHaveBeenCalledOnce();
   expect(JSON.parse(fs.readFileSync(f.file)).apiKey).toBe('synthetic-key');
+  expect(log.mock.calls.flat().join('\n')).toContain('Commands will fail until you unset it');
+  expect(log.mock.calls.flat().join('\n')).not.toContain('You can now use');
+  expect(resolveCredential({ env: f.env })).toMatchObject({ kind: 'api-key', source: 'env', apiKey: value });
 });
 it('returns a manual payment challenge for an API key without signing or retrying', async () => {
   const requirements = { accepts: [{ scheme: 'exact', network: 'eip155:8453', amount: '1' }] };

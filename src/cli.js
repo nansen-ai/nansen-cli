@@ -1529,7 +1529,10 @@ export function buildCommands(deps = {}) {
         const result = await authState.install(attempt, { apiKey: apiKey.trim(), baseUrl: 'https://api.nansen.ai' });
         for (const message of cleanupMessage(result.cleanup)) log(message);
       } finally { await authState.finish(attempt); }
-      if (env.NANSEN_API_KEY !== undefined) log('Commands still use NANSEN_API_KEY. Unset it to use the saved credential.');
+      const blankEnvKey = env.NANSEN_API_KEY !== undefined && !env.NANSEN_API_KEY.trim();
+      if (env.NANSEN_API_KEY !== undefined) log(blankEnvKey
+        ? 'NANSEN_API_KEY is blank. Commands will fail until you unset it or supply a valid environment key.'
+        : 'Commands still use NANSEN_API_KEY. Unset it to use the saved credential.');
 
       log(`✓ Saved to ${getConfigFileFn()}\n`);
       if (accountInfo?.plan) {
@@ -1538,7 +1541,7 @@ export function buildCommands(deps = {}) {
       if (accountInfo?.credits_remaining !== undefined) {
         log(`Credits remaining: ${accountInfo.credits_remaining}`);
       }
-      log('\nYou can now use the Nansen CLI. Try:');
+      log(blankEnvKey ? '\nUnset NANSEN_API_KEY to use the saved credential, then try:' : '\nYou can now use the Nansen CLI. Try:');
       log('  nansen research token screener --chain solana --pretty');
     },
 
