@@ -2682,7 +2682,7 @@ export async function runCLI(rawArgs, deps = {}) {
     if (options['x402-payment-signature']) {
       defaultHeaders['Payment-Signature'] = options['x402-payment-signature'];
     }
-    api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders });
+    api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders, authState: inputInteractiveDeps.authState });
 
     // --all aliases --paginate; wrapping api.request gives every list handler
     // the same max-pages bound while leaving non-list requests untouched.

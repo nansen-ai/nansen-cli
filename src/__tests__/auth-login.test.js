@@ -250,3 +250,21 @@ it('returns a manual payment challenge for an API key without signing or retryin
   expect(fetch).toHaveBeenCalledOnce();
   expect(payment).not.toHaveBeenCalled();
 });
+
+it('uses the injected session owner for a public account request', async () => {
+  const f = fixture(); const bundle = sessionFixture();
+  const operation = await f.state.begin();
+  await f.state.install(operation, { bundle, baseUrl: 'https://api.nansen.ai' });
+  await f.state.finish(operation);
+  const selection = resolveCredential({ env: f.env });
+  const read = vi.spyOn(f.state, 'readSession');
+  class SessionAPI extends NansenAPI {
+    constructor(_key, _url, options) { super(undefined, 'https://api.nansen.ai', { ...options, credential: selection }); }
+  }
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ account_id: bundle.accountId }), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+  await runCLI(['account'], { env: f.env, authState: f.state, NansenAPIClass: SessionAPI, output: vi.fn(), errorOutput: vi.fn(), exit: vi.fn(), trackFn: vi.fn(), trackFailed: vi.fn() });
+  expect(read).toHaveBeenCalledWith(selection);
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(fetch.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${bundle.accessToken}`);
+});

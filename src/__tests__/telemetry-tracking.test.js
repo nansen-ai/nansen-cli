@@ -155,17 +155,17 @@ describe('telemetry tracking for all first-level commands', () => {
 
   it('login (with --api-key)', async () => {
     const err = Object.assign(new Error('Unauthorized'), { code: 'UNAUTHORIZED' });
-    function FailingAPI() {
-      return { getAccount: vi.fn().mockRejectedValue(err) };
-    }
+    const getAccount = vi.fn().mockRejectedValue(err);
+    function FailingAPI() { return { getAccount }; }
     await runCLI(['login', '--api-key', 'test-key'], baseDeps({
       NansenAPIClass: FailingAPI,
-
+      authState: { begin: vi.fn().mockResolvedValue({}), install: vi.fn(), finish: vi.fn().mockResolvedValue([]) },
       getConfigFileFn: () => '/tmp/fake-config.json',
     }));
     expect(wasTracked()).toBe(1);
     expect(trackAuth).toHaveBeenCalledOnce();
     expect(trackAuth.mock.calls[0][0]).toMatchObject({ command: 'login', failed: true });
+    expect(getAccount).toHaveBeenCalledOnce();
   });
 
   it('logout', async () => {
