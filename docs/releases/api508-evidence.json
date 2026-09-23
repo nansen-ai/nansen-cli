@@ -4,7 +4,7 @@
   "source": {
     "api508Head": null,
     "api508HeadNote": "Fill from reviewed PR head; this document cannot hash its own containing commit.",
-    "cliDependency": "7649cd1f2a21b7fa16a19f3b8851813caf39898c",
+    "cliDependency": "be92d1185b4dc9c50c8c6d66bccdfd0c3fe1878b",
     "cliAuthBase": "294a51130b98acd89e283d765f7088b1d6fb290d",
     "api505ContractHead": "9190ae3decbba98c7513dbaa47695394ccd4515f",
     "api505SourceEquivalentFinalHead": "bcbae999ba3e8a59ec56fd145832ff34319e541f",
@@ -13,7 +13,8 @@
     "apiPermissionParityHead": "1d7bcc9efad02277554f563837450023b2c2a7f5",
     "historicalContractNote": "API50558-route source fields and all existing evidence records are historical read-scope proof, not the revised nansen:api contract or permission list.",
     "previousCliDependency": "77efe0e4612eb1d5e2f357a4b753981519f7d98e",
-    "currentParentNote": "September 23 merge-forward includes browser login parent 1d38498b2ed916bc6de07b6532974e53bfcedcd1. Historical evidence below remains tied to its original source heads; current package and independent review acceptance must be recorded separately."
+    "currentParentNote": "September 23 merge-forward includes browser login parent 1d38498b2ed916bc6de07b6532974e53bfcedcd1. Historical evidence below remains tied to its original source heads; current package and independent review acceptance must be recorded separately.",
+    "mergeForwardParent": "7649cd1f2a21b7fa16a19f3b8851813caf39898c"
   },
   "evidence": [
     {

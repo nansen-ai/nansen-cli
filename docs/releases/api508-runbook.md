@@ -2,7 +2,7 @@
 
 ## September 23 reconciliation
 
-The current source includes renewal parent `7649cd1f2a21b7fa16a19f3b8851813caf39898c` and browser login parent `1d38498b2ed916bc6de07b6532974e53bfcedcd1`. Main merge, publication and native-platform acceptance remain on hold. An unpublished package check does not authorize distribution. The September 20 records below retain their original heads and limitations; statements about missing deployment evidence describe that snapshot, not a new assessment of live services. Current server validation belongs in the separate dated dev report.
+The current source includes renewal parent `be92d1185b4dc9c50c8c6d66bccdfd0c3fe1878b` and browser login parent `1d38498b2ed916bc6de07b6532974e53bfcedcd1`. Main merge, publication and native-platform acceptance remain on hold. An unpublished package check does not authorize distribution. The September 20 records below retain their original heads and limitations; statements about missing deployment evidence describe that snapshot, not a new assessment of live services. Current server validation belongs in the separate dated dev report.
 
 ## Historical preparation record
 

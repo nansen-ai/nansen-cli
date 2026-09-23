@@ -7,6 +7,7 @@ import { createAuthStore } from './auth-store.js';
 import { refreshSession, retireSession, validateSession } from './auth-device.js';
 
 const queues = new Map();
+const MAX_RETRYABLE_RENEWALS = 5;
 const recognizedJournal = name => /^[a-f0-9-]{36}\.json$/.test(name);
 const journalError = () => new AuthError('AUTH_JOURNAL_INVALID', 'Authentication recovery cannot safely read auth-operations. Preserve its files and secure-store entries. Stop all CLI authentication processes, restore only a known-valid journal backup for this state, or contact support using docs/browser-login.md#damaged-or-unrecognized-journals.');
 const journalExists = file => {
@@ -31,10 +32,13 @@ function readJournal(file, id) {
       if (value.version !== 2 || value.id !== value.selectionEpoch || !uuid(value.selectionEpoch) ||
           !uuid(value.sourceGeneration) || !uuid(value.targetGeneration) || value.sourceGeneration === value.targetGeneration ||
           !['in_flight', 'ready', 'blocked', 'retryable', 'retired'].includes(value.phase) ||
-          (value.phase === 'blocked' ? !['uncertain', 'rejected', 'setup', 'clock', 'expired', 'protocol'].includes(value.reason) : value.reason !== undefined) ||
+          (value.phase === 'blocked' ? !['uncertain', 'rejected', 'setup', 'clock', 'expired', 'protocol', 'retry_exhausted'].includes(value.reason) : value.reason !== undefined) ||
           (value.phase === 'retryable' ? !Number.isFinite(value.retryNotBefore) || value.retryNotBefore < 0 : value.retryNotBefore !== undefined) ||
+          (value.retryFailures !== undefined && (!Number.isInteger(value.retryFailures) || value.retryFailures < 0 || value.retryFailures > MAX_RETRYABLE_RENEWALS)) ||
+          (value.phase === 'retryable' && value.retryFailures >= MAX_RETRYABLE_RENEWALS) ||
+          (value.reason === 'retry_exhausted' && value.retryFailures !== MAX_RETRYABLE_RENEWALS) ||
           (value.phase === 'retired' ? !['unconfirmed', 'recorded_pending', 'refresh_only'].includes(value.remote) : value.remote !== undefined) ||
-          Object.keys(value).some(k => !['version', 'id', 'kind', 'selectionEpoch', 'sourceGeneration', 'targetGeneration', 'phase', 'reason', 'retryNotBefore', 'remote'].includes(k))) throw journalError();
+          Object.keys(value).some(k => !['version', 'id', 'kind', 'selectionEpoch', 'sourceGeneration', 'targetGeneration', 'phase', 'reason', 'retryNotBefore', 'retryFailures', 'remote'].includes(k))) throw journalError();
     } else if (value.kind !== undefined || value.version !== undefined || !Array.isArray(value.generations) || value.generations.length > 2 || value.generations.some(g => !uuid(g)) ||
         (value.blockedBy !== undefined && (!uuid(value.blockedBy) || value.blockedBy === value.id)) ||
         (value.unissued !== undefined && typeof value.unissued !== 'boolean') || (value.candidateRemote !== undefined && !['unconfirmed', 'recorded_pending', 'refresh_only'].includes(value.candidateRemote))) throw journalError();
@@ -249,6 +253,7 @@ export function createAuthState({ directory = authDirectory(), store = createAut
     if (reason === 'setup') return new AuthError('BROWSER_SESSION_SETUP_REQUIRED', 'The renewed session has incompatible issuer setup. Ask the operator to verify the supported 3600-second lifetime, SESSION_ACCESS_REVOCATION_ENABLED and BROWSER_SESSION_ACCOUNT_ENABLED. Renewal may have consumed the credential; do not retry it. Pair again only after server setup is repaired.');
     if (reason === 'clock') return new AuthError('SESSION_CLOCK_SKEW', 'The renewed session is ahead of the local clock. Synchronize system time, then run nansen login. The possibly consumed refresh credential will not be retried.');
     if (reason === 'expired') return new AuthError('SESSION_EXPIRED', 'The renewed access token was already expired. Check system time and issuer configuration, then run nansen login. The possibly consumed refresh credential will not be retried.');
+    if (reason === 'retry_exhausted') return new AuthError('SESSION_REFRESH_RETRY_EXHAUSTED', 'Session renewal repeatedly failed before rotation. Check connectivity, system time and issuer availability, then run nansen login. Automatic renewal is stopped for this session.');
     if (reason === 'protocol') return new AuthError('SESSION_REFRESH_PROTOCOL_ERROR', 'The issuer rejected the refresh request format. Check CLI/issuer compatibility with the operator before running nansen login. The request will not be retried.');
     return reason === 'rejected' ? new AuthError('SESSION_REFRESH_REJECTED', 'The saved session cannot be renewed. Run: nansen login.') : new AuthError('SESSION_RENEWAL_UNCERTAIN', 'Session renewal outcome is unknown. Run: nansen login. The saved refresh credential was not retried.');
   }
@@ -451,10 +456,16 @@ export function createAuthState({ directory = authDirectory(), store = createAut
         let replacement;
         try { replacement = await refresh(bundle, { ...options(), now }); }
         catch (error) {
-          const phase = error.code === 'SESSION_REFRESH_RETRYABLE' ? 'retryable' : 'blocked';
-          const next = { ...journal, phase, ...(phase === 'retryable' ? { retryNotBefore: error.retryNotBefore } : { reason: blockedReason(error) }) };
+          // Legacy v2 journals lack the counter. Preserve them, then persist the
+          // count on the next proved non-consuming refusal; restarts cannot reset it.
+          const retryable = error.code === 'SESSION_REFRESH_RETRYABLE' && Number.isFinite(error.retryNotBefore) && error.retryNotBefore >= 0;
+          const retryFailures = (journal.retryFailures || 0) + (retryable ? 1 : 0);
+          const canRetry = retryable && retryFailures < MAX_RETRYABLE_RENEWALS;
+          const next = { ...journal, retryFailures, phase: canRetry ? 'retryable' : 'blocked', ...(canRetry
+            ? { retryNotBefore: Math.max(error.retryNotBefore, now() + 1000 * 2 ** (retryFailures - 1)) }
+            : { reason: retryable ? 'retry_exhausted' : blockedReason(error) }) };
           await atomic(journalPath(journal.id), next);
-          if (phase === 'retryable') throw new AuthError('SESSION_REFRESH_RETRYABLE', 'Session renewal was refused before rotation. Check system time and retry later.');
+          if (canRetry) throw new AuthError('SESSION_REFRESH_RETRYABLE', 'Session renewal was refused before rotation. Check connectivity and system time, then retry later.');
           throw renewalError(next.reason);
         }
         check();
