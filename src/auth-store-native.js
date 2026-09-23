@@ -5,7 +5,7 @@ try {
   ({ Entry } = await import('@napi-rs/keyring'));
   if (typeof Entry !== 'function') throw new Error();
 }
-catch { parentPort.postMessage({ error: 'BINDING_MISSING' }); }
+catch { Entry = undefined; parentPort.postMessage({ error: 'BINDING_MISSING' }); }
 if (Entry) {
 try {
   const { operation, account, data } = workerData;
