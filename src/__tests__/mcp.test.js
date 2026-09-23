@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import {
   resolveClientConfigPath,
   buildServerEntry,
@@ -15,9 +16,56 @@ import {
   buildMcpCommands,
   NANSEN_MCP_URL,
   MCP_REMOTE_PIN,
+  SUPPORTED_CLIENTS,
 } from '../commands/mcp.js';
 
 const API_KEY = 'test-key-123';
+const EXPECTED_MCP_URL = 'https://mcp.nansen.ai/ra/mcp';
+const EXPECTED_MCP_REMOTE_PIN = 'mcp-remote@0.2.1';
+const EXPECTED_HEADER = 'NANSEN-API-KEY';
+const EXPECTED_HEADER_PLACEHOLDER = 'NANSEN-API-KEY:${NANSEN_API_KEY}';
+
+function validateGeneratedEntry(client, entry, apiKey = API_KEY) {
+  const fail = message => { throw new Error(message); };
+  const checkEndpoint = endpoint => {
+    let parsed;
+    try { parsed = new URL(endpoint); } catch { fail('malformed MCP endpoint'); }
+    if (endpoint !== EXPECTED_MCP_URL
+      || parsed.protocol !== 'https:'
+      || parsed.hostname !== 'mcp.nansen.ai'
+      || parsed.pathname !== '/ra/mcp'
+      || parsed.search
+      || parsed.hash) {
+      fail('malformed MCP endpoint');
+    }
+  };
+
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) fail('malformed MCP entry');
+
+  if (client === 'claude-desktop') {
+    if (JSON.stringify(Object.keys(entry).sort()) !== JSON.stringify(['args', 'command', 'env'])) fail('malformed MCP desktop entry');
+    if (entry.command !== 'npx' || !Array.isArray(entry.args) || entry.args.length !== 5) fail('malformed MCP desktop args');
+    checkEndpoint(entry.args[2]);
+    if (entry.args[0] !== '-y' || entry.args[1] !== EXPECTED_MCP_REMOTE_PIN) fail('malformed MCP pin');
+    if (entry.args[3] !== '--header') fail('malformed MCP header');
+    if (entry.args[4] !== EXPECTED_HEADER_PLACEHOLDER) fail('malformed MCP placeholder');
+    if (JSON.stringify(entry.env) !== JSON.stringify({ NANSEN_API_KEY: apiKey })
+      || entry.args.includes(apiKey)
+      || entry.args.includes('--allow-http')) {
+      fail('malformed MCP credential placement');
+    }
+    return;
+  }
+
+  if (!SUPPORTED_CLIENTS.includes(client)) fail('unsupported MCP client');
+  checkEndpoint(entry.url);
+  const expected = client === 'claude-code'
+    ? { type: 'http', url: EXPECTED_MCP_URL, headers: { [EXPECTED_HEADER]: apiKey } }
+    : { url: EXPECTED_MCP_URL, headers: { [EXPECTED_HEADER]: apiKey } };
+  if (JSON.stringify(entry) !== JSON.stringify(expected)) fail('malformed MCP header');
+}
+
+const README_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../README.md');
 
 describe('resolveClientConfigPath', () => {
   const ctx = { platform: 'linux', homedir: '/home/u', env: {} };
@@ -33,8 +81,10 @@ describe('resolveClientConfigPath', () => {
       .toBe(path.join('/custom/claude', '.claude.json'));
   });
 
-  it('cursor -> ~/.cursor/mcp.json', () => {
-    expect(resolveClientConfigPath('cursor', ctx)).toBe(path.join('/home/u', '.cursor', 'mcp.json'));
+  it('cursor -> ~/.cursor/mcp.json on all platforms', () => {
+    for (const platform of ['linux', 'darwin', 'win32']) {
+      expect(resolveClientConfigPath('cursor', { ...ctx, platform })).toBe(path.join('/home/u', '.cursor', 'mcp.json'));
+    }
   });
 
   it('claude-desktop on macOS -> Application Support path', () => {
@@ -57,30 +107,59 @@ describe('resolveClientConfigPath', () => {
 });
 
 describe('buildServerEntry', () => {
-  it('claude-code: native remote with required type field', () => {
-    expect(buildServerEntry('claude-code', API_KEY)).toEqual({
-      type: 'http',
-      url: NANSEN_MCP_URL,
-      headers: { 'NANSEN-API-KEY': API_KEY },
-    });
+  it.each(SUPPORTED_CLIENTS)('%s emits the exact supported artifact', client => {
+    expect(NANSEN_MCP_URL).toBe(EXPECTED_MCP_URL);
+    expect(MCP_REMOTE_PIN).toBe(EXPECTED_MCP_REMOTE_PIN);
+    expect(() => validateGeneratedEntry(client, buildServerEntry(client, API_KEY))).not.toThrow();
   });
 
-  it('cursor: url + headers, no type field', () => {
-    const entry = buildServerEntry('cursor', API_KEY);
-    expect(entry).toEqual({ url: NANSEN_MCP_URL, headers: { 'NANSEN-API-KEY': API_KEY } });
-    expect(entry.type).toBeUndefined();
+  it('rejects malformed endpoints, headers, and placeholders in generated entries', () => {
+    for (const client of SUPPORTED_CLIENTS) {
+      const entry = buildServerEntry(client, API_KEY);
+      const malformedEndpoint = client === 'claude-desktop'
+        ? { ...entry, args: [...entry.args.slice(0, 2), 'http://evil.example/mcp', ...entry.args.slice(3)] }
+        : { ...entry, url: 'http://evil.example/mcp' };
+      expect(() => validateGeneratedEntry(client, malformedEndpoint)).toThrow(/endpoint/);
+      const malformedUrl = client === 'claude-desktop'
+        ? { ...entry, args: [...entry.args.slice(0, 2), 'not a URL', ...entry.args.slice(3)] }
+        : { ...entry, url: 'not a URL' };
+      expect(() => validateGeneratedEntry(client, malformedUrl)).toThrow(/endpoint/);
+
+      if (client === 'claude-desktop') {
+        const malformedPlaceholder = { ...entry, args: [...entry.args.slice(0, 4), 'NANSEN-API-KEY:<your-key>'] };
+        expect(() => validateGeneratedEntry(client, malformedPlaceholder)).toThrow(/placeholder/);
+        const malformedHeader = { ...entry, args: [...entry.args.slice(0, 3), '--bad-header', entry.args[4]] };
+        expect(() => validateGeneratedEntry(client, malformedHeader)).toThrow(/header/);
+      } else {
+        const malformedHeader = { ...entry, headers: { 'NANSEN-API-KEY': '' } };
+        expect(() => validateGeneratedEntry(client, malformedHeader)).toThrow(/header/);
+        const placeholderCredential = { ...entry, headers: { 'NANSEN-API-KEY': 'YOUR_API_KEY_HERE' } };
+        expect(() => validateGeneratedEntry(client, placeholderCredential)).toThrow(/header/);
+      }
+    }
   });
 
-  it('claude-desktop: pinned mcp-remote stdio bridge', () => {
-    const entry = buildServerEntry('claude-desktop', API_KEY);
-    expect(entry.command).toBe('npx');
-    expect(entry.args).toContain(MCP_REMOTE_PIN);
-    expect(MCP_REMOTE_PIN).toMatch(/^mcp-remote@\d+\.\d+\.\d+$/); // exact pin, not a range
-    // key stays out of argv: it lives in env and mcp-remote substitutes ${NANSEN_API_KEY}
-    expect(entry.args).toContain('NANSEN-API-KEY:${NANSEN_API_KEY}');
-    expect(entry.args.join(' ')).not.toContain(API_KEY);
-    expect(entry.env).toEqual({ NANSEN_API_KEY: API_KEY });
-    expect(entry.args).not.toContain('--allow-http');
+  it('builds each artifact deterministically', () => {
+    for (const client of SUPPORTED_CLIENTS) {
+      expect(JSON.stringify(buildServerEntry(client, API_KEY)))
+        .toBe(JSON.stringify(buildServerEntry(client, API_KEY)));
+    }
+  });
+});
+
+describe('MCP README onboarding contract', () => {
+  it('keeps documented commands and bridge values aligned with generated entries', () => {
+    const readme = fs.readFileSync(README_PATH, 'utf8');
+    expect(readme).toContain(EXPECTED_MCP_URL);
+    expect(readme).toContain(EXPECTED_HEADER);
+    expect(readme).toContain(EXPECTED_HEADER_PLACEHOLDER);
+    expect(readme).toContain(EXPECTED_MCP_REMOTE_PIN);
+
+    for (const client of SUPPORTED_CLIENTS) {
+      const entry = buildServerEntry(client, API_KEY);
+      expect(readme).toContain(`nansen mcp install ${client}`);
+      expect(readme).toContain(client === 'claude-desktop' ? entry.args[2] : entry.url);
+    }
   });
 });
 
@@ -133,6 +212,19 @@ describe('mcp command handler', () => {
   const run = (args, { flags = {}, apiInstance = api } = {}) => mcp(args, apiInstance, flags, {});
   const cursorPath = () => path.join(tempDir, '.cursor', 'mcp.json');
   const readCursor = () => JSON.parse(fs.readFileSync(cursorPath(), 'utf8'));
+  const clientPlatform = client => client === 'claude-desktop' ? 'darwin' : 'linux';
+  const clientPath = client => resolveClientConfigPath(client, {
+    platform: clientPlatform(client),
+    homedir: tempDir,
+    env: {},
+  });
+  const runClient = (client, args, { flags = {}, apiInstance = api } = {}) => buildMcpCommands({
+    log: (...a) => logs.push(a.join(' ')),
+    platform: clientPlatform(client),
+    homedirFn: () => tempDir,
+    env: {},
+  }).mcp(args, apiInstance, flags, {});
+  const readClient = client => JSON.parse(fs.readFileSync(clientPath(client), 'utf8'));
 
   beforeEach(() => {
     // realpath: on macOS os.tmpdir() is /var/... which is a symlink to
@@ -160,37 +252,41 @@ describe('mcp command handler', () => {
     expect(logs.join('\n')).toContain('plaintext');
   });
 
-  it('install merges into an existing config and writes a backup first', async () => {
-    fs.mkdirSync(path.dirname(cursorPath()), { recursive: true });
+  it.each(SUPPORTED_CLIENTS)('install merges into an existing config and writes a backup first for %s', async client => {
+    const configPath = clientPath(client);
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const original = JSON.stringify({ mcpServers: { other: { command: 'foo' } }, unrelated: true });
-    fs.writeFileSync(cursorPath(), original);
-    fs.writeFileSync(`${cursorPath()}.bak`, 'older backup');
+    fs.writeFileSync(configPath, original);
+    fs.writeFileSync(`${configPath}.bak`, 'older backup');
 
-    await run(['install', 'cursor']);
+    await runClient(client, ['install', client]);
 
-    const cfg = readCursor();
+    const cfg = readClient(client);
     expect(cfg.mcpServers.other).toEqual({ command: 'foo' });
     expect(cfg.unrelated).toBe(true);
-    expect(cfg.mcpServers.nansen.url).toBe(NANSEN_MCP_URL);
-    expect(fs.readFileSync(`${cursorPath()}.bak`, 'utf8')).toBe(original);
-    expect(fs.statSync(`${cursorPath()}.bak`).mode & 0o777).toBe(0o600);
-    expect(logs.join('\n')).toContain(`Overwrote existing backup at ${cursorPath()}.bak`);
+    expect(cfg.mcpServers.nansen).toEqual(buildServerEntry(client, API_KEY));
+    expect(fs.readFileSync(`${configPath}.bak`, 'utf8')).toBe(original);
+    expect(fs.statSync(`${configPath}.bak`).mode & 0o777).toBe(0o600);
+    expect(logs.join('\n')).toContain(`Overwrote existing backup at ${configPath}.bak`);
   });
 
-  it('re-running install is idempotent and reports an update', async () => {
-    await run(['install', 'cursor']);
+  it.each(SUPPORTED_CLIENTS)('re-running install is idempotent and reports an update for %s', async client => {
+    await runClient(client, ['install', client]);
     logs.length = 0;
-    await run(['install', 'cursor']);
+    await runClient(client, ['install', client]);
     expect(logs.join('\n')).toContain('Updated existing Nansen MCP entry');
-    expect(readCursor().mcpServers.nansen).toEqual(buildServerEntry('cursor', API_KEY));
+    const entry = readClient(client).mcpServers.nansen;
+    expect(entry).toEqual(buildServerEntry(client, API_KEY));
+    expect(() => validateGeneratedEntry(client, entry)).not.toThrow();
   });
 
-  it('refuses to touch unparseable JSON', async () => {
-    fs.mkdirSync(path.dirname(cursorPath()), { recursive: true });
-    fs.writeFileSync(cursorPath(), '{ not json');
-    await expect(run(['install', 'cursor'])).rejects.toThrow(/Could not parse/);
-    expect(fs.readFileSync(cursorPath(), 'utf8')).toBe('{ not json'); // untouched
-    expect(fs.existsSync(`${cursorPath()}.bak`)).toBe(false);
+  it.each(SUPPORTED_CLIENTS)('refuses to touch unparseable JSON for %s', async client => {
+    const configPath = clientPath(client);
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, '{ not json');
+    await expect(runClient(client, ['install', client])).rejects.toThrow(/Could not parse/);
+    expect(fs.readFileSync(configPath, 'utf8')).toBe('{ not json'); // untouched
+    expect(fs.existsSync(`${configPath}.bak`)).toBe(false);
   });
 
   it('reports config read failures without calling them parse errors', async () => {
