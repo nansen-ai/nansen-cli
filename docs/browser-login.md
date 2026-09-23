@@ -2,6 +2,20 @@
 
 Browser sessions need coordinated server admission, account permissions and revocation enforcement before cohort rollout. Cross-service parity and staging acceptance remain required. Automatic renewal and normal-release promotion ship separately.
 
+## Preview platform scope
+
+The proposed first browser-login preview is limited to local macOS arm64 terminals with an unlocked login Keychain and a local home directory. It remains unpublished and requires release-owner acceptance. The September 23 assembled-package dev walkthrough covered login, restart, research, renewal and logout on that setup. Renewal comes from the companion refresh PR, not this login-only slice.
+
+Linux is a candidate for a later supported remote-terminal cohort. Debian 12 x64 with an unlocked Secret Service passed native-store tests using a synthetic issuer, but the full remote browser-login walkthrough is still pending. Windows is excluded from the first preview; Credential Manager qualification has not been completed. Desktop prompt cancellation, OS login/PAM/reboot and network or synchronized home directories are unverified. Implementation of an OS adapter does not establish support for that platform.
+
+Existing environment/explicit API-key requests remain available without the browser store. Saving or removing credentials still needs the native lock binding. These preview limits do not authorize normal publication or production browser enablement. The release owner must select a distribution channel and record any supported-platform expansion before advertising it.
+
+## Publication hold
+
+Repository variable `CLI_PUBLICATION_ENABLED` must equal `true` before the current workflows can run Changesets versioning/publication or ClawHub sync. Missing or false skips those jobs; lint and tests still run. This hold covers all CLI releases, including unrelated changes, and also pauses Version Packages updates.
+
+The release owner enables publication only after approving the version/channel, supported cohort and recovery package, then disables it again when the controlled release window ends. Do not merge a version PR, dispatch an older ungated workflow revision or publish manually during the hold. The gate applies to workflow revisions containing it, not old queued runs or manual npm commands. Review and cancel any older publication run before relying on the hold. Keep production browser access disabled with the existing `releaseCliBrowserLogin` flag until its separate activation decision. Turning that feature off must not prevent a separately authorized CLI repair release.
+
 ## Commands and selection
 
 Plain `nansen login` always requests fresh approval, including when an environment key or saved credential exists. `--no-browser` skips automatic opening only. Email/password and Google are the upstream consent methods; Apple is not advertised. The browser owns explicit account/client/code/access consent. Visiting the URL alone does not approve.

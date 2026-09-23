@@ -71,7 +71,8 @@ jobs:
   publish:
     needs: [lint, test]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Missing/false keeps source merges from versioning or publishing packages.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.CLI_PUBLICATION_ENABLED == 'true'
     outputs:
       published: ${{ steps.changesets.outputs.published }}
     permissions:
