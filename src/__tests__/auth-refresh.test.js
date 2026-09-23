@@ -159,6 +159,7 @@ it('the public account command reacquires headers after resource backoff crosses
     const next = issuedFixture(f.old.privateJwk, { now: f.now() });
     return response(200, { access_token: next.accessToken, refresh_token: `replacement-${++renewals}`, token_type: 'Bearer', expires_in: 3600 });
   });
+  const acquire = vi.spyOn(f.state, 'acquireSession');
   const headers = [];
   vi.stubGlobal('fetch', vi.fn(async (_url, options) => {
     headers.push(options.headers);
@@ -167,6 +168,8 @@ it('the public account command reacquires headers after resource backoff crosses
   }));
   const api = new NansenAPI(undefined, f.old.audience, { credential: f.selection, authState: f.state, retry: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 } });
   await buildCommands().account([], api, {}, {});
+  expect(acquire).toHaveBeenCalledTimes(2);
+  for (const [selection, options] of acquire.mock.calls) { expect(selection.selectionEpoch).toBe(f.selection.selectionEpoch); expect(options.audience).toBe(f.old.audience); }
   expect(renewals).toBe(2); expect(headers).toHaveLength(2); expect(headers[1].Authorization).not.toBe(headers[0].Authorization);
   for (const h of headers) { expect(h.apikey).toBeUndefined(); expect(h['Payment-Signature']).toBeUndefined(); }
 });
@@ -404,4 +407,76 @@ it.each(['nansen:read', undefined])('does not refresh or upgrade a saved %s gran
   await f.store.write(f.selection.generation, old);
   await expect(f.acquire()).rejects.toMatchObject({ code: 'INVALID_BROWSER_SESSION' });
   expect(f.fetchFn).not.toHaveBeenCalled(); expect(f.retire).not.toHaveBeenCalled();
+});
+
+it.each([401, 429])('bounds persistent non-consuming HTTP%s renewal refusals across owner restarts', async status => {
+  const f = await fixture({ age: 7200000 });
+  f.fetchFn.mockImplementation(async () => response(status, { error: status === 429 ? 'rate_limited' : 'invalid_dpop_proof' }, { 'retry-after': '60' }));
+  const resource = vi.fn(); vi.stubGlobal('fetch', resource);
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    const state = createAuthState({ directory: f.directory, store: f.store, retire: f.retire, now: f.now,
+      refresh: (bundle, options) => refreshSession(bundle, { ...options, fetchFn: f.fetchFn }) });
+    const api = new NansenAPI(undefined, f.old.audience, { credential: f.selection, authState: state });
+    const pay = vi.spyOn(api, '_x402Retry');
+    const code = attempt < 5 ? 'SESSION_REFRESH_RETRYABLE' : 'SESSION_REFRESH_RETRY_EXHAUSTED';
+    await expect(api.getAccount()).rejects.toMatchObject({ code });
+    expect(json(f.journal()).retryFailures).toBe(attempt);
+    expect(f.fetchFn).toHaveBeenCalledTimes(attempt);
+    await expect(api.getAccount()).rejects.toMatchObject({ code });
+    expect(f.fetchFn).toHaveBeenCalledTimes(attempt); // Cooldown calls cannot consume budget or dispatch.
+    expect(pay).not.toHaveBeenCalled(); f.advance(61000);
+  }
+  const refresh = vi.fn();
+  const restarted = createAuthState({ directory: f.directory, store: f.store, now: f.now, refresh });
+  await expect(restarted.acquireSession(f.selection, { audience: f.old.audience })).rejects.toMatchObject({ code: 'SESSION_REFRESH_RETRY_EXHAUSTED', message: expect.stringContaining('nansen login') });
+  expect(refresh).not.toHaveBeenCalled(); expect(resource).not.toHaveBeenCalled();
+  expect(json(f.journal())).toMatchObject({ phase: 'blocked', reason: 'retry_exhausted', retryFailures: 5 });
+  expect(json(f.file).auth.active.generation).toBe(f.selection.generation);
+});
+
+it.each([undefined, null, NaN, -1, 'later', Infinity])('blocks an invalid retry timestamp %s without corrupting the journal', async retryNotBefore => {
+  const f = await fixture({ age: 7200000 });
+  const refresh = vi.fn(async () => { throw Object.assign(new AuthError('SESSION_REFRESH_RETRYABLE', 'synthetic refusal'), { retryNotBefore }); });
+  const state = createAuthState({ directory: f.directory, store: f.store, now: f.now, refresh });
+  await expect(state.acquireSession(f.selection, { audience: f.old.audience })).rejects.toMatchObject({ code: 'SESSION_RENEWAL_UNCERTAIN' });
+  const restarted = createAuthState({ directory: f.directory, store: f.store, now: f.now, refresh });
+  await expect(restarted.acquireSession(f.selection, { audience: f.old.audience })).rejects.toMatchObject({ code: 'SESSION_RENEWAL_UNCERTAIN' });
+  expect(refresh).toHaveBeenCalledOnce(); expect(renewalStatus(f.directory, f.selection)).toBe('login_required');
+  expect(json(f.journal())).toMatchObject({ phase: 'blocked', reason: 'uncertain' });
+  expect(json(f.journal())).not.toHaveProperty('retryNotBefore');
+});
+
+it.each([-1, 1.5, 6, '1', null])('fails closed on a malformed persisted refusal count %s', async retryFailures => {
+  const f = await fixture({ age: 7200000 }); f.fetchFn.mockResolvedValue(response(429, { error: 'rate_limited' }));
+  await expect(f.acquire()).rejects.toMatchObject({ code: 'SESSION_REFRESH_RETRYABLE' });
+  const damaged = { ...json(f.journal()), retryFailures }; fs.writeFileSync(f.journal(), JSON.stringify(damaged));
+  f.advance(60000);
+  await expect(f.acquire()).rejects.toMatchObject({ code: 'AUTH_JOURNAL_INVALID' });
+  expect(f.fetchFn).toHaveBeenCalledOnce(); expect(json(f.journal())).toEqual(damaged);
+  expect(renewalStatus(f.directory, f.selection)).toBe('metadata_unreadable');
+});
+
+it('preserves a legacy retry journal, then clears its refusal count after successful renewal', async () => {
+  const f = await fixture({ age: 7200000 }); f.fetchFn.mockResolvedValueOnce(response(429, { error: 'rate_limited' }));
+  await expect(f.acquire()).rejects.toMatchObject({ code: 'SESSION_REFRESH_RETRYABLE' });
+  const legacy = json(f.journal()); delete legacy.retryFailures; fs.writeFileSync(f.journal(), JSON.stringify(legacy));
+  f.advance(2000); const next = await f.acquire();
+  expect(next.refreshToken).toBe('replacement-secret'); expect(fs.existsSync(f.journal())).toBe(false);
+});
+
+it('does not resend a browser credential when logout commits during resource backoff', async () => {
+  const f = await fixture(); const acquire = vi.spyOn(f.state, 'acquireSession');
+  const fetch = vi.fn(async () => response(503, {})); vi.stubGlobal('fetch', fetch);
+  const timer = globalThis.setTimeout; let logout;
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+    if (ms !== 17) return timer(fn, ms, ...args);
+    logout = f.state.logout();
+    return timer(() => { logout.then(() => fn(...args)); }, 0);
+  });
+  const api = new NansenAPI(undefined, f.old.audience, { credential: f.selection, authState: f.state, retry: { maxRetries: 1, baseDelayMs: 17, maxDelayMs: 17 } });
+  const pay = vi.spyOn(api, '_x402Retry');
+  await expect(api.getAccount()).rejects.toMatchObject({ code: 'AUTH_SELECTION_CHANGED' });
+  await logout;
+  expect(acquire).toHaveBeenCalledTimes(2); expect(fetch).toHaveBeenCalledOnce(); expect(pay).not.toHaveBeenCalled();
+  expect(json(f.file).auth.active.kind).toBe('none');
 });
