@@ -2953,6 +2953,122 @@ describe('buildCommands', () => {
       );
     });
 
+    describe('screener --search window marker', () => {
+      const rows = (n, prefix = 'PEPE') => Array.from({ length: n }, (_, i) => ({ token_symbol: `${prefix}${i}`, price_usd: i }));
+      let errorOutput;
+      let cmds;
+      beforeEach(() => {
+        errorOutput = vi.fn();
+        cmds = buildCommands({ ...mockDeps, errorOutput });
+      });
+      const search = (mockApi, options, flags = {}) =>
+        cmds['token'](['screener'], mockApi, flags, { chain: 'ethereum', search: 'pepe', ...options });
+
+      it('reports an incomplete search when the candidate window came back full', async () => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [...rows(3), ...rows(497, 'OTHER')] }) };
+        const result = await search(mockApi, {});
+        expect(result.data).toHaveLength(3);
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 500, matched: 3, complete: false });
+        expect(errorOutput).toHaveBeenCalledTimes(1);
+        const note = errorOutput.mock.calls[0][0];
+        expect(note).toContain('only the first 500 screener rows');
+        expect(note).toContain('_meta.search.complete: false');
+        expect(note).toContain('--limit');
+        expect(note).toContain('--paginate');
+      });
+
+      it('reports a complete search when the window covered every candidate', async () => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [...rows(3), ...rows(47, 'OTHER')] }) };
+        const result = await search(mockApi, {});
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 50, matched: 3, complete: true });
+        expect(errorOutput).not.toHaveBeenCalled();
+      });
+
+      it('keeps an empty match set distinguishable from "not in the window"', async () => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: rows(500, 'OTHER') }) };
+        const result = await search(mockApi, {});
+        expect(result.data).toEqual([]);
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 500, matched: 0, complete: false });
+        expect(errorOutput).toHaveBeenCalledTimes(1);
+      });
+
+      it('trusts server pagination metadata over the row count', async () => {
+        const full = { data: rows(500), pagination: { page: 1, per_page: 500, is_last_page: true } };
+        const fullResult = await search({ tokenScreener: vi.fn().mockResolvedValue(full) }, {});
+        expect(fullResult._meta.search.complete).toBe(true);
+        expect(errorOutput).not.toHaveBeenCalled();
+
+        const short = { data: rows(20), pagination: { page: 1, per_page: 500, is_last_page: false } };
+        const shortResult = await search({ tokenScreener: vi.fn().mockResolvedValue(short) }, {});
+        expect(shortResult._meta.search).toEqual({ query: 'pepe', searched: 20, matched: 20, complete: false });
+        expect(errorOutput).toHaveBeenCalledTimes(1);
+      });
+
+      it('measures the window against the widened candidate fetch, not the default 500', async () => {
+        // --limit 100 --page 7 fetches 700 candidates; 600 rows back means the API ran out.
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: rows(600) }) };
+        const result = await search(mockApi, { limit: '100', page: '7' });
+        expect(mockApi.tokenScreener).toHaveBeenCalledWith(expect.objectContaining({ pagination: { page: 1, per_page: 700 } }));
+        expect(result.data).toEqual([]);
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 600, matched: 600, complete: true });
+        expect(errorOutput).not.toHaveBeenCalled();
+      });
+
+      it('counts every match before --page/--limit slicing', async () => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: rows(30) }) };
+        const result = await search(mockApi, { limit: '10', page: '2' });
+        expect(result.data).toHaveLength(10);
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 30, matched: 30, complete: true });
+      });
+
+      it('attaches the marker to nested responses and keeps the nested pagination', async () => {
+        const pagination = { page: 1, per_page: 500, is_last_page: false };
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: { data: rows(500), pagination } }) };
+        const result = await search(mockApi, {});
+        expect(result.data.data).toHaveLength(100);
+        expect(result.data.pagination).toBe(pagination);
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 500, matched: 500, complete: false });
+        expect(errorOutput).toHaveBeenCalledTimes(1);
+      });
+
+      it('follows the --paginate traversal summary and points at the resume page', async () => {
+        // collectPages spreads the first page's stale is_last_page into the summary; `complete` must win.
+        const pagination = { page: 1, per_page: 100, is_last_page: true, pages_fetched: 10, next_page: 11, complete: false };
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: rows(1000), pagination }) };
+        const result = await search(mockApi, { limit: '100' }, { paginate: true });
+        expect(result.data).toHaveLength(1000);
+        expect(result.pagination).toBe(pagination);
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 1000, matched: 1000, complete: false });
+        expect(errorOutput).toHaveBeenCalledTimes(1);
+        const note = errorOutput.mock.calls[0][0];
+        expect(note).toContain('after 10 candidate pages (--max-pages)');
+        expect(note).toContain('1000 screener rows');
+        expect(note).toContain('--page 11');
+      });
+
+      it('stays quiet when a --paginate traversal completed', async () => {
+        const pagination = { page: 1, pages_fetched: 3, next_page: null, complete: true };
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: rows(250), pagination }) };
+        const result = await search(mockApi, { limit: '100' }, { all: true });
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 250, matched: 250, complete: true });
+        expect(errorOutput).not.toHaveBeenCalled();
+      });
+
+      it('merges into _meta the request layer already attached', async () => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: rows(10), _meta: { retriedAttempts: 1 } }) };
+        const result = await search(mockApi, {});
+        expect(result._meta).toEqual({ retriedAttempts: 1, search: { query: 'pepe', searched: 10, matched: 10, complete: true } });
+      });
+
+      it('adds no marker and no note without --search', async () => {
+        const response = { data: rows(500) };
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue(response) };
+        const result = await cmds['token'](['screener'], mockApi, {}, { chain: 'ethereum' });
+        expect(result).toBe(response);
+        expect(errorOutput).not.toHaveBeenCalled();
+      });
+    });
+
     it('should call holders with token address', async () => {
       const mockApi = {
         tokenHolders: vi.fn().mockResolvedValue({ data: [] })
@@ -3226,6 +3342,41 @@ describe('runCLI', () => {
     
     await runCLI(['smart-money', 'netflow', '--table'], deps);
     expect(outputs[0]).toContain('│'); // table has column separators
+  });
+
+  it('marks a screener search that ran out of candidate window on stdout and stderr', async () => {
+    const data = Array.from({ length: 500 }, (_, i) => ({ token_symbol: i === 7 ? 'PEPE' : `TOKEN${i}` }));
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI() {
+        this.tokenScreener = vi.fn().mockResolvedValue({ data, pagination: { page: 1, per_page: 500, is_last_page: false } });
+      }
+    };
+
+    await runCLI(['research', 'token', 'screener', '--chain', 'ethereum', '--search', 'pepe'], deps);
+
+    const { success, data: payload } = JSON.parse(outputs[0]);
+    expect(success).toBe(true);
+    expect(payload.data).toEqual([{ token_symbol: 'PEPE' }]);
+    expect(payload.pagination).toEqual({ page: 1, per_page: 500, is_last_page: false });
+    expect(payload._meta.search).toEqual({ query: 'pepe', searched: 500, matched: 1, complete: false });
+    expect(errors.some(line => line.includes('--search matched against only the first 500 screener rows'))).toBe(true);
+  });
+
+  it('keeps the screener search note off stdout under --fields', async () => {
+    const data = Array.from({ length: 500 }, (_, i) => ({ token_symbol: i === 7 ? 'PEPE' : `TOKEN${i}`, price_usd: i }));
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI() {
+        this.tokenScreener = vi.fn().mockResolvedValue({ data });
+      }
+    };
+
+    await runCLI(['research', 'token', 'screener', '--chain', 'ethereum', '--search', 'pepe', '--fields', 'token_symbol'], deps);
+
+    // --fields drops _meta from stdout like every other unrequested key; the note is the remaining signal.
+    expect(JSON.parse(outputs[0])).toEqual({ success: true, data: { data: [{ token_symbol: 'PEPE' }] } });
+    expect(errors.some(line => line.includes('_meta.search.complete: false'))).toBe(true);
   });
 
   it('should handle API errors', async () => {

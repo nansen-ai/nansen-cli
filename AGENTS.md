@@ -87,7 +87,7 @@ Behaviors that are not bugs — don't "fix" them:
 
 - `token holders --smart-money` → API returns `UNSUPPORTED_FILTER` for tokens without SM tracking
 - `token flow-intelligence` → may return all-zero flows for illiquid tokens
-- `token screener --search` → client-side filtering (fetches 500, filters locally)
+- `token screener --search` → client-side filtering (fetches 500, filters locally). `_meta.search.complete: false` in the response (plus a stderr note) means the window was full and lower-ranked tokens were never searched — an empty result is not proof the token is absent
 - `token ohlcv` → no pagination/limit support; returns all candles for the timeframe
 - `profiler perp-positions` → no pagination support; API ignores the parameter
 - `smart-money netflow --timeframe` → silently accepted but has no effect; response always includes all timeframes

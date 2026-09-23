@@ -1,0 +1,5 @@
+---
+"nansen-cli": patch
+---
+
+`token screener --search` now says how far it looked. The client-side filter can only find a token among the candidate rows it fetched (the first 500 by default, more with `--limit`/`--page`, every traversed page with `--paginate`), so the response adds `_meta.search: { query, searched, matched, complete }`: `searched` is the number of candidate rows scanned, `matched` the number of matches before `--page`/`--limit` slicing, and `complete: false` means the API had more rows beyond that window, so an empty or short result no longer looks the same as "the token does not exist". `complete` follows the server's `is_last_page` (or the `--paginate` traversal summary) when present and falls back to "the window came back full". When the search was cut short a one-line note also goes to stderr with the ways to widen it (`--limit` up to 1000, `--paginate`, or a higher `--max-pages`) or narrow the candidates (`--filters`), so `--fields`, `--table`, `--format csv` and `--stream` callers that never see `_meta` still learn about it. Row data and `pagination` are unchanged.
