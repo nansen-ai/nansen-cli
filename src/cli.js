@@ -1333,7 +1333,7 @@ export function buildCommands(deps = {}) {
     authState = defaultAuthState(),
     browserLoginFn = browserLogin,
     getConfigFileFn = getConfigFile,
-    isTTY = process.stdout.isTTY,
+    stdoutTTY = deps.isTTY ?? process.stdout.isTTY,
     stdinTTY = deps.isTTY ?? process.stdin.isTTY,
     env = process.env
   } = deps;
@@ -1450,13 +1450,13 @@ export function buildCommands(deps = {}) {
       if (flags['api-key']) throw new CommandError('--api-key requires a value.', 'MISSING_PARAM');
       if ('api-key' in options && typeof options['api-key'] !== 'string') throw new CommandError('--api-key must be a single key string.', 'INVALID_PARAMS');
       if (!flags.human && options['api-key'] === undefined) {
-        return browserLoginFn({ flags, env, isTTY, log, errorOutput: _errorOutput, state: authState });
+        return browserLoginFn({ flags, env, isTTY: stdoutTTY, log, errorOutput: _errorOutput, state: authState });
       }
       if (flags['no-browser']) throw new CommandError('--no-browser cannot be combined with legacy key setup.', 'INVALID_PARAMS');
       let apiKey = options['api-key'];
 
       if (apiKey === undefined) {
-        apiKey = env.NANSEN_API_KEY;
+        apiKey = env.NANSEN_API_KEY?.trim() || undefined;
       }
 
       if (apiKey === undefined && flags.human) {
@@ -2430,6 +2430,8 @@ export async function runCLI(rawArgs, deps = {}) {
   const inputInteractiveDeps = {
     ...deps,
     isTTY: isInputTTY,
+    stdoutTTY: isTTY,
+    stdinTTY: isInputTTY,
     promptFn: deps.promptFn ?? prompt,
     confirmationPromptFn: deps.confirmationPromptFn ?? promptForConfirmation,
     confirmationLog: deps.confirmationLog ?? errorOutput,

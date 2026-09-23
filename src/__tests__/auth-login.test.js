@@ -218,3 +218,31 @@ it('legacy prompting depends on stdin while redirected browser output stays mach
   await commands.login([], null, {}, {});
   expect(browserLoginFn.mock.calls[0][0].isTTY).toBe(false);
 });
+
+it.each([[false, true], [true, false]])('runCLI uses output TTY %s independently of input TTY %s', async (isTTY, isInputTTY) => {
+  const f = fixture(); const browserLoginFn = vi.fn();
+  await runCLI(['login'], { env: f.env, authState: f.state, isTTY, isInputTTY, browserLoginFn, output: vi.fn(), errorOutput: vi.fn(), exit: vi.fn() });
+  expect(browserLoginFn).toHaveBeenCalledOnce();
+  expect(browserLoginFn.mock.calls[0][0].isTTY).toBe(isTTY);
+});
+it.each(['', '   '])('legacy --human prompts when the environment key is blank (%j)', async value => {
+  const f = fixture(); const promptFn = vi.fn().mockResolvedValue('synthetic-key');
+  f.env.NANSEN_API_KEY = value;
+  class API { async getAccount() { return { user_id: 'synthetic-account' }; } }
+  const commands = buildCommands({ env: f.env, authState: f.state, stdinTTY: true, promptFn, NansenAPIClass: API, log: vi.fn() });
+  await commands.login([], null, { human: true }, {});
+  expect(promptFn).toHaveBeenCalledOnce();
+  expect(JSON.parse(fs.readFileSync(f.file)).apiKey).toBe('synthetic-key');
+});
+it('returns a manual payment challenge for an API key without signing or retrying', async () => {
+  const requirements = { accepts: [{ scheme: 'exact', network: 'eip155:8453', amount: '1' }] };
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ message: 'Payment required' }), { status: 402, headers: { 'payment-required': Buffer.from(JSON.stringify(requirements)).toString('base64') } }));
+  vi.stubGlobal('fetch', fetch);
+  const api = new NansenAPI('synthetic-key', 'https://api.nansen.ai');
+  const payment = vi.spyOn(api, '_x402Retry');
+  const error = await api.getAccount().catch(e => e);
+  expect(error.code).toBe('PAYMENT_REQUIRED');
+  expect(error.details.paymentRequirements).toEqual(requirements);
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(payment).not.toHaveBeenCalled();
+});

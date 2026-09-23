@@ -100,3 +100,11 @@ Trading quote, signed-transaction submission and bridge-status calls to `trading
 ## Development evidence (historical)
 
 Earlier read-scope integration evidence exercised the API account contract at `9190ae3decbba98c7513dbaa47695394ccd4515f` with CLI `83d6f5d1e851e9da1f46902e3df93dd523bddedd` in ten synthetic selection/billing/error cases, and authservice device/revoke contract at `3e08f9e76a3fd785df9f641f640234e5a87e00a4`. That earlier evidence is historical and does not verify the revised nansen:api contract. Cross-service parity verification is still required. It does not establish staging acceptance or authorize publication. API505 gates account API access under the revised `nansen:api` contract, API507 adds renewal, and API508 owns normal-release promotion.
+
+## Review follow-up
+
+Login chooses NDJSON from stdout's terminal state. Redirecting stdout keeps machine output even when stdin remains interactive; `--human` prompts depend on stdin. Blank environment keys do not suppress that prompt.
+
+A selected API key receives the server's manual payment requirements on 402 without automatic signing or retries. Browser sessions never receive payment fallback. Hosted simulation rejects 401/403 for both selected keys and sessions; this preserves account, region and sanctions denials before signing. Anonymous simulation retains its existing outage policy.
+
+Missing or unloadable native keyring bindings now produce reinstall guidance after the helper exits. This does not certify native support: offline diagnostics still avoid opening the store or triggering an OS prompt. Every request currently reads its selected generation under the authentication lock. Native-read latency remains a required cohort acceptance check; a cache must not bypass local logout or account replacement.

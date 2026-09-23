@@ -1156,11 +1156,10 @@ function toRpcHexValue(value) {
  * @param {string} args.from - the wallet that will sign (the sender simulated)
  * @param {object} args.quote - the quote about to be executed (currentQuote)
  * @param {object} args.quoteData - the loaded quote record (.request, .slippage)
- * @param {string|null} [args.apiKey] - Explicit legacy key for standalone simulation callers
  * @param {object} [args.api] - Selected Nansen API client for hosted simulation
  * @param {function} [args.log]
  */
-export async function verifySwapOutcome({ chain, from, quote, quoteData, apiKey = null, api, log = () => {} }) {
+export async function verifySwapOutcome({ chain, from, quote, quoteData, api, log = () => {} }) {
   if (CHAIN_MAP[chain?.toLowerCase()]?.type !== 'evm') return { proceed: true }; // EVM-only
   // Cross-chain (bridge): the output token settles on the destination chain,
   // so the source-chain simulation still runs but assertSwapOutcome skips
@@ -1188,7 +1187,7 @@ export async function verifySwapOutcome({ chain, from, quote, quoteData, apiKey 
     const sim = await simulateAssetChanges(
       chain,
       { to: tx.to, data: tx.data, value: toRpcHexValue(tx.value) },
-      { from, apiKey, api },
+      { from, api },
     );
     // A cross-chain bridge may pay a fee in native ETH via msg.value on a
     // token-input route; that surfaces as a native sibling outflow which the

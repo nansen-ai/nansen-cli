@@ -1045,6 +1045,14 @@ export class NansenAPI {
           const hasManualSignature = Object.keys(extraHeaders).some(k => k.toLowerCase() === 'payment-signature');
           if (this.selection.kind === 'api-key' && !hasManualSignature) message = 'Payment is required for the selected API key. Top up at https://app.nansen.ai/api?tab=api or explicitly provide --x402-payment-signature. Automatic wallet payment is available only without a selected credential.';
 
+          if (this.selection.kind === 'api-key' && !hasManualSignature) {
+            const paymentHeader = response.headers.get('payment-required');
+            if (paymentHeader) {
+              try { data.paymentRequirements = JSON.parse(Buffer.from(paymentHeader, 'base64').toString('utf8')); }
+              catch { /* An invalid challenge must not trigger signing or retry. */ }
+            }
+          }
+
           if (mayAutoPay && !hasManualSignature) {
             // Determine payment method from default wallet's provider
             let defaultWalletProvider = 'local';

@@ -10,7 +10,7 @@ export function cleanupMessage(results = []) {
   if (results.some(r => r.local === 'unrecognized')) messages.push('Unrecognized JSON files remain in auth-operations. They were preserved and not treated as credential journals. See docs/browser-login.md#damaged-or-unrecognized-journals.');
   if (results.some(r => r.local === 'incomplete' && r.code !== 'AUTH_JOURNAL_INVALID')) messages.push('Secure-store deletion incomplete. Unlock the credential store and run nansen logout to finish cleanup.');
   if (results.some(r => r.local === 'pending')) messages.push('Authentication cleanup remains pending. After other login attempts finish and the credential store is unlocked, rerun nansen logout to process the next bounded batch.');
-  if (results.some(r => r.remote === 'unconfirmed')) messages.push('Remote revocation unconfirmed. Review the old CLI device in your Nansen account security settings.');
+  if (results.some(r => r.remote === 'unconfirmed')) messages.push('Remote revocation unconfirmed. Login may have failed before creating a session. If the CLI device appears in your account security settings, review it there.');
   if (results.some(r => r.remote === 'recorded_pending')) messages.push('Family revocation recorded; API propagation is pending.');
   if (results.some(r => r.remote === 'refresh_only')) messages.push('Refresh family retired; issued access tokens may remain valid until expiry.');
   return messages;
