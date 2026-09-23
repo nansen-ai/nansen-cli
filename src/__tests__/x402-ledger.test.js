@@ -160,6 +160,22 @@ describe('recordPaymentAttempt and audit log', () => {
     expect(result.ok).toBe(false);
   });
 
+  it('writes daily spend through a process-qualified temp file', async () => {
+    const writeSpy = vi.spyOn(fs, 'writeFileSync');
+    const { recordPaymentAttempt, finalizePaymentAttempt, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    const id = recordPaymentAttempt({ provider: 'local', amountUsd: 0.50, network: 'eip155:8453', asset: '0xt', symbol: 'USDC', amountRaw: '500000', payTo: '0xr', requestUrl: 'https://api.nansen.ai/test' });
+    finalizePaymentAttempt(id, { status: 'accepted' });
+
+    expect(writeSpy).toHaveBeenCalledWith(
+      expect.stringMatching(new RegExp(`spend-\\d{4}-\\d{2}-\\d{2}\\.json\\.${process.pid}\\.tmp$`)),
+      expect.any(String),
+      { mode: 0o600 },
+    );
+    writeSpy.mockRestore();
+  });
+
   it('rejected outcome does not increment daily spend', async () => {
     const { recordPaymentAttempt, finalizePaymentAttempt, assertCumulativeSpendAllowed, _resetSessionSpend } = await import('../x402-ledger.js');
     _resetSessionSpend();
