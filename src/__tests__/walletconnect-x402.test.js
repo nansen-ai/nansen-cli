@@ -118,7 +118,7 @@ describe('handleX402Payment — sign-typed-data output parsing', () => {
     });
 
     const result = await handleX402Payment(PAYMENT_REQUIREMENTS);
-    const decoded = JSON.parse(Buffer.from(result, 'base64').toString('utf8'));
+    const decoded = JSON.parse(Buffer.from(result.signature, 'base64').toString('utf8'));
     expect(decoded.payload.signature).toBe('0xmultilinesig');
   });
 
@@ -130,7 +130,7 @@ describe('handleX402Payment — sign-typed-data output parsing', () => {
     });
 
     const result = await handleX402Payment(PAYMENT_REQUIREMENTS);
-    const decoded = JSON.parse(Buffer.from(result, 'base64').toString('utf8'));
+    const decoded = JSON.parse(Buffer.from(result.signature, 'base64').toString('utf8'));
     expect(decoded.payload.signature).toBe('0xonelinesig');
   });
 

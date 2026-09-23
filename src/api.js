@@ -1222,6 +1222,9 @@ export class NansenAPI {
                     // ordinary "payment failed" that invites the caller to
                     // retry the whole request (and sign yet another payment).
                     if (x402Err instanceof NansenError && x402Err.code === ErrorCode.PAYMENT_AMBIGUOUS) throw x402Err;
+                    if (x402Err?.failClosedX402) {
+                      throw new NansenError(x402Err.message, ErrorCode.PAYMENT_REQUIRED, 402);
+                    }
                     message = this.selection.kind !== 'anonymous'
                       ? 'x402 wallet payment failed. Check the wallet configuration and balance, or top up the selected account.'
                       : 'No API key configured. Three ways to authenticate:\n' +
