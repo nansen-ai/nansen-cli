@@ -43,6 +43,16 @@ export function resolveSessionSpendCapUsd() {
 
 function getLedgerDir() {
   const home = process.env.HOME || process.env.USERPROFILE || '';
+  // Without a home directory, path.join would produce the relative path
+  // `.nansen/x402` resolved against cwd — the ledger would land somewhere
+  // unpredictable and the daily cap would silently read as $0. Fail closed
+  // instead of computing a wrong path.
+  if (!home) {
+    throw new X402LedgerError(
+      'Cannot locate the x402 spend ledger: no home directory (HOME/USERPROFILE unset). ' +
+      '(fail-closed: not signing this payment)',
+    );
+  }
   return path.join(home, '.nansen', 'x402');
 }
 
@@ -53,13 +63,23 @@ function getDailyFileName(now) {
   return `spend-${yyyy}-${mm}-${dd}.json`;
 }
 
+/**
+ * Returns { totalUsd } for the current UTC day, or { totalUsd: 0 } if no ledger exists yet.
+ * @throws {X402LedgerError} if the ledger file exists but cannot be read/parsed (fail-closed,
+ *   consistent with assertCumulativeSpendAllowed — a corrupt ledger is never read as $0).
+ */
 export function getDailySpendState(now = new Date()) {
   const dir = getLedgerDir();
   const filePath = path.join(dir, getDailyFileName(now));
   if (!fs.existsSync(filePath)) return { totalUsd: 0 };
-  const raw = fs.readFileSync(filePath, 'utf8');
-  const data = JSON.parse(raw); // intentional: callers handle thrown errors
-  return { totalUsd: microsToUsd(readSpendMicrosFromData(data)) };
+  try {
+    return { totalUsd: microsToUsd(readDailySpendMicros(filePath)) };
+  } catch {
+    throw new X402LedgerError(
+      `x402 daily spend ledger is corrupt and cannot be read safely. ` +
+      `To reset: remove ${filePath}. (fail-closed: not reporting a spend total)`,
+    );
+  }
 }
 
 function usdToMicros(amountUsd) {
@@ -146,7 +166,12 @@ function appendAuditLine(record) {
   fs.appendFileSync(auditFile, JSON.stringify(record) + '\n', { mode: 0o600 });
 }
 
-// In-memory map: paymentId → amountUsd (for finalizePaymentAttempt to increment ledger)
+// In-memory map: paymentId → amountUsd, held between recordPaymentAttempt and
+// finalizePaymentAttempt (which increments the ledger).
+// Callers MUST always call finalizePaymentAttempt for every id returned by
+// recordPaymentAttempt (any terminal status) — that is the only thing that clears
+// the entry. There is no self-cleanup; a caller that records but never finalizes
+// leaks an entry for the life of the process.
 const pendingAmounts = new Map();
 
 /**
@@ -208,10 +233,15 @@ export function finalizePaymentAttempt(id, patch) {
     if (amountUsd !== undefined) {
       try {
         incrementDailySpend(amountUsd);
+        // Only advance the in-memory session total once the durable daily file
+        // has actually been written. If the write failed (ENOSPC, permissions,
+        // corrupt ledger), the daily total is unchanged; advancing session spend
+        // here would silently diverge the two counters and, after a restart,
+        // under-count the day's spend against the cap.
+        sessionSpendMicros += usdToMicros(amountUsd);
       } catch (err) {
         console.error(`[x402] Warning: could not update daily spend ledger: ${err.message}`);
       }
-      sessionSpendMicros += usdToMicros(amountUsd);
     }
   }
   pendingAmounts.delete(id);

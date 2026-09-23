@@ -1189,6 +1189,12 @@ export class NansenAPI {
                     // ordinary "payment failed" that invites the caller to
                     // retry the whole request (and sign yet another payment).
                     if (x402Err instanceof NansenError && x402Err.code === ErrorCode.PAYMENT_AMBIGUOUS) throw x402Err;
+                    // A corrupt spend ledger fails closed: surface the "ledger is
+                    // corrupt" signal instead of downgrading it to a generic
+                    // payment failure (mirrors the Privy and local-wallet paths).
+                    if (x402Err?.failClosedX402) {
+                      throw new NansenError(x402Err.message, ErrorCode.PAYMENT_REQUIRED, 402);
+                    }
                     if (!this.apiKey) {
                       message = 'No API key configured. Three ways to authenticate:\n' +
                         '  1. API key: run `nansen login --human` or set NANSEN_API_KEY (get key at https://app.nansen.ai/auth/agent-setup)\n' +

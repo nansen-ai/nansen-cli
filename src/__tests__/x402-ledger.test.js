@@ -221,6 +221,34 @@ describe('recordPaymentAttempt and audit log', () => {
     expect(assertCumulativeSpendAllowed({ amountUsd: 0.700001 }).ok).toBe(false);
   });
 
+  it('does not advance session spend when the daily ledger write fails', async () => {
+    // Unlimited daily cap so the cap check itself skips the (corrupt) daily
+    // file read and only the session accumulator is exercised.
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = 'unlimited';
+    process.env.NANSEN_X402_SESSION_MAX_AMOUNT = '1.00';
+    const { recordPaymentAttempt, finalizePaymentAttempt, assertCumulativeSpendAllowed, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    // Corrupt daily file makes incrementDailySpend throw during finalize.
+    const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
+    fs.mkdirSync(ledgerDir, { recursive: true });
+    const today = new Date();
+    const yyyy = today.getUTCFullYear();
+    const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(today.getUTCDate()).padStart(2, '0');
+    fs.writeFileSync(path.join(ledgerDir, `spend-${yyyy}-${mm}-${dd}.json`), 'NOT VALID JSON');
+
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const id = recordPaymentAttempt({ provider: 'local', amountUsd: 0.9, network: 'eip155:8453', asset: '0xt', symbol: 'USDC', amountRaw: '900000', payTo: '0xr', requestUrl: 'https://api.nansen.ai/test' });
+    finalizePaymentAttempt(id, { status: 'accepted' });
+    warn.mockRestore();
+
+    // The $0.90 never durably recorded, so the session total must still be $0 —
+    // a fresh $0.90 payment still fits under the $1.00 session cap. If session
+    // spend had advanced, $0.90 + $0.90 would exceed the cap.
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.9 }).ok).toBe(true);
+  });
+
   it('does not overwrite a corrupt ledger while finalizing an accepted payment', async () => {
     const { recordPaymentAttempt, finalizePaymentAttempt, _resetSessionSpend } = await import('../x402-ledger.js');
     _resetSessionSpend();
@@ -240,5 +268,44 @@ describe('recordPaymentAttempt and audit log', () => {
     expect(fs.readFileSync(spendPath, 'utf8')).toBe('NOT VALID JSON');
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/could not update daily spend ledger/));
     warn.mockRestore();
+  });
+});
+
+describe('fail-closed edge cases', () => {
+  it('fails closed when no home directory can be resolved', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '10.00';
+    const savedHome = process.env.HOME;
+    const savedProfile = process.env.USERPROFILE;
+    delete process.env.HOME;
+    delete process.env.USERPROFILE;
+    try {
+      const { assertCumulativeSpendAllowed } = await import('../x402-ledger.js');
+      expect(() => assertCumulativeSpendAllowed({ amountUsd: 1.0 })).toThrow(/home directory/i);
+      // Must carry the fail-closed marker so callers surface it instead of
+      // silently disabling the cap.
+      try {
+        assertCumulativeSpendAllowed({ amountUsd: 1.0 });
+      } catch (err) {
+        expect(err.failClosedX402).toBe(true);
+      }
+    } finally {
+      process.env.HOME = savedHome;
+      if (savedProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = savedProfile;
+    }
+  });
+
+  it('getDailySpendState throws a typed X402LedgerError on a corrupt ledger', async () => {
+    const { getDailySpendState, X402LedgerError } = await import('../x402-ledger.js');
+    const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
+    fs.mkdirSync(ledgerDir, { recursive: true });
+    const today = new Date();
+    const yyyy = today.getUTCFullYear();
+    const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(today.getUTCDate()).padStart(2, '0');
+    fs.writeFileSync(path.join(ledgerDir, `spend-${yyyy}-${mm}-${dd}.json`), 'NOT VALID JSON');
+
+    expect(() => getDailySpendState()).toThrow(X402LedgerError);
+    expect(() => getDailySpendState()).toThrow(/corrupt/i);
   });
 });
