@@ -9,6 +9,8 @@ on:
 
 jobs:
   sync-clawhub:
+    # Covers both workflow_call and manual workflow_dispatch on this revision.
+    if: vars.CLI_PUBLICATION_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
