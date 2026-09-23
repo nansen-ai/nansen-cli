@@ -147,6 +147,28 @@ describe('recordPaymentAttempt and audit log', () => {
     expect(record).not.toHaveProperty('privateKey');
   });
 
+  it('tightens permissions on an existing audit log before appending', async () => {
+    const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
+    const auditFile = path.join(ledgerDir, 'payments.jsonl');
+    fs.mkdirSync(ledgerDir, { recursive: true });
+    fs.writeFileSync(auditFile, '');
+    fs.chmodSync(auditFile, 0o644);
+
+    const { recordPaymentAttempt } = await import('../x402-ledger.js');
+    recordPaymentAttempt({
+      provider: 'local',
+      amountUsd: 0.01,
+      network: 'eip155:8453',
+      asset: '0xt',
+      symbol: 'USDC',
+      amountRaw: '10000',
+      payTo: '0xr',
+      requestUrl: 'https://api.nansen.ai/test',
+    });
+
+    expect(fs.statSync(auditFile).mode & 0o777).toBe(0o600);
+  });
+
   it('finalizePaymentAttempt appends an accepted update and increments daily spend', async () => {
     const { recordPaymentAttempt, finalizePaymentAttempt, assertCumulativeSpendAllowed, _resetSessionSpend } = await import('../x402-ledger.js');
     _resetSessionSpend();

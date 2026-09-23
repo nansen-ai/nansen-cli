@@ -89,6 +89,9 @@ function usdToMicros(amountUsd) {
   if (!Number.isFinite(amountUsd) || amountUsd < 0) {
     throw new X402LedgerError(`Invalid x402 spend amount: ${amountUsd}`);
   }
+  // x402 USD amounts are produced from bounded token base-unit integers or cap
+  // env vars; round at the micro-USD boundary to absorb IEEE-754 representation
+  // drift such as 0.1 * 1_000_000.
   return BigInt(Math.round(amountUsd * MICRO_USD_SCALE));
 }
 
@@ -219,6 +222,9 @@ function withLedgerLock(lockPath, fn) {
 function appendAuditLine(record) {
   const dir = getLedgerDir();
   const auditFile = path.join(dir, 'payments.jsonl');
+  if (fs.existsSync(auditFile)) {
+    fs.chmodSync(auditFile, 0o600);
+  }
   fs.appendFileSync(auditFile, JSON.stringify(record) + '\n', { mode: 0o600 });
 }
 
