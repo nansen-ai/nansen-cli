@@ -86,12 +86,11 @@ function readTimestamp(file, field) {
   let fd;
   let raw;
   try {
-    // Open the already-validated entry without following a final-component
-    // symlink. This closes the lstat/read TOCTOU window: even if an entry is
-    // replaced after listDirEntries checks it, the cache inspector cannot be
-    // redirected to an arbitrary file. Reading through the descriptor also
-    // keeps the directory-derived path out of readFileSync's path sink.
-    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    // O_NOFOLLOW prevents a final-component symlink replacement after lstat.
+    // Windows does not define it. There, only the earlier lstat check applies;
+    // opening with O_RDONLY does not prevent this race.
+    const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0);
+    fd = fs.openSync(file, flags);
     if (!fs.fstatSync(fd).isFile()) return { raced: true };
     raw = fs.readFileSync(fd, 'utf8');
   } catch (error) {
@@ -317,7 +316,9 @@ export function formatCacheStats(stats) {
 /** What a clear actually removed, cache by cache. */
 export function formatCacheClear(result) {
   const lines = result.removed.map(
-    cache => `✓ Cleared ${entryCount(cache.entries)} (${formatBytes(cache.bytes)}) from the ${cache.label}\n  ${cache.path}`
+    cache => cache.entries > 0
+      ? `✓ Cleared ${entryCount(cache.entries)} (${formatBytes(cache.bytes)}) from the ${cache.label}\n  ${cache.path}`
+      : `ℹ No entries to clear from the ${cache.label}\n  ${cache.path}`
   );
   if (result.removed.length > 1) {
     lines.push(`  Total: ${entryCount(result.total_entries)}, ${formatBytes(result.total_bytes)}`);

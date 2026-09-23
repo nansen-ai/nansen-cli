@@ -242,6 +242,38 @@ describe('cache stats privacy', () => {
 });
 
 describe('cache clear', () => {
+  it('reports an empty response cache without a success mark', async () => {
+    const { clearCaches, formatCacheClear } = await freshModule('../cache-inspect.js');
+
+    expect(formatCacheClear(clearCaches('responses'))).toBe(
+      `ℹ No entries to clear from the response cache\n  ${responseCacheDir()}`,
+    );
+  });
+
+  it('reports all empty caches without success marks', async () => {
+    const { clearCaches, formatCacheClear } = await freshModule('../cache-inspect.js');
+
+    expect(formatCacheClear(clearCaches('all'))).toBe([
+      `ℹ No entries to clear from the response cache\n  ${responseCacheDir()}`,
+      `ℹ No entries to clear from the credit cost map\n  ${path.join(nansenDir(), 'cost-map.json')}`,
+      `ℹ No entries to clear from the update check\n  ${path.join(nansenDir(), 'update-check.json')}`,
+      '  Total: 0 entries, 0 B',
+    ].join('\n'));
+  });
+
+  it('marks only caches with deleted entries as cleared', async () => {
+    const file = writeResponseEntry(CACHE_KEY, { data: [1] });
+    const bytes = fs.statSync(file).size;
+    const { clearCaches, formatCacheClear } = await freshModule('../cache-inspect.js');
+
+    expect(formatCacheClear(clearCaches('all'))).toBe([
+      `✓ Cleared 1 entry (${bytes} B) from the response cache\n  ${responseCacheDir()}`,
+      `ℹ No entries to clear from the credit cost map\n  ${path.join(nansenDir(), 'cost-map.json')}`,
+      `ℹ No entries to clear from the update check\n  ${path.join(nansenDir(), 'update-check.json')}`,
+      `  Total: 1 entry, ${bytes} B`,
+    ].join('\n'));
+  });
+
   it('removes response entries and reports exactly what went', async () => {
     writeResponseEntry('a'.repeat(64), { data: [1] });
     writeResponseEntry('b'.repeat(64), { data: [2] });
