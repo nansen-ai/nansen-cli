@@ -20,6 +20,7 @@ vi.mock("../wallet.js", async (importOriginal) => {
 // Intercept x402-ledger dynamic imports so cap checks are controllable in tests.
 vi.mock("../x402-ledger.js", () => ({
   assertCumulativeSpendAllowed: vi.fn(() => ({ ok: true })),
+  finalizePaymentAttempt: vi.fn(),
   recordPaymentAttempt: vi.fn(() => "mock-payment-id"),
 }));
 
@@ -337,6 +338,41 @@ describe("createPrivyPaymentSignatures", () => {
     const decoded = JSON.parse(atob(results[0].signature));
     expect(decoded.x402Version).toBe(2);
     expect(decoded.payload.signature).toBe("0xfakesignature");
+  });
+
+  it("finalizes a recorded EVM payment as ambiguous if the generator is interrupted after yielding", async () => {
+    const { finalizePaymentAttempt } = await import("../x402-ledger.js");
+    vi.mocked(finalizePaymentAttempt).mockClear();
+
+    let callCount = 0;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            data: [{ id: "w-1", address: "0x1234567890abcdef1234567890abcdef12345678", chain_type: "ethereum" }],
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: { signature: "0xfakesignature" } }),
+      });
+    }));
+
+    const response = make402Response([evmRequirement]);
+    const iterator = createPrivyPaymentSignatures(response, "https://api.nansen.ai/test");
+
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(first.value.paymentId).toBe("mock-payment-id");
+
+    await expect(iterator.throw(new Error("consumer interrupted"))).rejects.toThrow("consumer interrupted");
+    expect(finalizePaymentAttempt).toHaveBeenCalledWith(
+      "mock-payment-id",
+      expect.objectContaining({ status: "ambiguous", reason: "consumer interrupted" }),
+    );
   });
 
   it("falls back to pay_to for the authorization recipient when payTo is absent", async () => {

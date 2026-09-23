@@ -290,7 +290,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
   const requirements = parsePaymentRequirements(response);
   if (!requirements || requirements.length === 0) return;
 
-  const { assertCumulativeSpendAllowed, recordPaymentAttempt } = await import('./x402-ledger.js');
+  const { assertCumulativeSpendAllowed, finalizePaymentAttempt, recordPaymentAttempt } = await import('./x402-ledger.js');
 
   const client = getClient();
 
@@ -306,6 +306,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
           continue;
         }
         let capCheck;
+        let paymentId = null;
         try {
           capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
         } catch (err) {
@@ -344,7 +345,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
             accepted: requirement,
           });
 
-          const paymentId = recordPaymentAttempt({
+          paymentId = recordPaymentAttempt({
             provider: 'privy',
             walletLabel: `Privy wallet ${evmWallet.id}`,
             network: decision.network,
@@ -358,6 +359,10 @@ export async function* createPrivyPaymentSignatures(response, url) {
 
           yield { signature: header, network: requirement.network, asset: requirement.asset, paymentId };
         } catch (err) {
+          if (paymentId) {
+            finalizePaymentAttempt(paymentId, { status: 'ambiguous', reason: err.message });
+            throw err;
+          }
           console.error(`[x402] Privy EVM signing failed for ${requirement.network}: ${err.message}`);
           continue;
         }
@@ -379,6 +384,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
           continue;
         }
         let svmCapCheck;
+        let paymentId = null;
         try {
           svmCapCheck = assertCumulativeSpendAllowed({ amountUsd: svmDecision.usd });
         } catch (err) {
@@ -412,7 +418,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
           }
 
           const header = Buffer.from(JSON.stringify(payload)).toString("base64");
-          const paymentId = recordPaymentAttempt({
+          paymentId = recordPaymentAttempt({
             provider: 'privy',
             walletLabel: `Privy wallet ${solWallet.id}`,
             network: svmDecision.network,
@@ -426,6 +432,10 @@ export async function* createPrivyPaymentSignatures(response, url) {
 
           yield { signature: header, network: requirement.network, asset: requirement.asset, paymentId };
         } catch (err) {
+          if (paymentId) {
+            finalizePaymentAttempt(paymentId, { status: 'ambiguous', reason: err.message });
+            throw err;
+          }
           console.error(`[x402] Privy Solana signing failed for ${requirement.network}: ${err.message}`);
           continue;
         }

@@ -9,6 +9,9 @@ import path from 'path';
 
 export const DEFAULT_DAILY_MAX_AMOUNT_USD = 10.0;
 const MICRO_USD_SCALE = 1_000_000;
+const LEDGER_LOCK_RETRY_MS = 25;
+const LEDGER_LOCK_TIMEOUT_MS = 5_000;
+const LEDGER_LOCK_STALE_MS = 30_000;
 
 // Session accumulator — lives in process memory only
 let sessionSpendMicros = 0n;
@@ -160,6 +163,59 @@ function ensureLedgerDir() {
   fs.mkdirSync(getLedgerDir(), { mode: 0o700, recursive: true });
 }
 
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function withLedgerLock(lockPath, fn) {
+  const startedAt = Date.now();
+
+  while (true) {
+    let fd = null;
+    try {
+      fd = fs.openSync(lockPath, 'wx', 0o600);
+      fs.writeFileSync(fd, String(process.pid));
+      try {
+        return fn();
+      } finally {
+        fs.closeSync(fd);
+        fd = null;
+        try {
+          fs.unlinkSync(lockPath);
+        } catch { /* best-effort lock cleanup */ }
+      }
+    } catch (err) {
+      if (fd !== null) {
+        try {
+          fs.closeSync(fd);
+        } catch { /* best-effort lock cleanup */ }
+      }
+      if (err.code !== 'EEXIST') throw err;
+
+      let stale = false;
+      try {
+        stale = Date.now() - fs.statSync(lockPath).mtimeMs > LEDGER_LOCK_STALE_MS;
+      } catch (statErr) {
+        if (statErr.code !== 'ENOENT') throw statErr;
+      }
+      if (stale) {
+        try {
+          fs.unlinkSync(lockPath);
+          continue;
+        } catch { /* another process won the race; retry below */ }
+      }
+
+      if (Date.now() - startedAt > LEDGER_LOCK_TIMEOUT_MS) {
+        throw new X402LedgerError(
+          `x402 daily spend ledger is locked and cannot be updated safely. ` +
+          `(fail-closed: preserving existing ledger)`,
+        );
+      }
+      sleepSync(LEDGER_LOCK_RETRY_MS);
+    }
+  }
+}
+
 function appendAuditLine(record) {
   const dir = getLedgerDir();
   const auditFile = path.join(dir, 'payments.jsonl');
@@ -255,25 +311,28 @@ export function finalizePaymentAttempt(id, patch) {
 function incrementDailySpend(amountUsd, now = new Date()) {
   const dir = getLedgerDir();
   const filePath = path.join(dir, getDailyFileName(now));
-  const tmpPath = filePath + '.tmp';
+  const lockPath = filePath + '.lock';
+  const tmpPath = filePath + '.' + process.pid + '.tmp';
 
   const amountMicros = usdToMicros(amountUsd);
-  let current = 0n;
-  if (fs.existsSync(filePath)) {
-    try {
-      current = readDailySpendMicros(filePath);
-    } catch {
-      throw new X402LedgerError(
-        `x402 daily spend ledger is corrupt and cannot be updated safely. ` +
-        `To reset: remove ${filePath}. (fail-closed: preserving existing ledger)`,
-      );
-    }
-  }
-
-  const updated = { totalUsdMicros: (current + amountMicros).toString(), updatedAt: new Date().toISOString() };
   ensureLedgerDir();
-  fs.writeFileSync(tmpPath, JSON.stringify(updated), { mode: 0o600 });
-  fs.renameSync(tmpPath, filePath);
+  withLedgerLock(lockPath, () => {
+    let current = 0n;
+    if (fs.existsSync(filePath)) {
+      try {
+        current = readDailySpendMicros(filePath);
+      } catch {
+        throw new X402LedgerError(
+          `x402 daily spend ledger is corrupt and cannot be updated safely. ` +
+          `To reset: remove ${filePath}. (fail-closed: preserving existing ledger)`,
+        );
+      }
+    }
+
+    const updated = { totalUsdMicros: (current + amountMicros).toString(), updatedAt: new Date().toISOString() };
+    fs.writeFileSync(tmpPath, JSON.stringify(updated), { mode: 0o600 });
+    fs.renameSync(tmpPath, filePath);
+  });
 }
 
 // Exported for tests only
