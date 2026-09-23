@@ -103,9 +103,9 @@ async function installSkill() {
 
   log(`The Nansen skill lets AI coding agents (Cursor, Claude Code, etc.) query`);
   log(`on-chain data, track smart money, analyze tokens, and use nansen trade.`);
-  const answer = await prompt(`  Install Nansen skill for your AI coding agent? [Y/n] `);
+  const answer = await prompt(`  Install Nansen skill for your AI coding agent? [y/N] `);
 
-  if (/^n/i.test(answer)) {
+  if (!/^y(es)?$/i.test(answer)) {
     log(`Skipped. You can install it later with: ${CYAN}npx skills add ${SKILL_REPO}${RESET}`);
     return;
   }

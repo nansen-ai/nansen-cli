@@ -31,6 +31,26 @@ afterEach(() => { [process.stdin, process.stderr].forEach((stream, i) => { if (t
 function save(value) { fs.writeFileSync(config(), typeof value === 'string' ? value : JSON.stringify(value)); }
 const pointer = version => ({ auth: { version, selectionEpoch: '00000000-0000-0000-0000-000000000001', active: { kind: 'session', generation: '00000000-0000-0000-0000-000000000002', issuer: 'https://idp.nansen.ai', audience: 'https://api.nansen.ai', accountId: 'synthetic-account', expiresAt: Date.now() + 3600000 } } });
 describe('offline postinstall selection with shared resolver', () => {
+  it.each(['', 'n', 'maybe', 'yes please', 'y', 'YES'])('requires explicit consent to install the skill for %j', async answer => {
+    fs.rmSync(path.join(process.env.HOME, '.claude/skills/nansen-cli'), { recursive: true });
+    controls.answers.push(answer);
+    await main();
+    expect(controls.prompts).toHaveLength(1);
+    expect(controls.prompts[0]).toContain('Install Nansen skill for your AI coding agent? [y/N]');
+    if (answer === 'y' || answer === 'YES') {
+      const args = ['-y', 'skills', 'add', 'nansen-ai/nansen-cli'];
+      expect(controls.spawn).toHaveBeenCalledTimes(1);
+      expect(controls.spawn).toHaveBeenCalledWith(
+        process.platform === 'win32' ? 'cmd.exe' : 'npx',
+        process.platform === 'win32' ? ['/c', 'npx', ...args] : args,
+        { stdio: 'inherit', shell: false },
+      );
+    } else {
+      expect(controls.spawn).not.toHaveBeenCalled();
+      expect(output).toContain('Skipped. You can install it later');
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
   it.each([
     ['environment only', null, 'synthetic-env-secret', 'API key is configured', true],
     ['legacy key', { apiKey: 'synthetic-key-secret' }, undefined, 'API key is configured', true],
