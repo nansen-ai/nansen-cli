@@ -35,7 +35,9 @@ export async function resolveAddress(addressOrName, chain = 'ethereum') {
     return { address: trimmed };
   }
 
-  if (!EVM_CHAINS.includes(chain)) {
+  // 'all' lets the API route by address format; a resolved .eth name is an
+  // EVM address, so it resolves the same way an explicit EVM chain does.
+  if (chain !== 'all' && !EVM_CHAINS.includes(chain)) {
     throw new Error(`ENS names can only be resolved on EVM chains, not ${chain}`);
   }
 

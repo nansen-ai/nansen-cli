@@ -155,7 +155,7 @@ describe('public CLI session error compatibility', () => {
   it.each([
     [401, 'unauthorized', 'UNAUTHORIZED'],
     [403, 'insufficient_credits', 'CREDITS_EXHAUSTED'],
-    [403, 'plan_upgrade_required', 'plan_upgrade_required'],
+    [403, 'plan_upgrade_required', 'PLAN_UPGRADE_REQUIRED'],
   ])('keeps key/session code parity for %s %s without reflecting session secrets', async (status, code, expected) => {
     const f = fixture(); const bundle = sessionFixture(); const a = await f.state.begin();
     await f.state.install(a, { bundle, baseUrl: bundle.audience }); await f.state.finish(a);
@@ -238,4 +238,54 @@ it('state disagreement guidance preserves the code and directs unconfirmed revoc
   const messages = cleanupMessage([{ local: 'incomplete', remote: 'unconfirmed', code: 'AUTH_STATE_INVALID' }]).join(' ');
   expect(messages).toContain('metadata disagree'); expect(messages).toContain('session/revocation operator');
   expect(messages).not.toContain('Unlock'); expect(messages).not.toContain('account security settings');
+});
+
+it.each([[false, true], [true, false]])('runCLI uses output TTY %s independently of input TTY %s', async (isTTY, isInputTTY) => {
+  const f = fixture(); const browserLoginFn = vi.fn();
+  await runCLI(['login'], { env: f.env, authState: f.state, isTTY, isInputTTY, browserLoginFn, output: vi.fn(), errorOutput: vi.fn(), exit: vi.fn() });
+  expect(browserLoginFn).toHaveBeenCalledOnce();
+  expect(browserLoginFn.mock.calls[0][0].isTTY).toBe(isTTY);
+});
+it.each(['', '   '])('legacy --human prompts when the environment key is blank (%j)', async value => {
+  const f = fixture(); const promptFn = vi.fn().mockResolvedValue('synthetic-key');
+  f.env.NANSEN_API_KEY = value;
+  const log = vi.fn();
+  class API { async getAccount() { return { user_id: 'synthetic-account' }; } }
+  const commands = buildCommands({ env: f.env, authState: f.state, stdinTTY: true, promptFn, NansenAPIClass: API, log });
+  await commands.login([], null, { human: true }, {});
+  expect(promptFn).toHaveBeenCalledOnce();
+  expect(JSON.parse(fs.readFileSync(f.file)).apiKey).toBe('synthetic-key');
+  expect(log.mock.calls.flat().join('\n')).toContain('Commands will fail until you unset it');
+  expect(log.mock.calls.flat().join('\n')).not.toContain('You can now use');
+  expect(resolveCredential({ env: f.env })).toMatchObject({ kind: 'api-key', source: 'env', apiKey: value });
+});
+it('returns a manual payment challenge for an API key without signing or retrying', async () => {
+  const requirements = { accepts: [{ scheme: 'exact', network: 'eip155:8453', amount: '1' }] };
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ message: 'Payment required' }), { status: 402, headers: { 'payment-required': Buffer.from(JSON.stringify(requirements)).toString('base64') } }));
+  vi.stubGlobal('fetch', fetch);
+  const api = new NansenAPI('synthetic-key', 'https://api.nansen.ai');
+  const payment = vi.spyOn(api, '_x402Retry');
+  const error = await api.getAccount().catch(e => e);
+  expect(error.code).toBe('PAYMENT_REQUIRED');
+  expect(error.details.paymentRequirements).toEqual(requirements);
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(payment).not.toHaveBeenCalled();
+});
+
+it('uses the injected session owner for a public account request', async () => {
+  const f = fixture(); const bundle = sessionFixture();
+  const operation = await f.state.begin();
+  await f.state.install(operation, { bundle, baseUrl: 'https://api.nansen.ai' });
+  await f.state.finish(operation);
+  const selection = resolveCredential({ env: f.env });
+  const read = vi.spyOn(f.state, 'acquireSession');
+  class SessionAPI extends NansenAPI {
+    constructor(_key, _url, options) { super(undefined, 'https://api.nansen.ai', { ...options, credential: selection }); }
+  }
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ account_id: bundle.accountId }), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+  await runCLI(['account'], { env: f.env, authState: f.state, NansenAPIClass: SessionAPI, output: vi.fn(), errorOutput: vi.fn(), exit: vi.fn(), trackFn: vi.fn(), trackFailed: vi.fn() });
+  expect(read).toHaveBeenCalledWith(selection, { audience: 'https://api.nansen.ai' });
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(fetch.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${bundle.accessToken}`);
 });

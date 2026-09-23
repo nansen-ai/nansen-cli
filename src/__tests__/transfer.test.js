@@ -16,6 +16,7 @@ import {
   validateSolanaAddress,
   bigIntToHex,
   buildUnsignedSolanaTransaction,
+  getTokenInfo,
 } from '../transfer.js';
 import { signSecp256k1, rlpEncode } from '../crypto.js';
 import { base58Encode } from '../wallet.js';
@@ -90,6 +91,23 @@ describe('Amount Parsing', () => {
   test('truncates excess decimals', () => {
     // 6 decimal token, input has 9 decimals — should truncate
     expect(parseAmount('1.123456789', 6)).toBe(1123456n);
+  });
+
+  // A zero result used to be returned and then signed and broadcast: a
+  // native send paying gas to move nothing, a 0-token transfer, or a limit
+  // order created with inputAmount "0".
+  test('rejects a literal zero', () => {
+    for (const z of ['0', '0.0', '00', '0.000']) {
+      expect(() => parseAmount(z, 6)).toThrow('Amount must be greater than zero');
+    }
+  });
+
+  test('rejects a positive amount that truncates to zero at the token precision', () => {
+    expect(() => parseAmount('0.0000001', 6)).toThrow(/below the smallest unit.*6 decimals.*at least 0\.000001/);
+    expect(() => parseAmount('0.5', 0)).toThrow(/below the smallest unit.*0 decimals.*at least 1/);
+    // Exactly the smallest unit is fine.
+    expect(parseAmount('0.000001', 6)).toBe(1n);
+    expect(parseAmount('1', 0)).toBe(1n);
   });
 
   test('rejects negative amounts', () => {
@@ -441,6 +459,34 @@ describe('sendTokens integration', () => {
       expect(estimateCall).toBeDefined();
     });
 
+    test('max native send aborts when the dummy estimate reports insufficient funds', async () => {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'eth_estimateGas') {
+          // Only the 1-wei dummy estimate fails; the final estimate would
+          // succeed, so the guard on the dummy call is what must abort.
+          if (body.params[0].value === '0x1') {
+            return { json: () => Promise.resolve({ error: { code: -32000, message: 'insufficient funds for gas * price + value' } }) };
+          }
+          return { json: () => Promise.resolve({ result: '0x5208' }) };
+        }
+        const responses = {
+          'eth_getTransactionCount': '0x0',
+          'eth_feeHistory': { baseFeePerGas: ['0x1','0x1','0x1','0x1','0x1'] },
+          'eth_maxPriorityFeePerGas': '0x5F5E100',
+          'eth_getBalance': '0x' + (10n ** 18n).toString(16),
+          'eth_sendRawTransaction': '0xshouldnotsend',
+          'eth_getTransactionReceipt': { status: '0x1', blockNumber: '0x100' },
+        };
+        return { json: () => Promise.resolve({ result: responses[body.method] ?? '0x0' }) };
+      });
+
+      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', chain: 'base', max: true, password: 'test' }))
+        .rejects.toThrow(/Insufficient native balance/);
+      const sendCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_sendRawTransaction');
+      expect(sendCall).toBeUndefined();
+    });
+
     test('rejects when ETH balance is insufficient', async () => {
       fetch.mockImplementation(async (url, opts) => {
         const body = JSON.parse(opts.body);
@@ -523,7 +569,51 @@ describe('sendTokens integration', () => {
     });
   });
 
+  describe('getTokenInfo', () => {
+    const MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEHpdXxn';
+
+    function mockAccountInfo(value) {
+      fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ jsonrpc: '2.0', id: 1, result: { value, context: { slot: 1 } } }) }));
+    }
+
+    test('returns the owner program and parsed decimals', async () => {
+      mockAccountInfo({ owner: TOKEN_2022, data: { parsed: { info: { decimals: 6 } } } });
+      await expect(getTokenInfo('https://rpc.test', MINT)).resolves.toEqual({ tokenProgram: TOKEN_2022, decimals: 6 });
+    });
+
+    test('accepts a zero-decimal mint', async () => {
+      mockAccountInfo({ owner: TOKEN_2022, data: { parsed: { info: { decimals: 0 } } } });
+      await expect(getTokenInfo('https://rpc.test', MINT)).resolves.toMatchObject({ decimals: 0 });
+    });
+
+    // This used to default to 9 decimals, scaling the user's --amount by the
+    // wrong power of ten and only failing on-chain in TransferChecked.
+    test('fails instead of guessing 9 decimals when the RPC returns unparsed mint data', async () => {
+      mockAccountInfo({ owner: TOKEN_2022, data: ['AAAA', 'base64'] });
+      await expect(getTokenInfo('https://rpc.test', MINT)).rejects.toThrow(/Could not determine decimals.*did not return parsed token data/);
+    });
+
+    test('fails when parsed data carries no decimals field', async () => {
+      mockAccountInfo({ owner: TOKEN_2022, data: { parsed: { info: { supply: '1' } } } });
+      await expect(getTokenInfo('https://rpc.test', MINT)).rejects.toThrow(/Could not determine decimals/);
+    });
+
+    test('still reports a missing mint account', async () => {
+      mockAccountInfo(null);
+      await expect(getTokenInfo('https://rpc.test', MINT)).rejects.toThrow('not found');
+    });
+  });
+
   describe('Error handling', () => {
+    test('rejects a zero amount before touching the RPC', async () => {
+      fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ result: '0x0' }) }));
+      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0', chain: 'base', password: 'test' }))
+        .rejects.toThrow('Amount must be greater than zero');
+      const sendCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_sendRawTransaction');
+      expect(sendCall).toBeUndefined();
+    });
+
     test('rejects invalid EVM address', async () => {
       await expect(sendTokens({ to: 'bad', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('Invalid recipient');
     });
@@ -543,8 +633,129 @@ describe('sendTokens integration', () => {
     });
 
     test('propagates RPC errors', async () => {
-      fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ error: { message: 'insufficient lamports on account' } }) }));
-      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('Insufficient SOL balance');
+      fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ error: { message: 'nonce too low' } }) }));
+      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('RPC error: nonce too low');
+    });
+
+    // geth/op-geth reject an underfunded send with "insufficient funds for gas
+    // * price + value". That used to hit the Solana branch of friendlyRpcError
+    // and tell an EVM user to top up SOL.
+    test('maps an EVM insufficient-funds rejection to the chain\'s gas token, not SOL', async () => {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'eth_sendRawTransaction') {
+          return { json: () => Promise.resolve({ error: { code: -32000, message: 'insufficient funds for gas * price + value: balance 0, tx cost 21000000000000, overshot 21000000000000' } }) };
+        }
+        const responses = {
+          'eth_getTransactionCount': '0x0',
+          'eth_feeHistory': { baseFeePerGas: ['0x1','0x1','0x1','0x1','0x1'] },
+          'eth_maxPriorityFeePerGas': '0x5F5E100',
+          'eth_getBalance': '0x' + (10n ** 18n).toString(16),
+          'eth_estimateGas': '0x5208',
+        };
+        return { json: () => Promise.resolve({ result: responses[body.method] ?? '0x0' }) };
+      });
+
+      const err = await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'base', password: 'test' }).catch(e => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toMatch(/Insufficient native balance.*native gas token.*ETH/);
+      expect(err.message).toContain('insufficient funds for gas * price + value');
+      expect(err.message).not.toMatch(/SOL/);
+    });
+
+    // eth_estimateGas used to be wrapped in a bare catch that fell back to a
+    // default gas limit for every failure — including the node reporting that
+    // the transaction itself cannot succeed. That broadcast a doomed
+    // transaction and burned gas on it.
+    test('does not broadcast when eth_estimateGas reports the transaction would revert', async () => {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'eth_estimateGas') {
+          return { json: () => Promise.resolve({ error: { code: 3, message: 'execution reverted: ERC20: transfer amount exceeds balance' } }) };
+        }
+        if (body.method === 'eth_call') {
+          // decimals() = 6 for validateErc20Token, then balanceOf = 500 USDC
+          if (body.params[0].data === '0x313ce567') {
+            return { json: () => Promise.resolve({ result: '0x' + (6n).toString(16).padStart(64, '0') }) };
+          }
+          return { json: () => Promise.resolve({ result: '0x' + (500000000n).toString(16).padStart(64, '0') }) };
+        }
+        const responses = {
+          'eth_getTransactionCount': '0x0',
+          'eth_feeHistory': { baseFeePerGas: ['0x1','0x1','0x1','0x1','0x1'] },
+          'eth_maxPriorityFeePerGas': '0x5F5E100',
+          'eth_getCode': '0x6080604052',
+          'eth_sendRawTransaction': '0xshouldnotbesent',
+        };
+        return { json: () => Promise.resolve({ result: responses[body.method] ?? '0x0' }) };
+      });
+
+      await expect(sendTokens({
+        to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'base',
+        token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', password: 'test',
+      })).rejects.toThrow(/execution reverted/);
+
+      const sendCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_sendRawTransaction');
+      expect(sendCall).toBeUndefined();
+    });
+
+    test('tags RPC errors that mean the transaction cannot succeed, from the raw message', async () => {
+      // rpcCall is module-private; getTokenInfo is the cheapest exported
+      // caller that forwards its error unchanged, so it is the vehicle here.
+      // The classification does not depend on the method or the chain.
+      const cases = [
+        ['insufficient funds for gas * price + value', true],
+        ['execution reverted: ERC20: transfer amount exceeds balance', true],
+        ['Transaction results in an account with insufficient lamports', true],
+        ['internal error: node is syncing', false],
+        ['nonce too low', false],
+        ['Transaction was already processed and rolled back; state reverted to snapshot', false],
+      ];
+      for (const [message, expected] of cases) {
+        fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ error: { message } }) }));
+        const err = await getTokenInfo('https://rpc.test', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v').catch(e => e);
+        expect(err).toBeInstanceOf(Error);
+        expect(err.transactionWouldFail).toBe(expected);
+      }
+    });
+
+    test('still falls back to a default gas limit when eth_estimateGas fails for another reason', async () => {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'eth_estimateGas') {
+          return { json: () => Promise.resolve({ error: { code: -32603, message: 'internal error: node is syncing' } }) };
+        }
+        const responses = {
+          'eth_getTransactionCount': '0x0',
+          'eth_feeHistory': { baseFeePerGas: ['0x1','0x1','0x1','0x1','0x1'] },
+          'eth_maxPriorityFeePerGas': '0x5F5E100',
+          'eth_getBalance': '0x' + (10n ** 18n).toString(16),
+          'eth_sendRawTransaction': '0xfallbacktx',
+          'eth_getTransactionReceipt': { status: '0x1', blockNumber: '0x100' },
+        };
+        return { json: () => Promise.resolve({ result: responses[body.method] ?? '0x0' }) };
+      });
+
+      const result = await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'base', password: 'test' });
+      expect(result.success).toBe(true);
+      expect(result.transactionHash).toBe('0xfallbacktx');
+    });
+
+    test('keeps the SOL advice for a Solana insufficient-funds rejection', async () => {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'sendTransaction') {
+          return { json: () => Promise.resolve({ error: { code: -32002, message: 'Transaction simulation failed: Transaction results in an account (0) with insufficient funds for rent' } }) };
+        }
+        const responses = {
+          'getLatestBlockhash': { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } },
+          'getBalance': { value: 10000000000 },
+        };
+        return { json: () => Promise.resolve({ result: responses[body.method] ?? null }) };
+      });
+
+      await expect(sendTokens({ to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', amount: '0.5', chain: 'solana', password: 'test' }))
+        .rejects.toThrow('Insufficient SOL balance for this transaction. Top up your wallet with SOL.');
     });
 
     test('propagates network errors', async () => {
@@ -798,6 +1009,43 @@ describe('sendTokens via WalletConnect', () => {
     expect(call.data).toBe('0x');
     expect(BigInt(call.value)).toBeLessThan(1000000000000000000n);
     expect(BigInt(call.value)).toBeGreaterThan(0n);
+
+    vi.restoreAllMocks();
+  });
+
+  // The --max flow's dummy 1-wei estimate used to swallow every error and
+  // fall back to 21000 gas, so a recipient the node says will revert still
+  // went on to the reserve calculation and a doomed broadcast.
+  test('max native send aborts when the dummy estimate says the transfer would revert', async () => {
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xshouldnotsend' });
+
+    fetch.mockImplementation(async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      if (body.method === 'eth_getBalance') {
+        return { json: () => Promise.resolve({ result: '0xDE0B6B3A7640000' }) };
+      }
+      if (body.method === 'eth_estimateGas') {
+        // Only the 1-wei dummy estimate fails; a later estimate would succeed,
+        // so the guard on the dummy call is what has to stop the send.
+        if (body.params[0].value === '0x1') {
+          return { json: () => Promise.resolve({ error: { code: 3, message: 'execution reverted' } }) };
+        }
+        return { json: () => Promise.resolve({ result: '0x5208' }) };
+      }
+      if (body.method === 'eth_feeHistory') {
+        return { json: () => Promise.resolve({ result: { baseFeePerGas: ['0x3B9ACA00', '0x3B9ACA00'] } }) };
+      }
+      return { json: () => Promise.resolve({ result: '0x0' }) };
+    });
+
+    await expect(sendTokens({
+      to: '0x1234567890123456789012345678901234567890',
+      chain: 'evm',
+      walletconnect: true,
+      max: true,
+    })).rejects.toThrow(/execution reverted/);
+    expect(sendSpy).not.toHaveBeenCalled();
 
     vi.restoreAllMocks();
   });

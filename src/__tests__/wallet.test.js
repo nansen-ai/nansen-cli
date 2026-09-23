@@ -22,6 +22,9 @@ import {
   deleteWallet,
   getWalletConfig,
   promptPassword,
+  writeWalletJsonAtomic,
+  readWalletJson,
+  mkdirPrivateSync,
 } from '../wallet.js';
 import { keccak256 } from '../crypto.js';
 
@@ -342,6 +345,113 @@ describe('wallet CRUD', () => {
     expect(result.evm).toBeDefined();
     const exported = exportWallet('fresh', NEW_PASSWORD);
     expect(exported.evm.privateKey).toBeTruthy();
+  });
+});
+
+describe('wallet file durability', () => {
+  const PASSWORD = 'test-password-123!!';
+  const walletsDir = () => path.join(tempDir, '.nansen', 'wallets');
+
+  // Every wallet-subsystem write used to be a plain writeFileSync and every
+  // read a bare JSON.parse. A torn write (crash, full disk, two concurrent
+  // nansen processes) left a truncated file, and the next listWallets() or
+  // getWalletConfig() threw a SyntaxError that hid every healthy wallet too.
+  it('lists the healthy wallets when one wallet file is corrupt', () => {
+    createWallet('alice', PASSWORD);
+    createWallet('bob', PASSWORD);
+    const bobFile = path.join(walletsDir(), 'bob.json');
+    fs.writeFileSync(bobFile, fs.readFileSync(bobFile, 'utf8').slice(0, 40));
+
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const result = listWallets();
+      expect(result.wallets.map(w => w.name)).toEqual(['alice']);
+      expect(result.defaultWallet).toBe('alice');
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/Skipping .*bob\.json.*not valid JSON/));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('names the file when config.json is corrupt instead of throwing a bare SyntaxError', () => {
+    createWallet('alice', PASSWORD);
+    const configFile = path.join(walletsDir(), 'config.json');
+    fs.writeFileSync(configFile, '{"defaultWallet": "ali');
+
+    expect(() => getWalletConfig()).toThrow(/config\.json is not valid JSON/);
+    expect(() => showWallet('alice')).toThrow(/config\.json is not valid JSON/);
+  });
+
+  it('names the file when a single wallet file is corrupt', () => {
+    createWallet('alice', PASSWORD);
+    fs.writeFileSync(path.join(walletsDir(), 'alice.json'), 'not json');
+    expect(() => showWallet('alice')).toThrow(/alice\.json is not valid JSON/);
+    expect(() => exportWallet('alice', PASSWORD)).toThrow(/alice\.json is not valid JSON/);
+  });
+
+  it('writes through a temp file and leaves nothing behind on success', () => {
+    createWallet('alice', PASSWORD);
+    const leftovers = fs.readdirSync(walletsDir()).filter(f => f.endsWith('.tmp'));
+    expect(leftovers).toEqual([]);
+    expect(readWalletJson(path.join(walletsDir(), 'alice.json')).name).toBe('alice');
+  });
+
+  it('refuses to read or write a path outside the wallets directory', () => {
+    createWallet('alice', PASSWORD);
+    const outside = path.join(tempDir, 'elsewhere.json');
+    expect(() => writeWalletJsonAtomic(outside, { v: 1 })).toThrow(/not inside the wallets directory/);
+    expect(fs.existsSync(outside)).toBe(false);
+    const traversal = path.join(walletsDir(), '..', 'elsewhere.json');
+    expect(() => readWalletJson(traversal)).toThrow(/not inside the wallets directory/);
+    // A real wallet file still reads.
+    expect(readWalletJson(path.join(walletsDir(), 'alice.json')).name).toBe('alice');
+  });
+
+  it('tolerates a directory created concurrently by another process', () => {
+    const dir = path.join(tempDir, 'race', 'wallets');
+    const realMkdir = fs.mkdirSync;
+    const spy = vi.spyOn(fs, 'mkdirSync').mockImplementation((p, opts) => {
+      // Simulate the other process winning the race for the leaf directory.
+      if (p === dir) realMkdir(p, { recursive: true });
+      return realMkdir(p, opts);
+    });
+    try {
+      expect(() => mkdirPrivateSync(dir)).not.toThrow();
+      expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('keeps the previous file intact when the atomic write fails', () => {
+    createWallet('alice', PASSWORD); // ensures the wallets dir exists
+    const target = path.join(walletsDir(), 'value.json');
+    writeWalletJsonAtomic(target, { v: 1 });
+    // A directory at the temp path makes openSync fail before any bytes land.
+    fs.mkdirSync(`${target}.${process.pid}.tmp`);
+    expect(() => writeWalletJsonAtomic(target, { v: 2 })).toThrow();
+    expect(readWalletJson(target)).toEqual({ v: 1 });
+    fs.rmdirSync(`${target}.${process.pid}.tmp`);
+  });
+
+  // mkdir/writeFileSync mode options are filtered through the umask; export
+  // --file already pins its mode with fchmodSync for exactly this reason, but
+  // the directory, config.json and key-file writes did not. Under umask 0277
+  // config.json came out 0400 and every later rewrite failed with EACCES.
+  it('creates the wallets dir, config and key file with 0700/0600 under a restrictive umask', () => {
+    if (process.platform === 'win32') return;
+    const previous = process.umask(0o277);
+    try {
+      createWallet('alice', PASSWORD);
+      createWallet('bob', PASSWORD); // rewrites config.json
+      setDefaultWallet('bob');       // rewrites config.json again
+      expect(fs.statSync(walletsDir()).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(path.join(walletsDir(), 'config.json')).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(path.join(walletsDir(), 'alice.json')).mode & 0o777).toBe(0o600);
+      expect(getWalletConfig().defaultWallet).toBe('bob');
+    } finally {
+      process.umask(previous);
+    }
   });
 });
 

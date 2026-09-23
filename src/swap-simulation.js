@@ -212,10 +212,9 @@ async function postSim(rpcUrl, auth, method, params, timeoutMs) {
     const hosted = isNansenHostedUrl(rpcUrl);
     let credentials = {};
     if (hosted && auth.api) {
-      if (auth.apiKey !== null && auth.apiKey !== undefined) throw new AuthError('MIXED_CREDENTIALS', 'Use the selected API credential alone for hosted simulation.');
       if (new URL(rpcUrl).origin !== auth.api.baseUrl) throw new AuthError('AUTH_ORIGIN_MISMATCH', 'Simulation origin differs from the selected API origin. Configure a matching Nansen simulation endpoint.');
       credentials = await auth.api.requestCredentials();
-    } else if (hosted && auth.apiKey) credentials = { apikey: auth.apiKey };
+    }
     const res = await fetch(rpcUrl, {
       method: 'POST',
       redirect: Object.keys(credentials).length ? 'error' : 'follow',
@@ -454,11 +453,11 @@ async function simulateViaDebugTraceCall(rpcUrl, auth, { from, to, data, value }
  *
  * @param {string} chain - chain key (only 'base' is wired today)
  * @param {{ to: string, data: string, value?: string }} swapCall - the swap tx
- * @param {{ from: string, apiKey?: string|null, api?: object, timeoutMs?: number }} opts
+ * @param {{ from: string, api?: object, timeoutMs?: number }} opts
  * @returns {Promise<{ deltas: Record<string,bigint>, approvals: Array<{token,spender,amount}>, nftOut: Array<{standard,token}>, nftApprovals: Array<{standard,token,operator}>, method: string }>}
  * @throws {SwapSimulationError} on any degrade condition or an in-sim revert.
  */
-export async function simulateAssetChanges(chain, swapCall, { from, apiKey = null, api, timeoutMs = 20000 } = {}) {
+export async function simulateAssetChanges(chain, swapCall, { from, api, timeoutMs = 20000 } = {}) {
   const rpcUrl = SIMULATION_RPCS[chain];
   if (!rpcUrl) {
     throw new SwapSimulationError('NO_SIM_RPC', `No simulation RPC configured for chain '${chain}'.`);
@@ -473,10 +472,10 @@ export async function simulateAssetChanges(chain, swapCall, { from, apiKey = nul
   // error redaction. No transport failure changes account or payment rail.
   try {
     try {
-      return await simulateViaEthSimulateV1(rpcUrl, { apiKey, api }, call, timeoutMs);
+      return await simulateViaEthSimulateV1(rpcUrl, { api }, call, timeoutMs);
     } catch (error) {
       if (error instanceof SwapSimulationError && error.code === 'NOT_SIM_CAPABLE') {
-        return await simulateViaDebugTraceCall(rpcUrl, { apiKey, api }, call, timeoutMs);
+        return await simulateViaDebugTraceCall(rpcUrl, { api }, call, timeoutMs);
       }
       throw error;
     }

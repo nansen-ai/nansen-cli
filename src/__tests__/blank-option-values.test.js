@@ -22,6 +22,19 @@ vi.mock('../privy.js', () => ({
 }));
 
 const deps = { log: vi.fn(), exit: vi.fn() };
+
+// `trade quote` / `trade execute` screen the wallet against the sanctions list
+// through the API instance before requesting a quote or signing (the gate itself
+// is covered in trading-sanctions-screening.test.js). Tests here exercise other
+// behaviour, so they get an API instance whose screen always reports clean.
+const screenApi = {
+  request: async (endpoint, body) => {
+    if (endpoint.startsWith('/api/v1/sanctions/screen')) {
+      return { results: (body?.addresses || []).map(address => ({ address, sanctioned: false })) };
+    }
+    throw new Error(`unexpected endpoint ${endpoint}`);
+  },
+};
 let tempDir;
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nansen-blank-options-'));
@@ -60,7 +73,7 @@ const researchCases = [
 describe.each(['', ' \t '])('explicit blank option %j', blank => {
   it.each(['swap-mode', 'wallet', 'to-chain', 'aggregator', 'amount-unit'])('rejects quote --%s', async name => {
     const parsed = parseArgs(['--' + name, blank]);
-    await expect(buildTradingCommands(deps).quote([], null, parsed.flags, {
+    await expect(buildTradingCommands(deps).quote([], screenApi, parsed.flags, {
       ...quoteOptions, ...parsed.options,
     })).rejects.toMatchObject({ code: 'MISSING_PARAM', message: expect.stringContaining(`--${name} requires a value. Usage: --${name} `) });
     expect(fetch).not.toHaveBeenCalled();
@@ -86,7 +99,7 @@ describe.each(['', ' \t '])('explicit blank option %j', blank => {
 
   it('rejects execute --wallet before loading or signing a quote', async () => {
     const parsed = parseArgs(['quote-1', '--wallet', blank]);
-    await expect(buildTradingCommands(deps).execute(parsed._, null, parsed.flags, parsed.options))
+    await expect(buildTradingCommands(deps).execute(parsed._, screenApi, parsed.flags, parsed.options))
       .rejects.toMatchObject({ code: 'MISSING_PARAM', message: expect.stringContaining('--wallet requires a value') });
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -160,7 +173,7 @@ it.each([0, '0', undefined])('preserves quote slippage caps %j and omitted quote
     ? parseArgs(['--slippage', value, '--max-auto-slippage', value]).options
     : { slippage: value, 'max-auto-slippage': value };
   // Stop at the mocked response after capturing the complete outgoing request.
-  await expect(buildTradingCommands(deps).quote([], null, { 'auto-slippage': true }, {
+  await expect(buildTradingCommands(deps).quote([], screenApi, { 'auto-slippage': true }, {
     ...quoteOptions, ...options,
   })).rejects.toThrow('No quotes available');
   const body = Object.fromEntries(new URL(fetch.mock.calls[0][0]).searchParams);

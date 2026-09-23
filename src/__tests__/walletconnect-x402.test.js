@@ -23,6 +23,7 @@ vi.mock('../walletconnect-exec.js', () => ({
 import { evaluatePaymentRequirement } from '../x402-policy.js';
 import { wcExec } from '../walletconnect-exec.js';
 import { handleX402Payment, buildEIP712TypedData } from '../walletconnect-x402.js';
+import { ErrorCode } from '../api.js';
 
 // Session approved for Base (eip155:8453) only -- the account entry carries
 // the CAIP-2 chain tag getWalletConnectAddress matches on, not just a bare
@@ -84,6 +85,70 @@ describe('handleX402Payment — policy guard', () => {
 
     const signCalls = wcExec.mock.calls.filter(c => c[1]?.[0] === 'sign-typed-data');
     expect(signCalls).toHaveLength(1);
+  });
+});
+
+describe('handleX402Payment — sign-typed-data output parsing', () => {
+  // The signing step used to take only the first line starting with "{" and
+  // JSON.parse it. A pretty-printed result therefore parsed as the single
+  // character "{" and threw — after the user had already approved the payment
+  // in their wallet. walletconnect-trading.js's parseWcJson handles the
+  // status-line-then-multi-line shape; the x402 path must read it the same way.
+  it('accepts a pretty-printed signature preceded by status lines', async () => {
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC' });
+    wcExec.mockImplementation((_cmd, args) => {
+      if (args[0] === 'whoami') return Promise.resolve(JSON.stringify(CONNECTED_WALLET));
+      return Promise.resolve([
+        'Waiting for wallet approval...',
+        'Request approved.',
+        '{',
+        '  "signature": "0xmultilinesig",',
+        '  "address": "0xBaseAddress"',
+        '}',
+      ].join('\n'));
+    });
+
+    const result = await handleX402Payment(PAYMENT_REQUIREMENTS);
+    const decoded = JSON.parse(Buffer.from(result, 'base64').toString('utf8'));
+    expect(decoded.payload.signature).toBe('0xmultilinesig');
+  });
+
+  it('still accepts a single-line signature', async () => {
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC' });
+    wcExec.mockImplementation((_cmd, args) => {
+      if (args[0] === 'whoami') return Promise.resolve(JSON.stringify(CONNECTED_WALLET));
+      return Promise.resolve('Signing...\n{"signature":"0xonelinesig"}');
+    });
+
+    const result = await handleX402Payment(PAYMENT_REQUIREMENTS);
+    const decoded = JSON.parse(Buffer.from(result, 'base64').toString('utf8'));
+    expect(decoded.payload.signature).toBe('0xonelinesig');
+  });
+
+  it('fails with a payment error when the CLI prints no JSON at all', async () => {
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC' });
+    wcExec.mockImplementation((_cmd, args) => {
+      if (args[0] === 'whoami') return Promise.resolve(JSON.stringify(CONNECTED_WALLET));
+      return Promise.resolve('Request rejected by wallet');
+    });
+
+    await expect(handleX402Payment(PAYMENT_REQUIREMENTS)).rejects.toMatchObject({
+      code: ErrorCode.PAYMENT_REQUIRED,
+      message: expect.stringMatching(/x402 payment signing failed: No JSON output/),
+    });
+  });
+
+  it('fails instead of building a header when the result carries no signature', async () => {
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC' });
+    wcExec.mockImplementation((_cmd, args) => {
+      if (args[0] === 'whoami') return Promise.resolve(JSON.stringify(CONNECTED_WALLET));
+      return Promise.resolve('{"error":"user rejected"}');
+    });
+
+    await expect(handleX402Payment(PAYMENT_REQUIREMENTS)).rejects.toMatchObject({
+      code: ErrorCode.PAYMENT_REQUIRED,
+      message: expect.stringMatching(/returned no signature/),
+    });
   });
 });
 

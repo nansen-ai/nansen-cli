@@ -638,11 +638,11 @@ describe('mcp verify', () => {
     expect(output.join('\n')).toContain('--api-key requires a value');
   });
 
-  it('rejects a non-string --api-key value such as the literal null', async () => {
+  it('rejects a non-string --api-key value such as a repeated flag', async () => {
     const output = [];
     const exits = [];
     const fetchFn = vi.fn();
-    const result = await runCLI(['mcp', 'verify', '--api-key', 'null'], {
+    const result = await runCLI(['mcp', 'verify', '--api-key', 'first', '--api-key', 'second'], {
       output: value => output.push(value),
       errorOutput: () => {},
       exit: code => exits.push(code),

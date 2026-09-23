@@ -21,3 +21,18 @@ it('fails bounded without claiming termination when the OS never reports helper 
   // No late readiness can issue another operation after the failure deadline.
   child.stdout.emit('data', '{"ready":true}\n'); expect(child.stdin.write).toHaveBeenCalledTimes(2);
 });
+
+it('reports a missing native binding after helper termination without claiming storage success', async () => {
+  const stream = () => Object.assign(new EventEmitter(), { write: vi.fn(), resume: vi.fn(), destroy: vi.fn() });
+  const child = Object.assign(new EventEmitter(), { stdin: stream(), stdout: stream(), stderr: stream(), kill: vi.fn(), unref: vi.fn() });
+  spawn.mockReturnValue(child);
+  const result = nativeStoreOperation('get', '00000000-0000-4000-8000-000000000000.manifest', undefined, { directory: '/synthetic' }).catch(error => error);
+  child.stdout.emit('data', '{"ready":true}\n');
+  child.stdout.emit('data', '{"error":"BINDING_MISSING"}\n');
+  child.emit('close', 0);
+  const error = await result;
+  expect(error.code).toBe('AUTH_STORE_UNAVAILABLE');
+  expect(error.message).toContain('optional dependencies');
+  expect(error.message).not.toContain('Unlock');
+  expect(child.kill).not.toHaveBeenCalled();
+});

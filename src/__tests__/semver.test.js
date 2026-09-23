@@ -49,4 +49,35 @@ describe('compareSemver', () => {
     expect(compareSemver('2', '2.0')).toBe(0);
     expect(compareSemver('2', '2.0.0')).toBe(0);
   });
+
+  // Regression: Number("10-beta") is NaN, which `|| 0` turned into 0, so a
+  // prerelease-suffixed component compared as if it were 0. The npm `latest`
+  // dist-tag can carry such a version, and update-check/doctor compare it
+  // with no format validation.
+  it('reads the numeric core of a prerelease-suffixed component', () => {
+    expect(compareSemver('1.2.10-beta', '1.2.9')).toBe(1);
+    expect(compareSemver('1.2.9', '1.2.10-beta')).toBe(-1);
+    expect(compareSemver('1.9.10-beta', '1.9.2')).toBe(1);
+    expect(compareSemver('2.0.0-rc.1', '1.99.99')).toBe(1);
+  });
+
+  it('ranks a prerelease below the release it precedes', () => {
+    expect(compareSemver('1.3.0-beta.1', '1.3.0')).toBe(-1);
+    expect(compareSemver('1.3.0', '1.3.0-beta.1')).toBe(1);
+  });
+
+  // Documents a known gap, NOT desired behaviour: prerelease identity is not
+  // compared, so any two prereleases of the same core read as equal. SemVer
+  // §11 says beta < rc and rc.2 < rc.10. If you are reading this because you
+  // implemented that precedence and this test failed, the test is what's
+  // wrong — delete it.
+  it('does not order two prereleases of the same core (known limitation)', () => {
+    expect(compareSemver('1.3.0-beta.1', '1.3.0-rc.1')).toBe(0);
+    expect(compareSemver('1.3.0-rc.2', '1.3.0-rc.10')).toBe(0);
+  });
+
+  it('ignores build metadata', () => {
+    expect(compareSemver('1.2.3+build.7', '1.2.3')).toBe(0);
+    expect(compareSemver('1.2.4+sha', '1.2.3')).toBe(1);
+  });
 });
