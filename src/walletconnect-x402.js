@@ -165,7 +165,15 @@ export async function handleX402Payment(paymentRequirements) {
   }
 
   const { assertCumulativeSpendAllowed, recordPaymentAttempt } = await import('./x402-ledger.js');
-  const capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
+  let capCheck;
+  try {
+    capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
+  } catch (err) {
+    // Surface a [x402] stderr line before the error propagates, consistent
+    // with the local-wallet (x402.js) and Privy (privy.js) paths.
+    console.error(`[x402] ${err.message}`);
+    throw err;
+  }
   if (!capCheck.ok) {
     throw new NansenError(capCheck.reason, ErrorCode.PAYMENT_REQUIRED, 402);
   }

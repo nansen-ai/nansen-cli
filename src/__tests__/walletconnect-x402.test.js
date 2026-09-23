@@ -312,4 +312,18 @@ describe('handleX402Payment — cumulative cap enforcement', () => {
     const signCalls = wcExec.mock.calls.filter(c => c[1]?.[0] === 'sign-typed-data');
     expect(signCalls).toHaveLength(0);
   });
+
+  it('logs an [x402] line and re-throws when the cap check throws (corrupt/unreadable ledger)', async () => {
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC', network: 'eip155:8453', asset: '0xtoken', payTo: '0xrec', amountRaw: '10000' });
+    const ledgerError = Object.assign(new Error('x402 daily spend ledger is corrupt'), { failClosedX402: true });
+    vi.mocked(assertCumulativeSpendAllowed).mockImplementationOnce(() => { throw ledgerError; });
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(handleX402Payment(PAYMENT_REQUIREMENTS)).rejects.toBe(ledgerError);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringMatching(/^\[x402\] .*corrupt/));
+    errSpy.mockRestore();
+
+    const signCalls = wcExec.mock.calls.filter(c => c[1]?.[0] === 'sign-typed-data');
+    expect(signCalls).toHaveLength(0);
+  });
 });
