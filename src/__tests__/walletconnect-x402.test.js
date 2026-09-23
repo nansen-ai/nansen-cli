@@ -307,7 +307,12 @@ describe('handleX402Payment — cumulative cap enforcement', () => {
     evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC', network: 'eip155:8453', asset: '0xtoken', payTo: '0xrec', amountRaw: '10000' });
     vi.mocked(assertCumulativeSpendAllowed).mockReturnValueOnce({ ok: false, reason: 'Refusing to auto-pay: daily cap exceeded' });
 
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     await expect(handleX402Payment(PAYMENT_REQUIREMENTS)).rejects.toThrow(/daily cap exceeded/);
+    // The actionable cap reason must reach stderr: for x402-only users api.js
+    // rewrites the thrown message to a generic "No API key configured" note.
+    expect(errSpy).toHaveBeenCalledWith('[x402] Refusing to auto-pay: daily cap exceeded');
+    errSpy.mockRestore();
 
     const signCalls = wcExec.mock.calls.filter(c => c[1]?.[0] === 'sign-typed-data');
     expect(signCalls).toHaveLength(0);

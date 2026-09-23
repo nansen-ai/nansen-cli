@@ -175,6 +175,10 @@ export async function handleX402Payment(paymentRequirements) {
     throw err;
   }
   if (!capCheck.ok) {
+    // Emit the actionable cap reason to stderr before throwing: for x402-only
+    // users (no API key) api.js replaces the thrown message with a generic
+    // "No API key configured" note, so this is the user's only explanation.
+    console.error(`[x402] ${capCheck.reason}`);
     throw new NansenError(capCheck.reason, ErrorCode.PAYMENT_REQUIRED, 402);
   }
 

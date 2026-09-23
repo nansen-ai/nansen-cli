@@ -346,4 +346,21 @@ describe('NansenAPI._x402Retry — payment finalization', () => {
     await api._x402Retry('sig', null, null, 'https://api.nansen.ai/test', {}, {}, null, {});
     expect(finalizePaymentAttempt).not.toHaveBeenCalled();
   });
+
+  it('threads the response x-request-id into the audit finalization', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ ok: true }), headers: new Map([['x-request-id', 'req-xyz']]) });
+    const api = makeApi();
+    await api._x402Retry('sig', null, null, 'https://api.nansen.ai/test', {}, {}, null, { paymentId: 'pid-req' });
+    expect(finalizePaymentAttempt).toHaveBeenCalledWith('pid-req', expect.objectContaining({ status: 'accepted', requestId: 'req-xyz' }));
+  });
+
+  it('leaves requestId unset when the transport fails before any response', async () => {
+    mockFetch.mockRejectedValue(new TypeError('network down'));
+    const api = makeApi();
+    await expect(api._x402Retry('sig', null, null, 'https://api.nansen.ai/test', {}, {}, null, { paymentId: 'pid-req2' }))
+      .rejects.toMatchObject({ code: ErrorCode.PAYMENT_AMBIGUOUS });
+    const call = finalizePaymentAttempt.mock.calls.find(c => c[0] === 'pid-req2');
+    expect(call[1]).toMatchObject({ status: 'ambiguous' });
+    expect(call[1].requestId).toBeUndefined();
+  });
 });
