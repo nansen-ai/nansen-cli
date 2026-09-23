@@ -46,7 +46,7 @@ function validateGeneratedEntry(client, entry, apiKey = API_KEY) {
     if (JSON.stringify(Object.keys(entry).sort()) !== JSON.stringify(['args', 'command', 'env'])) fail('malformed MCP desktop entry');
     if (entry.command !== 'npx' || !Array.isArray(entry.args)) fail('malformed MCP desktop args');
     if (JSON.stringify(entry.env) !== JSON.stringify({ NANSEN_API_KEY: apiKey })
-      || entry.args.includes(apiKey)
+      || entry.args.some(arg => arg.includes(apiKey))
       || entry.args.includes('--allow-http')) {
       fail('malformed MCP credential placement');
     }
@@ -131,7 +131,7 @@ describe('buildServerEntry', () => {
         expect(() => validateGeneratedEntry(client, malformedPlaceholder)).toThrow(/placeholder/);
         const malformedHeader = { ...entry, args: [...entry.args.slice(0, 3), '--bad-header', entry.args[4]] };
         expect(() => validateGeneratedEntry(client, malformedHeader)).toThrow(/header/);
-        const leakedKey = { ...entry, args: [...entry.args, API_KEY] };
+        const leakedKey = { ...entry, args: [...entry.args, `--token=${API_KEY}`] };
         expect(() => validateGeneratedEntry(client, leakedKey)).toThrow(/credential placement/);
       } else {
         const malformedHeader = { ...entry, headers: { 'NANSEN-API-KEY': '' } };
@@ -143,6 +143,7 @@ describe('buildServerEntry', () => {
   });
 });
 
+// Pins onboarding commands to live constants to prevent README/generated-config drift.
 describe('MCP README onboarding contract', () => {
   it('keeps documented commands and bridge values aligned with generated entries', () => {
     const readme = fs.readFileSync(README_PATH, 'utf8');
