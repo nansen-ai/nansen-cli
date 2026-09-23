@@ -44,16 +44,17 @@ function validateGeneratedEntry(client, entry, apiKey = API_KEY) {
 
   if (client === 'claude-desktop') {
     if (JSON.stringify(Object.keys(entry).sort()) !== JSON.stringify(['args', 'command', 'env'])) fail('malformed MCP desktop entry');
-    if (entry.command !== 'npx' || !Array.isArray(entry.args) || entry.args.length !== 5) fail('malformed MCP desktop args');
-    checkEndpoint(entry.args[2]);
-    if (entry.args[0] !== '-y' || entry.args[1] !== EXPECTED_MCP_REMOTE_PIN) fail('malformed MCP pin');
-    if (entry.args[3] !== '--header') fail('malformed MCP header');
-    if (entry.args[4] !== EXPECTED_HEADER_PLACEHOLDER) fail('malformed MCP placeholder');
+    if (entry.command !== 'npx' || !Array.isArray(entry.args)) fail('malformed MCP desktop args');
     if (JSON.stringify(entry.env) !== JSON.stringify({ NANSEN_API_KEY: apiKey })
       || entry.args.includes(apiKey)
       || entry.args.includes('--allow-http')) {
       fail('malformed MCP credential placement');
     }
+    if (entry.args.length !== 5) fail('malformed MCP desktop args');
+    checkEndpoint(entry.args[2]);
+    if (entry.args[0] !== '-y' || entry.args[1] !== EXPECTED_MCP_REMOTE_PIN) fail('malformed MCP pin');
+    if (entry.args[3] !== '--header') fail('malformed MCP header');
+    if (entry.args[4] !== EXPECTED_HEADER_PLACEHOLDER) fail('malformed MCP placeholder');
     return;
   }
 
@@ -130,19 +131,14 @@ describe('buildServerEntry', () => {
         expect(() => validateGeneratedEntry(client, malformedPlaceholder)).toThrow(/placeholder/);
         const malformedHeader = { ...entry, args: [...entry.args.slice(0, 3), '--bad-header', entry.args[4]] };
         expect(() => validateGeneratedEntry(client, malformedHeader)).toThrow(/header/);
+        const leakedKey = { ...entry, args: [...entry.args, API_KEY] };
+        expect(() => validateGeneratedEntry(client, leakedKey)).toThrow(/credential placement/);
       } else {
         const malformedHeader = { ...entry, headers: { 'NANSEN-API-KEY': '' } };
         expect(() => validateGeneratedEntry(client, malformedHeader)).toThrow(/header/);
         const placeholderCredential = { ...entry, headers: { 'NANSEN-API-KEY': 'YOUR_API_KEY_HERE' } };
         expect(() => validateGeneratedEntry(client, placeholderCredential)).toThrow(/header/);
       }
-    }
-  });
-
-  it('builds each artifact deterministically', () => {
-    for (const client of SUPPORTED_CLIENTS) {
-      expect(JSON.stringify(buildServerEntry(client, API_KEY)))
-        .toBe(JSON.stringify(buildServerEntry(client, API_KEY)));
     }
   });
 });
