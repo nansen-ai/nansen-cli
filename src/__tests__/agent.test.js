@@ -545,6 +545,15 @@ describe('consumeSSEStream', () => {
     expect(result.text).toBe('Hello world');
   });
 
+  it('accepts data fields without the optional space after the colon', async () => {
+    const response = mockSSEResponse(
+      'data:{"type":"delta","text":"compact"}\n\ndata:{"type":"finish","conversation_id":"compact-id"}\n\ndata:[DONE]\n\n'
+    );
+    const result = await consumeSSEStream(response);
+    expect(result.text).toBe('compact');
+    expect(result.conversationId).toBe('compact-id');
+  });
+
   it('collects tool calls', async () => {
     const response = mockSSEResponse([
       'data: {"type":"tool_call","name":"token_search"}\n\n',

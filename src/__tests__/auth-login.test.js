@@ -154,7 +154,7 @@ describe('public CLI session error compatibility', () => {
   it.each([
     [401, 'unauthorized', 'UNAUTHORIZED'],
     [403, 'insufficient_credits', 'CREDITS_EXHAUSTED'],
-    [403, 'plan_upgrade_required', 'plan_upgrade_required'],
+    [403, 'plan_upgrade_required', 'PLAN_UPGRADE_REQUIRED'],
   ])('keeps key/session code parity for %s %s without reflecting session secrets', async (status, code, expected) => {
     const f = fixture(); const bundle = sessionFixture(); const a = await f.state.begin();
     await f.state.install(a, { bundle, baseUrl: bundle.audience }); await f.state.finish(a);

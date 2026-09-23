@@ -20,8 +20,10 @@ import {
   buildUsdClassTransferAction,
   l1Eip712,
   userSignedEip712,
+  validateTpsl,
 } from './hl-action.js';
 import { submitExchange } from './hl-client.js';
+import { hlApiUrl, hlNetwork } from './hl-env.js';
 import { trackPerpOrderCompleted } from './telemetry.js';
 import { resolveEvmWallet, resolvePrivateKey } from './wallet-signing.js';
 import { hashTypedData } from './x402-evm.js';
@@ -47,7 +49,31 @@ function signAgent(eip712, privateKeyHex) {
 // account) or feeds a signing decision (close sizes its order from positions,
 // and asset ids/szDecimals come from meta), so a hit inside the 5-minute TTL
 // would sign against data that has moved.
+// Every read below comes from the Nansen proxy, which serves Hyperliquid
+// MAINNET data — asset ids, szDecimals, positions, open orders, balances.
+// Signing and submission, in contrast, follow NANSEN_HL_API_URL: hlNetwork()
+// flips the L1 phantom-agent source and hyperliquidChain to Testnet and
+// hl-client posts to the testnet host. Pointing the CLI at the testnet
+// therefore signs mainnet asset indices into testnet orders (the two
+// universes are not guaranteed to share an ordering), shows mainnet positions
+// for a testnet account, and validates `close --side` against the wrong
+// network's position. Refuse rather than mix the two, the way bridge.js
+// refuses an action whose hyperliquidChain is not the network it targets.
+//
+// hlNetwork() only reports Testnet for a hyperliquid-testnet host, so a local
+// mock (the other documented use of NANSEN_HL_API_URL) is unaffected.
+function assertPerpNetworkSupported() {
+  const network = hlNetwork();
+  if (network !== 'Mainnet') {
+    throw new CommandError(
+      `Perp commands are mainnet-only: NANSEN_HL_API_URL points at ${hlApiUrl()} (${network}), but asset metadata, positions and balances come from the Nansen proxy, which serves mainnet data. Signing ${network} actions against mainnet asset ids could target a different instrument. Unset NANSEN_HL_API_URL to trade on mainnet.`,
+      'UNSUPPORTED_NETWORK',
+    );
+  }
+}
+
 async function perpRead(apiInstance, endpoint, params) {
+  assertPerpNetworkSupported();
   const qs = new URLSearchParams(params).toString();
   // Only append the query string when there is one; a paramless read like `meta`
   // would otherwise resolve to `/api/v1/perp/meta?` with a bare trailing `?`.
@@ -60,6 +86,9 @@ async function perpRead(apiInstance, endpoint, params) {
 // (missing wallet, wrong password) — callers that need it to build an action
 // re-check for null and abort at that point (see requireAsset).
 async function fetchAssetMeta(apiInstance, coin) {
+  // Before the try: a network mismatch is a configuration error the caller
+  // must see, not an availability problem to fail open on.
+  assertPerpNetworkSupported();
   try {
     const meta = await perpRead(apiInstance, 'meta', {});
     const asset = (meta.assets || []).find(a => String(a.name).toUpperCase() === coin);
@@ -107,6 +136,7 @@ const MAX_BUILDER_FEE_TENTHS_BP = 80;
 // gate. Fail closed — this endpoint shares availability with screening, so if
 // it's down we abort rather than trade without the builder code.
 async function fetchBuilderFee(apiInstance, walletAddress) {
+  assertPerpNetworkSupported();
   const qs = new URLSearchParams({ wallet_address: walletAddress }).toString();
   let status;
   try {
@@ -175,10 +205,8 @@ function resolveWalletAddress(walletName) {
 // response that doesn't cover every requested address all abort the trade
 // before signing, never trade through.
 
-// Exported for bridge.js, which needs the same fail-closed check before it signs
-// (its EVM deposit leg broadcasts straight to a public RPC, so no server-side
-// screen sits in that path). Worth lifting into its own module if a third caller
-// appears.
+// Shared with bridge.js and trading.js, whose direct signing/broadcast paths do
+// not have a server-side screen after this checkpoint.
 export async function screenOrThrow(apiInstance, addresses) {
   let result;
   try {
@@ -196,7 +224,9 @@ export async function screenOrThrow(apiInstance, addresses) {
   }
 
   const results = Array.isArray(result?.results) ? result.results : [];
-  const sanctioned = results.filter(r => r && r.sanctioned).map(r => r.address);
+  const sanctioned = results
+    .filter(r => r && r.sanctioned === true)
+    .map(r => r.address);
   if (sanctioned.length > 0) {
     throw new CommandError(
       `Wallet address is on the compliance blocklist and cannot trade: ${sanctioned.join(', ')}`,
@@ -204,10 +234,21 @@ export async function screenOrThrow(apiInstance, addresses) {
     );
   }
 
-  // A 200 that omitted a requested address is unverifiable — fail closed rather
-  // than assume the missing address is clean.
-  const screened = new Set(results.map(r => String(r.address).toLowerCase()));
-  const missing = addresses.filter(a => !screened.has(String(a).toLowerCase()));
+  // A 200 that omitted a requested address or did not return a boolean verdict
+  // is unverifiable — fail closed rather than assume the address is clean.
+  // EVM addresses are case-insensitive; base58 addresses (including Solana)
+  // are case-sensitive and must match exactly. Lowercasing every result here
+  // would let a verdict for a different Solana address satisfy the gate.
+  const addressKey = (address) => {
+    const value = String(address);
+    return /^0x[0-9a-f]{40}$/i.test(value) ? value.toLowerCase() : value;
+  };
+  const screened = new Set(
+    results
+      .filter(r => r && typeof r.sanctioned === 'boolean' && r.address != null)
+      .map(r => addressKey(r.address)),
+  );
+  const missing = addresses.filter(a => !screened.has(addressKey(a)));
   if (missing.length > 0) {
     throw new CommandError(
       `Compliance screening did not cover all addresses, so the trade was not submitted: ${missing.join(', ')}`,
@@ -334,6 +375,10 @@ function emitPerpOrderCompleted(telemetry, summary, walletAddress, submissionId,
 async function buildScreenSignSubmit(apiInstance, prepared, ctx) {
   const { action, nonce, eip712, size, price, coin, telemetry } = prepared;
   const { walletAddress, log } = ctx;
+
+  // Last gate before a signature: every action built above used proxy-sourced
+  // mainnet metadata.
+  assertPerpNetworkSupported();
 
   log('  Screening...');
   await screenOrThrow(apiInstance, [walletAddress]);
@@ -652,6 +697,13 @@ OPTIONS:
       const tp = options['take-profit'] !== undefined ? parsePositiveNumber(options['take-profit'], 'take-profit') : undefined;
       const sl = options['stop-loss'] !== undefined ? parsePositiveNumber(options['stop-loss'], 'stop-loss') : undefined;
       const isBuy = side === 'buy' || side === 'long';
+
+      // buildOrderAction re-checks this, but that call happens after the signing
+      // context is resolved and after ensureBuilderApproved has already signed
+      // and submitted the one-time builder-fee approval. A stop/take on the
+      // wrong side of entry would otherwise cost the user an on-chain approval
+      // and a password prompt for an order that was never valid.
+      validateTpsl({ isBuy, price, takeProfit: tp ?? null, stopLoss: sl ?? null });
 
       // One meta read serves both the advisory precision warning and the
       // required build metadata. Fetched fail-open so a meta outage doesn't

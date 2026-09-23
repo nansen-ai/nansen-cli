@@ -185,11 +185,9 @@ describe('telemetry tracking for all first-level commands', () => {
     expect(trackSucceeded.mock.calls[0][0].command).toBe('schema');
   });
 
-  it('cache clear', async () => {
+  it('cache clear stays offline and does not emit telemetry', async () => {
     await runCLI(['cache', 'clear'], baseDeps());
-    expect(wasTracked()).toBe(1);
-    expect(trackSucceeded).toHaveBeenCalledOnce();
-    expect(trackSucceeded.mock.calls[0][0].command).toBe('cache clear');
+    expect(wasTracked()).toBe(0);
   });
 
   it('changelog', async () => {
@@ -378,8 +376,8 @@ describe('telemetry tracking for all first-level commands', () => {
       // research sub-categories (tested via both `research <cat>` and deprecated alias)
       'smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points', 'prediction-market',
       'research',
-      // operational ('auth' and 'doctor --offline' are tested as deliberately
-      // untracked — the offline contract covers telemetry)
+      // operational ('auth', 'doctor --offline', and cache are tested as
+      // deliberately untracked — the offline contract covers telemetry)
       'account', 'auth', 'doctor', 'login', 'logout', 'schema', 'cache', 'changelog',
       'web', 'mcp',
       // wallet, trading, bridge & perp

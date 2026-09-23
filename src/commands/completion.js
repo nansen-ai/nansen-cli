@@ -28,10 +28,6 @@ export const UNSCHEMA_COMMANDS = {
     description: 'Print the JSON schema for every command',
     options: { full: { type: 'boolean', description: 'Verbose schema instead of the compact listing' } },
   },
-  cache: {
-    description: 'API response cache maintenance',
-    subcommands: { clear: { description: 'Clear all cached responses' } },
-  },
   changelog: {
     description: 'Show release history',
     options: { since: { type: 'string', description: 'Only show versions at or above this one' } },

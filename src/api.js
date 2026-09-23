@@ -11,7 +11,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { EVM_CHAINS } from './chain-ids.js';
 import { getAnonymousId, TELEMETRY_DISABLED } from './telemetry.js';
-import { readResponseMeta } from './response-meta.js';
+import { readResponseMeta, stringHeader } from './response-meta.js';
+import { trace, traceRequest, traceResponse, traceError, traceRetry, traceCacheHit } from './debug.js';
 
 /**
  * Key for the credit/rate-limit metadata attached to a successful response.
@@ -53,6 +54,8 @@ export const ErrorCode = {
   UNAUTHORIZED: 'UNAUTHORIZED',           // 401 - Invalid or missing API key
   FORBIDDEN: 'FORBIDDEN',                 // 403 - Valid key but insufficient permissions
   CREDITS_EXHAUSTED: 'CREDITS_EXHAUSTED', // 403 - Insufficient API credits
+  PLAN_UPGRADE_REQUIRED: 'PLAN_UPGRADE_REQUIRED', // 403 - Feature needs a higher subscription plan
+  GEO_BLOCKED: 'GEO_BLOCKED',             // 451 - Not available in the caller's region
   PAYMENT_REQUIRED: 'PAYMENT_REQUIRED',   // 402 - x402 payment required
   
   // Rate Limiting
@@ -65,11 +68,15 @@ export const ErrorCode = {
   INVALID_PARAMS: 'INVALID_PARAMS',       // Generic parameter validation error
   MISSING_PARAM: 'MISSING_PARAM',         // Required parameter not provided
   UNSUPPORTED_FILTER: 'UNSUPPORTED_FILTER', // Filter not supported for this token/chain
+  QUERY_TOO_LARGE: 'QUERY_TOO_LARGE',     // Query would return too much data - narrow it; retrying will not help
+  PAYLOAD_TOO_LARGE: 'PAYLOAD_TOO_LARGE', // 413 - Request body exceeds the size limit
   
   // Resource Errors
   NOT_FOUND: 'NOT_FOUND',                 // 404 - Resource not found
   TOKEN_NOT_FOUND: 'TOKEN_NOT_FOUND',     // Token doesn't exist
   ADDRESS_NOT_FOUND: 'ADDRESS_NOT_FOUND', // Address has no data
+  METHOD_NOT_ALLOWED: 'METHOD_NOT_ALLOWED', // 405 - HTTP method not allowed for this endpoint
+  CONFLICT: 'CONFLICT',                   // 409 - Request conflicts with the current state
   
   // Server Errors
   SERVER_ERROR: 'SERVER_ERROR',           // 500+ - Nansen API internal error
@@ -130,16 +137,46 @@ export class NansenError extends Error {
 }
 
 /**
- * Stable snake_case codes the server sends in error bodies, mapped to the
+ * Stable snake_case codes the API sends in error bodies, mapped to the
  * ErrorCode values downstream consumers already key on.
+ *
+ * Every code documented at
+ * https://docs.nansen.ai/getting-started/error-handling has an entry here, so
+ * friendly messages and agent-facing hints engage for each of them. A code
+ * missing from this map passes through statusToErrorCode verbatim; keep the
+ * table in step with that page when the API adds a code.
  */
-const SERVER_CODE_MAP = {
-  rate_limit_exceeded: ErrorCode.RATE_LIMITED,
-  insufficient_credits: ErrorCode.CREDITS_EXHAUSTED,
-  payment_required: ErrorCode.PAYMENT_REQUIRED,
-  unauthorized: ErrorCode.UNAUTHORIZED,
+export const SERVER_CODE_MAP = {
+  // Request validation (400 / 422)
+  missing_field: ErrorCode.MISSING_PARAM,
+  unknown_field: ErrorCode.INVALID_PARAMS,
+  invalid_field_value: ErrorCode.INVALID_PARAMS,
+  invalid_address_format: ErrorCode.INVALID_ADDRESS,
+  invalid_date_format: ErrorCode.INVALID_PARAMS,
+  invalid_date_range: ErrorCode.INVALID_PARAMS,
+  mutually_exclusive_fields: ErrorCode.INVALID_PARAMS,
+  value_out_of_range: ErrorCode.INVALID_PARAMS,
+  too_many_items: ErrorCode.INVALID_PARAMS,
+  // Authentication, authorization, quota
+  unauthenticated: ErrorCode.UNAUTHORIZED,
   forbidden: ErrorCode.FORBIDDEN,
+  geo_blocked: ErrorCode.GEO_BLOCKED,
+  plan_upgrade_required: ErrorCode.PLAN_UPGRADE_REQUIRED,
+  insufficient_credits: ErrorCode.CREDITS_EXHAUSTED,
+  rate_limit_exceeded: ErrorCode.RATE_LIMITED,
+  // Resource and request shape
   not_found: ErrorCode.NOT_FOUND,
+  method_not_allowed: ErrorCode.METHOD_NOT_ALLOWED,
+  conflict: ErrorCode.CONFLICT,
+  payload_too_large: ErrorCode.PAYLOAD_TOO_LARGE,
+  // Server side
+  query_timeout: ErrorCode.TIMEOUT,
+  query_too_large: ErrorCode.QUERY_TOO_LARGE,
+  upstream_unavailable: ErrorCode.SERVICE_UNAVAILABLE,
+  internal_error: ErrorCode.SERVER_ERROR,
+  // Aliases from earlier error-body shapes, kept so older responses still map.
+  unauthorized: ErrorCode.UNAUTHORIZED,
+  payment_required: ErrorCode.PAYMENT_REQUIRED,
   unsupported_filter: ErrorCode.UNSUPPORTED_FILTER,
   validation_error: ErrorCode.INVALID_PARAMS,
   invalid_params: ErrorCode.INVALID_PARAMS,
@@ -147,11 +184,11 @@ const SERVER_CODE_MAP = {
 
 export function browserSessionError(status, data = {}) {
   const raw = data?.error_code ?? data?.code ?? data?.detail?.error_code ?? data?.detail?.code;
-  const category = status === 403 ? (raw === 'insufficient_credits' ? ErrorCode.CREDITS_EXHAUSTED : raw === 'plan_upgrade_required' ? 'plan_upgrade_required' : undefined) : undefined;
+  const category = status === 403 ? (raw === 'insufficient_credits' ? ErrorCode.CREDITS_EXHAUSTED : raw === 'plan_upgrade_required' ? ErrorCode.PLAN_UPGRADE_REQUIRED : undefined) : undefined;
   const code = category || statusToErrorCode(status);
   const message = code === ErrorCode.CREDITS_EXHAUSTED
     ? 'Insufficient API credits for the selected account. Top up at https://app.nansen.ai/api?tab=api. No payment was attempted.'
-    : code === 'plan_upgrade_required' ? 'The selected account plan does not include this endpoint. Check upgrade options at https://app.nansen.ai/api?tab=api.'
+    : code === ErrorCode.PLAN_UPGRADE_REQUIRED ? 'The selected account plan does not include this endpoint. Check upgrade options at https://app.nansen.ai/api?tab=api.'
       : status === 401 ? 'The selected browser session was rejected. Run: nansen login.'
         : status === 503 ? 'API authentication is temporarily unavailable. Retry later.'
           : `API request failed (${status}). The selected account was not changed and no payment was attempted.`;
@@ -205,8 +242,18 @@ export function statusToErrorCode(status, data = {}) {
       if (messageLower.includes('token')) return ErrorCode.TOKEN_NOT_FOUND;
       if (messageLower.includes('address') || messageLower.includes('wallet')) return ErrorCode.ADDRESS_NOT_FOUND;
       return ErrorCode.NOT_FOUND;
+    case 405:
+      return ErrorCode.METHOD_NOT_ALLOWED;
+    case 408:
+      return ErrorCode.TIMEOUT;
+    case 409:
+      return ErrorCode.CONFLICT;
+    case 413:
+      return ErrorCode.PAYLOAD_TOO_LARGE;
     case 429:
       return ErrorCode.RATE_LIMITED;
+    case 451:
+      return ErrorCode.GEO_BLOCKED;
     case 500:
     case 502:
       return ErrorCode.SERVER_ERROR;
@@ -243,7 +290,8 @@ export function getConfigFile() {
 // ============= Response Cache =============
 
 const CACHE_DIR = path.join(CONFIG_DIR, 'cache');
-const DEFAULT_CACHE_TTL = 300; // 5 minutes
+// Exported so the cache inspector reports the same default TTL the client applies.
+export const DEFAULT_CACHE_TTL = 300; // 5 minutes
 
 import crypto from 'crypto';
 
@@ -304,8 +352,8 @@ export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL
     const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
     const age = (Date.now() - cached.timestamp) / 1000;
     
-    if (ttlSeconds <= 0 || age > ttlSeconds) {
-      // Cache expired or TTL is 0, delete it
+    if (!Number.isFinite(cached.timestamp) || ttlSeconds <= 0 || age > ttlSeconds) {
+      // Delete entries with invalid timestamps, expired entries, or disabled entries.
       fs.unlinkSync(cacheFile);
       return null;
     }
@@ -398,9 +446,8 @@ export const COUNTERPARTIES_BATCH_MAX_DAYS = 90;
  * validates `chain` against. Anything outside it is a 422.
  *
  * Deliberately NOT derived from EVM_CHAINS. That list is this CLI's own
- * address-format/ENS set and disagrees with the endpoint in both directions: it
- * carries `scroll` and `ronin`, which the endpoint rejects, and omits every
- * non-EVM chain the endpoint does serve (bitcoin, tron, sui, ton, near, ...).
+ * address-format/ENS set and omits every non-EVM chain the endpoint does serve
+ * (bitcoin, tron, sui, ton, near, ...).
  * Mirrors ADDRESS_COUNTERPARTIES_BATCH_CHAINS on the MCP side (nansen-ra#3550),
  * which additionally drops `arc` and `starknet`; the spec enum is the contract
  * here, so they stay in.
@@ -553,8 +600,34 @@ const DEFAULT_RETRY_OPTIONS = {
   maxRetries: 3,
   baseDelayMs: 1000,
   maxDelayMs: 30000,
+  // Longest server Retry-After we are willing to wait out. A longer one is not
+  // retried at all: retrying earlier than the server asked only burns the
+  // remaining attempts on more 429s.
+  maxRetryAfterMs: 120000,
   retryOnStatus: [429, 500, 502, 503, 504],
 };
+
+/**
+ * Read a response body once. A fetch body can only be consumed once, and
+ * response.json() consumes it even when parsing fails, so a body the server
+ * declares as non-JSON (gateway HTML, plain text) is read as text first. It
+ * is still parsed as JSON when it turns out to be JSON; otherwise the thrown
+ * error carries the text so the caller can report it.
+ */
+async function readBody(response) {
+  const contentType = stringHeader(response, 'content-type');
+  if (contentType && !/json/i.test(contentType)) {
+    const rawBody = await response.text();
+    try {
+      return JSON.parse(rawBody);
+    } catch (_err) {
+      const error = new Error('Response body is not JSON');
+      error.rawBody = rawBody;
+      throw error;
+    }
+  }
+  return response.json();
+}
 
 /**
  * Sleep for a given number of milliseconds
@@ -567,10 +640,12 @@ export function sleep(ms) {
  * Calculate delay with exponential backoff and jitter
  */
 function calculateBackoff(attempt, baseDelayMs, maxDelayMs, retryAfterMs = null) {
-  // If server specifies retry-after, use it (with some jitter)
-  if (retryAfterMs) {
+  // If server specifies retry-after, wait at least that long (plus some jitter).
+  // maxDelayMs only bounds the local exponential backoff; the caller decides
+  // whether a Retry-After is too long to wait for at all.
+  if (retryAfterMs !== null && retryAfterMs !== undefined) {
     const jitter = Math.random() * 1000;
-    return Math.min(retryAfterMs + jitter, maxDelayMs);
+    return retryAfterMs + jitter;
   }
   
   // Exponential backoff: base * 2^attempt + random jitter
@@ -598,6 +673,20 @@ function parseRetryAfter(headerValue) {
   }
   
   return null;
+}
+
+/**
+ * Server-side request id for a response, or null when it carries none.
+ * Read straight off the header so the debug trace can name the id on every
+ * attempt without paying for a full metadata parse. Tolerates any header bag
+ * with a .get() — a real Headers, or a Map in tests.
+ */
+function requestIdOf(response) {
+  try {
+    return response?.headers?.get?.('x-request-id') ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -634,6 +723,16 @@ export class NansenAPI {
      * low-credit warning wants.
      */
     this.lastResponseMeta = null;
+    /** Live response objects carry RESPONSE_META, allowing request-local attribution. */
+    this.responseMetadataOnPayload = true;
+    /**
+     * Command-level aggregate populated only by the auto-pagination wrapper.
+     * lastResponseMeta above deliberately remains the metadata for the final
+     * individual response.
+     */
+    this.paginatedResponseMeta = null;
+    /** API path paired with paginatedResponseMeta for fallback cost estimates. */
+    this.paginatedEndpoint = null;
     /** API path of the most recent request(), for pairing lastResponseMeta with a cost estimate. */
     this.lastEndpoint = null;
     /**
@@ -700,6 +799,9 @@ export class NansenAPI {
     const method = options.method || 'POST';
     const isGet = method === 'GET';
     let paidResponse;
+    const startedAt = Date.now();
+    // The signature itself is never traced — only that a paid retry went out.
+    traceRequest({ method, url, attempt: 1, payment: 'x402' });
     try {
       paidResponse = await fetch(url, {
         method,
@@ -716,6 +818,7 @@ export class NansenAPI {
         ...(!isGet && method !== 'DELETE' && { body: JSON.stringify(NansenAPI.cleanBody(body)) }),
       });
     } catch (err) {
+      traceError({ method, url, durationMs: Date.now() - startedAt, attempt: 1, error: err.message });
       // The signature was already on the wire when the connection failed —
       // the server may have received and settled it before we lost the
       // response. Fail closed rather than let the caller sign and send a
@@ -725,6 +828,17 @@ export class NansenAPI {
         ErrorCode.PAYMENT_AMBIGUOUS,
       );
     }
+    // fetch resolves when response headers are available, before body parsing;
+    // duration_ms therefore reports time-to-headers (TTFB), not full download.
+    traceResponse({
+      method,
+      url,
+      status: paidResponse.status,
+      durationMs: Date.now() - startedAt,
+      requestId: requestIdOf(paidResponse),
+      attempt: 1,
+      payment: 'x402',
+    });
     if (!paidResponse.ok) {
       // A 5xx doesn't prove the payment was rejected — the server could have
       // processed it before failing to respond. Only a readable non-5xx
@@ -781,7 +895,7 @@ export class NansenAPI {
     const credentialHeaders = await this.requestCredentials(extraHeaders);
     const mayAutoPay = this.allowPayment && this.selection.kind === 'anonymous' && !Object.keys(extraHeaders).some(k => ['apikey', 'authorization'].includes(k.toLowerCase()));
     const url = `${this.baseUrl}${endpoint}`;
-    const { maxRetries, baseDelayMs, maxDelayMs, retryOnStatus } = this.retryOptions;
+    const { maxRetries, baseDelayMs, maxDelayMs, maxRetryAfterMs, retryOnStatus } = this.retryOptions;
     const shouldRetry = options.retry !== false; // Allow disabling retry per-request
     
     // Check cache first (if enabled and not bypassed)
@@ -804,6 +918,7 @@ export class NansenAPI {
       const cached = getCachedResponse(endpoint, body, cacheTtl, cacheContext);
       if (cached) {
         this.servedFromCache = true;
+        traceCacheHit({ method, url });
         return cached;
       }
     }
@@ -811,8 +926,14 @@ export class NansenAPI {
 
     let lastError;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const maxAttempts = (shouldRetry ? maxRetries : 0) + 1;
+
+    // Bound the loop by the displayed attempt count so retry:false can never
+    // produce a trace such as attempt=2/1, even if a future branch continues.
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       let response;
+      const startedAt = Date.now();
+      traceRequest({ method, url, attempt: attempt + 1, maxAttempts });
       try {
         const isGet = method === 'GET';
         response = await fetch(url, {
@@ -831,41 +952,62 @@ export class NansenAPI {
         });
       } catch (err) {
         // Network-level errors - retry these too
+        traceError({ method, url, durationMs: Date.now() - startedAt, attempt: attempt + 1, error: err.message });
         lastError = new NansenError(
           this.selection.kind === 'session' ? 'API request failed. Check your connection and retry.' : `Network error: ${err.message}`,
           ErrorCode.NETWORK_ERROR,
           null,
           { ...(this.selection.kind !== 'session' && { originalError: err.message }), attempt: attempt + 1 }
         );
-        
+
         if (shouldRetry && attempt < maxRetries) {
           const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs);
+          traceRetry({ method, url, attempt: attempt + 1, reason: 'network-error', delayMs });
           await sleep(delayMs);
           continue;
         }
         throw lastError;
       }
 
+      // Keep response timing independent of body size: this is elapsed time to
+      // response headers (TTFB), before readBody downloads/parses the payload.
+      traceResponse({
+        method,
+        url,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+        requestId: requestIdOf(response),
+        attempt: attempt + 1,
+      });
+
       let data;
       try {
-        data = await response.json();
-      } catch (_err) {
+        data = await readBody(response);
+      } catch (err) {
         // Non-JSON response (rare, usually server errors)
         const meta = this.selection.kind === 'session' ? browserSessionResponseMeta(response) : readResponseMeta(response);
         this.lastResponseMeta = meta;
+        // readBody already holds the text when the server declared a non-JSON
+        // body; otherwise try to read it now (null once json() consumed it).
+        const rawBody = err?.rawBody ?? await response.text().catch(() => null);
+        const retryAfterMs = parseRetryAfter(stringHeader(response, 'retry-after'));
         const error = new NansenError(
           `Invalid response from API (status ${response.status})`,
-          response.status >= 500 ? ErrorCode.SERVER_ERROR : ErrorCode.UNKNOWN,
+          statusToErrorCode(response.status, {}),
           response.status,
           {
-            ...(this.selection.kind !== 'session' && { body: await response.text().catch(() => null) }),
+            ...(this.selection.kind !== 'session' && { body: rawBody }),
             attempt: attempt + 1,
+            retryAfterMs,
             ...(meta?.requestId && { requestId: meta.requestId })
           }
         );
         
-        if (shouldRetry && attempt < maxRetries && response.status >= 500) {
-          const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs);
+        // Same retry policy as a JSON error body: a rate limiter or gateway
+        // that answers in plain text or HTML is still a 429/5xx.
+        if (shouldRetry && attempt < maxRetries && retryOnStatus.includes(response.status)) {
+          const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs, retryAfterMs);
+          traceRetry({ method, url, status: response.status, attempt: attempt + 1, reason: 'unparseable-response', delayMs, retryAfterMs });
           await sleep(delayMs);
           lastError = error;
           continue;
@@ -916,7 +1058,7 @@ export class NansenAPI {
                 defaultWalletProvider = wallet.provider || 'local';
               }
             } catch (err) {
-              if (process.env.DEBUG) console.error(`[x402] Failed to detect wallet provider: ${err.message}`);
+              trace('x402.wallet_provider_lookup_failed', { error: err.message });
             }
 
             if (defaultWalletProvider === 'privy') {
@@ -1015,9 +1157,27 @@ export class NansenAPI {
           ...(meta?.rateLimit && { rateLimit: meta.rateLimit })
         });
         
-        // Retry on specific status codes
-        if (shouldRetry && attempt < maxRetries && retryOnStatus.includes(response.status)) {
-          const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs, retryAfterMs);
+        // Retry on specific status codes. A 429 Retry-After is binding: retrying
+        // earlier only burns attempts on more 429s, so wait it out in full or,
+        // if it is longer than we are willing to block, give up right away (the
+        // error already carries retryAfterMs so the caller can come back later).
+        // A Retry-After on a 5xx is only advisory and keeps the old maxDelayMs cap.
+        const isRateLimit = response.status === 429;
+        if (shouldRetry && attempt < maxRetries && retryOnStatus.includes(response.status)
+          && !(isRateLimit && retryAfterMs !== null && retryAfterMs > maxRetryAfterMs)) {
+          const serverDelayMs = retryAfterMs === null || isRateLimit
+            ? retryAfterMs
+            : Math.min(retryAfterMs, maxDelayMs);
+          const delayMs = calculateBackoff(attempt, baseDelayMs, maxDelayMs, serverDelayMs);
+          traceRetry({
+            method,
+            url,
+            status: response.status,
+            attempt: attempt + 1,
+            reason: retryAfterMs ? 'retry-after' : 'retryable-status',
+            delayMs,
+            retryAfterMs,
+          });
           await sleep(delayMs);
           continue;
         }
@@ -1156,13 +1316,13 @@ export class NansenAPI {
   }
 
   async addressLabels(params = {}) {
-    const { address, chain = 'ethereum', pagination = { page: 1, per_page: 100 } } = params;
+    const { address, chain = 'ethereum', pagination = { page: 1, per_page: 100 }, requestOptions } = params;
     if (address) requireValidAddress(address, chain);
     return this.request('/api/v1/profiler/address/labels', {
       address,
       chain,
       pagination
-    });
+    }, requestOptions);
   }
 
   async addressPremiumLabels(params = {}) {
@@ -1190,7 +1350,7 @@ export class NansenAPI {
   }
 
   async addressPnl(params = {}) {
-    const { address, chain = 'ethereum', date, days = 30, filters = {}, orderBy, pagination } = params;
+    const { address, chain = 'ethereum', date, days = 30, filters = {}, orderBy, pagination, requestOptions } = params;
     if (address) requireValidAddress(address, chain);
     const dateRange = date || buildDateRange(days);
     return this.request('/api/v1/profiler/address/pnl', {
@@ -1200,7 +1360,7 @@ export class NansenAPI {
       filters,
       order_by: orderBy,
       pagination
-    });
+    }, requestOptions);
   }
 
   async entitySearch(params = {}) {
@@ -1289,7 +1449,7 @@ export class NansenAPI {
   }
 
   async addressCounterparties(params = {}) {
-    const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30 } = params;
+    const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30, requestOptions } = params;
     if (address) requireValidAddress(address, chain);
     return this.request('/api/v1/profiler/address/counterparties', {
       address,
@@ -1298,7 +1458,7 @@ export class NansenAPI {
       filters,
       order_by: orderBy,
       pagination
-    });
+    }, requestOptions);
   }
 
   /**
@@ -2023,7 +2183,10 @@ export class NansenAPI {
   }
 
   async alertsUpdate(params = {}) {
-    return this.request('/api/v1/smart-alert', params, { method: 'PATCH', cache: false });
+    // Same hazard as alertsCreate: an update that sets channels makes the
+    // server re-send the channel welcome message, so a lost response after a
+    // committed update must not resend the PATCH through the retry loop.
+    return this.request('/api/v1/smart-alert', params, { method: 'PATCH', cache: false, retry: false });
   }
 
   async alertsToggle(params = {}) {

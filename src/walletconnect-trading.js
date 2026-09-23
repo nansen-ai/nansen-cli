@@ -15,24 +15,45 @@ import { encodeApproveCalldata } from './trade-validation.js';
 const SOLANA_MAINNET_CHAIN = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
 
 /**
- * Extract the first JSON line from walletconnect CLI output.
- * The CLI may print status messages before the JSON result.
+ * Extract the first JSON object from walletconnect CLI output.
+ * The CLI may print status messages before the JSON result, and may
+ * pretty-print the result across several lines. Shared with the x402
+ * payment path so both read the CLI's output the same way.
  */
-function parseWcJson(output) {
+export function parseWcJson(output) {
   const lines = output.split('\n');
   const startIdx = lines.findIndex(l => l.trimStart().startsWith('{'));
   if (startIdx === -1) throw new Error('No JSON output from walletconnect');
 
-  // Handle multi-line JSON: collect lines until braces balance
-  let braces = 0;
+  // Handle multi-line JSON: collect lines until braces balance. A brace
+  // inside a string value ("... retried } ok") is not structural, so track
+  // string and escape state while scanning — counting it would end the object
+  // early and fail to parse a perfectly valid result.
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
   const jsonLines = [];
   for (let i = startIdx; i < lines.length; i++) {
     jsonLines.push(lines[i]);
     for (const ch of lines[i]) {
-      if (ch === '{') braces++;
-      else if (ch === '}') braces--;
+      if (escaped) {
+        escaped = false;
+      } else if (inString) {
+        if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+      } else if (ch === '"') {
+        inString = true;
+      } else if (ch === '{') {
+        depth++;
+      } else if (ch === '}') {
+        depth--;
+      }
     }
-    if (braces === 0) break;
+    // A JSON string cannot contain a raw newline, so any unterminated quote is
+    // a line-local anomaly rather than a string continuing onto the next line.
+    inString = false;
+    escaped = false;
+    if (depth === 0) break;
   }
   return JSON.parse(jsonLines.join('\n'));
 }

@@ -173,6 +173,56 @@ describe('bridge quote --amount-unit (M2)', () => {
     expect(msgs.some((m) => /floored 200000105 → 200000100 base units/.test(m))).toBe(true);
   });
 
+  it('rejects a Base -> Hyperliquid deposit with a non-USDC symbol before the API request', async () => {
+    const cmds = buildBridgeCommands({ log: () => {} });
+    const api = fakeApi();
+    await expect(
+      cmds.quote([], api, {}, {
+        'from-chain': 'base', 'to-chain': 'hyperliquid',
+        'from-token': 'ETH', amount: '1000000000000000000', wallet: 'w',
+      }),
+    ).rejects.toThrow(/USDC only/);
+    expect(api.captured.params).toBeUndefined();
+  });
+
+  it('rejects a Base -> Hyperliquid deposit with a random ERC-20 address before the API request', async () => {
+    const cmds = buildBridgeCommands({ log: () => {} });
+    const api = fakeApi();
+    await expect(
+      cmds.quote([], api, {}, {
+        'from-chain': 'base', 'to-chain': 'hyperliquid',
+        'from-token': '0x' + '11'.repeat(20), amount: '1000000', wallet: 'w',
+      }),
+    ).rejects.toThrow(/USDC only/);
+    expect(api.captured.params).toBeUndefined();
+  });
+
+  it('still accepts a Base -> Hyperliquid deposit with USDC', async () => {
+    const cmds = buildBridgeCommands({ log: () => {} });
+    const api = fakeApi();
+    await cmds.quote([], api, {}, {
+      'from-chain': 'base', 'to-chain': 'hyperliquid',
+      'from-token': 'USDC', amount: '5000000', wallet: 'w',
+    });
+    expect(api.captured.params.origin_chain).toBe('base');
+  });
+
+  it('rejects non-USDC origin with INVALID_INPUT code', async () => {
+    const cmds = buildBridgeCommands({ log: () => {} });
+    const api = fakeApi();
+    let err;
+    try {
+      await cmds.quote([], api, {}, {
+        'from-chain': 'base', 'to-chain': 'hyperliquid',
+        'from-token': 'ETH', amount: '1000000000000000000', wallet: 'w',
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err.code).toBe('INVALID_INPUT');
+  });
+
   it('rejects an unknown --amount-unit instead of silently using base units', async () => {
     const cmds = buildBridgeCommands({ log: () => {} });
     const api = fakeApi();
