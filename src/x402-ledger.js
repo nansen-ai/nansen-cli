@@ -214,7 +214,11 @@ export function recordPaymentAttempt(entry) {
     appendAuditLine(record);
   } catch { /* best-effort audit */ }
 
-  if (entry.amountUsd !== undefined) pendingAmounts.set(id, entry.amountUsd);
+  // Capture the day the payment was recorded (right after the cap check) so the
+  // eventual ledger increment is attributed to that UTC day, not the day the
+  // response happens to land on. Finalization can arrive seconds later, across a
+  // midnight boundary, and must count against the day the guard authorized.
+  if (entry.amountUsd !== undefined) pendingAmounts.set(id, { amountUsd: entry.amountUsd, recordedAt: new Date() });
   return id;
 }
 
@@ -229,10 +233,11 @@ export function finalizePaymentAttempt(id, patch) {
   } catch { /* best-effort audit */ }
 
   if (patch.status === 'accepted' || patch.status === 'ambiguous') {
-    const amountUsd = pendingAmounts.get(id);
-    if (amountUsd !== undefined) {
+    const pending = pendingAmounts.get(id);
+    if (pending !== undefined) {
+      const { amountUsd, recordedAt } = pending;
       try {
-        incrementDailySpend(amountUsd);
+        incrementDailySpend(amountUsd, recordedAt);
         // Only advance the in-memory session total once the durable daily file
         // has actually been written. If the write failed (ENOSPC, permissions,
         // corrupt ledger), the daily total is unchanged; advancing session spend

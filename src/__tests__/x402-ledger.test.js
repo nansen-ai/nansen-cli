@@ -295,6 +295,32 @@ describe('fail-closed edge cases', () => {
     }
   });
 
+  it('attributes spend to the day the payment was recorded, not the day it finalizes', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '10.00';
+    const { recordPaymentAttempt, finalizePaymentAttempt, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    vi.useFakeTimers();
+    try {
+      // Record just before UTC midnight on day 1.
+      vi.setSystemTime(new Date('2026-03-01T23:59:55Z'));
+      const id = recordPaymentAttempt({ provider: 'local', amountUsd: 0.5, network: 'eip155:8453', asset: '0xt', symbol: 'USDC', amountRaw: '500000', payTo: '0xr', requestUrl: 'https://api.nansen.ai/test' });
+
+      // Finalize just after midnight, now on day 2.
+      vi.setSystemTime(new Date('2026-03-02T00:00:05Z'));
+      finalizePaymentAttempt(id, { status: 'accepted' });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
+    const files = fs.readdirSync(ledgerDir).filter((n) => n.startsWith('spend-'));
+    // Spend lands on day 1 (record/authorization day), not day 2.
+    expect(files).toEqual(['spend-2026-03-01.json']);
+    const stored = JSON.parse(fs.readFileSync(path.join(ledgerDir, files[0]), 'utf8'));
+    expect(stored.totalUsdMicros).toBe('500000');
+  });
+
   it('getDailySpendState throws a typed X402LedgerError on a corrupt ledger', async () => {
     const { getDailySpendState, X402LedgerError } = await import('../x402-ledger.js');
     const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
