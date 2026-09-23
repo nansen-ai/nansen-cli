@@ -87,6 +87,19 @@ describe('Package Integrity', () => {
     const failed = invoke(['--import', brokenPrompt, postinstall], { NANSEN_API_KEY: 'synthetic-key' });
     expect(failed.status).toBe(0); expect(failed.stdout).toBe('');
     expect(failed.stderr).toContain('API key is configured'); expect(failed.stderr).not.toContain('synthetic-onboarding-failure');
+    // Missing or corrupt optional onboarding dependencies must not fail installation.
+    const resolverPath = join(packageRoot, 'src/auth-credentials.js');
+    const resolverSource = readFileSync(resolverPath);
+    try {
+      for (const corruptSource of [null, 'export const = ;']) {
+        if (corruptSource === null) rmSync(resolverPath);
+        else writeFileSync(resolverPath, corruptSource);
+        const guarded = invoke(['--import', brokenPrompt, postinstall]);
+        expect(guarded.status).toBe(0); expect(guarded.stdout).toBe('');
+        expect(guarded.stderr).toContain('Run: nansen auth status');
+        expect(guarded.stderr).not.toMatch(/LOCAL_FETCH_CAPTURE|Running:|synthetic-onboarding-failure|SyntaxError|ERR_MODULE_NOT_FOUND/);
+      }
+    } finally { writeFileSync(resolverPath, resolverSource); }
     const recovery = readFileSync(join(packageRoot, 'docs/browser-login.md'), 'utf8');
     expect(recovery).toContain('## Offline recovery without native locking');
     expect(recovery).toContain('v2');

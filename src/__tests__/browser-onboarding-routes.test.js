@@ -88,7 +88,7 @@ describe('published skill commands and account permission parity', () => {
     assertSkillScope(examples, skillDocs);
     for (const text of Object.values(skillDocs)) expect(text).not.toContain('Fresh browser login does not grant agent access');
   });
-  it.each(['wallet create', 'trade quote', 'agent "interpret"'])('rejects an unclassified new workflow: %s', command => {
+  it.each(['wallet create', 'trade quote', 'agent "interpret"'])('rejects workflow guidance without required authentication metadata: %s', command => {
     expect(() => assertSkillScope(examples, { ...skillDocs, 'nansen-new': `Run nansen ${command}` })).toThrow();
   });
   it('rejects untraced research, unknown families and mandatory-key metadata', () => {

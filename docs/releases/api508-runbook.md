@@ -4,6 +4,8 @@
 
 The current source includes renewal parent `be92d1185b4dc9c50c8c6d66bccdfd0c3fe1878b` and browser login parent `1d38498b2ed916bc6de07b6532974e53bfcedcd1`. Main merge, publication and native-platform acceptance remain on hold. An unpublished package check does not authorize distribution. The September 20 records below retain their original heads and limitations; statements about missing deployment evidence describe that snapshot, not a new assessment of live services. Current server validation belongs in the separate dated dev report.
 
+Current unpublished candidate: `nansen-cli-1.46.0.tgz`, SHA256 `769225ccbcee71dc0055329bf7e272bc1c3c294d8f9e91fc392332dddace3729`. Every archived file was compared with this source tree; the exact containing commit is recorded in the external `cli659-forward/package-final.json` report. This is package-integrity evidence only: no publication, native-platform acceptance or compatible recovery release is claimed.
+
 ## Historical preparation record
 
 This is a repository-only runbook. [The evidence manifest](api508-evidence.json) records immutable source heads and hashes of completed, private root artifacts without copying raw captures. Artifact identifiers require the root evidence archive; they are not public download links. Null fields are missing evidence. No published version, accepted cohort, live ledger result or operator approval exists in this record.
@@ -24,7 +26,7 @@ The package version in source is not a release decision. `package.json` includes
 | Controlled accounts and billing | No accepted controlled-account or ledger evidence | Environment A/saved B; canonical UID; before/after ledger for free pairing/account and charged research; exhausted credits/plan refusal; account-owned billing settings |
 | Deployments, flags, gateway | Missing | Reviewed issuer/API/consumer/gateway digests, flag snapshots, header-size/headroom measurements, monitoring owner and rollback decision |
 | Denied load and latency | No release acceptance | Sustained single/multi-account zero-credit and restricted-plan refusal; profile/store cost and free-account availability; operator thresholds and rollback triggers |
-| Distribution and rollback | Unpublished956 archive proof only; repaired candidate and compatible recovery version missing | Integrity-pinned package, v2-compatible recovery binary and native bindings; rehearsal on retained state/journals; dist-tag and ClawHub snapshots |
+| Distribution and rollback | Current unpublished 1.46.0 source-matched archive (digest above); historical956 native proof remains separate; compatible recovery version missing | Integrity-pinned package, v2-compatible recovery binary and native bindings; rehearsal on retained state/journals; dist-tag and ClawHub snapshots |
 
 The native 11 KiB read measurements at83d6 (1/4/16 reads:798/2956/11764ms on one host) are absolute cost observations. They establish no comparative improvement or throughput guarantee. Isolated Secret Service restart is not OS login/PAM/reboot acceptance. Apple sign-in remains deferred.
 
@@ -67,7 +69,7 @@ The mandatory-native legacy-write compatibility minority finding remains open. P
 
 ## Prior unpublished candidate and review record
 
-Root's `API-508-root-956764b-source-verification.md` records163 focused cases. `API-508-root-956764b-package-verification.md` records native Mac and isolated Linux lifecycle tests from the same unpublished archive, SHA256 `724711ffad9087d3a2e73e8820435359c8a14dda50b6fe50babc743e630a1be2`. New manifest entries preserve that exact956 source and archive attribution. The current repair changes the candidate; final source/package evidence must be established again. Existing source version1.45.0 is not a published recovery version. All23 acceptance gates remain null.
+Root's `API-508-root-956764b-source-verification.md` records163 focused cases. `API-508-root-956764b-package-verification.md` records native Mac and isolated Linux lifecycle tests from the same unpublished archive, SHA256 `724711ffad9087d3a2e73e8820435359c8a14dda50b6fe50babc743e630a1be2`. New manifest entries preserve that exact956 source and archive attribution. At that historical repair, final source/package evidence still needed to be re-established. The historical 956764b candidate used source version 1.45.0; it was not a published recovery version. All23 acceptance gates remain null.
 
 General B completed its same-model retry at956 with zero code findings and nine material limits. B's original execution and same-session resume returned provider errors, so neither counts as a completed review. B and bounded security both requested changes; security S5-S7 cover renewal friction, installed executable coverage and all-shipped-skill classification. No third general round or approval is claimed.
 

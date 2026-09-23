@@ -16,7 +16,6 @@ import { execFileSync, spawn } from "child_process";
 import { existsSync, realpathSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { resolveCredential, assertUsableSelection } from "../src/auth-credentials.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -120,8 +119,10 @@ async function installSkill() {
 
 async function testQuery() {
   // Selection reads metadata only. Never open storage or verify during install.
-  const selection = resolveCredential();
+  let selection;
   try {
+    const { resolveCredential, assertUsableSelection } = await import("../src/auth-credentials.js");
+    selection = resolveCredential();
     assertUsableSelection(selection);
   } catch {
     log(`Saved or selected authentication needs attention. Run: nansen auth status`);

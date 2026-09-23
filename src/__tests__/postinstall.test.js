@@ -65,6 +65,14 @@ describe('offline postinstall selection with shared resolver', () => {
     controls.spawn.mockImplementation(() => { const child = new EventEmitter(); queueMicrotask(() => child.emit('error', new Error('secret-child-error'))); return child; });
     await main(); expect(output).toContain('Account check failed'); expect(output).not.toContain('secret-child-error');
   });
+  it('gives an offline repair tip when HOME is invalid', async () => {
+    vi.stubEnv('HOME', 'relative-home');
+    controls.exec.mockImplementation(() => { throw new Error('npx unavailable'); });
+    await expect(main()).resolves.toBeUndefined();
+    expect(output).toContain('Run: nansen auth status');
+    expect(controls.prompts).toEqual([]); expect(controls.spawn).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
   it('preserves local-install and non-TTY guards', async () => {
     vi.stubEnv('npm_config_global', 'false'); await main(); expect(output).toBe('');
     vi.stubEnv('npm_config_global', 'true'); tty(process.stdin, false);

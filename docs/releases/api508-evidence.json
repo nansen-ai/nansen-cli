@@ -211,7 +211,7 @@
       "sha256": "a36bcf73afbaaa6a07c9360c536c5ddc1dfe33c886fc0ba9850ba09b47066526",
       "sourceHead": "956764b207fcc91498cea45c8ba91d70e31e538a",
       "kind": "unpublished archive provenance",
-      "limits": "Source version1.45.0 is not a new release;53 src files and postinstall matched956. Archive not relabeled as repaired head."
+      "limits": "Historical candidate956764b used source version1.45.0, not a new release;53 src files and postinstall matched956. Archive not relabeled as repaired head."
     },
     {
       "artifact": "api508-package-956764b/nansen-cli-1.45.0.tgz",
@@ -330,5 +330,15 @@
       "realChildCases": 17
     },
     "limits": "Parent writer local proof; no stacked main-only CI pass. Earlier native/joint/package records are historical. Full server route parity and exact revised candidate verification remain pending."
+  },
+  "currentUnpublishedCandidate": {
+    "version": "1.46.0",
+    "filename": "nansen-cli-1.46.0.tgz",
+    "sha256": "769225ccbcee71dc0055329bf7e272bc1c3c294d8f9e91fc392332dddace3729",
+    "integrity": "sha512-iMBmPYSJQp52NlnHZlagBJuU06+cdo5DPYV8R0fjij1Lmd437hRra49kunllNwwzdh2nh00lrGPVhc+2Fyp4mw==",
+    "published": false,
+    "sourceHead": null,
+    "sourceHeadNote": "Containing commit recorded with the archive/source comparison in cli659-forward/package-final.json; this document cannot hash its own containing commit.",
+    "limits": "Source version 1.46.0; unpublished archive only, not an accepted prerelease or recovery release. No native/live acceptance."
   }
 }
