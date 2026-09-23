@@ -55,7 +55,10 @@ export async function browserLogin({ flags = {}, env = process.env, isTTY = proc
     try { cleanup.push(...await state.finish(attempt)); } catch { cleanup.push({ local: 'incomplete', remote: 'unconfirmed' }); }
     attempt = null;
     const override = env.NANSEN_API_KEY !== undefined;
-    progress(override ? `Browser session saved for ${bundle.accountId}. Commands still use NANSEN_API_KEY. Unset it to use this session.` : `Browser session saved for ${bundle.accountId}.`);
+    const overrideMessage = override && !env.NANSEN_API_KEY.trim()
+      ? 'NANSEN_API_KEY is blank. Commands will fail until you unset it or supply a valid environment key.'
+      : 'Commands still use NANSEN_API_KEY. Unset it to use this session.';
+    progress(override ? `Browser session saved for ${bundle.accountId}. ${overrideMessage}` : `Browser session saved for ${bundle.accountId}.`);
     for (const message of cleanupMessage(cleanup)) progress(message);
     emit('saved', { account_id: bundle.accountId, effective_source: override ? 'env' : 'session', cleanup });
   } catch (error) {

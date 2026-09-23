@@ -47,7 +47,7 @@ export function nativeStoreOperation(operation, account, bytes, { directory = au
             // The child already holds execution/cleanup exclusion. Keep the
             // pipe open as a parent-lifetime signal; never send secrets early.
             child.stdin.write(JSON.stringify({ operation, account, ...(bytes && { data: Buffer.from(bytes).toString('base64') }) }) + '\n');
-          } else if (ready && !result && Object.hasOwn(message, 'value')) result = message;
+          } else if (ready && !result && (Object.hasOwn(message, 'value') || message.error === 'BINDING_MISSING')) result = message;
           else throw new Error();
         } catch { stop(); }
       }
@@ -61,6 +61,10 @@ export function nativeStoreOperation(operation, account, bytes, { directory = au
       signal?.removeEventListener('abort', stop);
       try {
         if (failed || code !== 0 || !ready || !result || output) throw new Error();
+        if (result.error === 'BINDING_MISSING') {
+          reject(new AuthError('AUTH_STORE_UNAVAILABLE', 'The native credential-store binding could not load. Reinstall nansen-cli with optional dependencies enabled on a supported OS and architecture. See nansen doctor --offline and the browser-login platform guide.'));
+          return;
+        }
         resolve(operation === 'get' && result.value !== null ? Buffer.from(result.value, 'base64') : result.value);
       } catch { reject(unavailable()); }
     });

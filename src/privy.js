@@ -10,6 +10,7 @@ import fs from "fs";
 import path from "path";
 import { parsePaymentRequirements } from "./x402.js";
 import { isEvmNetwork } from "./x402-evm.js";
+import { mkdirPrivateSync, readWalletJson, writeWalletJsonAtomic } from "./wallet.js";
 import { evaluatePaymentRequirement, resolvePaymentAmount, resolvePayTo } from "./x402-policy.js";
 import {
   isSvmNetwork,
@@ -21,6 +22,7 @@ import {
   buildEIP712TypedData,
   buildPaymentSignatureHeader,
 } from "./walletconnect-x402.js";
+import { trace } from "./debug.js";
 
 // ============= Constants =============
 
@@ -190,22 +192,20 @@ export async function createPrivyWalletPair(name) {
     createdAt: new Date().toISOString(),
   };
 
-  if (!fs.existsSync(walletsDir)) {
-    fs.mkdirSync(walletsDir, { mode: 0o700, recursive: true });
-  }
+  mkdirPrivateSync(walletsDir);
 
   // Write config before wallet file so a crash doesn't leave an orphan without a default entry
   const configPath = path.join(walletsDir, "config.json");
   let config = { defaultWallet: null, passwordHash: null };
   if (fs.existsSync(configPath)) {
-    config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    config = readWalletJson(configPath);
   }
   if (!config.defaultWallet) {
     config.defaultWallet = name;
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+    writeWalletJsonAtomic(configPath, config);
   }
 
-  fs.writeFileSync(walletFile, JSON.stringify(walletData, null, 2), { mode: 0o600 });
+  writeWalletJsonAtomic(walletFile, walletData);
 
   return walletData;
 }
@@ -226,11 +226,11 @@ async function getPrivyEvmWallet(client) {
     const walletsDir = path.join(process.env.HOME || process.env.USERPROFILE || "", ".nansen", "wallets");
     const configPath = path.join(walletsDir, "config.json");
     if (fs.existsSync(configPath)) {
-      const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const config = readWalletJson(configPath);
       if (config.defaultWallet) {
         const walletFile = path.join(walletsDir, `${config.defaultWallet}.json`);
         if (fs.existsSync(walletFile)) {
-          const data = JSON.parse(fs.readFileSync(walletFile, "utf8"));
+          const data = readWalletJson(walletFile);
           if (data.provider === "privy" && data.evm?.privyWalletId) {
             return client.getWallet(data.evm.privyWalletId);
           }
@@ -239,7 +239,7 @@ async function getPrivyEvmWallet(client) {
     }
   } catch (err) {
     // Fall through to list-based detection
-    if (process.env.DEBUG) console.error(`[x402] Default wallet lookup failed: ${err.message}`);
+    trace("x402.default_wallet_lookup_failed", { error: err.message });
   }
 
   const result = await client.listWallets();
@@ -257,11 +257,11 @@ async function getPrivySolanaWallet(client) {
     const walletsDir = path.join(process.env.HOME || process.env.USERPROFILE || "", ".nansen", "wallets");
     const configPath = path.join(walletsDir, "config.json");
     if (fs.existsSync(configPath)) {
-      const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const config = readWalletJson(configPath);
       if (config.defaultWallet) {
         const walletFile = path.join(walletsDir, `${config.defaultWallet}.json`);
         if (fs.existsSync(walletFile)) {
-          const data = JSON.parse(fs.readFileSync(walletFile, "utf8"));
+          const data = readWalletJson(walletFile);
           if (data.provider === "privy" && data.solana?.privyWalletId) {
             return client.getWallet(data.solana.privyWalletId);
           }
@@ -269,7 +269,7 @@ async function getPrivySolanaWallet(client) {
       }
     }
   } catch (err) {
-    if (process.env.DEBUG) console.error(`[x402] Solana wallet lookup failed: ${err.message}`);
+    trace("x402.solana_wallet_lookup_failed", { error: err.message });
   }
 
   const result = await client.listWallets();

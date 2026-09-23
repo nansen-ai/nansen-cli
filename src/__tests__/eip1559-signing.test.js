@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { RLP } from '@ethereumjs/rlp';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak256 } from '../crypto.js';
-import { signEvmTransaction, signEip1559Transaction } from '../trading.js';
+import {
+  signEvmTransaction,
+  signEip1559Transaction,
+  resolveQuoteEip1559Fees,
+  resolveQuoteLegacyGasPrice,
+} from '../trading.js';
 
 // Valid secp256k1 scalar, matching the convention in perp.test.js. Deliberately
 // not a random 64-hex literal: those read as a real private key to secret
@@ -142,5 +147,48 @@ describe('signEvmTransaction transaction-type selection', () => {
     expect(() => signEvmTransaction({ ...base }, KEY, 'base', 18)).toThrow(
       /no gas price.*Refusing to sign/s,
     );
+  });
+});
+
+// The Privy and approval/revoke signing paths do not go through
+// signEvmTransaction, so they resolve their fee fields with these helpers.
+// They used to fall back to 1,000,000 wei (0.001 gwei) — an unmineable fee
+// that left the nonce stuck — and must refuse the same way instead.
+describe('resolveQuoteEip1559Fees', () => {
+  it('passes through EIP-1559 fields', () => {
+    expect(resolveQuoteEip1559Fees({ maxFeePerGas: '6600000', maxPriorityFeePerGas: '1100000' }))
+      .toEqual({ maxFeePerGas: '6600000', maxPriorityFeePerGas: '1100000' });
+  });
+
+  it('falls back to the fee cap when the priority fee is omitted', () => {
+    expect(resolveQuoteEip1559Fees({ maxFeePerGas: '6600000' }))
+      .toEqual({ maxFeePerGas: '6600000', maxPriorityFeePerGas: '6600000' });
+  });
+
+  it('lifts a legacy gasPrice into both EIP-1559 fields', () => {
+    expect(resolveQuoteEip1559Fees({ gasPrice: '6600000' }))
+      .toEqual({ maxFeePerGas: '6600000', maxPriorityFeePerGas: '6600000' });
+  });
+
+  it('refuses a quote with no fee information instead of inventing one', () => {
+    expect(() => resolveQuoteEip1559Fees({ to: '0x1', data: '0x' })).toThrow(
+      /no gas price.*Refusing to sign/s,
+    );
+    expect(() => resolveQuoteEip1559Fees({ maxFeePerGas: '', gasPrice: '' })).toThrow(
+      /no gas price.*Refusing to sign/s,
+    );
+    expect(() => resolveQuoteEip1559Fees(undefined)).toThrow(/Refusing to sign/);
+  });
+});
+
+describe('resolveQuoteLegacyGasPrice', () => {
+  it('prefers gasPrice and flattens an EIP-1559-only quote to its fee cap', () => {
+    expect(resolveQuoteLegacyGasPrice({ gasPrice: '6600000', maxFeePerGas: '9900000' })).toBe('6600000');
+    expect(resolveQuoteLegacyGasPrice({ maxFeePerGas: '9900000' })).toBe('9900000');
+  });
+
+  it('refuses a quote with no fee information', () => {
+    expect(() => resolveQuoteLegacyGasPrice({})).toThrow(/no gas price.*Refusing to sign/s);
+    expect(() => resolveQuoteLegacyGasPrice(undefined)).toThrow(/Refusing to sign/);
   });
 });

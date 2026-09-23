@@ -207,9 +207,87 @@ export function generateSolanaWallet() {
 
 // ============= Storage =============
 
+/**
+ * Create a private directory (and any missing parents) owner-only. mkdir's
+ * mode is filtered through the process umask — a 0277 umask leaves 0500, so
+ * the owner could not create files inside — so each directory this creates
+ * has its mode pinned afterwards. Existing directories are left untouched.
+ */
+export function mkdirPrivateSync(dir) {
+  const missing = [];
+  for (let cur = dir; !fs.existsSync(cur); cur = path.dirname(cur)) {
+    missing.unshift(cur);
+    if (path.dirname(cur) === cur) break;
+  }
+  for (const d of missing) {
+    try {
+      fs.mkdirSync(d, { mode: 0o700 });
+    } catch (err) {
+      // Another nansen process may have created it between the existence
+      // check and here; the chmod below still applies.
+      if (err.code !== 'EEXIST') throw err;
+    }
+    fs.chmodSync(d, 0o700);
+  }
+}
+
 function ensureWalletsDir() {
-  if (!fs.existsSync(getWalletsDir())) {
-    fs.mkdirSync(getWalletsDir(), { mode: 0o700, recursive: true });
+  mkdirPrivateSync(getWalletsDir());
+}
+
+/**
+ * Write a wallet-subsystem JSON file (config.json or a <name>.json key file)
+ * so that a concurrent reader always sees either the previous complete file
+ * or the new complete file, never a truncated one: write to a pid-suffixed
+ * temp file, pin its mode to 0600 on the fd (writeFileSync's mode option is
+ * filtered through the umask), then rename over the target. Mirrors the
+ * writeAtomic helpers in cost-cache.js / update-check.js, which the key files
+ * — the highest-value files this CLI owns — never got.
+ */
+// Every wallet-subsystem path is built from getWalletsDir() plus a name that
+// validateWalletName() already confined to [a-zA-Z0-9_-]; this re-checks the
+// resolved path so the helpers below can never be pointed outside that
+// directory by a future caller.
+function assertWalletsDirPath(filePath) {
+  const dir = path.resolve(getWalletsDir());
+  const resolved = path.resolve(filePath);
+  if (path.dirname(resolved) !== dir) {
+    throw new Error(`Refusing to access ${filePath}: not inside the wallets directory`);
+  }
+  return resolved;
+}
+
+export function writeWalletJsonAtomic(filePath, value) {
+  filePath = assertWalletsDirPath(filePath);
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  let fd;
+  try {
+    fd = fs.openSync(tmp, 'w', 0o600);
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, JSON.stringify(value, null, 2));
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* already closed */ }
+    }
+    try { fs.unlinkSync(tmp); } catch { /* temp file may not exist */ }
+    throw err;
+  }
+}
+
+/**
+ * Read and parse a wallet-subsystem JSON file. A file that exists but does
+ * not parse (torn write, disk error, manual edit) is reported by name instead
+ * of surfacing as a bare SyntaxError from deep inside a wallet command.
+ */
+export function readWalletJson(filePath) {
+  const raw = fs.readFileSync(assertWalletsDirPath(filePath), 'utf8');
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`${filePath} is not valid JSON (${err.message}). Restore it from a backup before running wallet commands.`, { cause: err });
   }
 }
 
@@ -227,12 +305,12 @@ export function getWalletConfig() {
     return { defaultWallet: null, passwordHash: null };
   }
   warnIfInsecurePerms(getWalletConfigPath());
-  return JSON.parse(fs.readFileSync(getWalletConfigPath(), 'utf8'));
+  return readWalletJson(getWalletConfigPath());
 }
 
 function saveWalletConfig(config) {
   ensureWalletsDir();
-  fs.writeFileSync(getWalletConfigPath(), JSON.stringify(config, null, 2), { mode: 0o600 });
+  writeWalletJsonAtomic(getWalletConfigPath(), config);
 }
 
 const WALLET_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -390,17 +468,27 @@ export function listWallets() {
   const config = getWalletConfig();
   const files = fs.readdirSync(getWalletsDir()).filter(f => f.endsWith('.json') && f !== 'config.json');
 
-  const wallets = files.map(f => {
-    const data = JSON.parse(fs.readFileSync(path.join(getWalletsDir(), f), 'utf8'));
-    return {
+  const wallets = [];
+  for (const f of files) {
+    const filePath = path.join(getWalletsDir(), f);
+    let data;
+    try {
+      data = readWalletJson(filePath);
+    } catch (err) {
+      // One damaged file must not hide every other wallet — report it and
+      // keep listing the rest.
+      console.error(`⚠️  Skipping ${filePath}: ${err.message}`);
+      continue;
+    }
+    wallets.push({
       name: data.name,
       provider: data.provider || 'local',
       evm: data.evm?.address || null,
       solana: data.solana?.address || null,
       createdAt: data.createdAt,
       isDefault: data.name === config.defaultWallet,
-    };
-  });
+    });
+  }
 
   return { wallets, defaultWallet: config.defaultWallet };
 }
@@ -432,7 +520,7 @@ export function createWallet(name, password) {
         .filter(f => f.endsWith('.json') && f !== 'config.json')
         .filter(f => {
           try {
-            const data = JSON.parse(fs.readFileSync(path.join(walletsDir, f), 'utf8'));
+            const data = readWalletJson(path.join(walletsDir, f));
             return !data.provider || data.provider === 'local';
           } catch { return true; }
         });
@@ -461,7 +549,7 @@ export function createWallet(name, password) {
     },
   };
 
-  fs.writeFileSync(walletFile, JSON.stringify(wallet, null, 2), { mode: 0o600 });
+  writeWalletJsonAtomic(walletFile, wallet);
 
   // Set as default if it's the first wallet
   if (!config.defaultWallet) {
@@ -483,7 +571,7 @@ export function createWallet(name, password) {
 export function showWallet(name) {
   const walletFile = requireWalletFile(name);
 
-  const data = JSON.parse(fs.readFileSync(walletFile, 'utf8'));
+  const data = readWalletJson(walletFile);
   const config = getWalletConfig();
   const isPrivy = data.provider === 'privy';
 
@@ -509,7 +597,7 @@ export function showWallet(name) {
 export function exportWallet(name, password) {
   const walletFile = requireWalletFile(name);
 
-  const data = JSON.parse(fs.readFileSync(walletFile, 'utf8'));
+  const data = readWalletJson(walletFile);
   if (data.provider && data.provider !== 'local') {
     throw new Error(`${data.provider} wallets don't support key export. Keys are managed by the provider.`);
   }
@@ -551,7 +639,7 @@ export function setDefaultWallet(name) {
 export async function deleteWallet(name, password) {
   const walletFile = requireWalletFile(name);
 
-  const data = JSON.parse(fs.readFileSync(walletFile, 'utf8'));
+  const data = readWalletJson(walletFile);
   const config = getWalletConfig();
 
   if (data.provider && data.provider !== 'local') {
@@ -564,7 +652,9 @@ export async function deleteWallet(name, password) {
 
   fs.unlinkSync(walletFile);
 
-  const remaining = fs.readdirSync(getWalletsDir()).filter(f => f.endsWith('.json') && f !== 'config.json');
+  const remaining = fs.readdirSync(getWalletsDir())
+    .filter(f => f.endsWith('.json') && f !== 'config.json')
+    .filter(f => { try { readWalletJson(path.join(getWalletsDir(), f)); return true; } catch { return false; } });
 
   if (remaining.length === 0) {
     config.defaultWallet = null;
@@ -579,6 +669,25 @@ export async function deleteWallet(name, password) {
 }
 
 // ============= CLI Command Builder =============
+
+/**
+ * Every `nansen wallet` subcommand the dispatcher below accepts, in the order
+ * they are advertised to users. `help` is deliberately absent: it is the
+ * fallback, not a capability. The top-level help banner builds its wallet line
+ * from this list, and command-surface.test.js checks the handlers, README and
+ * src/schema.json against it so the four cannot drift apart.
+ */
+export const WALLET_SUBCOMMANDS = [
+  'create',
+  'list',
+  'show',
+  'export',
+  'default',
+  'delete',
+  'send',
+  'forget-password',
+  'secure',
+];
 
 /**
  * Build wallet command handlers for integration into CLI.
@@ -762,10 +871,10 @@ export function buildWalletCommands(deps = {}) {
             throw new CommandError('Usage: nansen wallet export <name> [--reveal | --file <path>]', 'MISSING_ARGS');
           }
 
-          // Bare `--file` parses as flags.file, `--file true` JSON-parses to a
-          // boolean, and `--file ""` (an unset shell variable) is an empty path
-          // that would only fail at open time — reject all of them before any
-          // secret is decrypted.
+          // Bare `--file` parses as flags.file, a repeated or JSON-array `--file`
+          // arrives as a non-string, and `--file ""` (an unset shell variable) is
+          // an empty path that would only fail at open time — reject all of them
+          // before any secret is decrypted.
           const wantsFile = options.file !== undefined || flags.file;
           if (wantsFile && (typeof options.file !== 'string' || options.file === '')) {
             throw new CommandError('--file requires a path: nansen wallet export <name> --file <path>', 'INVALID_INPUT');
@@ -913,7 +1022,7 @@ export function buildWalletCommands(deps = {}) {
           // dir and cannot traverse. deleteWallet() re-validates below.
           let isPrivy = false;
           try {
-            const data = JSON.parse(fs.readFileSync(getWalletFile(name), 'utf8'));
+            const data = readWalletJson(getWalletFile(name));
             if (data.provider === 'privy') isPrivy = true;
           } catch { /* invalid/missing name; deleteWallet will validate and throw */ }
 
@@ -975,7 +1084,7 @@ export function buildWalletCommands(deps = {}) {
                 // getWalletFile() runs validateWalletName(), confining the path to
                 // the wallets dir; an invalid name throws and is ignored here, and
                 // the real wallet load downstream validates again.
-                const data = JSON.parse(fs.readFileSync(getWalletFile(walletName), 'utf8'));
+                const data = readWalletJson(getWalletFile(walletName));
                 if (data.provider === 'privy') isPrivyWallet = true;
               }
             } catch { /* ignore */ }

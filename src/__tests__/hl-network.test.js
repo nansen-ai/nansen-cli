@@ -95,6 +95,15 @@ describe('usdClassTransfer amount rendering', () => {
     );
   });
 
+  it('refuses with a coded CommandError so agents can branch on it', () => {
+    expect(() => buildUsdClassTransferAction({ amount: 1e21, toPerp: true, nonce: 1 })).toThrow(
+      expect.objectContaining({ name: 'CommandError', code: 'INVALID_INPUT' }),
+    );
+    expect(() => buildUsdClassTransferAction({ amount: 0, toPerp: true, nonce: 1 })).toThrow(
+      expect.objectContaining({ name: 'CommandError', code: 'INVALID_INPUT' }),
+    );
+  });
+
   it('refuses a non-positive or non-finite amount', () => {
     expect(() => buildUsdClassTransferAction({ amount: 0, toPerp: true, nonce: 1 })).toThrow(/Invalid/);
     expect(() => buildUsdClassTransferAction({ amount: -5, toPerp: true, nonce: 1 })).toThrow(/Invalid/);

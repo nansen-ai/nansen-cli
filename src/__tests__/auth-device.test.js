@@ -114,3 +114,23 @@ it('keeps device authorization grants bounded at one hour before polling', async
   await expect(pairDevice(createDeviceClient({ audience: 'https://api.nansen.ai', fetchFn }), { wait: async () => {}, onPending: vi.fn() })).rejects.toMatchObject({ code: 'PAIRING_FAILED' });
   expect(fetchFn).toHaveBeenCalledOnce();
 });
+
+it('asks for a new login when issuance fails after consuming approval', async () => {
+  const fetchFn = vi.fn()
+    .mockResolvedValueOnce(response(200, grant()))
+    .mockResolvedValueOnce(response(500, { error: 'internal_error' }))
+    .mockResolvedValueOnce(response(400, { error: 'expired_token' }));
+  const onIssued = vi.fn();
+  const wait = vi.fn(async () => {});
+  const client = createDeviceClient({ audience: 'https://api.nansen.ai', fetchFn });
+  await expect(pairDevice(client, { wait, onPending: () => {}, onIssued })).rejects.toMatchObject({
+    code: 'PAIRING_EXPIRED',
+    message: 'The approval code expired or was consumed. Run nansen login again.',
+    provenUnissued: false,
+  });
+  expect(onIssued).not.toHaveBeenCalled();
+  expect(fetchFn.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+    '/auth/device/authorize', '/auth/device/token', '/auth/device/token',
+  ]);
+  expect(wait.mock.calls.map(([ms]) => ms)).toEqual([5000, 10000]);
+});

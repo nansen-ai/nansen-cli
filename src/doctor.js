@@ -273,6 +273,9 @@ export function runDoctorChecks(deps = {}) {
   } else if (auth.configError === 'parse') {
     checks.push(check('config-file', 'error', `${getConfigFilePath(env)} exists but is not valid JSON`, 'Restore or repair config.json before retrying nansen login'));
   }
+  if (auth.configError === 'format') {
+    checks.push(check('config-file', 'error', `${getConfigFilePath(env)} has an unrecognized auth format`, 'Restore or repair config.json before retrying. Do not delete secure-store credentials to repair this file.'));
+  }
   if (auth.selected.kind === 'session') {
     checks.push(check('browser-session', 'warn', 'Saved browser session metadata is cached and unverified; secure storage was not opened.', 'Run: nansen account for a live check'));
   } else if (auth.apiKey) {

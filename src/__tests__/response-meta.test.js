@@ -182,6 +182,16 @@ describe('creditWarning', () => {
     expect(warning).not.toContain('auth/agent-setup');
   });
 
+  it('describes an aggregated pagination charge as multiple live page requests', () => {
+    const warning = creditWarning({
+      credits: { used: 30, remaining: 5, cost: 30 },
+      pagination: { pagesFetched: 3, livePages: 3, cachedPages: 0 },
+    });
+
+    expect(warning).toContain('less than the aggregate cost of 3 live page requests (30)');
+    expect(warning).not.toContain('this call cost');
+  });
+
   it('singularises one remaining credit', () => {
     expect(creditWarning({ credits: { used: 5, remaining: 1 } })).toContain('1 API credit left');
   });

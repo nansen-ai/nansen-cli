@@ -4,6 +4,7 @@ description: Execute DEX swaps on Solana or Base (including cross-chain bridges)
 metadata:
   openclaw:
     requires:
+      env:
         - NANSEN_WALLET_PASSWORD
       bins:
         - nansen
@@ -57,7 +58,22 @@ For cross-chain swaps, each token is checked against its own chain (from vs `--c
 
 ```bash
 nansen trade execute --quote <quote-id>
+nansen trade execute --quote <quote-id> --dry-run   # preview only, nothing is broadcast
+nansen trade execute --quote <quote-id> --yes       # skip the confirmation prompt
 ```
+
+**`--dry-run`** runs every sign-free preflight available from the cached quote, its public signer address, and read-only RPC calls; prints the trade that *would* be sent (chain, tokens, amounts, recipient, approval, fees); and stops before wallet credentials or signing. No wallet password is needed, the quote is not consumed, and the command exits 0. Real execution still resolves and revalidates the live signer. On Base, preview also reads the current token allowance and runs the pre-broadcast revert simulation when no approval is outstanding.
+
+**Confirmation.** When stdin is an interactive terminal, `execute` prints the plan and asks `Broadcast this transaction? [y/N]` before broadcasting. Answering anything but `y`/`yes` aborts with exit code 1 and nothing signed. Pass `--yes` (`-y`), or set `NANSEN_YES=1`, to skip the question.
+
+**Agents and CI are unaffected:** when stdin is *not* a terminal (a pipe, a CI job, an agent shell) the command proceeds without prompting, exactly as before. `--yes` is accepted there and is simply a no-op, so it is safe to always pass it. The same flags and rules apply to `nansen bridge execute`.
+
+### Exit codes (`trade execute`, `bridge execute`)
+
+| Code | Meaning |
+|------|---------|
+| `0` | Broadcast succeeded, or the dry run completed |
+| `1` | Declined at the confirmation prompt, or the execution failed |
 
 ## Cross-Chain Swap
 
@@ -170,6 +186,8 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 | `--wallet` | Wallet name (default: default wallet) |
 | `--quote-index` | Pin a specific quote by index (0-based) when multiple quotes were returned |
 | `--no-simulate` | Skip pre-broadcast simulation |
+| `--dry-run` | Validate and print what would be sent, then stop. Nothing is signed or broadcast |
+| `--yes`, `-y` | Skip the confirmation prompt (same as `NANSEN_YES=1`); no-op when stdin is not a terminal |
 
 ### `trade bridge-status` flags
 
@@ -185,6 +203,7 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 |-----|---------|
 | `NANSEN_WALLET_PASSWORD` | **Required for `trade execute`.** Wallet encryption password — persisted in `~/.nansen/.env`. Source before executing: `source ~/.nansen/.env && nansen trade execute ...` |
 | `NANSEN_API_KEY` | API key (also set via explicit `nansen login --human`; browser sessions are not wallet or RPC keys) |
+| `NANSEN_YES` | Set to `1` to skip the `execute` confirmation prompt, like `--yes` |
 
 > **Agents:** Never hold a wallet password only in session memory. If `NANSEN_WALLET_PASSWORD` is not in `~/.nansen/.env`, follow the setup flow in the nansen-wallet-manager skill Password Policy to generate and persist one before proceeding.
 
@@ -192,6 +211,7 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 
 - Quotes expire after ~1 hour. If execute fails, get a fresh quote.
 - A wallet is required even for quotes (the API builds sender-specific transactions).
+- Compliance screen: `trade quote` and `trade execute` check the signing wallet (and any distinct `--to-wallet` destination) against the compliance blocklist through the Nansen API before requesting a quote or signing — the same fail-closed check `bridge` and `perp` run. A flagged address aborts with code `SANCTIONED`; if the screening call itself fails the command aborts with `SCREENING_UNAVAILABLE`. Nothing is signed or broadcast in either case.
 - ERC-20 swaps may require an approval step — execute handles this automatically.
 
 # Perp Trading

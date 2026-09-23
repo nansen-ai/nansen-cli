@@ -8,7 +8,7 @@
 import crypto from 'crypto';
 import { NansenError, ErrorCode } from './api.js';
 import { wcExec } from './walletconnect-exec.js';
-import { getWalletConnectAddress } from './walletconnect-trading.js';
+import { getWalletConnectAddress, parseWcJson } from './walletconnect-trading.js';
 import { evaluatePaymentRequirement, resolvePaymentAmount, resolvePayTo } from './x402-policy.js';
 
 /**
@@ -201,10 +201,14 @@ export async function handleX402Payment(paymentRequirements) {
   let signResult;
   try {
     const output = await wcExec('walletconnect', ['sign-typed-data', typedDataJson], 120000);
-    // walletconnect may print status messages before the JSON line — extract JSON only
-    const jsonLine = output.split('\n').find(line => line.startsWith('{'));
-    if (!jsonLine) throw new Error('No JSON output from walletconnect sign-typed-data');
-    signResult = JSON.parse(jsonLine);
+    // walletconnect may print status messages before the result and may
+    // pretty-print it over several lines. Reading only the first line that
+    // starts with "{" used to throw on a multi-line result — after the user
+    // had already approved and signed the payment in their wallet.
+    signResult = parseWcJson(output);
+    if (typeof signResult?.signature !== 'string' || signResult.signature.length === 0) {
+      throw new Error('walletconnect sign-typed-data returned no signature');
+    }
   } catch (err) {
     throw new NansenError(
       `x402 payment signing failed: ${err.message}`,

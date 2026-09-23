@@ -57,6 +57,7 @@ nansen wallet <subcommand> [options]
 nansen mcp install <client>           # add the Nansen MCP server to Claude Code/Desktop or Cursor
 nansen completion <bash|zsh|fish>     # shell completions (no API key needed)
 nansen schema [command] [--pretty]    # full command reference (no API key needed)
+nansen cache stats                    # what the local caches hold (no API key needed)
 ```
 
 **Research categories:** `smart-money` (`sm`), `token` (`tgm`), `profiler` (`prof`), `portfolio` (`port`), `prediction-market` (`pm`), `search`, `perp`
@@ -76,7 +77,7 @@ Plus the `historical-*` point-in-time commands — run `nansen research help` fo
 
 **Trade:** `quote`, `execute`, `bridge-status`, `limit-order` — DEX swaps on Solana and Base, cross-chain bridges, and Solana limit orders.
 
-**Wallet:** `create`, `list`, `show`, `export`, `default`, `delete`, `send` — local or Privy server-side wallets (EVM + Solana).
+**Wallet:** `create`, `list`, `show`, `export`, `default`, `delete`, `send`, `forget-password`, `secure` — local or Privy server-side wallets (EVM + Solana).
 
 Run `nansen schema --pretty` for the full subcommand and field reference.
 
@@ -179,6 +180,24 @@ nansen trade execute --quote <quoteId> --gasless      # Relay-only: solver pays 
 nansen trade bridge-status --tx-hash <hash> --from-chain base --to-chain solana
 ```
 
+### Before broadcasting
+
+`trade execute` and `bridge execute` move funds irreversibly, so both accept:
+
+```bash
+nansen trade execute --quote <quoteId> --dry-run   # validate + print the plan, broadcast nothing
+nansen trade execute --quote <quoteId> --yes       # skip the confirmation prompt (also: -y)
+```
+
+`--dry-run` runs every sign-free preflight available from the cached quote, its public signer address, and read-only RPC calls; prints what *would* be sent (chain, tokens, amounts, recipient, approvals, fees); and stops before wallet credentials, signing, or broadcast — no wallet password needed, the quote stays usable, exit code 0. Real execution still resolves and revalidates the live signer before signing.
+
+When stdin is an interactive terminal, execute prints that plan and asks `Broadcast this transaction? [y/N]` first; anything but `y`/`yes` aborts with exit code 1 and nothing signed. `--yes`, or `NANSEN_YES=1`, skips the question. **When stdin is not a terminal — agents, CI, pipes — nothing changes: the command proceeds without prompting**, and `--yes` is accepted as a no-op so it is always safe to pass.
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Broadcast succeeded, or the dry run completed |
+| `1` | Declined at the confirmation prompt, or the execution failed |
+
 Amounts are in base units (lamports, wei) by default — use `--amount-unit token|usd|percent` for friendlier inputs. Common symbols (`SOL`, `ETH`, `USDC`, `USDT`) resolve automatically. A wallet is required — set one with `nansen wallet default <name>`.
 
 ## Limit Orders
@@ -229,11 +248,12 @@ Move USDC between EVM chains and Hyperliquid via `nansen bridge`. Uses the same 
 ```bash
 nansen bridge quote --from-chain base --to-chain hyperliquid --from-token USDC --amount 1000000
 nansen bridge execute --quote <quoteId>
+nansen bridge execute --quote <quoteId> --dry-run                     # preview, nothing is broadcast
 nansen bridge execute --quote <quoteId> --nonce 20 --priority-fee 5   # replace a stuck EVM deposit
 nansen bridge status --request-id <id>
 ```
 
-Supported routes: `base → hyperliquid` (deposit), and `hyperliquid → base`/`ethereum`/`arbitrum` (withdraw). Deposits broadcast an EVM transaction locally, so only Base is offered on the deposit side; run `nansen bridge help` for the current list. `--amount` is a base-unit integer by default; pass `--amount-unit token` for a human amount. `--recipient` defaults to the wallet's own EVM address. `--priority-fee`/`--max-fee` (gwei) and `--nonce` apply only to EVM deposit legs and let a stuck transaction be replaced. Bridge transfers are irreversible once signed.
+Supported routes: `base → hyperliquid` (deposit), and `hyperliquid → base`/`ethereum`/`arbitrum` (withdraw). Deposits broadcast an EVM transaction locally, so only Base is offered on the deposit side; run `nansen bridge help` for the current list. `--amount` is a base-unit integer by default; pass `--amount-unit token` for a human amount. `--recipient` defaults to the wallet's own EVM address. `--priority-fee`/`--max-fee` (gwei) and `--nonce` apply only to EVM deposit legs and let a stuck transaction be replaced. Bridge transfers are irreversible once signed, so `bridge execute` takes the same `--dry-run` and `--yes`/`NANSEN_YES` gate as `trade execute` (see [Before broadcasting](#before-broadcasting)); on a multi-step transfer, a dry run stops before the first step.
 
 ## Wallet
 
@@ -243,6 +263,8 @@ nansen wallet create --name my-wallet --provider privy  # server-side via Privy
 nansen wallet list
 nansen wallet default <name>
 nansen wallet send --wallet <name> --to <addr> --amount <n> --chain <chain>
+nansen wallet secure                         # move a saved password into the OS keychain
+nansen wallet forget-password                # drop the saved password from every store
 ```
 
 **Local wallets** are password-encrypted. Set `NANSEN_WALLET_PASSWORD` to skip the prompt.
@@ -312,17 +334,81 @@ after upgrading the CLI to pick up new commands.
 | `--chain <chain>` | Blockchain to query |
 | `--limit <n>` | Result count |
 | `--timeframe <tf>` | Time window: `5m` `1h` `6h` `24h` `7d` `30d` |
-| `--fields <list>` | Comma-separated fields (reduces response size) |
+| `--fields <list>` | Comma-separated fields (reduces response size); a bare name matches at any depth, a dotted path such as `data.results.address` only at that position |
 | `--sort <field:dir>` | Sort results, e.g. `--sort value_usd:desc` |
 | `--pretty` | Human-readable JSON |
 | `--table` | Table format |
 | `--stream` | NDJSON output for large results |
+| `--paginate` | Fetch every page of a list command (alias `--all`); bound with `--max-pages <n>` (default 10; ignored without pagination) |
 | `--labels <label>` | Smart Money label filter |
 | `--smart-money` | Filter for Smart Money addresses only |
+| `--cache` | Serve this invocation from the local cache (see [Caching](#caching)) |
+| `--no-cache` | Bypass the cache for this invocation |
+| `--debug` | Trace every HTTP request on stderr (see [Debugging](#debugging)) |
+
+## Caching
+
+Response caching is **off by default** and opt-in per invocation:
+
+```bash
+nansen research token screener --chain solana --cache              # cache this result
+nansen research token screener --chain solana --cache --cache-ttl 60
+nansen research token screener --chain solana --cache --no-cache   # veto: always live
+```
+
+`NANSEN_NO_CACHE=1` does the same as `--no-cache` without a flag, for wrappers
+that cannot change the command line.
+
+With `--cache` on, every read the CLI makes through the Nansen API client is
+cached — all of `nansen research ...`, plus `alerts list` and `alerts get`.
+Never cached: `account`, `web search`, `web fetch`, the `alerts`
+create/update/toggle/delete commands, `agent`, every `trade`, `bridge`, `wallet`
+and `mcp` command, and `perp` trading. The analytics commands `perp screener`
+and `perp leaderboard` are cached.
+
+Inspect and clear what is on disk:
+
+```bash
+nansen cache stats                 # entries, size, age, effective TTL per cache
+nansen cache stats --json          # the same numbers as an object
+nansen cache clear                 # delete cached API responses
+nansen cache clear cost-map        # or update-check, or all
+```
+
+`nansen cache stats` reports totals and ages. It reads timestamp metadata but does not print cached payloads, request parameters, or cache keys. `nansen cache clear` deletes only files in the selected cache. Credentials, wallets, saved quotes, and config are never changed. CLI startup loads the saved config as usual.
+
+| Cache | Location | TTL |
+|-------|----------|-----|
+| `responses` | `~/.nansen/cache` | `--cache-ttl`, default 300s |
+| `cost-map` | `~/.nansen/cost-map.json` | 24h |
+| `update-check` | `~/.nansen/update-check.json` | 24h |
+
+## Debugging
+
+`--debug` (or `NANSEN_DEBUG=1`) prints HTTP trace events to **stderr**, so stdout stays pure JSON/CSV and stays pipeable:
+
+```bash
+nansen research token screener --chain solana --debug
+nansen research token screener --chain solana 2>trace.log | jq .   # trace to a file, JSON to jq
+```
+
+```
+[nansen:debug] http.request method=POST url=https://api.nansen.ai/api/v1/token-screener attempt=1/4
+[nansen:debug] http.response method=POST url=https://api.nansen.ai/api/v1/token-screener status=429 duration_ms=182 request_id=6f1c0f2a-0000-4000-8000-0000000000aa attempt=1
+[nansen:debug] http.retry method=POST url=https://api.nansen.ai/api/v1/token-screener status=429 attempt=1 reason=retry-after delay_ms=1100 retry_after_ms=1000
+[nansen:debug] http.request method=POST url=https://api.nansen.ai/api/v1/token-screener attempt=2/4
+[nansen:debug] http.response method=POST url=https://api.nansen.ai/api/v1/token-screener status=200 duration_ms=143 request_id=6f1c0f2a-0000-4000-8000-0000000000ab attempt=2
+```
+
+Events: `http.request`, `http.response`, `http.retry`, `http.error`, `http.cache_hit` (answered from the local cache, no request made).
+
+For `http.response`, `duration_ms` is the elapsed time from starting the attempt until response headers arrive (time to first byte / TTFB). It deliberately excludes downloading and parsing the response body. For `http.error`, `duration_ms` is the elapsed time until the transport failed before any response headers arrived.
+
+**What the trace never contains.** No API keys, wallet keys, mnemonics or payment signatures; no `Authorization`, `apikey` or `Payment-Signature` header values (header values are not traced at all); no request or response bodies. Query-string values are blanked whenever the parameter name mentions a key, token, secret, signature, password or auth, and any remaining credential-shaped value is blanked too. This intentionally includes public identifiers under names such as `token` and `token_address`, so use the original command—not the trace alone—to confirm which token was queried. Redaction deliberately fails closed: bare 64-character hex URL segments and long opaque/base58 identifiers are hidden even when they are public transaction, block, or Solana signature identifiers, because they are indistinguishable from key material without endpoint-specific assumptions. Long values are truncated. Paste a trace into a bug report as-is — but a quick read before you share is always wise.
 
 ## Supported Chains
 
-`ethereum` `solana` `base` `bnb` `arbitrum` `polygon` `optimism` `avalanche` `linea` `scroll` `mantle` `ronin` `sei` `plasma` `sonic` `monad` `hyperevm` `iotaevm`
+`algorand` `aptos` `arbitrum` `arc` `avalanche` `base` `bitcoin` `bitlayer` `bnb` `chiliz` `citrea` `ethereum` `gravity` `hyperevm` `hyperliquid` `injective` `iotaevm` `linea` `mantle` `mantra` `monad` `near` `optimism` `plasma` `polygon` `robinhood` `sei` `solana` `sonic` `stacks` `starknet` `stellar` `sui` `ton` `tron` `viction`
 
 > Run `nansen schema` to get the current chain list (source of truth).
 
@@ -335,9 +421,29 @@ nansen research smart-money netflow --chain solana --fields token_symbol,net_flo
 
 **Use `--stream` for large results** — outputs NDJSON instead of buffering a giant array.
 
+**Use `--paginate` to fetch every page** of a list command in one call instead of looping over `--page`:
+```bash
+nansen smart-money netflow --chain solana --limit 100 --paginate --max-pages 5
+```
+`--limit` is the page size and `--max-pages` (default 10; ignored without pagination) caps the number of requests — every page is a
+separate, separately billed API call. Server completion metadata (`total_pages`, `total`, or
+`is_last_page`) is honoured so a known final page is not fetched again. Rows are de-duplicated and
+the response gains
+`pagination: { page, pages_fetched, next_page, complete }`; when `complete` is `false`, resume with
+`--page <next_page>`. The stderr credit summary totals the live page requests; cached pages are not
+counted as charges. Traversal trusts the server's `total`; if a live dataset changes or reports
+inconsistent totals while pages are being fetched, later rows can be omitted. Combine with
+`--stream` for NDJSON.
+
 **ENS names** work anywhere `--address` is accepted: `--address vitalik.eth`
 
 ## Output Format
+
+> **Compatibility note:** `--table`, `--format csv`, and `--stream` now render an
+> unambiguous descriptive top-level array (for example, `trades` or `holdings`)
+> as one row per item, even without `--paginate`. Older versions rendered the
+> enclosing response object as a single row. Envelopes with multiple candidate
+> data arrays remain unexpanded.
 
 ```json
 { "success": true,  "data": <api_response> }
@@ -352,8 +458,12 @@ nansen research smart-money netflow --chain solana --fields token_symbol,net_flo
 | `UNAUTHORIZED` | Wrong or missing key. Re-auth. |
 | `RATE_LIMITED` | Auto-retried by CLI. `details.rateLimit.resetSeconds` is how long the window needs to drain. |
 | `UNSUPPORTED_FILTER` | Remove the filter and retry. |
+| `PLAN_UPGRADE_REQUIRED` | The endpoint or option needs a higher subscription plan. Do not retry. |
+| `GEO_BLOCKED` | Not available in your region. Do not retry. |
 | `SERVER_ERROR` | Not your fault. Quote `details.requestId` when reporting it. |
 | `COMMAND_UNAVAILABLE` | The command is no longer available. For points leaderboard, run `nansen research` to explore other analytics commands. |
+
+Every code documented on the API's [error-handling page](https://docs.nansen.ai/getting-started/error-handling) maps onto a stable CLI error code; a code the CLI does not recognise is passed through unchanged.
 
 **Error metadata.** When the API reports them, `details` carries:
 

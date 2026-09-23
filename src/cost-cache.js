@@ -14,6 +14,14 @@ const CACHE_FILE = path.join(CONFIG_DIR, 'cost-map.json');
 const STALE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const OPENAPI_URL = 'https://api.nansen.ai/openapi.json';
 
+/** How long a fetched cost map stays fresh. */
+export const COST_MAP_TTL_MS = STALE_MS;
+
+/** Absolute path of the cost map cache file, for `nansen cache stats` and `clear`. */
+export function getCostMapFile() {
+  return CACHE_FILE;
+}
+
 /**
  * Write `data` to `file` atomically: write to a unique temp file in the same
  * directory, then rename over the target. rename(2) is atomic on POSIX, so a
@@ -55,7 +63,13 @@ export function getCostForEndpoint(endpoint) {
 export function creditsCharged(meta, endpoint) {
   const charged = meta?.credits?.cost;
   if (charged != null) return { cost: charged, source: 'header' };
-  const estimate = endpoint ? getCostForEndpoint(endpoint) : null;
+  let estimate = endpoint ? getCostForEndpoint(endpoint) : null;
+  const livePages = meta?.pagination?.livePages;
+  if (estimate != null && Number.isSafeInteger(livePages) && livePages > 1) {
+    estimate = Object.fromEntries(
+      Object.entries(estimate).map(([plan, cost]) => [plan, typeof cost === 'number' ? cost * livePages : cost])
+    );
+  }
   if (estimate != null) return { estimate, source: 'estimate' };
   return null;
 }
@@ -69,7 +83,7 @@ export async function refreshCostMapIfStale() {
   try {
     if (fs.existsSync(CACHE_FILE)) {
       const { fetchedAt } = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-      if (fetchedAt && Date.now() - fetchedAt < STALE_MS) return;
+      if (Number.isFinite(fetchedAt) && fetchedAt !== 0 && Date.now() - fetchedAt < STALE_MS) return;
     }
 
     const controller = new AbortController();

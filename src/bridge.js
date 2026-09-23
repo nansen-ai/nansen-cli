@@ -22,6 +22,7 @@ import {
   signEvmTransaction,
   waitForReceipt,
 } from './trading.js';
+import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 import { screenOrThrow } from './perp.js';
 import { extractActionErrors } from './hl-client.js';
 import { encodeApproveCalldata } from './trade-validation.js';
@@ -706,12 +707,16 @@ const ERC20_APPROVE_SELECTOR = '0x095ea7b3';
 // Keyed by origin chain, in lockstep with the deposit rows of BRIDGE_ROUTES:
 // widening the EVM deposit side (a new signable origin chain) MUST add that
 // chain's router here too, or every deposit on the new route fails closed.
-const BRIDGE_DEPOSIT_TARGETS = {
+// Exported for a CI guard test that pins every entry to a valid, lowercased
+// 20-byte address — see the invariant note in assertEvmBridgeStepIntent's
+// approve branch (a malformed entry would mis-code a spender-shape error as
+// AMOUNT_MISMATCH, and a non-lowercased one would break the `.has()` lookups).
+export const BRIDGE_DEPOSIT_TARGETS = {
   base: new Set(['0x4cd00e387622c35bddb9b4c962c136462338bc31']),
 };
 
 // The deposit call selector on that router. Its calldata is a fixed 4-arg ABI
-// layout: deposit(address depositor, address token, uint256 amount, bytes32 id).
+// layout: depositErc20(address depositor, address token, uint256 amount, bytes32 id).
 const BRIDGE_DEPOSIT_SELECTOR = '0xe8017952';
 
 // True when calldata is an ERC-20 approve(spender, amount). 0x + 4-byte
@@ -757,12 +762,31 @@ function decodeBridgeDeposit(data) {
     // than a raw SyntaxError.
     return null;
   }
+  const idWord = w(3);
+  if (!/^[0-9a-fA-F]{64}$/.test(idWord)) return null;
   return {
     depositor: '0x' + w(0).slice(24),   // last 20 bytes of word 0
     token: '0x' + w(1).slice(24),
     amount,
-    // w(3) is the opaque relay id — intentionally not returned / not bound.
+    id: idWord,                          // opaque relay id word (bytes32), normalized on re-encode
   };
+}
+
+// Re-encode accepted deposit calldata from decoded fields. Normalizes any dirty
+// upper bits in address words (the decoded last-20-bytes are clean; padding them
+// fresh means the output is canonical regardless of the input's upper bits).
+// The relay id word is opaque — lowercased to canonical form; its value is
+// preserved (a bytes32 is binary, so case carries no meaning on-chain).
+// decodeBridgeDeposit already guarantees id is exactly 64 hex chars (it returns
+// null unless data.length === 266 and the id word matches /^[0-9a-fA-F]{64}$/),
+// so the padStart below is a no-op today — kept for symmetry with the other
+// words and to stay correct if that invariant is ever loosened.
+function encodeBridgeDeposit({ depositor, token, amount, id }) {
+  return BRIDGE_DEPOSIT_SELECTOR
+    + depositor.slice(2).toLowerCase().padStart(64, '0')
+    + token.slice(2).toLowerCase().padStart(64, '0')
+    + amount.toString(16).padStart(64, '0')
+    + id.toLowerCase().padStart(64, '0');
 }
 
 // Bind a server-supplied EVM bridge transaction to the user's intent before
@@ -787,12 +811,21 @@ function requireAmountAnchor(intent, context) {
       'AMOUNT_MISMATCH',
     );
   }
+  try {
+    return BigInt(intent.requestedAmountBaseUnits);
+  } catch {
+    throw new CommandError(
+      `${context}: reviewed amount ${intent.requestedAmountBaseUnits} is not a valid integer. Refusing to sign. Request a new quote.`,
+      'AMOUNT_MISMATCH',
+    );
+  }
 }
 
 // Returns { data } — for an approve step, `data` is RE-ENCODED via
 // encodeApproveCalldata (rejects MAX_UINT256, caps to requestedAmountBaseUnits,
-// re-validates the spender width). For a deposit step, `data` is returned
-// unchanged after the to/selector allowlist AND the decoded-arg binding pass.
+// re-validates the spender width). For a deposit step, `data` is the canonical
+// re-encoding from encodeBridgeDeposit after the to/selector allowlist AND the
+// decoded-arg binding pass (normalizes dirty upper bits in address words).
 export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM step') {
   if (!txData || typeof txData !== 'object' || typeof txData.data !== 'string') {
     throw new CommandError(`${context}: no transaction data to verify. Request a new quote.`, 'INVALID_INPUT');
@@ -844,7 +877,6 @@ export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM 
 
   // AC1: ERC-20 approve → re-scope through the hardened encoder.
   if (isErc20Approve(txData.data)) {
-    requireAmountAnchor(intent, context);
     // The approve call itself must target the origin chain's USDC contract —
     // otherwise a spender/amount that both look legitimate could still grant
     // the router an allowance over an unrelated token the wallet holds.
@@ -871,12 +903,30 @@ export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM 
         'UNEXPECTED_ACTION',
       );
     }
-    // encodeApproveCalldata rejects >= MAX_UINT256 and amount > maxAllowance,
-    // and re-validates the 20-byte spender width. Cap to the requested input.
-    const scoped = encodeApproveCalldata(spender, amount, {
-      maxAllowance: BigInt(intent.requestedAmountBaseUnits),
-    });
-    return { data: scoped };
+    // Cap to the requested input. The only errors encodeApproveCalldata can
+    // throw here are amount-related (zero, unlimited, over-cap): the spender is
+    // already validated against BRIDGE_DEPOSIT_TARGETS above, and amount was
+    // already parsed as a BigInt by decodeErc20Approve — so AMOUNT_MISMATCH is
+    // the correct code for everything that can actually reach the catch.
+    // NB: this rests on every BRIDGE_DEPOSIT_TARGETS entry being a valid 20-byte
+    // address. If one were ever a zero/malformed address, encodeApproveCalldata's
+    // assertValidApprovalSpender would throw a spender-shape error that this catch
+    // would mis-code as AMOUNT_MISMATCH — keep that constant's entries valid.
+    const maxAllowance = requireAmountAnchor(intent, context);
+    try {
+      const scoped = encodeApproveCalldata(spender, amount, { maxAllowance });
+      return { data: scoped };
+    } catch (err) {
+      // encodeApproveCalldata messages already end with their own imperative
+      // ("Refusing to sign[ an … approval].") — drop it so we don't stack two
+      // directives before appending the single actionable next step every
+      // sibling refusal ends with.
+      const reason = err.message.replace(/\s*Refusing to sign[^.]*\.\s*$/, '');
+      throw new CommandError(
+        `${context}: ${reason} Request a new quote.`,
+        'AMOUNT_MISMATCH',
+      );
+    }
   }
 
   // AC2: deposit call → to + selector must both be on the route's allowlist.
@@ -924,8 +974,14 @@ export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM 
   }
   // arg2 (amount) must not exceed what the user requested (defense in depth —
   // the scoped approval already bounds the pull; captures show exact equality).
-  requireAmountAnchor(intent, context);
-  if (dep.amount > BigInt(intent.requestedAmountBaseUnits)) {
+  if (dep.amount <= 0n) {
+    throw new CommandError(
+      context + ' would deposit ' + dep.amount + '; deposit amount must be positive. Refusing to sign. Request a new quote.',
+      'AMOUNT_MISMATCH',
+    );
+  }
+  const requestedAmount = requireAmountAnchor(intent, context);
+  if (dep.amount > requestedAmount) {
     throw new CommandError(
       `${context} would deposit ${dep.amount}, more than the ${intent.requestedAmountBaseUnits} base units you requested. `
         + `Refusing to sign. Request a new quote.`,
@@ -936,7 +992,7 @@ export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM 
   // appears on-chain — both are the accepted relayer-trust residual, bounded by
   // the checks above.
 
-  return { data: txData.data };
+  return { data: encodeBridgeDeposit(dep) };
 }
 
 // Validate every EVM step's calldata against intent BEFORE any step is signed
@@ -960,14 +1016,26 @@ export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM 
 export function preflightEvmBridgeSteps(steps, intent) {
   let approveCount = 0;
   let depositCount = 0;
+  let sawDeposit = false;
   for (const step of steps) {
     for (const item of step.items || []) {
       if (item.status === 'complete') continue;   // don't re-check / re-count resumed steps
       assertEvmBridgeStepIntent(item.data, intent, `Bridge step "${step.id}"`);
       // assertEvmBridgeStepIntent above already proved each item is exactly one
       // of these two shapes, so this classification is total.
-      if (isErc20Approve(item.data.data)) approveCount++;
-      else depositCount++;
+      if (isErc20Approve(item.data.data)) {
+        if (sawDeposit) {
+          throw new CommandError(
+            `Bridge plan has an incomplete approve transaction after the deposit; every incomplete approve must precede the deposit. `
+              + `Refusing to sign — a trailing approve could leave a live router allowance after the deposit is already consumed. Request a new quote.`,
+            'UNEXPECTED_ACTION',
+          );
+        }
+        approveCount++;
+      } else {
+        sawDeposit = true;
+        depositCount++;
+      }
     }
   }
   if (approveCount > 1 || depositCount !== 1) {
@@ -1456,6 +1524,23 @@ function resolveWalletAddress(walletName) {
   return resolveEvmWallet(walletName, 'Bridging');
 }
 
+// Bridge quote files persist the address used to build the transaction at this
+// exact top-level field (see saveBridgeQuote). A dry run can safely use that
+// public address for screening and transaction preflight without requiring a
+// configured local wallet, but only after checking it is actually an EVM
+// address. Missing legacy data falls back to normal wallet resolution.
+function validateQuotedWalletAddress(quoteId, walletAddress) {
+  if (walletAddress == null || walletAddress === '') return null;
+  const { valid, error } = validateAddress(walletAddress, 'ethereum');
+  if (!valid) {
+    throw new CommandError(
+      `Quote "${quoteId}" is malformed: walletAddress is invalid. ${error} Request a fresh quote with "nansen bridge quote".`,
+      'INVALID_INPUT',
+    );
+  }
+  return walletAddress.trim();
+}
+
 // Destination address for --recipient. Validated against the EVM pattern rather
 // than the destination chain's own rules: every supported destination
 // (base/ethereum/arbitrum/hyperliquid) takes an EVM address, and passing
@@ -1495,8 +1580,48 @@ function parseBridgeAmount(raw, amountUnit) {
 
 // ── Command builder ──────────────────────────────────────────────────
 
+/**
+ * Describe the transfer `bridge execute` is about to sign, for the
+ * confirmation prompt and for --dry-run. Built entirely from the cached quote
+ * and the resolved signer — it touches no wallet material.
+ */
+export function buildBridgeExecutionPlan({ quoteId, quoteData, signerAddress, overrides }) {
+  const response = quoteData.response || {};
+  const details = response.details || {};
+  const currencyIn = details.currencyIn || {};
+  const currencyOut = details.currencyOut || {};
+  const relayerFee = response.fees?.relayer || {};
+  const steps = response.steps || [];
+  const sendAmount = currencyIn.amountFormatted
+    || (quoteData.requestedAmountBaseUnits != null ? `${quoteData.requestedAmountBaseUnits} base units` : null);
+  // Keep malformed seam inputs out of user-facing plans. formatPlan omits null
+  // rows, but a template literal would otherwise turn an absent signer into a
+  // visible `undefined (same address)` recipient.
+  const planSignerAddress = signerAddress || null;
+
+  return formatPlan(`Bridge plan — ${quoteData.originChain} → ${quoteData.destinationChain}`, [
+    ['Quote', quoteId],
+    ['Type', response.execution_type],
+    ['Send', [sendAmount, currencyIn.currency?.symbol].filter(Boolean).join(' ') || null],
+    ['Receive', currencyOut.amountFormatted ? `~${[currencyOut.amountFormatted, currencyOut.currency?.symbol].filter(Boolean).join(' ')}` : null],
+    ['Fee', relayerFee.amountUsd ? `$${relayerFee.amountUsd}` : null],
+    ['Wallet', planSignerAddress],
+    ['Recipient', quoteData.recipient || (planSignerAddress ? `${planSignerAddress} (same address)` : null)],
+    ['Steps', steps.map(s => `${s.id} (${s.kind})`).join(', ') || null],
+    ['Overrides', overrides || null],
+  ]);
+}
+
 export function buildBridgeCommands(deps = {}) {
-  const { log = console.log } = deps;
+  const {
+    log = console.log,
+    // Injected so the confirmation prompt (and whether there is anyone to
+    // answer it) can be driven in tests without a terminal.
+    promptFn,
+    confirmationLog = log,
+    isTTY = false,
+    env = process.env,
+  } = deps;
 
   return {
     'quote': async (args, apiInstance, flags, options) => {
@@ -1557,6 +1682,17 @@ OPTIONS:
       const destinationToken = toTokenRaw
         ? resolveBridgeToken(toTokenRaw, destinationChain)
         : resolveBridgeToken('USDC', destinationChain);
+
+      if (
+        originChain === 'base'
+        && destinationChain === 'hyperliquid'
+        && !isBridgeUsdc(originToken, originChain)
+      ) {
+        throw new CommandError(
+          'Base -> Hyperliquid bridge deposits currently support USDC only. Use --from-token USDC.',
+          'INVALID_INPUT',
+        );
+      }
 
       const wallet = resolveWalletAddress(walletName);
 
@@ -1660,12 +1796,24 @@ OPTIONS:
     'execute': async (args, apiInstance, flags, options) => {
       const quoteId = options.quote || args[0];
       const walletName = options.wallet;
+      const guard = resolveExecuteGuard(flags, { env, isTTY });
 
       if (!quoteId) {
         throw new CommandError(
           `Usage: nansen bridge execute --quote <quoteId> [--wallet <name>]
 
 Execute a cached bridge quote. Signs transactions and broadcasts them.
+
+OPTIONS:
+  --dry-run       Validate and print what would be signed, then stop. Nothing is
+                  broadcast and the quote stays usable.
+  --yes, -y       Skip the confirmation prompt (same as NANSEN_YES=1). The prompt
+                  only appears when stdin is a terminal; agents, CI and pipes are
+                  never prompted, with or without --yes.
+
+EXIT CODES:
+  0  the transfer was submitted, or the dry run completed
+  1  declined at the confirmation prompt, or the execution failed
 
 RECOVERY OPTIONS (EVM deposit legs only):
   --priority-fee  Priority fee in gwei, overriding the quoted one
@@ -1707,6 +1855,14 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         nonceSequence = { next: parseInt(s, 10) };
       }
 
+      // One rendering of the overrides — shown in the execution plan, and
+      // again when the EVM leg actually applies them.
+      const overridesSummary = [
+        feeOverrides.priorityFeeWei ? `priority fee ${feeOverrides.priorityFeeWei} wei` : null,
+        feeOverrides.maxFeeWei ? `fee cap ${feeOverrides.maxFeeWei} wei` : null,
+        nonceSequence ? `starting nonce ${nonceSequence.next}` : null,
+      ].filter(Boolean).join(', ') || null;
+
       const quoteData = loadBridgeQuote(quoteId);
       // A truncated or hand-edited quote file can be missing `response.steps`
       // entirely; guard before destructuring so the operator gets an actionable
@@ -1734,38 +1890,131 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         );
       }
 
-      log(`\n  Executing bridge: ${quoteData.originChain} → ${quoteData.destinationChain}`);
+      log(`\n  ${guard.dryRun ? 'Checking' : 'Executing'} bridge: ${quoteData.originChain} → ${quoteData.destinationChain}`);
       log(`  Type: ${execution_type}`);
       log(`  Steps: ${steps.length}`);
 
-      // The quote was issued for one wallet, but the signing wallet is resolved
-      // separately from --wallet / the current default — which can have changed
-      // since. Signing with a different wallet than the quote was built for would
-      // screen one address and move funds from another, and the cached tx data
-      // (nonce, from) belongs to the quote's wallet regardless. Refuse instead.
-      const signer = resolveWalletAddress(walletName);
+      // Dry-run preflight needs only the public address persisted alongside the
+      // quote. Prefer it before touching local wallet configuration; legacy
+      // quotes without the field retain the previous wallet-resolution path.
+      // A real execution always resolves the live signer independently and
+      // binds it to the quote before any credentials are loaded.
+      const quotedWalletAddress = validateQuotedWalletAddress(quoteId, quoteData.walletAddress);
+      const signer = guard.dryRun && quotedWalletAddress
+        ? null
+        : resolveWalletAddress(walletName);
+      const signerAddress = signer?.address || quotedWalletAddress;
+      // resolveEvmWallet and validateQuotedWalletAddress already guarantee this
+      // in production. Keep an explicit boundary before compliance screening
+      // so a malformed injected seam can never turn into screenOrThrow([undefined]).
+      if (!signerAddress) {
+        throw new CommandError(
+          `Quote "${quoteId}" has no valid signer address. Request a fresh quote with "nansen bridge quote".`,
+          'INVALID_WALLET',
+        );
+      }
       if (
-        quoteData.walletAddress &&
-        String(signer.address).toLowerCase() !== String(quoteData.walletAddress).toLowerCase()
+        signer &&
+        quotedWalletAddress &&
+        String(signer.address).toLowerCase() !== quotedWalletAddress.toLowerCase()
       ) {
         throw new Error(
-          `Bridge quote "${quoteId}" was created for ${quoteData.walletAddress} but the signing wallet is ${signer.address}. Pass --wallet for the quote's wallet, or request a new quote.`,
+          `Bridge quote "${quoteId}" was created for ${quotedWalletAddress} but the signing wallet is ${signer.address}. Pass --wallet for the quote's wallet, or request a new quote.`,
         );
       }
 
       // Re-screen the signer and any distinct recipient immediately before
       // signing. Quotes live up to an hour, and the EVM leg broadcasts directly.
       const screenAddresses = recipient
-        && String(recipient).toLowerCase() !== String(signer.address).toLowerCase()
-        ? [signer.address, recipient]
-        : [signer.address];
+        && String(recipient).toLowerCase() !== String(signerAddress).toLowerCase()
+        ? [signerAddress, recipient]
+        : [signerAddress];
       await screenOrThrow(apiInstance, screenAddresses);
+
+      // These checks need only the cached quote and public signer address. A
+      // dry run must execute them before returning at the gate; a real run
+      // preserves the established password/error ordering by executing them
+      // after credentials resolve. Cache the result so each invocation can run
+      // the preflight at most once even if the guard's control flow changes.
+      const preflightPlan = () => {
+        let evmIntent = null;
+        let hlIntent = null;
+        if (execution_type === 'evm_transaction') {
+          evmIntent = {
+            chain: quoteData.originChain,
+            signerAddress,
+            requestedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
+          };
+          preflightEvmBridgeSteps(steps, evmIntent);
+        } else if (execution_type === 'hyperliquid_signature') {
+          const currencyIn = quoteData.response.details?.currencyIn;
+          if (quoteData.requestedAmountBaseUnits != null && currencyIn?.amount != null) {
+            let currencyInScaled;
+            let requestedScaled;
+            try {
+              currencyInScaled = BigInt(currencyIn.amount);
+              requestedScaled = BigInt(quoteData.requestedAmountBaseUnits);
+            } catch {
+              throw new CommandError(
+                `Quote input "${currencyIn.amount}" is not a valid amount. Request a new quote.`,
+                'AMOUNT_MISMATCH',
+              );
+            }
+            if (currencyInScaled !== requestedScaled) {
+              throw new CommandError(
+                `Quote input ${currencyIn.amount} does not match the requested ${quoteData.requestedAmountBaseUnits}. Request a new quote.`,
+                'AMOUNT_MISMATCH',
+              );
+            }
+          }
+          hlIntent = {
+            reviewedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
+            hlNetwork: 'Mainnet',
+            signerAddress,
+          };
+          preflightHlBridgeSteps(steps, hlIntent);
+        } else {
+          throw new CommandError(
+            `Quote "${quoteId}" has unsupported execution type "${execution_type}". Request a new quote.`,
+            'INVALID_INPUT',
+          );
+        }
+        return { evmIntent, hlIntent };
+      };
+
+      // A plan shown for interactive consent must already be known-safe. Match
+      // trade execute: preview and an actual prompt preflight eagerly, while
+      // --yes/non-TTY retain the established ordering (credentials first,
+      // preflight immediately before signing).
+      const shouldPreflightPlan = guard.dryRun || (guard.isTTY && !guard.assumeYes);
+      let preflightResult = shouldPreflightPlan ? preflightPlan() : null;
+
+      // ── Acknowledgement gate: --dry-run / --yes ──────────────────────
+      // Placed before the signing credentials are loaded and well before the
+      // first of the quote's steps is signed, so a dry run can sign nothing
+      // and a declined confirmation leaves a multi-step transfer untouched.
+      // See src/execute-guard.js for the TTY rules.
+      const proceed = await guardExecution({
+        plan: buildBridgeExecutionPlan({
+          quoteId,
+          quoteData,
+          signerAddress,
+          overrides: overridesSummary,
+        }),
+        ...guard,
+        promptFn,
+        log,
+        confirmationLog,
+      });
+      if (!proceed) return undefined;
 
       // Signing material for the wallet resolved above — not a second lookup.
       // Resolving twice re-read the wallet file and, worse, could pick a
       // different wallet than the one just screened if the default changed in
       // between.
       const creds = resolveSigningCredentials(signer);
+      preflightResult ??= preflightPlan();
+      const { evmIntent, hlIntent } = preflightResult;
 
       // Consume the quote at each INDIVIDUAL broadcast, before any receipt wait.
       // A tx can be accepted by the network and then have waitForReceipt time
@@ -1786,23 +2035,10 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         });
 
       if (execution_type === 'evm_transaction') {
-        const evmIntent = {
-          chain: quoteData.originChain,
-          signerAddress: signer.address,
-          requestedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
-        };
-        // Validate every step's calldata against intent before any step is
-        // signed or broadcast — see preflightEvmBridgeSteps for why this can't
-        // just be the per-step check processEvmStep already does.
-        preflightEvmBridgeSteps(steps, evmIntent);
         // Overrides move real money differently from what was quoted, so say so
         // rather than letting them apply silently.
-        if (feeOverrides.priorityFeeWei || feeOverrides.maxFeeWei || nonceSequence) {
-          const parts = [];
-          if (feeOverrides.priorityFeeWei) parts.push(`priority fee ${feeOverrides.priorityFeeWei} wei`);
-          if (feeOverrides.maxFeeWei) parts.push(`fee cap ${feeOverrides.maxFeeWei} wei`);
-          if (nonceSequence) parts.push(`starting nonce ${nonceSequence.next}`);
-          log(`  Overrides: ${parts.join(', ')}`);
+        if (overridesSummary) {
+          log(`  Overrides: ${overridesSummary}`);
         }
         for (const [index, step] of steps.entries()) {
           await processEvmStep(step, {
@@ -1818,45 +2054,6 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
           markBroadcast(index);
         }
       } else if (execution_type === 'hyperliquid_signature') {
-        // Check E: the quote's own currencyIn.amount — the amount it displayed
-        // and will send through /perp/bridge/quote — must equal what was
-        // actually requested at quote time. The amount cap below (check B) is
-        // anchored to requestedAmountBaseUnits directly, not to this display
-        // field, so this check is UI-consistency defense-in-depth: it catches a
-        // quote whose displayed send amount has drifted from the request,
-        // rather than gating the cap itself.
-        const currencyIn = quoteData.response.details?.currencyIn;
-        if (quoteData.requestedAmountBaseUnits != null && currencyIn?.amount != null) {
-          let currencyInScaled, requestedScaled;
-          try {
-            currencyInScaled = BigInt(currencyIn.amount);
-            requestedScaled = BigInt(quoteData.requestedAmountBaseUnits);
-          } catch {
-            throw new CommandError(
-              `Quote input "${currencyIn.amount}" is not a valid amount. Request a new quote.`,
-              'AMOUNT_MISMATCH',
-            );
-          }
-          if (currencyInScaled !== requestedScaled) {
-            throw new CommandError(
-              `Quote input ${currencyIn.amount} does not match the requested ${quoteData.requestedAmountBaseUnits}. Request a new quote.`,
-              'AMOUNT_MISMATCH',
-            );
-          }
-        }
-        const hlIntent = {
-          // Anchored to what the CLIENT persisted at quote time from the
-          // user's own --amount, not to any server-supplied display field —
-          // see assertHlBridgeActionIntent for why.
-          reviewedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
-          hlNetwork: 'Mainnet',
-          signerAddress: signer.address,
-        };
-        // Validate every step's payload (both the authorize leg and the HL
-        // action leg) before any of them are signed or posted — see
-        // preflightHlBridgeSteps for why this can't just be the per-step
-        // check the loops below already do.
-        preflightHlBridgeSteps(steps, hlIntent);
         if (creds.provider === 'privy') {
           const { PrivyClient } = await import('./privy.js');
           const privyClient = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);

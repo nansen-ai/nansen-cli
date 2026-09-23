@@ -24,7 +24,7 @@ function credentialMetadata(text) {
 // Command families classify workflows, not server permissions. Unknown additions
 // require an explicit transport/authorization assessment, never a key-only fallback.
 const apiFamilies = new Set(['research', 'login', 'auth', 'account', 'agent', 'alerts', 'web']);
-const walletFamilies = new Set(['trade', 'wallet', 'perp', 'doctor']);
+const walletFamilies = new Set(['trade', 'bridge', 'wallet', 'perp', 'doctor']);
 function assertSkillScope(rows, docs) {
   const groups = { accountApi: [], walletWorkflow: [], standalonePayment: [] };
   for (const row of rows) if (!Object.hasOwn(docs, row.file.split('/')[1])) throw new Error(`Unknown inventory skill: ${row.file}`);
@@ -38,7 +38,7 @@ function assertSkillScope(rows, docs) {
     if (families.includes('research') && !rows.some(r => r.file.split('/')[1] === name) && !families.some(f => walletFamilies.has(f))) throw new Error(`Untraced research skill: ${name}`);
     const metadata = credentialMetadata(text);
     expect(metadata.primaryEnv, name).toBe('NANSEN_API_KEY');
-    expect(metadata.requiredEnv, name).toEqual([]);
+    expect(metadata.requiredEnv, name).toEqual(name === 'nansen-trading' ? ['NANSEN_WALLET_PASSWORD'] : []);
     expect(text).toContain('## Authentication'); expect(text).toContain('nansen:api');
     expect(text).toContain('Browser rollout acceptance is still pending.');
     groups[families.some(f => walletFamilies.has(f)) ? 'walletWorkflow' : 'accountApi'].push(name);

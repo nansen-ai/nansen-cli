@@ -88,7 +88,8 @@ it('matching staging simulation resolves the staging session and refuses an extr
   const fetch = vi.fn(async () => sim()); vi.stubGlobal('fetch', fetch);
   await simulateAssetChanges('base', { to: '0x2' }, { from: '0x1', api });
   expect(fetch.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${bundle.accessToken}`);
-  await expect(simulateAssetChanges('base', { to: '0x2' }, { from: '0x1', api, apiKey: 'other-account' })).rejects.toMatchObject({ code: 'MIXED_CREDENTIALS' });
+  api.defaultHeaders = { apikey: 'other-account' };
+  await expect(simulateAssetChanges('base', { to: '0x2' }, { from: '0x1', api })).rejects.toMatchObject({ code: 'MIXED_CREDENTIALS' });
   expect(fetch).toHaveBeenCalledOnce();
 });
 

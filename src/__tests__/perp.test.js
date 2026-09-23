@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../wallet.js', () => ({
   showWallet: vi.fn(),
@@ -44,6 +44,63 @@ const baseOrder = {
   type: 'limit',
   wallet: 'does-not-matter',
 };
+
+// Asset ids, szDecimals, positions and balances all come from the Nansen
+// proxy, which serves Hyperliquid mainnet data, while signing and submission
+// follow NANSEN_HL_API_URL. Pointing the CLI at the testnet therefore signed
+// mainnet asset indices into testnet actions and showed mainnet positions for
+// a testnet account.
+describe('perp network guard', () => {
+  const TESTNET = 'https://api.hyperliquid-testnet.xyz';
+  let previous;
+
+  beforeEach(() => {
+    previous = process.env.NANSEN_HL_API_URL;
+  });
+
+  afterEach(() => {
+    if (previous === undefined) delete process.env.NANSEN_HL_API_URL;
+    else process.env.NANSEN_HL_API_URL = previous;
+  });
+
+  const apiStub = { request: vi.fn() };
+
+  beforeEach(() => {
+    showWallet.mockReturnValue({ name: 'x', evm: '0x' + '1'.repeat(40), provider: 'local' });
+    getWalletConfig.mockReturnValue({ passwordHash: null, defaultWallet: 'x' });
+  });
+
+  it('refuses a perp read when NANSEN_HL_API_URL points at the testnet', async () => {
+    process.env.NANSEN_HL_API_URL = TESTNET;
+    apiStub.request.mockClear();
+    await expect(cmds.positions([], apiStub, {}, { wallet: 'does-not-matter' }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_NETWORK' });
+    expect(apiStub.request).not.toHaveBeenCalled();
+  });
+
+  it('refuses an order on the testnet before any signing', async () => {
+    process.env.NANSEN_HL_API_URL = TESTNET;
+    submitExchange.mockClear();
+    await expect(cmds.order([], apiStub, {}, baseOrder))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_NETWORK' });
+    expect(submitExchange).not.toHaveBeenCalled();
+  });
+
+  it('names the configured URL and how to undo it', async () => {
+    process.env.NANSEN_HL_API_URL = TESTNET;
+    await expect(cmds.order([], apiStub, {}, baseOrder))
+      .rejects.toThrow(/mainnet-only.*hyperliquid-testnet.*Unset NANSEN_HL_API_URL/s);
+  });
+
+  it('leaves a local mock URL (treated as mainnet) working', async () => {
+    process.env.NANSEN_HL_API_URL = 'http://127.0.0.1:8080';
+    apiStub.request.mockClear();
+    apiStub.request.mockRejectedValue(new Error('proxy unreachable in test'));
+    // Reaches the proxy read instead of being refused by the network guard.
+    await expect(cmds.positions([], apiStub, {}, { wallet: 'does-not-matter' })).rejects.toThrow();
+    expect(apiStub.request).toHaveBeenCalled();
+  });
+});
 
 describe('perp order validation', () => {
   it('rejects a typo in --side instead of silently opening a short', async () => {
@@ -597,6 +654,41 @@ describe('perp direct-to-HL flow (Chunk 3/4/5)', () => {
     expect(submitExchange.mock.calls[0][0].action.type).toBe('approveBuilderFee');
     expect(submitExchange.mock.calls[0][0].action.maxFeeRate).toBe('0.08%');
     expect(submitExchange.mock.calls[1][0].action.type).toBe('order');
+  });
+
+  // The TP/SL side check used to run only inside buildOrderAction, which the
+  // order flow reaches after ensureBuilderApproved has signed and submitted the
+  // one-time approval. A wrong-side stop/take must not cost an on-chain action
+  // or a password prompt, so assert against an unapproved builder: the setup
+  // that would otherwise submit approveBuilderFee first.
+  describe('wrong-side take-profit/stop-loss is rejected before anything is signed', () => {
+    const unapproved = () => mockApi({
+      builder: { approved: false, max_fee_rate: 0, required_fee: 80, builder_address: BUILDER },
+      screen: clean,
+    });
+
+    it.each([
+      ['buy', 'stop-loss', '2000', /Stop-loss for a long must be below/],
+      ['buy', 'take-profit', '1900', /Take-profit for a long must be above/],
+      ['sell', 'stop-loss', '2000', /Stop-loss for a short must be above/],
+      ['sell', 'take-profit', '2100', /Take-profit for a short must be below/],
+    ])('rejects %s with --%s %s', async (side, flag, value, message) => {
+      exportWallet.mockClear();
+      const api = unapproved();
+      const err = await cmds.order([], api, {}, { ...baseOrder, side, [flag]: value }).catch(e => e);
+      expect(err.code).toBe('INVALID_INPUT');
+      expect(err.message).toMatch(message);
+      expect(submitExchange).not.toHaveBeenCalled();
+      // No signing context resolved, so the user is never prompted for a password.
+      expect(exportWallet).not.toHaveBeenCalled();
+      expect(api.request.mock.calls.some(([endpoint]) => endpoint.startsWith('/api/v1/sanctions/screen'))).toBe(false);
+    });
+
+    it('still fires the builder-fee approval when the protective legs are valid', async () => {
+      const api = unapproved();
+      await cmds.order([], api, {}, { ...baseOrder, 'stop-loss': '1900', 'take-profit': '2100' });
+      expect(submitExchange.mock.calls.map(([c]) => c.action.type)).toEqual(['approveBuilderFee', 'order']);
+    });
   });
 
   it('screens and submits a transfer (user-signed usdClassTransfer)', async () => {

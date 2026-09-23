@@ -1,6 +1,12 @@
 // Runs only inside the guarded helper process, never in the CLI event loop.
 import { parentPort, workerData } from 'node:worker_threads';
-import { Entry } from '@napi-rs/keyring';
+let Entry;
+try {
+  ({ Entry } = await import('@napi-rs/keyring'));
+  if (typeof Entry !== 'function') throw new Error();
+}
+catch { Entry = undefined; parentPort.postMessage({ error: 'BINDING_MISSING' }); }
+if (Entry) {
 try {
   const { operation, account, data } = workerData;
   const entry = new Entry('nansen-cli-api-auth-v1', account, { linux: { store: 'secret-service' } });
@@ -11,3 +17,4 @@ try {
   else throw new Error();
   parentPort.postMessage({ value });
 } catch { parentPort.postMessage({ error: 'STORE_UNAVAILABLE' }); }
+}

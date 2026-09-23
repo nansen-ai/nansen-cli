@@ -5,7 +5,7 @@
  */
 
 import { NansenError, ErrorCode } from '../api.js';
-import { parseSort, rejectBlankOption } from '../query-options.js';
+import { parseSort, rejectBlankOption, parseObjectOption } from '../query-options.js';
 
 // Research subcommands validate --page strictly. The shared helper in
 // src/query-options.js clamps an invalid page to 1 for the category commands,
@@ -79,6 +79,8 @@ function parseTimeframeDays(value) {
 function parseBooleanOption(options, flags, key) {
   const value = options[key] ?? flags[key];
   if (value === undefined) return undefined;
+  // Bare flags arrive through `flags` as true; explicit values arrive through
+  // `options` as strings (for example, `--apply-blacklist-filter false`).
   if (typeof value === 'boolean') return value;
   if (value === 'true' || value === '1') return true;
   if (value === 'false' || value === '0') return false;
@@ -254,7 +256,7 @@ export function buildResearchCommands(deps = {}) {
 
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
-      const filters = options.filters || {};
+      const filters = parseObjectOption(options.filters, 'filters');
       const { fromDate, toDate } = resolveDateRange(options);
       const asOfDate = options['as-of-date'];
 

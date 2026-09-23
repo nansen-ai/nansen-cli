@@ -1,5 +1,11 @@
 # Browser onboarding release preparation — NOT READY
 
+## September 23 reconciliation
+
+The current source includes renewal parent `7649cd1f2a21b7fa16a19f3b8851813caf39898c` and browser login parent `1d38498b2ed916bc6de07b6532974e53bfcedcd1`. Main merge, publication and native-platform acceptance remain on hold. An unpublished package check does not authorize distribution. The September 20 records below retain their original heads and limitations; statements about missing deployment evidence describe that snapshot, not a new assessment of live services. Current server validation belongs in the separate dated dev report.
+
+## Historical preparation record
+
 This is a repository-only runbook. [The evidence manifest](api508-evidence.json) records immutable source heads and hashes of completed, private root artifacts without copying raw captures. Artifact identifiers require the root evidence archive; they are not public download links. Null fields are missing evidence. No published version, accepted cohort, live ledger result or operator approval exists in this record.
 
 The package version in source is not a release decision. `package.json` includes `docs/browser-login.md` for self-contained recovery but excludes this release directory. The earlier58-route admission fixture has been removed. Command fixtures now assert shared API-key/browser transports, not a server permission allowlist. Tests trace shipped examples through the public parser and real request transport with synthetic local responses. They cannot establish server entitlement, credits or deployment state.
@@ -69,6 +75,6 @@ Root's separate staging account discovery/balance work has no balance or feature
 
 ## Current permission revision
 
-Parent is exactly77efe0e4612eb1d5e2f357a4b753981519f7d98e. Browser nansen:api grants have API-key-equivalent permissions through normal account ownership, plan, credit, quota and endpoint checks. Existing OAuth/MCP nansen:read is not broadened. Old58-route,23eligible/10key-only assertions and old native/package proof are historical, not acceptance of this revision. All shipped skills are classified by account API, wallet workflow or standalone MPP, without mandatory API-key eligibility for browser-supported calls. Wallet signatures, trade confirmations and sanctions/geographic checks are unchanged.
+At the historical permission revision, the parent was `77efe0e4612eb1d5e2f357a4b753981519f7d98e`. Browser nansen:api grants have API-key-equivalent permissions through normal account ownership, plan, credit, quota and endpoint checks. Existing OAuth/MCP nansen:read is not broadened. Old58-route,23eligible/10key-only assertions and old native/package proof are historical, not acceptance of this revision. All shipped skills are classified by account API, wallet workflow or standalone MPP, without mandatory API-key eligibility for browser-supported calls. Wallet signatures, trade confirmations and sanctions/geographic checks are unchanged.
 
 Local installed-command parity checks do not establish server permission enforcement or ledger outcomes. Freeze the sibling API1967 committed parity head and verify signed cross-service behavior before acceptance. Issuer3ed0279/consumer2ad5702 signed nansen:api revocation evidence is separate from full-route acceptance. Preserve the default-off non-account API gate, account stage, full-session revocation, no mixed credentials and no fallback. MCP installation still needs a persistent integration key; no session-as-key export is implemented.
