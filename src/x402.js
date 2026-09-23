@@ -306,6 +306,8 @@ export async function checkX402Balance(network, asset = null) {
       });
       const data = await resp.json();
       const accounts = data.result?.value || [];
+      // uiAmountString is an RPC display field; this float is only used for a
+      // low-balance warning and never for signing, transfers, or cap arithmetic.
       const balance = accounts.length === 0
         ? 0
         : parseFloat(accounts[0].account.data.parsed.info.tokenAmount.uiAmountString || '0');
