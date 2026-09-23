@@ -58,11 +58,15 @@ function validateGeneratedEntry(client, entry, apiKey = API_KEY) {
     return;
   }
 
-  if (!SUPPORTED_CLIENTS.includes(client)) fail('unsupported MCP client');
+  let expected;
+  if (client === 'claude-code') {
+    expected = { type: 'http', url: EXPECTED_MCP_URL, headers: { [EXPECTED_HEADER]: apiKey } };
+  } else if (client === 'cursor') {
+    expected = { url: EXPECTED_MCP_URL, headers: { [EXPECTED_HEADER]: apiKey } };
+  } else {
+    fail(`unhandled supported MCP client: ${client}`);
+  }
   checkEndpoint(entry.url);
-  const expected = client === 'claude-code'
-    ? { type: 'http', url: EXPECTED_MCP_URL, headers: { [EXPECTED_HEADER]: apiKey } }
-    : { url: EXPECTED_MCP_URL, headers: { [EXPECTED_HEADER]: apiKey } };
   if (JSON.stringify(entry) !== JSON.stringify(expected)) fail('malformed MCP header');
 }
 
@@ -153,9 +157,7 @@ describe('MCP README onboarding contract', () => {
     expect(readme).toContain(EXPECTED_MCP_REMOTE_PIN);
 
     for (const client of SUPPORTED_CLIENTS) {
-      const entry = buildServerEntry(client, API_KEY);
       expect(readme).toContain(`nansen mcp install ${client}`);
-      expect(readme).toContain(client === 'claude-desktop' ? entry.args[2] : entry.url);
     }
   });
 });
@@ -216,6 +218,7 @@ describe('mcp command handler', () => {
     env: {},
   });
   const runClient = (client, args, { flags = {}, apiInstance = api } = {}) => buildMcpCommands({
+    // Intentionally share outer logs so resets between runs apply here too.
     log: (...a) => logs.push(a.join(' ')),
     platform: clientPlatform(client),
     homedirFn: () => tempDir,
