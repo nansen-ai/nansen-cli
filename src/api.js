@@ -849,12 +849,15 @@ export class NansenAPI {
     }
     // fetch resolves when response headers are available, before body parsing;
     // duration_ms therefore reports time-to-headers (TTFB), not full download.
+    // Capture the server request id once — it is the primary correlation key to
+    // server-side logs and is threaded into every payment audit record below.
+    const responseRequestId = requestIdOf(paidResponse);
     traceResponse({
       method,
       url,
       status: paidResponse.status,
       durationMs: Date.now() - startedAt,
-      requestId: requestIdOf(paidResponse),
+      requestId: responseRequestId,
       attempt: 1,
       payment: 'x402',
     });
@@ -874,7 +877,7 @@ export class NansenAPI {
         if (paymentMeta.paymentId) {
           try {
             const { finalizePaymentAttempt } = await import('./x402-ledger.js');
-            finalizePaymentAttempt(paymentMeta.paymentId, { status: 'ambiguous', httpStatus: paidResponse.status });
+            finalizePaymentAttempt(paymentMeta.paymentId, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
           } catch { /* best-effort */ }
         }
         throw new NansenError(
@@ -889,7 +892,7 @@ export class NansenAPI {
         if (paymentMeta.paymentId) {
           try {
             const { finalizePaymentAttempt } = await import('./x402-ledger.js');
-            finalizePaymentAttempt(paymentMeta.paymentId, { status: 'ambiguous', httpStatus: paidResponse.status });
+            finalizePaymentAttempt(paymentMeta.paymentId, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
           } catch { /* best-effort */ }
         }
         throw new NansenError(
@@ -908,6 +911,7 @@ export class NansenAPI {
             status: 'rejected',
             httpStatus: paidResponse.status,
             reason: rejClass || null,
+            requestId: responseRequestId,
           });
         } catch { /* best-effort */ }
       }
@@ -932,7 +936,7 @@ export class NansenAPI {
       if (paymentMeta.paymentId) {
         try {
           const { finalizePaymentAttempt } = await import('./x402-ledger.js');
-          finalizePaymentAttempt(paymentMeta.paymentId, { status: 'ambiguous', httpStatus: paidResponse.status });
+          finalizePaymentAttempt(paymentMeta.paymentId, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
         } catch { /* best-effort */ }
       }
       // The payment was accepted (2xx) — it settled. We just can't read the
@@ -946,7 +950,7 @@ export class NansenAPI {
     if (paymentMeta.paymentId) {
       try {
         const { finalizePaymentAttempt } = await import('./x402-ledger.js');
-        finalizePaymentAttempt(paymentMeta.paymentId, { status: 'accepted', httpStatus: paidResponse.status });
+        finalizePaymentAttempt(paymentMeta.paymentId, { status: 'accepted', httpStatus: paidResponse.status, requestId: responseRequestId });
       } catch { /* best-effort */ }
     }
     const meta = readResponseMeta(paidResponse);
