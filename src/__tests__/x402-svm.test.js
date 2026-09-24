@@ -12,6 +12,7 @@ import {
   buildUnsignedSvmTransaction,
   fetchRecentBlockhash,
 } from '../x402-svm.js';
+import { CHAIN_RPCS } from '../rpc-urls.js';
 
 // Inline Solana wallet generation (from wallet.js PR #26, not yet merged)
 function generateSolanaWallet() {
@@ -95,8 +96,8 @@ describe('isSvmNetwork', () => {
 });
 
 describe('getSolanaRpcUrl', () => {
-  it('should return mainnet URL for the canonical mainnet CAIP-2 id', () => {
-    expect(getSolanaRpcUrl('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp')).toContain('mainnet');
+  it('should return the shared mainnet RPC for the canonical mainnet CAIP-2 id', () => {
+    expect(getSolanaRpcUrl('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp')).toBe(CHAIN_RPCS.solana);
   });
 
   it('should return devnet URL for the canonical devnet CAIP-2 id', () => {
@@ -110,6 +111,25 @@ describe('getSolanaRpcUrl', () => {
   it('throws for an unknown solana:* network instead of falling back to mainnet', () => {
     expect(() => getSolanaRpcUrl('solana:bogus')).toThrow(/Unsupported Solana network/);
     expect(() => getSolanaRpcUrl('solana:not-a-real-network-id')).toThrow(/Unsupported Solana network/);
+  });
+
+  // The mainnet branch hardcoded the public endpoint, so a user's
+  // NANSEN_SOLANA_RPC (honoured by transfer, trading and limit orders) was
+  // ignored for x402 blockhash fetches and balance checks.
+  it('honours NANSEN_SOLANA_RPC for mainnet like every other Solana path', async () => {
+    const previous = process.env.NANSEN_SOLANA_RPC;
+    process.env.NANSEN_SOLANA_RPC = 'https://private.rpc.example/solana';
+    vi.resetModules();
+    try {
+      const fresh = await import('../x402-svm.js');
+      expect(fresh.getSolanaRpcUrl('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp')).toBe('https://private.rpc.example/solana');
+      // Devnet/testnet stay on their fixed endpoints.
+      expect(fresh.getSolanaRpcUrl('solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1')).toContain('devnet');
+    } finally {
+      if (previous === undefined) delete process.env.NANSEN_SOLANA_RPC;
+      else process.env.NANSEN_SOLANA_RPC = previous;
+      vi.resetModules();
+    }
   });
 });
 
@@ -217,5 +237,77 @@ describe('fetchRecentBlockhash', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
     await expect(fetchRecentBlockhash('http://unused'))
       .rejects.toThrow(/Solana RPC unavailable while fetching a recent blockhash/);
+  });
+
+  it('defaults to the shared RPC registry entry rather than a hardcoded public endpoint', async () => {
+    const bh = base58Encode(crypto.randomBytes(32));
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ result: { value: { blockhash: bh } } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchRecentBlockhash()).resolves.toBe(bh);
+    expect(fetchMock).toHaveBeenCalledWith(CHAIN_RPCS.solana, expect.objectContaining({ method: 'POST' }));
+  });
+
+  // A private RPC URL usually carries an API key in its query string. Node's
+  // own parse failure ("Failed to parse URL from <value>") would copy it into
+  // the error message, which privy.js and the x402 fallback loop print.
+  it('refuses a malformed RPC URL up front without echoing it', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const secret = 'SUPERSECRET_KEY_123';
+    const badUrls = [
+      `mainnet.helius-rpc.com/?api-key=${secret}`, // missing scheme
+      `ws://rpc.example/?api-key=${secret}`,        // non-HTTP scheme
+      '   ',
+      '',
+      'not a url',
+    ];
+    for (const url of badUrls) {
+      let caught;
+      try {
+        await fetchRecentBlockhash(url);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught, `expected rejection for ${JSON.stringify(url)}`).toBeInstanceOf(Error);
+      expect(caught.message).toMatch(/Invalid Solana RPC URL.*http:\/\/ or https:\/\/.*NANSEN_SOLANA_RPC/);
+      expect(caught.message).not.toContain(secret);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('passes an abort signal to fetch and times out a hanging RPC with an actionable message', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn((_url, opts) => new Promise((_resolve, reject) => {
+        opts.signal.addEventListener('abort', () => {
+          reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }));
+        });
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const pending = fetchRecentBlockhash('http://unused');
+      const assertion = expect(pending).rejects.toThrow(/did not respond within 15s while fetching a recent blockhash/);
+      expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not report a timeout for an ordinary network failure', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    let caught;
+    try {
+      await fetchRecentBlockhash('http://unused');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught.message).toMatch(/Solana RPC unavailable/);
+    expect(caught.message).not.toMatch(/did not respond/);
   });
 });

@@ -15,3 +15,5 @@ First-party browser sessions request `nansen:api` for API-key-equivalent account
 Hosted simulation rejects selected-account authentication/authorization failures instead of degrading past them; wallet signing checks remain unchanged.
 
 Preserve anonymous hosted-simulation warn-and-proceed behavior on 401/403 while selected account credentials still fail closed. Resolve a missing home environment through the OS home directory, and refuse relative authentication storage paths.
+
+Explicit API-key login now saves the same API URL used to verify the key, preserving staging or custom API configuration.

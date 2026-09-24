@@ -268,3 +268,20 @@ it('uses the injected session owner for a public account request', async () => {
   expect(fetch).toHaveBeenCalledOnce();
   expect(fetch.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${bundle.accessToken}`);
 });
+
+
+it.each(['human', 'api-key'].flatMap(method => ['env', 'config', 'default'].map(source => [method, source])))('%s key login verifies and saves the %s API origin', async (method, source) => {
+  const f = fixture();
+  const expectedUrl = source === 'default' ? 'https://api.nansen.ai' : 'https://api.banansen.dev';
+  fs.writeFileSync(f.file, JSON.stringify({ baseUrl: source === 'config' ? expectedUrl : 'https://api.nansen.ai' }));
+  if (source === 'env') f.env.NANSEN_BASE_URL = expectedUrl;
+  const verified = vi.fn();
+  class API {
+    constructor(key, baseUrl) { verified(key, baseUrl); }
+    async getAccount() { return {}; }
+  }
+  const commands = buildCommands({ env: f.env, authState: f.state, NansenAPIClass: API, stdinTTY: true, promptFn: async () => 'test-key', log: vi.fn() });
+  await commands.login([], null, method === 'human' ? { human: true } : {}, method === 'api-key' ? { 'api-key': 'test-key' } : {});
+  expect(verified).toHaveBeenCalledWith('test-key', expectedUrl);
+  expect(authConfigView({ HOME: f.home })).toMatchObject({ baseUrl: expectedUrl, apiKey: 'test-key' });
+});

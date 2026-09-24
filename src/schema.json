@@ -1155,7 +1155,7 @@
                 },
                 "search": {
                   "type": "string",
-                  "description": "Filter screener candidates client-side by token name, symbol, or exact address. With --paginate/--all, the fully traversed candidate pool is filtered after traversal; pagination metadata describes the upstream candidate-page traversal, not the number of matches after filtering."
+                  "description": "Filter screener candidates client-side by token name, symbol, or exact address. Only the fetched candidate rows are searched (the first 500 by default, more with --limit/--page, every traversed page with --paginate/--all), so the response adds _meta.search: { query, searched, matched, complete }. complete: false means the API had more rows beyond that window and a missing token may simply rank below it; widen with --limit (max 1000) or --paginate, or narrow with --filters. A stderr note repeats this for --fields/--table/--csv/--stream output. With --paginate/--all, the fully traversed candidate pool is filtered after traversal; pagination metadata describes the upstream candidate-page traversal, not the number of matches after filtering."
                 }
               }
             },

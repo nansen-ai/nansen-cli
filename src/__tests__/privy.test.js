@@ -255,9 +255,11 @@ describe("createPrivyPaymentSignatures", () => {
       extra: { feePayer: "11111111111111111111111111111111" },
     };
 
-    vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
-      // Solana RPC (fetchRecentBlockhash) - mainnet-beta URL
-      if (typeof url === "string" && url.includes("mainnet-beta")) {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url, options) => {
+      // Solana RPC (fetchRecentBlockhash). Match on the JSON-RPC method, not
+      // the hostname, so the stub still applies when NANSEN_SOLANA_RPC points
+      // at a custom endpoint.
+      if (typeof options?.body === "string" && options.body.includes('"getLatestBlockhash"')) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({
