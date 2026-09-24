@@ -1553,6 +1553,7 @@ export function buildCommands(deps = {}) {
         const NansenAPIClass = _NansenAPIClass;
         const testApi = new NansenAPIClass(apiKey.trim(), baseUrl, {
           allowPayment: false,
+          redactAuthDiagnostics: fromStdin,
           retry: { maxRetries: 2 },
           cache: { enabled: false }
         });
@@ -1603,10 +1604,12 @@ export function buildCommands(deps = {}) {
         : 'Commands still use NANSEN_API_KEY. Unset it to use the saved credential.');
 
       log(`✓ Saved to ${getConfigFileFn()}\n`);
-      if (accountInfo?.plan) {
+      // Verification responses may reflect the submitted key. Stdin login
+      // prints only local status, including when upstream fields look harmless.
+      if (!fromStdin && accountInfo?.plan) {
         log(`Plan: ${accountInfo.plan}`);
       }
-      if (accountInfo?.credits_remaining !== undefined) {
+      if (!fromStdin && accountInfo?.credits_remaining !== undefined) {
         log(`Credits remaining: ${accountInfo.credits_remaining}`);
       }
       log(blankEnvKey ? '\nUnset NANSEN_API_KEY to use the saved credential, then try:' : '\nYou can now use the Nansen CLI. Try:');

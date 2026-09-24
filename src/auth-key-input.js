@@ -13,12 +13,14 @@ export async function readApiKeyInput(input, isTTY = input.isTTY, { timeoutMs = 
   let size = 0;
   const timeoutError = inputError('Timed out reading the API key from stdin. Close the pipe after writing a single key, or redirect a key file.', 'API_KEY_INPUT_TIMEOUT');
   let timer;
+  let iterator;
+  let exhausted = false;
   const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(timeoutError), timeoutMs); });
   try {
-    const iterator = input[Symbol.asyncIterator]();
+    iterator = input[Symbol.asyncIterator]();
     while (true) {
       const { done, value } = await Promise.race([iterator.next(), timeout]);
-      if (done) break;
+      if (done) { exhausted = true; break; }
       const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
       size += bytes.length;
       if (size > MAX_KEY_BYTES) break;
@@ -29,7 +31,12 @@ export async function readApiKeyInput(input, isTTY = input.isTTY, { timeoutMs = 
     throw inputError('Could not read the API key from stdin. Check the input and try again.', 'API_KEY_INPUT_FAILED');
   } finally {
     clearTimeout(timer);
-    input.destroy?.();
+    try { input.destroy?.(); } catch { /* Never expose input cleanup errors. */ }
+    // A pending next() can keep return() pending too. Request finalization,
+    // but never let a custom iterator extend the input deadline.
+    if (!exhausted) {
+      try { Promise.resolve(iterator?.return?.()).catch(() => {}); } catch { /* Preserve the sanitized input error. */ }
+    }
   }
   if (size > MAX_KEY_BYTES) throw inputError('API key input exceeds 4096 bytes. Provide a single API key.', 'INVALID_PARAMS');
   const key = Buffer.concat(chunks).toString('utf8').trim();

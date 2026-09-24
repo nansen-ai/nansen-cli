@@ -708,6 +708,7 @@ export class NansenAPI {
     this.baseUrl = baseUrl ?? view.baseUrl;
     this.authState = options.authState;
     this.allowPayment = options.allowPayment !== false;
+    this.redactAuthDiagnostics = options.redactAuthDiagnostics === true;
     this.retryOptions = { ...DEFAULT_RETRY_OPTIONS, ...options.retry };
     this.cacheOptions = {
       enabled: options.cache?.enabled ?? false,
@@ -960,7 +961,7 @@ export class NansenAPI {
         });
       } catch (err) {
         // Network-level errors - retry these too
-        traceError({ method, url, durationMs: Date.now() - startedAt, attempt: attempt + 1, error: err.message });
+        traceError({ method, url, durationMs: Date.now() - startedAt, attempt: attempt + 1, error: this.redactAuthDiagnostics ? 'API request failed' : err.message });
         lastError = new NansenError(
           this.selection.kind === 'session' ? 'API request failed. Check your connection and retry.' : `Network error: ${err.message}`,
           ErrorCode.NETWORK_ERROR,
@@ -984,7 +985,7 @@ export class NansenAPI {
         url,
         status: response.status,
         durationMs: Date.now() - startedAt,
-        requestId: requestIdOf(response),
+        requestId: this.redactAuthDiagnostics ? undefined : requestIdOf(response),
         attempt: attempt + 1,
       });
 

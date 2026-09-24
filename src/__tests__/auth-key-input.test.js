@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { readApiKeyInput } from '../auth-key-input.js';
 import { buildCommands, parseArgs, runCLI } from '../cli.js';
 import { buildCompletionSpec } from '../commands/completion.js';
+import { NansenAPI } from '../api.js';
+import { setDebugEnabled, setDebugWriter } from '../debug.js';
 
 describe('API key stdin input', () => {
   it('accepts a key split across chunks with a trailing newline', async () => {
@@ -21,11 +23,27 @@ describe('API key stdin input', () => {
 
   it('stops reading oversized input before verification', async () => {
     let chunks = 0;
+    let closed = false;
     async function* source() {
-      for (let i = 0; i < 100; i++) { chunks++; yield Buffer.alloc(4096, 'a'); }
+      try {
+        for (let i = 0; i < 100; i++) { chunks++; yield Buffer.alloc(4096, 'a'); }
+      } finally { closed = true; }
     }
     await expect(readApiKeyInput(source(), false)).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
     expect(chunks).toBe(2);
+    expect(closed).toBe(true);
+  });
+
+  it('does not let a stalled iterator cleanup defeat the input deadline', async () => {
+    const iterator = { next: () => new Promise(() => {}), return: vi.fn(() => new Promise(() => {})) };
+    const input = { [Symbol.asyncIterator]: () => iterator };
+    await expect(readApiKeyInput(input, false, { timeoutMs: 10 })).rejects.toMatchObject({ code: 'API_KEY_INPUT_TIMEOUT' });
+    expect(iterator.return).toHaveBeenCalledOnce();
+  });
+
+  it('suppresses a rejecting iterator cleanup without masking oversized input', async () => {
+    const iterator = { next: async () => ({ value: Buffer.alloc(4097) }), return: async () => { throw new Error('example-secret'); } };
+    await expect(readApiKeyInput({ [Symbol.asyncIterator]: () => iterator }, false)).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
   });
 
   it('sanitizes input errors', async () => {
@@ -99,6 +117,29 @@ describe('stdin login command', () => {
     await expect(login([], null, { 'api-key-stdin': true }, {})).rejects.toMatchObject({ code: 'API_KEY_REQUIRED' });
     expect(deps.NansenAPIClass).not.toHaveBeenCalled();
     expect(deps.authState.begin).not.toHaveBeenCalled();
+  });
+
+  it('does not print server-controlled account fields that reflect the submitted key', async () => {
+    const { deps, login } = commands(undefined, {
+      NansenAPIClass: vi.fn(function () { return { getAccount: async () => ({ plan: 'example-stdin-key', credits_remaining: 'example-stdin-key' }) }; }),
+    });
+    await login([], null, { 'api-key-stdin': true }, {});
+    expect(JSON.stringify(deps.log.mock.calls)).not.toContain('example-stdin-key');
+  });
+
+  it('does not trace a verification transport error that reflects the submitted key', async () => {
+    const trace = vi.fn();
+    setDebugEnabled(true); setDebugWriter(trace);
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('example-stdin-key')));
+    try {
+      class API extends NansenAPI {
+        constructor(key, url, options) { super(key, url, { ...options, retry: { maxRetries: 0 } }); }
+      }
+      const { login } = commands(undefined, { NansenAPIClass: API });
+      await expect(login([], null, { 'api-key-stdin': true }, {})).rejects.toMatchObject({ code: 'VERIFICATION_FAILED' });
+      expect(JSON.stringify(trace.mock.calls)).toContain('http.error');
+      expect(JSON.stringify(trace.mock.calls)).not.toContain('example-stdin-key');
+    } finally { setDebugEnabled(undefined); setDebugWriter(undefined); vi.unstubAllGlobals(); }
   });
 
   it('preserves saved authentication on verification failure and suppresses echoed keys', async () => {
