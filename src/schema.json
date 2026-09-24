@@ -2698,7 +2698,7 @@
         },
         "json": {
           "type": "boolean",
-          "description": "NDJSON pending and one terminal event; automatic in non-TTY"
+          "description": "Browser login: NDJSON pending and one terminal event; automatic in non-TTY. With --api-key-stdin: one saved event with effective_source, environment_key_blank and cleanup."
         },
         "human": {
           "type": "boolean",
@@ -2707,6 +2707,10 @@
         "api-key": {
           "type": "string",
           "description": "Legacy API key to verify and save; recorded in shell history"
+        },
+        "api-key-stdin": {
+          "type": "boolean",
+          "description": "Read a single API key from a pipe or redirected file (maximum 4096 bytes; input must close within 30 seconds), verify and save it without echoing it. Requires the native lock binding. Cannot combine with --api-key, --human or --no-browser. NANSEN_API_KEY still overrides saved credentials for subsequent commands."
         }
       },
       "returns": {

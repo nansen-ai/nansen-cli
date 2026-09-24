@@ -37,6 +37,15 @@ it.each(['NANSEN_NO_TELEMETRY', 'DO_NOT_TRACK'])('auth success and failure honor
   for (const fail of [false, true]) await runCLI(['login', secret], { commandOverrides: { login: async () => { if (fail) throw new Error(secret); } }, output: vi.fn(), errorOutput: vi.fn(), exit: vi.fn() });
   expect(fetch).not.toHaveBeenCalled();
 });
+it('records the stdin login flag without input or arbitrary option values', async () => {
+  const { runCLI, events } = await setup();
+  await runCLI(['login', '--api-key-stdin', '--json', '--example-secret-option', secret], {
+    commandOverrides: { login: async () => {} }, output: vi.fn(), errorOutput: vi.fn(), exit: vi.fn(),
+  });
+  expect(events[0].properties.flags.sort()).toEqual(['--api-key-stdin', '--json']);
+  expect(JSON.stringify(events)).not.toContain(secret);
+  expect(JSON.stringify(events)).not.toContain('example-secret-option');
+});
 it('auth status and doctor offline never send telemetry or other network even when telemetry is enabled', async () => {
   const { runCLI, fetch } = await setup();
   for (const args of [['auth', 'status'], ['doctor', '--offline']]) await runCLI(args, { output: vi.fn(), errorOutput: vi.fn(), exit: vi.fn() });

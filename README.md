@@ -30,6 +30,14 @@ Browser login requires working native credential storage and enabled server admi
 
 Existing API-key users can run commands directly with `NANSEN_API_KEY`. It overrides the saved session, even after successful browser login. To deliberately save an injected key, use explicit `nansen login --human`; without an environment key this prompts in a human terminal. `nansen login --api-key <key>` remains available but puts the key in shell history. Saved-auth mutations require the native lock binding. Get a conventional key at [agent setup](https://app.nansen.ai/auth/agent-setup); MCP installation exports a separate persistent API key; it does not export browser sessions.
 
+For automation, pipe a key from your secret manager into `nansen login --api-key-stdin`, or redirect a protected key file:
+
+```bash
+nansen login --api-key-stdin --json < /path/to/protected-api-key
+```
+
+This reads one key (up to 4096 bytes, with an optional trailing newline), verifies it, and saves it without printing it. Input must close within 30 seconds. `--json` prints one `saved` event with the effective credential source; errors exit nonzero. As with existing API-key login, the key is stored in `~/.nansen/config.json` using an atomic write with owner-only file permissions (`0600` on POSIX), not in the OS keychain. The native lock binding is required for saving credentials. It does not create an account or issue a key. Avoid commands containing literal secrets, which may enter shell history. Do not combine it with `--api-key`, `--human`, or `--no-browser`. An existing `NANSEN_API_KEY` still overrides the saved credential until you unset it.
+
 Anonymous payment options remain separate:
 
 - **x402:** create and fund a wallet with USDC on Base/Solana or USDT0 on X Layer. With no selected API key or browser session, the CLI can sign `Payment-Signature` on a supported 402 challenge. Selected credentials never trigger automatic payment, including a valid key returning 402. Top up the selected account or explicitly provide a manual API-key payment signature.

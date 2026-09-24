@@ -2269,7 +2269,7 @@ describe('buildCommands', () => {
       expect(out).not.toContain('security find-generic-password');
       expect(out).toMatch(/recorded in shell history/i);
       // the safe path is listed before the history-recording one
-      expect(out.indexOf('--human')).toBeLessThan(out.indexOf('--api-key'));
+      expect(out.indexOf('\n  --human')).toBeLessThan(out.indexOf('\n  --api-key —'));
     });
 
     it('should save config with --api-key option after verification', async () => {

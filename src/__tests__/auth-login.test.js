@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { Readable } from 'node:stream';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -91,6 +92,15 @@ describe('browser login public command integration', () => {
     function API() { return { getAccount: async () => ({ credits_remaining: 0 }) }; }
     await buildCommands({ authState: f.state, env: f.env, promptFn, isTTY: false, log: vi.fn(), NansenAPIClass: API }).login([], null, { human: true }, {});
     expect(promptFn).not.toHaveBeenCalled(); expect(JSON.parse(fs.readFileSync(f.file))).toMatchObject({ apiKey: 'key-A', auth: { active: { kind: 'api-key' } } });
+  });
+  it('stdin key login replaces an older key through protected atomic storage', async () => {
+    const f = fixture();
+    fs.writeFileSync(f.file, JSON.stringify({ apiKey: 'example-old-key' }), { mode: 0o644 });
+    function API() { return { getAccount: async () => ({ credits_remaining: 0 }) }; }
+    await buildCommands({ authState: f.state, env: f.env, stdin: Readable.from(['example-new-key\n']), stdinTTY: false, log: vi.fn(), NansenAPIClass: API }).login([], null, { 'api-key-stdin': true }, {});
+    expect(JSON.parse(fs.readFileSync(f.file))).toMatchObject({ apiKey: 'example-new-key', auth: { active: { kind: 'api-key' } } });
+    if (process.platform !== 'win32') expect(fs.statSync(f.file).mode & 0o777).toBe(0o600);
+    expect(fs.readdirSync(f.directory).filter(name => name.endsWith('.tmp'))).toEqual([]);
   });
   it('logout wins while an explicit key is still being verified', async () => {
     const f = fixture(); let release, started;

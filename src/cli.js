@@ -1,5 +1,6 @@
 import { authConfigView } from './auth-credentials.js';
 import { browserLogin, defaultAuthState, cleanupMessage } from './auth-login.js';
+import { readApiKeyInput } from './auth-key-input.js';
 /**
  * Nansen CLI - Core logic (testable)
  * Extracted from index.js for coverage
@@ -198,7 +199,7 @@ export function compactSchema(schema) {
 // subcommand, so it lives here rather than inline in parseArgs.
 export const VALUELESS_FLAGS = new Set([
   'pretty', 'help', 'version', 'table', 'no-retry', 'cache', 'no-cache', 'stream',
-  'enrich', 'full', 'human', 'no-browser', 'enabled', 'disabled', 'expert', 'json', 'offline',
+  'enrich', 'full', 'human', 'no-browser', 'api-key-stdin', 'enabled', 'disabled', 'expert', 'json', 'offline',
   'no-simulate', 'no-verify-outcome', 'no-revoke-excessive-allowance', 'dry-run',
   'send-api-key', 'all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password',
   'reveal', 'yes', 'paginate', 'debug',
@@ -1122,6 +1123,7 @@ AUTHENTICATION:
   nansen auth status           Offline, cached/unverified; does not open session storage
   nansen account               Free live check of the effective credential
   nansen login --human         Explicit legacy key setup; also persists an injected env key
+  nansen login --api-key-stdin Read a key from a pipe or file; never echo the key
   NANSEN_API_KEY overrides saved authentication. Selected credentials never auto-pay.
   Browser sessions renew automatically; uncertain renewal requires fresh login.
   Browser nansen:api sessions have API-key-equivalent account permissions; wallet signing is separate.
@@ -1388,6 +1390,7 @@ export function buildCommands(deps = {}) {
     getConfigFileFn = getConfigFile,
     stdoutTTY = deps.isTTY ?? process.stdout.isTTY,
     stdinTTY = deps.isTTY ?? process.stdin.isTTY,
+    stdin = process.stdin,
     env = process.env
   } = deps;
 
@@ -1500,13 +1503,18 @@ export function buildCommands(deps = {}) {
     },
 
     'login': async (args, apiInstance, flags, options) => {
+      if ('api-key-stdin' in options) throw new CommandError('--api-key-stdin does not accept a value.', 'INVALID_PARAMS');
+      const fromStdin = flags['api-key-stdin'] === true;
+      if (fromStdin && (args.length || flags.human || flags['no-browser'] || flags['api-key'] || 'api-key' in options)) {
+        throw new CommandError('--api-key-stdin cannot be combined with arguments, --api-key, --human, or --no-browser.', 'INVALID_PARAMS');
+      }
       if (flags['api-key']) throw new CommandError('--api-key requires a value.', 'MISSING_PARAM');
       if ('api-key' in options && typeof options['api-key'] !== 'string') throw new CommandError('--api-key must be a single key string.', 'INVALID_PARAMS');
-      if (!flags.human && options['api-key'] === undefined) {
+      if (!fromStdin && !flags.human && options['api-key'] === undefined) {
         return browserLoginFn({ flags, env, isTTY: stdoutTTY, log, errorOutput, state: authState });
       }
       if (flags['no-browser']) throw new CommandError('--no-browser cannot be combined with legacy key setup.', 'INVALID_PARAMS');
-      let apiKey = options['api-key'];
+      let apiKey = fromStdin ? await readApiKeyInput(stdin, stdinTTY) : options['api-key'];
 
       if (apiKey === undefined) {
         apiKey = env.NANSEN_API_KEY?.trim() || undefined;
@@ -1537,6 +1545,7 @@ export function buildCommands(deps = {}) {
       }
 
       let accountInfo;
+      let cleanup;
       const baseUrl = authConfigView(env).baseUrl;
       const attempt = await authState.begin({ preflight: false });
       try {
@@ -1581,9 +1590,14 @@ export function buildCommands(deps = {}) {
         }
 
         const result = await authState.install(attempt, { apiKey: apiKey.trim(), baseUrl });
-        for (const message of cleanupMessage(result.cleanup)) log(message);
+        cleanup = result.cleanup;
+        if (!fromStdin || !flags.json) for (const message of cleanupMessage(cleanup)) log(message);
       } finally { await authState.finish(attempt); }
       const blankEnvKey = env.NANSEN_API_KEY !== undefined && !env.NANSEN_API_KEY.trim();
+      if (fromStdin && flags.json) {
+        log(JSON.stringify({ event: 'saved', effective_source: env.NANSEN_API_KEY !== undefined ? 'env' : 'config', environment_key_blank: blankEnvKey, cleanup }));
+        return;
+      }
       if (env.NANSEN_API_KEY !== undefined) log(blankEnvKey
         ? 'NANSEN_API_KEY is blank. Commands will fail until you unset it or supply a valid environment key.'
         : 'Commands still use NANSEN_API_KEY. Unset it to use the saved credential.');
