@@ -378,7 +378,8 @@
     "sha256": "3df4a1c57538ec5296343a82e193653bdb33208937dfc863cf0a5dc445465e30",
     "published": false,
     "installedFilesMatchSourceAndArchive": 98,
-    "versionWarning": "The existing npm 1.46.0 and the September 23 local archive contain different bytes. Identify this artifact by head and digest."
+    "versionWarning": "The existing npm 1.46.0 and the September 23 local archive contain different bytes. Identify this artifact by head and digest.",
+    "repackNote": "docs/browser-login.md ships inside the archive. Repacking this documentation change creates different bytes and requires a new digest and installed-file verification; it does not change the existing a5f4529 artifact."
   },
   "currentDevValidation20260924": {
     "sourceHead": "a5f452935dafc91775ed7e0c4b81473c93ea7846",
@@ -394,7 +395,7 @@
       "freeAfter": 87,
       "purchasedCreditsUnchanged": true
     },
-    "renewalAndLogout": "incomplete: unrelated API deployment reset admission during wait; both account commands returned UNAUTHORIZED",
+    "renewalAndLogout": "indeterminate: account commands returned UNAUTHORIZED after unrelated API deployment disabled browser admission. No issuer refresh result or post-logout token rejection was captured.",
     "interferingApiDeployment": {
       "commit": "7ddcd2a2ac6e4893abd6d3ba447e9bb9bc4cbb84",
       "replicaSetCreatedAt": "2026-09-24T07:35:29Z"
@@ -431,7 +432,8 @@
       "devApiResearchAdmission": false,
       "cliPublicationEnabledVariable": "absent",
       "versionPackagesPr689": "open, no automerge"
-    }
+    },
+    "clientRenewalCoverage": "Independent source comparison found no renewal/logout behavior change since the September 23 archive, only retry error wording. That client result remains applicable, but it is not a current-deployment revocation measurement."
   },
   "isolatedOutageValidation20260924": {
     "api": {
