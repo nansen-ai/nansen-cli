@@ -263,7 +263,7 @@ export function buildUnsignedSvmTransaction(
       : `its transaction requires ${numRequiredSignatures} signatures instead of ${X402_SVM_SIGNER_COUNT}`;
     throw new Error(
       `Cannot pay this x402 Solana option: ${cause}. ` +
-      'Another payment option will be tried; if none succeeds, pay on Base or report this payment option to Nansen.',
+      'Another payment option will be tried; if none succeeds, pay on another network or report this payment option to Nansen.',
     );
   }
 

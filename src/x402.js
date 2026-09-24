@@ -120,6 +120,18 @@ async function buildPaymentForRequirement(requirement, exported, url) {
     return null;
   }
 
+  // exportWallet returns a null key for a chain the wallet file doesn't hold.
+  // Skip that option with a clear reason instead of failing on the missing key.
+  const rail = isEvmNetwork(requirement.network) ? 'evm' : 'solana';
+  if (!exported[rail]?.privateKey || !exported[rail]?.address) {
+    const chain = rail === 'evm' ? 'EVM' : 'Solana';
+    console.error(
+      `[x402] Skipping ${requirement.network} option: wallet "${exported.name}" has no ${chain} key. ` +
+      'Create a wallet with both keys (nansen wallet create) and make it the default (nansen wallet default <name>).',
+    );
+    return null;
+  }
+
   if (isEvmNetwork(requirement.network)) {
     if ((requirement.extra || {}).assetTransferMethod === 'permit2-exact') {
       const resolvedAmount = resolvePaymentAmount(requirement);

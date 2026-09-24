@@ -187,7 +187,7 @@ describe('buildUnsignedSvmTransaction', () => {
   it('refuses a feePayer equal to the paying wallet instead of building a malformed transaction', () => {
     const selfPay = { ...requirements, extra: { feePayer: wallet.address } };
     expect(() => buildUnsignedSvmTransaction(selfPay, wallet.address, blockhash))
-      .toThrow(/feePayer is the paying wallet .*Another payment option will be tried/);
+      .toThrow(/feePayer is the paying wallet .*Another payment option will be tried; if none succeeds, pay on another network/);
     expect(() => createSvmPaymentPayload(selfPay, wallet.privateKey, wallet.address, 'https://r', blockhash))
       .toThrow(/feePayer is the paying wallet/);
   });

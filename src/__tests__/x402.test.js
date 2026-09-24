@@ -398,6 +398,68 @@ describe('createPaymentSignatures — policy guard integration', () => {
     vi.doUnmock('../x402-evm.js');
   });
 
+  // A wallet without a Solana key used to reach the SVM builder and surface a
+  // raw TypeError on the skip line.
+  it('12d. skips a Solana option with a clear reason when the wallet has no Solana key', async () => {
+    vi.doMock('../wallet.js', () => ({
+      listWallets: () => ({
+        defaultWallet: 'test',
+        wallets: [{ name: 'test', evm: '0xFakeAddress' }],
+      }),
+      exportWallet: () => ({
+        name: 'test',
+        evm: FAKE_EXPORTED.evm,
+        solana: { address: undefined, privateKey: null },
+      }),
+      getWalletConfig: () => ({ passwordHash: null }),
+    }));
+
+    // Cheaper than the EVM option, so it is tried first.
+    const solanaOption = {
+      scheme: 'exact',
+      network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+      asset: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+      amount: '5000',
+      payTo: 'FakeSolanaPayTo',
+      extra: { feePayer: 'FakeFacilitator' },
+      maxTimeoutSeconds: 120,
+    };
+    const evm = makeRequirement(10_000n);
+
+    const createEvmSpy = vi.fn().mockReturnValue('fake-sig-ok');
+    const createSvmSpy = vi.fn();
+    vi.doMock('../x402-evm.js', () => ({
+      createEvmPaymentPayload: createEvmSpy,
+      isEvmNetwork: (n) => n.startsWith('eip155:'),
+      PERMIT2_ADDRESS: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
+    }));
+    vi.doMock('../x402-svm.js', () => ({
+      createSvmPaymentPayload: createSvmSpy,
+      isSvmNetwork: (n) => n.startsWith('solana:'),
+      fetchRecentBlockhash: vi.fn(),
+      getSolanaRpcUrl: vi.fn(),
+    }));
+
+    const { createPaymentSignatures } = await import('../x402.js');
+    const payload = { accepts: [evm, solanaOption] };
+    const header = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
+    const response = { headers: { get: (k) => (k === 'payment-required' ? header : null) } };
+
+    const results = [];
+    for await (const item of createPaymentSignatures(response, 'https://api.nansen.ai/test')) {
+      results.push(item);
+    }
+
+    expect(results).toEqual([{ signature: 'fake-sig-ok', network: 'eip155:8453', asset: evm.asset }]);
+    expect(createSvmSpy).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[x402\] Skipping solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp option: wallet "test" has no Solana key\. .*nansen wallet create/),
+    );
+
+    vi.doUnmock('../x402-evm.js');
+    vi.doUnmock('../x402-svm.js');
+  });
+
   it('13. permit2-exact preflight checks allowance against resolvePaymentAmount, not raw empty amount', async () => {
     // Regression: hasPermit2Allowance must be called with the guard's resolved
     // amount, not requirement.amount directly — otherwise amount: "" coerces to
