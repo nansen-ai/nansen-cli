@@ -190,7 +190,7 @@ describe('bridge execute overrides', () => {
     writeQuote('bridge-1');
     await cmds.execute([], api, {}, { quote: 'bridge-1', wallet: 'w' });
     expect(getEvmNonce).toHaveBeenCalled();
-    expect(signEvmTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'base', 7);
+    expect(signEvmTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'base', 7, expect.objectContaining({ label: expect.stringContaining('bridge step') }));
   });
 
   it('refuses a step whose txData.from is not the signing wallet', async () => {
@@ -248,7 +248,7 @@ describe('bridge execute overrides', () => {
     });
     await cmds.execute([], api, {}, { quote: 'bridge-nofrom', wallet: 'w' });
     expect(getEvmNonce).toHaveBeenCalledWith('base', ADDR);
-    expect(signEvmTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'base', 7);
+    expect(signEvmTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'base', 7, expect.objectContaining({ label: expect.stringContaining('bridge step') }));
   });
 
   it('signs at --nonce, bypassing the pending reconciliation', async () => {
@@ -258,7 +258,7 @@ describe('bridge execute overrides', () => {
     writeQuote('bridge-2');
     await cmds.execute([], api, {}, { quote: 'bridge-2', wallet: 'w', nonce: '20' });
     expect(getEvmNonce).not.toHaveBeenCalled();
-    expect(signEvmTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'base', 20);
+    expect(signEvmTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'base', 20, expect.objectContaining({ label: expect.stringContaining('bridge step') }));
   });
 
   it('passes --priority-fee through to the signed transaction', async () => {
