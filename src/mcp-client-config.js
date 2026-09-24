@@ -100,6 +100,9 @@ export function validateMcpClientConfig(config) {
   requireHttpsUrl(config, 'apiKeySetupUrl', { host: APP_HOST });
   requireHttpsUrl(config, 'apiKeyManageUrl', { host: APP_HOST });
   requireHttpsUrl(config, 'docsUrl', { host: 'docs.nansen.ai' });
+  // Follows the dxt repo's main branch on purpose: the public docs link must
+  // serve the current reviewed build. Pin it to a release tag before any
+  // client downloads it without a person in the loop.
   const dxt = requireHttpsUrl(config, 'dxtDownloadUrl', { host: 'github.com' });
   if (!dxt.startsWith('https://github.com/nansen-ai/nansen-mcp-dxt/')) fail(`"dxtDownloadUrl" must be in nansen-ai/nansen-mcp-dxt: ${dxt}`);
 
@@ -117,8 +120,9 @@ export function validateMcpClientConfig(config) {
   return Object.freeze({ ...config, mcpRemote: Object.freeze({ ...remote }) });
 }
 
-export function loadMcpClientConfig(source = MCP_CLIENT_CONFIG_PATH) {
-  const raw = fs.readFileSync(source, 'utf8');
+/** Load the packaged config file. The path is a constant: no caller input reaches readFileSync. */
+export function loadMcpClientConfig() {
+  const raw = fs.readFileSync(MCP_CLIENT_CONFIG_PATH, 'utf8');
   let parsed;
   try {
     parsed = JSON.parse(raw);
