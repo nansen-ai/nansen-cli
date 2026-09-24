@@ -7,6 +7,9 @@ import {
   signEip1559Transaction,
   resolveQuoteEip1559Fees,
   resolveQuoteLegacyGasPrice,
+  assertEvmFeeWithinCap,
+  MAX_EVM_TX_FEE_WEI,
+  parseMaxTxFeeOption,
 } from '../trading.js';
 
 // Valid secp256k1 scalar, matching the convention in perp.test.js. Deliberately
@@ -190,5 +193,103 @@ describe('resolveQuoteLegacyGasPrice', () => {
   it('refuses a quote with no fee information', () => {
     expect(() => resolveQuoteLegacyGasPrice({})).toThrow(/no gas price.*Refusing to sign/s);
     expect(() => resolveQuoteLegacyGasPrice(undefined)).toThrow(/Refusing to sign/);
+  });
+});
+
+// The fee fields of a quote are signed verbatim, so a compromised or buggy
+// aggregator response could make the wallet pay an arbitrary tip to the block
+// producer. The Solana signer already caps the priority fee a single trade can
+// pay (MAX_PRIORITY_FEE_LAMPORTS); this is the EVM sibling.
+describe('assertEvmFeeWithinCap', () => {
+  it('accepts a normal Base swap fee', () => {
+    // 5 gwei x 300k gas = 0.0015 ETH
+    expect(() => assertEvmFeeWithinCap('5000000000', 300000, 'swap')).not.toThrow();
+    expect(() => assertEvmFeeWithinCap('0x12a05f200', '0x493e0', 'swap')).not.toThrow();
+  });
+
+  it('accepts a fee exactly at the cap and refuses one wei above it', () => {
+    expect(MAX_EVM_TX_FEE_WEI).toBe(10n ** 18n);
+    expect(() => assertEvmFeeWithinCap(MAX_EVM_TX_FEE_WEI, 1, 'swap')).not.toThrow();
+    expect(() => assertEvmFeeWithinCap(MAX_EVM_TX_FEE_WEI / 1000000n, 1000000, 'swap')).not.toThrow();
+    expect(() => assertEvmFeeWithinCap(MAX_EVM_TX_FEE_WEI + 1n, 1, 'swap')).toThrow(/fee cap/);
+  });
+
+  it('refuses a fee above the cap and names the numbers', () => {
+    // 10,000 gwei x 300k gas = 3 ETH
+    expect(() => assertEvmFeeWithinCap('10000000000000', 300000, 'swap'))
+      .toThrow(/3000000000000000000 wei of gas for this swap.*1000000000000000000 wei fee cap.*Refusing to sign.*--max-tx-fee/s);
+  });
+
+  it('uses the cap it is given, and none for 0', () => {
+    expect(() => assertEvmFeeWithinCap('10000000000000', 300000, 'swap', 3n * 10n ** 18n)).not.toThrow();
+    expect(() => assertEvmFeeWithinCap('10000000000000', 300000, 'swap', 0n)).not.toThrow();
+    expect(() => assertEvmFeeWithinCap('5000000000', 300000, 'swap', 10n ** 15n)).toThrow(/fee cap/);
+  });
+
+  it('refuses a zero, negative or malformed fee or gas limit', () => {
+    expect(() => assertEvmFeeWithinCap('5000000000', 0, 'swap')).toThrow(/invalid gas limit for this swap \(0\)/);
+    expect(() => assertEvmFeeWithinCap('5000000000', '0x0', 'swap')).toThrow(/invalid gas limit/);
+    expect(() => assertEvmFeeWithinCap('0', 300000, 'swap')).toThrow(/invalid fee per gas/);
+    expect(() => assertEvmFeeWithinCap('-1', 300000, 'swap')).toThrow(/invalid fee per gas for this swap \(-1\)/);
+    expect(() => assertEvmFeeWithinCap('5 gwei', 300000, 'swap')).toThrow(/invalid fee per gas/);
+    expect(() => assertEvmFeeWithinCap(1.5, 300000, 'swap')).toThrow(/invalid fee per gas/);
+    // still refused with the cap disabled
+    expect(() => assertEvmFeeWithinCap('5000000000', 0, 'swap', 0n)).toThrow(/invalid gas limit/);
+  });
+});
+
+describe('parseMaxTxFeeOption', () => {
+  it('defaults to the cap and reads ETH digit-wise', () => {
+    expect(parseMaxTxFeeOption(undefined)).toBe(MAX_EVM_TX_FEE_WEI);
+    expect(parseMaxTxFeeOption('0')).toBe(0n);
+    expect(parseMaxTxFeeOption('0.5')).toBe(5n * 10n ** 17n);
+    expect(parseMaxTxFeeOption('.25')).toBe(25n * 10n ** 16n);
+    expect(parseMaxTxFeeOption(' 2 ')).toBe(2n * 10n ** 18n);
+    expect(parseMaxTxFeeOption('1.000000000000000001')).toBe(10n ** 18n + 1n);
+  });
+
+  it('refuses anything else', () => {
+    for (const bad of ['', '-1', 'abc', '1e18', '1.', '0.0000000000000000001', 'true']) {
+      expect(() => parseMaxTxFeeOption(bad), bad).toThrow(/Invalid --max-tx-fee/);
+    }
+  });
+
+  // parseArgs JSON-parses option values and accumulates a repeated option into
+  // an array, so String() would turn `--max-tx-fee '[0]'` into "0" and disable
+  // the cap without saying so.
+  it('refuses a non-scalar value instead of coercing it', () => {
+    for (const bad of [[0], [2], ['0'], {}, true]) {
+      expect(() => parseMaxTxFeeOption(bad), JSON.stringify(bad)).toThrow(/single value in ETH/);
+    }
+  });
+});
+
+describe('signEvmTransaction fee ceiling', () => {
+  const base = { to: '0x' + '11'.repeat(20), data: '0x', value: '0', gas: '300000' };
+
+  it('refuses an EIP-1559 quote whose fee cap is anomalous', () => {
+    expect(() => signEvmTransaction({ ...base, maxFeePerGas: '10000000000000' }, KEY, 'base', 1))
+      .toThrow(/fee cap/);
+  });
+
+  it('refuses a legacy quote whose gas price is anomalous', () => {
+    expect(() => signEvmTransaction({ ...base, gasPrice: '10000000000000' }, KEY, 'base', 1))
+      .toThrow(/fee cap/);
+  });
+
+  it('names what is being signed and uses the given cap', () => {
+    expect(() => signEvmTransaction({ ...base, maxFeePerGas: '10000000000000' }, KEY, 'base', 1, { label: 'bridge step "deposit"' }))
+      .toThrow(/for this bridge step "deposit"/);
+    expect(signEvmTransaction({ ...base, maxFeePerGas: '10000000000000' }, KEY, 'base', 1, { maxTxFeeWei: 0n })).toMatch(/^0x02/);
+  });
+
+  it('refuses a quote with a zero gas limit', () => {
+    expect(() => signEvmTransaction({ ...base, gas: '0', maxFeePerGas: '5000000000' }, KEY, 'base', 1))
+      .toThrow(/invalid gas limit/);
+  });
+
+  it('still signs a normal quote', () => {
+    expect(signEvmTransaction({ ...base, maxFeePerGas: '5000000000' }, KEY, 'base', 1)).toMatch(/^0x02/);
+    expect(signEvmTransaction({ ...base, gasPrice: '5000000000' }, KEY, 'base', 1)).toMatch(/^0x/);
   });
 });

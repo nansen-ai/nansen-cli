@@ -384,6 +384,10 @@
               "type": "string",
               "description": "Fee cap in gwei, overriding the computed one (EVM deposit legs only)"
             },
+            "max-tx-fee": {
+              "type": "string",
+              "description": "Most one EVM transaction may pay for gas (fee cap x gas limit), in ETH. Default 1; 0 disables the check."
+            },
             "nonce": {
               "type": "string",
               "description": "Sign at this nonce instead of the next one, to replace a stuck transaction (EVM deposit legs only)"
@@ -2149,6 +2153,10 @@
             "no-verify-outcome": {
               "type": "boolean",
               "description": "Skip swap-outcome verification. That check simulates the swap and confirms the wallet's balance changes match the quote (input spent within your max, expected output received, no other asset moved) before broadcasting; it needs a simulation-capable endpoint (NANSEN_BASE_SIM_RPC on EVM, NANSEN_SOLANA_SIM_RPC on Solana) and degrades with a warning when none is available."
+            },
+            "max-tx-fee": {
+              "type": "string",
+              "description": "Most one EVM transaction may pay for gas (fee cap x gas limit), in ETH. A quote above it is refused before anything is signed, approvals included. Default 1; 0 disables the check. Not applied to WalletConnect, where the wallet shows the fee."
             },
             "no-revoke-excessive-allowance": {
               "type": "boolean",
