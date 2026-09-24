@@ -2,8 +2,8 @@
   "status": "NOT_READY",
   "purpose": "Release preparation with source-attributed dev evidence. No publication, production enablement or cohort acceptance. Historical null gates are not passed by narrower current checks.",
   "source": {
-    "api508Head": null,
-    "api508HeadNote": "Fill from reviewed PR head; this document cannot hash its own containing commit.",
+    "api508Head": "a5f452935dafc91775ed7e0c4b81473c93ea7846",
+    "api508HeadNote": "Source of the September 24 tested local archive, not the commit containing this evidence update.",
     "cliDependency": "575cc31c03dc6faf59cb7d4c4e4888e9cd17be40",
     "cliAuthBase": "294a51130b98acd89e283d765f7088b1d6fb290d",
     "api505ContractHead": "9190ae3decbba98c7513dbaa47695394ccd4515f",
@@ -247,11 +247,17 @@
     "tarballIntegrity": null,
     "sourceDigest": null,
     "supportedCohort": null,
-    "proposedCohort": "Local macOS arm64 and isolated Debian12 x64 Secret Service are candidates for further testing only. Windows excluded from this proposal; no cohort has been accepted.",
+    "proposedCohort": "Unpublished local macOS arm64 GUI-terminal preview only, pending owner acceptance. Linux remote walkthrough and Windows qualification remain incomplete.",
     "independentReviewA": null,
     "independentReviewB": null,
     "securityReview": null,
-    "exactHeadCI": null
+    "exactHeadCI": {
+      "head": "a5f452935dafc91775ed7e0c4b81473c93ea7846",
+      "run": 35963580469,
+      "url": "https://github.com/nansen-ai/nansen-cli/actions/runs/35963580469",
+      "conclusion": "success",
+      "publication": "skipped"
+    }
   },
   "acceptance": {
     "controlledAccounts": null,
@@ -331,7 +337,7 @@
     },
     "limits": "Parent writer local proof; no stacked main-only CI pass. Earlier native/joint/package records are historical. Full server route parity and exact revised candidate verification remain pending."
   },
-  "currentUnpublishedCandidate": {
+  "historicalUnpublishedCandidate20260923": {
     "version": "1.46.0",
     "filename": "nansen-cli-1.46.0.tgz",
     "sha256": "769225ccbcee71dc0055329bf7e272bc1c3c294d8f9e91fc392332dddace3729",
@@ -341,7 +347,7 @@
     "sourceHeadNote": "The tested archive belongs to this immutable head, not later source revisions. Release docs are excluded from the package.",
     "limits": "Unpublished archive. Live macOS and synthetic Linux native results are recorded below; Windows, live remote ceremony, accepted cohort and recovery release are not established."
   },
-  "currentDevValidation": {
+  "historicalDevValidation20260923": {
     "date": "2026-09-23",
     "cliHead": "e0cb3202e21da6c2ac7dc8d051eb5608c4e986e3",
     "archiveSha256": "769225ccbcee71dc0055329bf7e272bc1c3c294d8f9e91fc392332dddace3729",
@@ -365,5 +371,234 @@
       "Revocation outage durability and unexplained503samples",
       "Release owner, opt-in distribution and compatible recovery artifact"
     ]
+  },
+  "currentUnpublishedCandidate": {
+    "sourceHead": "a5f452935dafc91775ed7e0c4b81473c93ea7846",
+    "filename": "nansen-cli-1.46.0.tgz",
+    "sha256": "3df4a1c57538ec5296343a82e193653bdb33208937dfc863cf0a5dc445465e30",
+    "published": false,
+    "installedFilesMatchSourceAndArchive": 98,
+    "versionWarning": "The existing npm 1.46.0 and the September 23 local archive contain different bytes. Identify this artifact by head and digest."
+  },
+  "currentDevValidation20260924": {
+    "sourceHead": "a5f452935dafc91775ed7e0c4b81473c93ea7846",
+    "archiveSha256": "3df4a1c57538ec5296343a82e193653bdb33208937dfc863cf0a5dc445465e30",
+    "login": "passed",
+    "account": "passed",
+    "freshProcessAccount": "passed",
+    "researchBilling": {
+      "passed": true,
+      "requests": 2,
+      "creditsPerRequest": 1,
+      "freeBefore": 89,
+      "freeAfter": 87,
+      "purchasedCreditsUnchanged": true
+    },
+    "renewalAndLogout": "incomplete: unrelated API deployment reset admission during wait; both account commands returned UNAUTHORIZED",
+    "interferingApiDeployment": {
+      "commit": "7ddcd2a2ac6e4893abd6d3ba447e9bb9bc4cbb84",
+      "replicaSetCreatedAt": "2026-09-24T07:35:29Z"
+    },
+    "cleanup": "CLI removed local credentials and reported family retirement recorded with propagation pending. No access-token rejection was measured.",
+    "devHoldRestoredAt": "2026-09-24T07:59:31Z",
+    "zeroCredit": "Waived by Di, not passed.",
+    "nativeContext": "Native read passed in a normal Mac Terminal; background automation read failed. Other execution contexts remain unqualified.",
+    "nativeRecovery": {
+      "started": "2026-09-24T08:47:35.452Z",
+      "finished": "2026-09-24T08:47:49.157Z",
+      "success": true,
+      "checks": [
+        {
+          "name": "process_death_after_third_real_chunk_and_fresh_process_cleanup",
+          "passed": true,
+          "remoteRetirement": "unconfirmed by design; no network call"
+        },
+        {
+          "name": "damaged_journal_preserves_metadata_and_native_entry",
+          "passed": true
+        }
+      ],
+      "remainingNativeEntries": 0,
+      "limits": "Synthetic credentials and retirement stub; does not prove remote retirement, power-loss durability or cancellation of an already-dispatched securityd write.",
+      "earlierAttempts": "Two Terminal attempts stopped before the crash step. The traced attempt failed its first secure-store write; explicit login-Keychain unlock preceded the successful run."
+    },
+    "finalHoldCheck": {
+      "at": "2026-09-24T08:50:30.649226+00:00",
+      "productionLaunchDarklyOn": false,
+      "productionOffVariationValue": false,
+      "devApiReadyPods": 2,
+      "devApiAccountAdmission": false,
+      "devApiResearchAdmission": false,
+      "cliPublicationEnabledVariable": "absent",
+      "versionPackagesPr689": "open, no automerge"
+    }
+  },
+  "isolatedOutageValidation20260924": {
+    "api": {
+      "event": "result",
+      "success": true,
+      "api_commit": "3e4d972bd0f735ef052c282379a93b3f2e7dfaa5",
+      "verifier_sha256": "f582fda55de0509dbbe84718ec3fceb95e5cf52f1d523d0d37ca6d76dcc44557",
+      "elapsed_seconds": 338.74,
+      "checks": [
+        {
+          "name": "healthy_and_signature_negative_control",
+          "passed": true
+        },
+        {
+          "name": "postgres_outage_after_browser_source_and_poll_expiry",
+          "passed": true,
+          "concurrent_verifications": 64,
+          "feed_fetches": 2
+        },
+        {
+          "name": "same_window_partial_200_does_not_refetch_per_request",
+          "passed": true,
+          "concurrent_verifications": 64,
+          "feed_fetches": 0
+        },
+        {
+          "name": "postgres_outage_beyond_legacy_300s_source_window",
+          "passed": true,
+          "concurrent_verifications": 64,
+          "feed_fetches": 2
+        },
+        {
+          "name": "same_consumers_recover_without_restart",
+          "passed": true,
+          "concurrent_verifications": 64,
+          "feed_fetches": 2
+        }
+      ],
+      "feed_responses": [
+        {
+          "status": 200,
+          "redis_generated_at": 1790237475,
+          "session_status": "ok",
+          "session_generated_at": 1790237471,
+          "outage_redis_jti_present": false
+        },
+        {
+          "status": 200,
+          "redis_generated_at": 1790237475,
+          "session_status": "ok",
+          "session_generated_at": 1790237471,
+          "outage_redis_jti_present": false
+        },
+        {
+          "status": 200,
+          "redis_generated_at": 1790237507,
+          "session_status": "unavailable",
+          "session_generated_at": null,
+          "outage_redis_jti_present": true
+        },
+        {
+          "status": 200,
+          "redis_generated_at": 1790237507,
+          "session_status": "unavailable",
+          "session_generated_at": null,
+          "outage_redis_jti_present": true
+        },
+        {
+          "status": 200,
+          "redis_generated_at": 1790237777,
+          "session_status": "unavailable",
+          "session_generated_at": null,
+          "outage_redis_jti_present": true
+        },
+        {
+          "status": 200,
+          "redis_generated_at": 1790237777,
+          "session_status": "unavailable",
+          "session_generated_at": null,
+          "outage_redis_jti_present": true
+        },
+        {
+          "status": 200,
+          "redis_generated_at": 1790237813,
+          "session_status": "ok",
+          "session_generated_at": 1790237811,
+          "outage_redis_jti_present": true
+        },
+        {
+          "status": 200,
+          "redis_generated_at": 1790237813,
+          "session_status": "ok",
+          "session_generated_at": 1790237811,
+          "outage_redis_jti_present": true
+        }
+      ],
+      "wall_clock_unmodified": true,
+      "scope": "Exact API Python verifier/parser/cache with signed synthetic tokens and real isolated producer HTTP",
+      "excluded": [
+        "live API middleware/routing",
+        "live workload identity exchange",
+        "real token issuance",
+        "deployed MCP",
+        "customer traffic",
+        "capacity or alert delivery"
+      ]
+    },
+    "environment": "Disposable PostgreSQL 16 and Redis 7 in an isolated dev test pod; synthetic issuer and workload-token provider. Shared dev service databases were not changed.",
+    "authserviceSource": "cfc1403e81bc2104cc7aaf0389a463f374f81c46",
+    "apiVerifierMatchesCurrentDeployment": true,
+    "productionEnablement": false,
+    "publication": false,
+    "mcp": {
+      "event": "result",
+      "success": true,
+      "deployedSourceCommit": "fdc854f2",
+      "runtime": "API-image Python, not MCP-image runtime",
+      "elapsedSeconds": 335.23,
+      "checks": [
+        "legacy MCP continues through PostgreSQL outage beyond cache expiry",
+        "Redis revocation remains rejected",
+        "wrong API audience rejected",
+        "wrong scope rejected",
+        "invalid signature rejected",
+        "same consumer recovers without restart"
+      ],
+      "conditional304Observed": true,
+      "feedResponses": [
+        {
+          "status": 200,
+          "conditional": false,
+          "time": 1790237843.6051931,
+          "session_status": "ok"
+        },
+        {
+          "status": 304,
+          "conditional": true,
+          "time": 1790237843.6246884
+        },
+        {
+          "status": 200,
+          "conditional": true,
+          "time": 1790237875.667475,
+          "session_status": "unavailable"
+        },
+        {
+          "status": 200,
+          "conditional": true,
+          "time": 1790238145.778575,
+          "session_status": "unavailable"
+        },
+        {
+          "status": 200,
+          "conditional": true,
+          "time": 1790238178.8640726,
+          "session_status": "ok"
+        }
+      ],
+      "excluded": [
+        "live workload token acquisition",
+        "live MCP middleware",
+        "MCP-image dependency qualification",
+        "real user issuance",
+        "load/alert validation"
+      ]
+    },
+    "testResourcesDeleted": true,
+    "additionalRestartProbe": "Incomplete: fresh-handler assertions ran, but the test driver called a nonexistent pruner method and exited nonzero. Not counted as a passing restart/retention check."
   }
 }
