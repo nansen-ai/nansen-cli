@@ -8,6 +8,7 @@ import { base58Encode, base58DecodePubkey } from './wallet.js';
 import { encodeCompactU16, deriveATA as _deriveATA } from './transfer.js';
 import { resolvePaymentAmount, resolvePayTo } from './x402-policy.js';
 import { SOLANA_MAINNET_NETWORK } from './x402-tokens.js';
+import { CHAIN_RPCS } from './rpc-urls.js';
 
 // ============= Constants =============
 
@@ -19,6 +20,11 @@ const _SYSTEM_PROGRAM = '11111111111111111111111111111111';
 
 const DEFAULT_COMPUTE_UNIT_LIMIT = 20000;
 const DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 1;
+
+// Upper bound on a single blockhash RPC round-trip. A NANSEN_SOLANA_RPC
+// endpoint that accepts the connection but never answers would otherwise
+// stall the x402 payment fallback loop for Node's default header timeout.
+const SOLANA_RPC_TIMEOUT_MS = 15_000;
 
 // ============= PDA Derivation =============
 
@@ -308,70 +314,111 @@ export function createSvmPaymentPayload(
   return Buffer.from(JSON.stringify(payload)).toString('base64');
 }
 
+function isHttpUrl(value) {
+  if (typeof value !== 'string') return false;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Fetch recent blockhash from Solana RPC.
+ *
+ * Defaults to the shared RPC registry so NANSEN_SOLANA_RPC is honoured even
+ * for an argless call; every production caller passes the URL explicitly.
  */
-export async function fetchRecentBlockhash(rpcUrl = 'https://api.mainnet-beta.solana.com') {
-  let response;
+export async function fetchRecentBlockhash(rpcUrl = CHAIN_RPCS.solana) {
+  // Validate up front and never echo the raw value. A private RPC URL usually
+  // carries an API key in its query string, and Node's own parse failure
+  // ("Failed to parse URL from <value>") would otherwise copy it into the
+  // error message that the Privy and local-wallet fallback loops print.
+  if (!isHttpUrl(rpcUrl)) {
+    throw new Error(
+      'Invalid Solana RPC URL: expected a full http:// or https:// URL. Check NANSEN_SOLANA_RPC.'
+    );
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SOLANA_RPC_TIMEOUT_MS);
+  const timeoutError = (cause) => new Error(
+    `Solana RPC did not respond within ${SOLANA_RPC_TIMEOUT_MS / 1000}s while fetching a recent blockhash. Retry or configure a different RPC endpoint.`,
+    { cause }
+  );
+
   try {
-    response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'getLatestBlockhash',
-        params: [{ commitment: 'finalized' }],
-      }),
-    });
-  } catch (err) {
-    throw new Error(
-      `Solana RPC unavailable while fetching a recent blockhash. Retry or configure a different RPC endpoint. ${String(err.message ?? err)}`,
-      { cause: err }
-    );
-  }
+    let response;
+    try {
+      response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getLatestBlockhash',
+          params: [{ commitment: 'finalized' }],
+        }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (controller.signal.aborted) throw timeoutError(err);
+      throw new Error(
+        `Solana RPC unavailable while fetching a recent blockhash. Retry or configure a different RPC endpoint. ${String(err.message ?? err)}`,
+        { cause: err }
+      );
+    }
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(
-      `Solana RPC returned HTTP ${response.status} while fetching a recent blockhash. Retry or configure a different RPC endpoint. ${text.slice(0, 100)}`
-    );
-  }
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(
+        `Solana RPC returned HTTP ${response.status} while fetching a recent blockhash. Retry or configure a different RPC endpoint. ${text.slice(0, 100)}`
+      );
+    }
 
-  let data;
-  try {
-    data = await response.json();
-  } catch {
-    throw new Error(
-      'Solana RPC returned an invalid response while fetching a recent blockhash. Retry or configure a different RPC endpoint.'
-    );
-  }
+    let data;
+    try {
+      data = await response.json();
+    } catch (err) {
+      if (controller.signal.aborted) throw timeoutError(err);
+      throw new Error(
+        'Solana RPC returned an invalid response while fetching a recent blockhash. Retry or configure a different RPC endpoint.',
+        { cause: err }
+      );
+    }
 
-  if (data?.error) {
-    const detail =
-      data.error.message != null ? String(data.error.message)
-      : data.error.code  != null ? String(data.error.code)
-      : 'unknown RPC error';
-    throw new Error(
-      `Solana RPC failed while fetching a recent blockhash: ${detail}. Retry or configure a different RPC endpoint.`
-    );
-  }
+    if (data?.error) {
+      const detail =
+        data.error.message != null ? String(data.error.message)
+        : data.error.code  != null ? String(data.error.code)
+        : 'unknown RPC error';
+      throw new Error(
+        `Solana RPC failed while fetching a recent blockhash: ${detail}. Retry or configure a different RPC endpoint.`
+      );
+    }
 
-  const blockhash = data?.result?.value?.blockhash;
-  if (typeof blockhash !== 'string' || blockhash.length === 0) {
-    throw new Error(
-      'Solana RPC returned no recent blockhash. Retry or configure a different RPC endpoint.'
-    );
-  }
+    const blockhash = data?.result?.value?.blockhash;
+    if (typeof blockhash !== 'string' || blockhash.length === 0) {
+      throw new Error(
+        'Solana RPC returned no recent blockhash. Retry or configure a different RPC endpoint.'
+      );
+    }
 
-  return blockhash;
+    return blockhash;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
  * Get RPC URL for a Solana network identifier.
  */
 export function getSolanaRpcUrl(network) {
-  if (network === SOLANA_MAINNET_NETWORK) return 'https://api.mainnet-beta.solana.com';
+  // Mainnet goes through the shared registry so NANSEN_SOLANA_RPC applies to
+  // x402 blockhash and balance calls the same way it does to every other
+  // Solana path (transfer, trading, limit orders). The default is unchanged.
+  if (network === SOLANA_MAINNET_NETWORK) return CHAIN_RPCS.solana;
   // Devnet/testnet resolve for tooling (e.g. balance checks), but the x402 pay
   // path never reaches them: SVM_X402_TOKENS is mainnet-only, so the policy layer
   // refuses a devnet/testnet requirement before signing. Adding a non-mainnet
