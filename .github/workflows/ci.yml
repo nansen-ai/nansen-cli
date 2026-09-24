@@ -8,7 +8,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, hulk/api-506-browser-login, hulk/api-507-session-refresh]
 
 permissions: {}
 

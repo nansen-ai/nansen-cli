@@ -1,3 +1,4 @@
+import { authConfigView } from './auth-credentials.js';
 import { browserLogin, defaultAuthState, cleanupMessage } from './auth-login.js';
 /**
  * Nansen CLI - Core logic (testable)
@@ -1317,6 +1318,46 @@ export async function promptForConfirmation(question, { input = process.stdin, o
   });
 }
 
+// `token screener --search` filters client-side, so it can only find a token
+// among the candidate rows the API returned. These helpers describe that window
+// as `_meta.search: { query, searched, matched, complete }` so a short or empty
+// result can be told apart from "the token ranks below the rows we fetched".
+function locatePaginationSummary(result) {
+  const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  if (isObject(result?.pagination)) return result.pagination;
+  if (isObject(result?.data?.pagination)) return result.data.pagination;
+  return null;
+}
+
+function describeSearchWindow({ query, candidates, matched, perPage, summary }) {
+  let complete;
+  if (typeof summary?.complete === 'boolean') {
+    // --paginate traversal summary (auto-paginate.js): false when --max-pages
+    // stopped the walk before the server ran out of rows. It also carries the
+    // first page's stale is_last_page, so it has to be checked first.
+    complete = summary.complete;
+  } else if (typeof summary?.is_last_page === 'boolean') {
+    // Server metadata on the single candidate page.
+    complete = summary.is_last_page;
+  } else {
+    // No metadata: a full page means the API may hold more rows beyond it.
+    complete = candidates.length < perPage;
+  }
+  return { query, searched: candidates.length, matched, complete };
+}
+
+function searchWindowNote(searchMeta, summary, paginateAll) {
+  const rows = `${searchMeta.searched} screener row${searchMeta.searched === 1 ? '' : 's'}`;
+  if (paginateAll) {
+    const pages = Number.isInteger(summary?.pages_fetched)
+      ? ` after ${summary.pages_fetched} candidate page${summary.pages_fetched === 1 ? '' : 's'} (--max-pages)`
+      : '';
+    const resume = Number.isInteger(summary?.next_page) ? ` or resume with --page ${summary.next_page}` : '';
+    return `Note: --search stopped${pages} with ${rows} checked; tokens beyond them were not searched (_meta.search.complete: false). Raise --max-pages${resume}.`;
+  }
+  return `Note: --search matched against only the first ${rows}; tokens ranked below them were not searched (_meta.search.complete: false). Widen the window with --limit <n> (max 1000) or --paginate, or narrow the candidates with --filters.`;
+}
+
 // Build command handlers (returns object with handler functions)
 export function buildCommands(deps = {}) {
   // Allow dependency injection for testing
@@ -1328,7 +1369,7 @@ export function buildCommands(deps = {}) {
     promptFn = prompt,
     confirmationPromptFn,
     log = console.log,
-    errorOutput: _errorOutput = console.error,
+    errorOutput = console.error,
     NansenAPIClass: _NansenAPIClass = NansenAPI,
     authState = defaultAuthState(),
     browserLoginFn = browserLogin,
@@ -1450,7 +1491,7 @@ export function buildCommands(deps = {}) {
       if (flags['api-key']) throw new CommandError('--api-key requires a value.', 'MISSING_PARAM');
       if ('api-key' in options && typeof options['api-key'] !== 'string') throw new CommandError('--api-key must be a single key string.', 'INVALID_PARAMS');
       if (!flags.human && options['api-key'] === undefined) {
-        return browserLoginFn({ flags, env, isTTY: stdoutTTY, log, errorOutput: _errorOutput, state: authState });
+        return browserLoginFn({ flags, env, isTTY: stdoutTTY, log, errorOutput, state: authState });
       }
       if (flags['no-browser']) throw new CommandError('--no-browser cannot be combined with legacy key setup.', 'INVALID_PARAMS');
       let apiKey = options['api-key'];
@@ -1484,11 +1525,12 @@ export function buildCommands(deps = {}) {
       }
 
       let accountInfo;
+      const baseUrl = authConfigView(env).baseUrl;
       const attempt = await authState.begin({ preflight: false });
       try {
         // Verify API key before saving
         const NansenAPIClass = _NansenAPIClass;
-        const testApi = new NansenAPIClass(apiKey.trim(), undefined, {
+        const testApi = new NansenAPIClass(apiKey.trim(), baseUrl, {
           allowPayment: false,
           retry: { maxRetries: 2 },
           cache: { enabled: false }
@@ -1526,7 +1568,7 @@ export function buildCommands(deps = {}) {
           });
         }
 
-        const result = await authState.install(attempt, { apiKey: apiKey.trim(), baseUrl: 'https://api.nansen.ai' });
+        const result = await authState.install(attempt, { apiKey: apiKey.trim(), baseUrl });
         for (const message of cleanupMessage(result.cleanup)) log(message);
       } finally { await authState.finish(attempt); }
       const blankEnvKey = env.NANSEN_API_KEY !== undefined && !env.NANSEN_API_KEY.trim();
@@ -1897,23 +1939,39 @@ export function buildCommands(deps = {}) {
           if (search) {
             const q = search.toLowerCase();
             const offset = (requestedPage - 1) * requestedLimit;
-            // Filtering only replaces the row array. With --paginate, the
-            // preserved pagination metadata describes candidate traversal,
-            // not the number of client-side matches.
-            const filterArr = (arr) => {
-              const matching = arr.filter(t =>
+            // Handle nested response shapes: {data: [...]} or {data: {data: [...]}}
+            let candidates;
+            let rebuild;
+            if (Array.isArray(result?.data)) {
+              candidates = result.data;
+              rebuild = rows => ({ ...result, data: rows });
+            } else if (Array.isArray(result?.data?.data)) {
+              candidates = result.data.data;
+              rebuild = rows => ({ ...result, data: { ...result.data, data: rows } });
+            } else {
+              return result;
+            }
+            const matching = candidates.filter(t =>
               (t.token_symbol && t.token_symbol.toLowerCase().includes(q)) ||
               (t.token_name && t.token_name.toLowerCase().includes(q)) ||
               (t.token_address && t.token_address.toLowerCase() === q)
-              );
-              return paginateAll ? matching : matching.slice(offset, offset + requestedLimit);
-            };
-            // Handle nested response shapes: {data: [...]} or {data: {data: [...]}}
-            if (Array.isArray(result?.data)) {
-              return { ...result, data: filterArr(result.data) };
-            } else if (result?.data?.data && Array.isArray(result.data.data)) {
-              return { ...result, data: { ...result.data, data: filterArr(result.data.data) } };
-            }
+            );
+            // Filtering only replaces the row array. With --paginate, the
+            // preserved pagination metadata describes candidate traversal,
+            // not the number of client-side matches.
+            const filtered = rebuild(paginateAll ? matching : matching.slice(offset, offset + requestedLimit));
+            // The search only saw the candidates fetched above, so say how far it
+            // looked: `complete: false` means the API had more rows past the
+            // window and a token that is missing here may simply rank below it.
+            const summary = locatePaginationSummary(result);
+            const searchMeta = describeSearchWindow({
+              query: search, candidates, matched: matching.length, perPage: searchPagination.per_page, summary,
+            });
+            filtered._meta = { ...(result._meta || {}), search: searchMeta };
+            // stderr, so --fields/--table/--csv/--stream callers that never see
+            // _meta still learn the search was cut short.
+            if (!searchMeta.complete) errorOutput(searchWindowNote(searchMeta, summary, paginateAll));
+            return filtered;
           }
           return result;
         },
