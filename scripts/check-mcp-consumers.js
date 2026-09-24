@@ -19,7 +19,8 @@ export const CONSUMERS = Object.freeze([
   { name: 'nansen-ai/nansen-mcp-dxt', upstreamJson: 'https://raw.githubusercontent.com/nansen-ai/nansen-mcp-dxt/main/config/upstream.json', sync: 'npm run sync -- --ref <sha>' },
 ]);
 
-export async function run({ fetchFn = fetch, log = console.log, error = console.error, localBytes } = {}) {
+// Same shape as check-mcp-remote-pin.js: argv first (no flags yet), then injectable I/O for tests.
+export async function run(_argv = [], { fetchFn = fetch, log = console.log, error = console.error, localBytes } = {}) {
   try {
     const local = createHash('sha256').update(localBytes ?? fs.readFileSync(MCP_CLIENT_CONFIG_PATH)).digest('hex');
     let stale = 0;
@@ -45,5 +46,5 @@ export async function run({ fetchFn = fetch, log = console.log, error = console.
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1])) {
-  process.exitCode = await run();
+  process.exitCode = await run(process.argv.slice(2));
 }

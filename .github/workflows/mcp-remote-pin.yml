@@ -30,7 +30,7 @@ jobs:
           - name: pin
             script: scripts/check-mcp-remote-pin.js
             title: mcp-remote pin is behind the latest release
-            key_line: '^Latest: '
+            key_line: 'Latest: '
           - name: consumers
             script: scripts/check-mcp-consumers.js
             title: MCP client config consumers are out of sync
@@ -88,7 +88,8 @@ jobs:
           fi
           # Comment only when the key lines of the report are new.
           seen=$(gh issue view "$existing" --json body,comments --jq '[.body, .comments[].body] | join("\n")')
-          new_lines=$(grep -E "$KEY_LINE" report.txt | while IFS= read -r line; do
+          # KEY_LINE is a fixed string, not a regex (grep -F).
+          new_lines=$(grep -F -- "$KEY_LINE" report.txt | while IFS= read -r line; do
             printf '%s\n' "$seen" | grep -qxF "$line" || printf '%s\n' "$line"
           done)
           if [ -n "$new_lines" ]; then

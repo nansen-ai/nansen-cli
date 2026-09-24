@@ -263,16 +263,16 @@ describe('consumer check (npm run mcp:check-consumers)', () => {
   const reply = body => async () => ({ ok: true, status: 200, json: async () => body });
 
   it('passes when the consumer pins the current file', async () => {
-    expect(await runConsumerCheck({ fetchFn: reply({ ref: 'a'.repeat(40), sha256: sha }), localBytes, ...quiet })).toBe(0);
+    expect(await runConsumerCheck([], { fetchFn: reply({ ref: 'a'.repeat(40), sha256: sha }), localBytes, ...quiet })).toBe(0);
   });
 
   it('flags a consumer that pins another file, and fails closed on errors', async () => {
     const lines = [];
-    expect(await runConsumerCheck({ fetchFn: reply({ ref: 'b'.repeat(40), sha256: 'f'.repeat(64) }), localBytes, log: l => lines.push(l), error: () => {} })).toBe(3);
+    expect(await runConsumerCheck([], { fetchFn: reply({ ref: 'b'.repeat(40), sha256: 'f'.repeat(64) }), localBytes, log: l => lines.push(l), error: () => {} })).toBe(3);
     expect(lines.join('\n')).toMatch(/nansen-mcp-dxt: OUT OF SYNC.*npm run sync/);
-    expect(await runConsumerCheck({ fetchFn: async () => ({ ok: false, status: 404 }), localBytes, ...quiet })).toBe(2);
+    expect(await runConsumerCheck([], { fetchFn: async () => ({ ok: false, status: 404 }), localBytes, ...quiet })).toBe(2);
     const fenced = [];
-    await runConsumerCheck({ fetchFn: reply({ ref: '```\n@team', sha256: '```' }), localBytes, log: l => fenced.push(l), error: () => {} });
+    await runConsumerCheck([], { fetchFn: reply({ ref: '```\n@team', sha256: '```' }), localBytes, log: l => fenced.push(l), error: () => {} });
     expect(fenced.join('\n')).not.toContain('`');
   });
 });

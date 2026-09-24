@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 const REGISTRY = 'https://registry.npmjs.org';
 const TIMEOUT_MS = 30_000;
 export const EXIT = Object.freeze({ OK: 0, CHECK_FAILED: 2, NEEDS_REVIEW: 3 });
-/** A pin must be at least this old when it is adopted. */
+/** A pin must be at least this old when it is adopted: the same 7-day minimum release age as locked dependencies. */
 export const MIN_RELEASE_AGE_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
