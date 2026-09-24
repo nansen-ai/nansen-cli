@@ -1,0 +1,98 @@
+name: MCP client config weekly check
+# API-322. Two weekly checks on src/mcp-client-config.json:
+# - pin: is the mcp-remote pin the latest npm release? The pin is never bumped
+#   automatically: the bridge carries the API key, so a human reviews each
+#   release (scripts/check-mcp-remote-pin.js).
+# - consumers: does nansen-ai/nansen-mcp-dxt vendor the current file?
+#   (scripts/check-mcp-consumers.js). This runs here because GitHub disables
+#   scheduled jobs in quiet public repos.
+# Each check opens one tracking issue, and comments on it only when the
+# report changes. Exit 0 = OK, 3 = needs attention, other = the check failed.
+
+on:
+  schedule:
+    - cron: '17 6 * * 1' # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: pin
+            script: scripts/check-mcp-remote-pin.js
+            title: mcp-remote pin is behind the latest release
+            key_line: '^Latest: '
+          - name: consumers
+            script: scripts/check-mcp-consumers.js
+            title: MCP client config consumers are out of sync
+            key_line: 'OUT OF SYNC'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      # The scripts import only src/mcp-client-config.js (node built-ins), so
+      # no npm ci is needed.
+      - name: Run the check
+        id: run
+        env:
+          SCRIPT: ${{ matrix.script }}
+        run: |
+          set +e
+          node "$SCRIPT" > report.txt
+          status=$?
+          cat report.txt
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then exit 1; fi
+          exit 0
+
+      - name: Open or update the tracking issue
+        if: steps.run.outputs.status == '3'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TITLE: ${{ matrix.title }}
+          KEY_LINE: ${{ matrix.key_line }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo 'The weekly MCP client config check needs attention.'
+            echo
+            echo '```text'
+            cat report.txt
+            echo '```'
+            echo
+            echo 'See AGENTS.md > MCP client config for the steps.'
+            echo
+            echo "Run: $RUN_URL"
+          } > issue-body.md
+          # Exact title match: the search is fuzzy.
+          existing=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
+            --jq '[.[] | select(.title == env.TITLE)][0].number // empty')
+          if [ -z "$existing" ]; then
+            gh issue create --title "$TITLE" --body-file issue-body.md
+            exit 0
+          fi
+          # Comment only when the key lines of the report are new.
+          seen=$(gh issue view "$existing" --json body,comments --jq '[.body, .comments[].body] | join("\n")')
+          new_lines=$(grep -E "$KEY_LINE" report.txt | while IFS= read -r line; do
+            printf '%s\n' "$seen" | grep -qxF "$line" || printf '%s\n' "$line"
+          done)
+          if [ -n "$new_lines" ]; then
+            gh issue comment "$existing" --body-file issue-body.md
+          else
+            echo "Issue #$existing already has this report."
+          fi

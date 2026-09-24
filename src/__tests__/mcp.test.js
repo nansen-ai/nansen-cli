@@ -21,7 +21,10 @@ import {
 
 const API_KEY = 'test-key-123';
 const EXPECTED_MCP_URL = 'https://mcp.nansen.ai/ra/mcp';
-const EXPECTED_MCP_REMOTE_PIN = 'mcp-remote@0.2.1';
+// The pin is owned by src/mcp-client-config.json (API-322); read the raw file
+// so a bump touches one place, and lock its shape instead of its value.
+const CANONICAL = JSON.parse(fs.readFileSync(new URL('../mcp-client-config.json', import.meta.url), 'utf8'));
+const EXPECTED_MCP_REMOTE_PIN = `mcp-remote@${CANONICAL.mcpRemote.version}`;
 const EXPECTED_HEADER = 'NANSEN-API-KEY';
 const EXPECTED_HEADER_PLACEHOLDER = 'NANSEN-API-KEY:${NANSEN_API_KEY}';
 
@@ -115,6 +118,7 @@ describe('buildServerEntry', () => {
   it.each(SUPPORTED_CLIENTS)('%s emits the exact supported artifact', client => {
     expect(NANSEN_MCP_URL).toBe(EXPECTED_MCP_URL);
     expect(MCP_REMOTE_PIN).toBe(EXPECTED_MCP_REMOTE_PIN);
+    expect(MCP_REMOTE_PIN).toMatch(/^mcp-remote@\d+\.\d+\.\d+$/);
     expect(() => validateGeneratedEntry(client, buildServerEntry(client, API_KEY))).not.toThrow();
   });
 

@@ -1,0 +1,17 @@
+{
+  "$comment": "Canonical Nansen MCP client install config (API-322). Edit only this file, then run `npm run mcp:generate`. Consumers: src/commands/mcp.js, src/mcp-verify.js, README.md (generated regions), the docs page https://docs.nansen.ai/mcp/connecting and nansen-ai/nansen-mcp-dxt manifest.json (vendored copies pinned to a commit of this file). See AGENTS.md > MCP client config.",
+  "schemaVersion": 1,
+  "serverKey": "nansen",
+  "endpoint": "https://mcp.nansen.ai/ra/mcp",
+  "oauthEndpoint": "https://mcp.nansen.ai/ra/connector-curated/mcp",
+  "apiKeyHeader": "NANSEN-API-KEY",
+  "apiKeyEnvVar": "NANSEN_API_KEY",
+  "apiKeySetupUrl": "https://app.nansen.ai/auth/agent-setup",
+  "apiKeyManageUrl": "https://app.nansen.ai/api?tab=api",
+  "docsUrl": "https://docs.nansen.ai/mcp/connecting",
+  "dxtDownloadUrl": "https://github.com/nansen-ai/nansen-mcp-dxt/raw/refs/heads/main/nansen.dxt",
+  "mcpRemote": {
+    "package": "mcp-remote",
+    "version": "0.2.1"
+  }
+}
