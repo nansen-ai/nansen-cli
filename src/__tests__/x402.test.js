@@ -151,19 +151,24 @@ describe('createPaymentSignatures — policy guard integration', () => {
 
   let mockFetch;
   let consoleErrorSpy;
+  let mockListWallets;
+  let mockExportWallet;
 
   beforeEach(() => {
     mockFetch = vi.fn().mockResolvedValue({ json: async () => ({}) });
     vi.stubGlobal('fetch', mockFetch);
     vi.resetModules();
 
+    mockListWallets = vi.fn().mockReturnValue({
+      defaultWallet: 'test',
+      wallets: [{ name: 'test', evm: '0xFakeAddress', solana: 'FakeSolanaAddr' }],
+    });
+    mockExportWallet = vi.fn().mockReturnValue(FAKE_EXPORTED);
+
     // Mock wallet.js for all paths (createPaymentSignatures + getWalletConfig in policy).
     vi.doMock('../wallet.js', () => ({
-      listWallets: () => ({
-        defaultWallet: 'test',
-        wallets: [{ name: 'test', evm: '0xFakeAddress', solana: 'FakeSolanaAddr' }],
-      }),
-      exportWallet: () => FAKE_EXPORTED,
+      listWallets: mockListWallets,
+      exportWallet: mockExportWallet,
       getWalletConfig: () => ({ passwordHash: null }),
     }));
 
@@ -401,18 +406,17 @@ describe('createPaymentSignatures — policy guard integration', () => {
   // A wallet without a Solana key used to reach the SVM builder and surface a
   // raw TypeError on the skip line.
   it('12d. skips a Solana option with a clear reason when the wallet has no Solana key', async () => {
-    vi.doMock('../wallet.js', () => ({
-      listWallets: () => ({
-        defaultWallet: 'test',
-        wallets: [{ name: 'test', evm: '0xFakeAddress' }],
-      }),
-      exportWallet: () => ({
-        name: 'test',
-        evm: FAKE_EXPORTED.evm,
-        solana: { address: undefined, privateKey: null },
-      }),
-      getWalletConfig: () => ({ passwordHash: null }),
-    }));
+    // Configure the existing mock: two queued doMock factories for wallet.js
+    // can resolve out of order and restore the default Solana key fixture.
+    mockListWallets.mockReturnValue({
+      defaultWallet: 'test',
+      wallets: [{ name: 'test', evm: '0xFakeAddress' }],
+    });
+    mockExportWallet.mockReturnValue({
+      name: 'test',
+      evm: FAKE_EXPORTED.evm,
+      solana: { address: undefined, privateKey: null },
+    });
 
     // Cheaper than the EVM option, so it is tried first.
     const solanaOption = {
