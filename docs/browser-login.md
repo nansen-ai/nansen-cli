@@ -39,7 +39,7 @@ Explicit legacy key setup remains available through `nansen login --human` and `
 
 Login verifies the approved account without charging for research. Research uses the effective account's credits, plan and endpoint permissions. Login does not purchase credits or create a subscription. Existing server-side account billing settings remain separate.
 
-An invalid selected credential fails with an error. The CLI does not silently switch accounts, restore an older saved key or start automatic payment. Selected browser sessions cannot be combined with an API key or payment signature. Existing anonymous payment and explicit manual payment behavior remain separate.
+An invalid selected credential fails with an error. The CLI does not silently switch accounts, restore an older saved key or pay after authentication or authorization fails. A supported HTTP 402 payment challenge uses the same automatic x402 flow for API keys, browser sessions and anonymous requests, subject to existing wallet authorization, token/recipient policy and spending limits. The paid retry sends only the payment credential; it does not change saved authentication or top up account credits. Login verification never pays. Browser Bearer requests cannot be combined with an API key or a manually supplied payment signature. Explicit manual API-key payment remains supported.
 
 ## Permissions and credential safety
 

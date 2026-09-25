@@ -1124,7 +1124,9 @@ AUTHENTICATION:
   nansen account               Free live check of the effective credential
   nansen login --human         Explicit legacy key setup; also persists an injected env key
   nansen login --api-key-stdin Read a key from a pipe or file; never echo the key
-  NANSEN_API_KEY overrides saved authentication. Selected credentials never auto-pay.
+  NANSEN_API_KEY overrides saved authentication.
+  API keys and browser sessions can auto-pay supported HTTP 402 challenges under the same wallet controls and spending limits.
+  Authentication failures never trigger payment; login verification and nansen account never auto-pay.
   Browser sessions renew automatically; uncertain renewal requires fresh login.
   Browser nansen:api sessions have API-key-equivalent account permissions; wallet signing is separate.
   Browser login needs native storage and enabled server admission; release gates remain open.
