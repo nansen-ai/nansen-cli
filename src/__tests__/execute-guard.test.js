@@ -593,6 +593,56 @@ describe('trade execute --dry-run / --yes', () => {
     expect(executeBodies).toHaveLength(1);
   });
 
+  // Two real `trade execute` runs of the same quote. A has loaded the quote
+  // and is waiting at the confirmation prompt while B runs start to finish;
+  // A must not then broadcast its stale copy.
+  it('refuses a quote another run executed while this one waited at the prompt', async () => {
+    stubFetch({ allowBroadcast: true });
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    const quoteId = nativeQuote(showWallet('default').evm);
+    const flags = { 'no-simulate': true, 'no-verify-outcome': true };
+
+    const runB = buildTradingCommands({ log: () => {}, isTTY: false, env: {} });
+    const promptFn = vi.fn(async () => {
+      await runB.execute([], api, flags, { quote: quoteId });
+      return 'y';
+    });
+    const runA = buildTradingCommands({ log: () => {}, promptFn, isTTY: true, env: {} });
+
+    await expect(runA.execute([], api, flags, { quote: quoteId }))
+      .rejects.toThrow(/already executed/);
+    expect(executeBodies).toHaveLength(1);
+  });
+
+  // B starts while A holds the claim (A is mid-broadcast).
+  it('refuses a second run while the first one holds the quote', async () => {
+    stubFetch({ allowBroadcast: true });
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    const quoteId = nativeQuote(showWallet('default').evm);
+    const flags = { 'no-simulate': true, 'no-verify-outcome': true };
+
+    const runB = buildTradingCommands({ log: () => {}, isTTY: false, env: {} });
+    let bResult;
+    const innerFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      if (String(url).endsWith('/execute') && bResult === undefined) {
+        bResult = await runB.execute([], api, flags, { quote: quoteId }).then(() => 'ok', err => err);
+      }
+      return innerFetch(url, opts);
+    }));
+    const runA = buildTradingCommands({ log: () => {}, isTTY: false, env: {} });
+    await runA.execute([], api, flags, { quote: quoteId });
+
+    expect(bResult).toBeInstanceOf(Error);
+    expect(bResult.message).toMatch(/claimed by another execution/);
+    expect(executeBodies).toHaveLength(1);
+    // A broadcast and recorded it: the quote is back under its name, spent.
+    expect(fs.existsSync(path.join(tmpHome, '.nansen', 'quotes', `${quoteId}.executing.json`))).toBe(false);
+    await expect(runB.execute([], api, flags, { quote: quoteId })).rejects.toThrow(/already executed/);
+  });
+
   it('broadcasts without prompting when --yes is passed on a terminal', async () => {
     stubFetch({ allowBroadcast: true });
     createWallet('default', 'testpass');

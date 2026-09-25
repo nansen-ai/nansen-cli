@@ -16,6 +16,8 @@ import {
   getWalletChainType,
   saveQuote,
   loadQuote,
+  claimQuoteForExecution,
+  markQuoteExecuted,
   cleanupQuotes,
   readCompactU16,
   toBuffer,
@@ -321,6 +323,107 @@ describe('quote storage', () => {
     const loaded = loadQuote(quoteId);
     expect(loaded.chain).toBe('base');
     expect(loaded.toChain).toBeUndefined();
+  });
+
+  // loadQuote's executedAt check only rejects a quote that has already been
+  // broadcast, and markQuoteExecuted writes that marker after the broadcast.
+  // Two concurrent `trade execute --quote <id>` runs (an agent retrying a
+  // call it believes timed out) therefore both passed the check and could
+  // each sign and broadcast; on Solana no shared nonce stops the second one.
+  describe('execution claim', () => {
+    const quotesDir = () => path.join(tempDir, '.nansen', 'quotes');
+    const quoteFile = id => path.join(quotesDir(), `${id}.json`);
+    const claimedFile = id => path.join(quotesDir(), `${id}.executing.json`);
+
+    it('claims by renaming the quote away, so a second claim fails', () => {
+      const quoteId = saveQuote(solanaQuoteResponse, 'solana');
+      const claim = claimQuoteForExecution(quoteId);
+      try {
+        expect(claim.quote.quoteId).toBe(quoteId);
+        expect(fs.existsSync(quoteFile(quoteId))).toBe(false);
+        expect(fs.existsSync(claimedFile(quoteId))).toBe(true);
+        expect(() => claimQuoteForExecution(quoteId))
+          .toThrow(/claimed by another execution.*executing\.json.*check the wallet on the explorer/s);
+        expect(() => loadQuote(quoteId)).toThrow(/claimed by another execution/);
+      } finally {
+        claim.release();
+      }
+    });
+
+    it('hands the quote back when no swap left the process', () => {
+      const quoteId = saveQuote(solanaQuoteResponse, 'solana');
+      claimQuoteForExecution(quoteId).release();
+      expect(fs.existsSync(quoteFile(quoteId))).toBe(true);
+      expect(fs.existsSync(claimedFile(quoteId))).toBe(false);
+      claimQuoteForExecution(quoteId).release();
+    });
+
+    it('hands back a broadcast quote only once its marker is recorded', () => {
+      const quoteId = saveQuote(solanaQuoteResponse, 'solana');
+      const claim = claimQuoteForExecution(quoteId);
+      markQuoteExecuted(quoteId, { broadcast: { txHash: 'sig-1' } });
+      claim.release({ handedOff: true });
+      expect(() => loadQuote(quoteId)).toThrow(/already executed.*sig-1/s);
+    });
+
+    // markQuoteExecuted is best-effort, and a failed /execute may still have
+    // broadcast. With no marker, the quote stays claimed: a retry is refused
+    // rather than risk a second swap.
+    it('keeps the quote claimed when a swap left the process with no marker', () => {
+      const quoteId = saveQuote(solanaQuoteResponse, 'solana');
+      claimQuoteForExecution(quoteId).release({ handedOff: true });
+      expect(fs.existsSync(claimedFile(quoteId))).toBe(true);
+      expect(() => loadQuote(quoteId)).toThrow(/claimed by another execution/);
+      expect(() => claimQuoteForExecution(quoteId)).toThrow(/claimed by another execution/);
+    });
+
+    it('re-reads the quote under the claim and refuses one that was executed meanwhile', () => {
+      const quoteId = saveQuote(solanaQuoteResponse, 'solana');
+      loadQuote(quoteId); // this run's earlier read
+      markQuoteExecuted(quoteId, { broadcast: { txHash: 'sig-other' } }); // another run
+      expect(() => claimQuoteForExecution(quoteId)).toThrow(/already executed.*sig-other/s);
+      // Nothing was signed, so the quote is not left claimed.
+      expect(fs.existsSync(claimedFile(quoteId))).toBe(false);
+      expect(fs.existsSync(quoteFile(quoteId))).toBe(true);
+    });
+
+    it('does not block a different quote', () => {
+      const a = saveQuote(solanaQuoteResponse, 'solana');
+      const b = saveQuote(solanaQuoteResponse, 'solana');
+      const claimA = claimQuoteForExecution(a);
+      const claimB = claimQuoteForExecution(b);
+      claimA.release();
+      claimB.release();
+    });
+
+    it('records the broadcast in the claimed file', () => {
+      const quoteId = saveQuote(solanaQuoteResponse, 'solana');
+      const claim = claimQuoteForExecution(quoteId);
+      markQuoteExecuted(quoteId, { broadcast: { txHash: 'sig-2' } });
+      const data = JSON.parse(fs.readFileSync(claimedFile(quoteId), 'utf8'));
+      expect(data.executedAt).toEqual(expect.any(Number));
+      expect(data.broadcasts.map(b => b.txHash)).toEqual(['sig-2']);
+      claim.release({ handedOff: true });
+    });
+
+    // The claim lives exactly as long as the quote: a quote left claimed
+    // after an interrupted run is removed with the other expired quotes,
+    // which also keeps a `trade quote` in another terminal from touching a
+    // live claim.
+    it('cleanupQuotes removes an expired claimed quote but keeps a live one', () => {
+      const expired = saveQuote(solanaQuoteResponse, 'solana');
+      const live = saveQuote(solanaQuoteResponse, 'solana');
+      const liveClaim = claimQuoteForExecution(live);
+      claimQuoteForExecution(expired).release({ handedOff: true });
+      const data = JSON.parse(fs.readFileSync(claimedFile(expired), 'utf8'));
+      data.timestamp = Date.now() - 2 * 3600000;
+      fs.writeFileSync(claimedFile(expired), JSON.stringify(data));
+
+      saveQuote(solanaQuoteResponse, 'solana'); // runs cleanupQuotes
+      expect(fs.existsSync(claimedFile(expired))).toBe(false);
+      expect(fs.existsSync(claimedFile(live))).toBe(true);
+      liveClaim.release();
+    });
   });
 
   it('tags saved quotes as swap and loads them', () => {
