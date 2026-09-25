@@ -908,6 +908,8 @@ export class NansenAPI {
     let credentialHeaders = await this.requestCredentials(extraHeaders);
     // Keys and browser sessions share the same payment policy. Explicit raw
     // authentication headers still cannot be forwarded into a payment retry.
+    // Either the instance or this request can disable automatic payment;
+    // a request cannot re-enable it when the instance has disabled it.
     const mayAutoPay = this.allowPayment && options.allowPayment !== false && !Object.keys(extraHeaders).some(k => ['apikey', 'authorization'].includes(k.toLowerCase()));
     const url = `${this.baseUrl}${endpoint}`;
     const { maxRetries, baseDelayMs, maxDelayMs, maxRetryAfterMs, retryOnStatus } = this.retryOptions;
@@ -1068,8 +1070,12 @@ export class NansenAPI {
         } else if (code === ErrorCode.PAYMENT_REQUIRED && response.status === 402) {
           // Try x402 auto-payment: local wallet (with network fallback), then WalletConnect
           const hasManualSignature = Object.keys(extraHeaders).some(k => k.toLowerCase() === 'payment-signature');
-          if (safeSessionError && mayAutoPay) message = 'Payment required (x402). Configure and fund a supported wallet, or top up the selected account.';
-          if (this.selection.kind === 'api-key' && !hasManualSignature) message = 'Payment required (x402). Configure and fund a supported wallet, top up the selected account, or explicitly provide --x402-payment-signature.';
+          // Session and API-key clients receive credential-specific guidance.
+          if (safeSessionError && mayAutoPay) {
+            message = 'Payment required (x402). Configure and fund a supported wallet, or top up the selected account.';
+          } else if (this.selection.kind === 'api-key' && !hasManualSignature) {
+            message = 'Payment required (x402). Configure and fund a supported wallet, top up the selected account, or explicitly provide --x402-payment-signature.';
+          }
 
           if (this.selection.kind === 'api-key' && !hasManualSignature) {
             const paymentHeader = response.headers.get('payment-required');
