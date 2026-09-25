@@ -12,7 +12,7 @@ export function cleanupMessage(results = []) {
   if (results.some(r => r.local === 'incomplete' && !['AUTH_JOURNAL_INVALID', 'AUTH_STATE_INVALID'].includes(r.code))) messages.push('Secure-store deletion incomplete. Unlock the credential store and run nansen logout to finish cleanup.');
   if (results.some(r => r.local === 'pending')) messages.push('Authentication cleanup remains pending. After other login attempts finish and the credential store is unlocked, rerun nansen logout to process the next bounded batch.');
   if (results.some(r => r.remote === 'unconfirmed')) messages.push('Remote revocation unconfirmed. Contact the session/revocation operator to revoke the affected session; local deselection does not confirm remote invalidation.');
-  if (results.some(r => r.remote === 'recorded_pending')) messages.push('Family revocation recorded; API propagation is pending.');
+  if (results.some(r => r.remote === 'recorded_pending')) messages.push('Session revoked. Existing access tokens may take a short time to stop working across API servers.');
   if (results.some(r => r.remote === 'refresh_only')) messages.push('Refresh family retired; issued access tokens may remain valid until expiry.');
   return messages;
 }
