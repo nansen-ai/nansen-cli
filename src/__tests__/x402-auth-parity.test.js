@@ -119,6 +119,17 @@ describe.each(['api-key', 'session', 'anonymous'])('%s x402 payment policy', kin
     expect(mocks.privySign).not.toHaveBeenCalled();
   });
 
+  it('cannot re-enable instance-disabled payment with a per-request override', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(paymentResponse());
+    vi.stubGlobal('fetch', fetch);
+    const { api } = client(kind, { allowPayment: false });
+    await expect(api.request(endpoint, {}, { allowPayment: true })).rejects.toMatchObject({ code: 'PAYMENT_REQUIRED' });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(mocks.localSign).not.toHaveBeenCalled();
+    expect(mocks.wcSign).not.toHaveBeenCalled();
+    expect(mocks.privySign).not.toHaveBeenCalled();
+  });
+
   it.each([{ amount: '1000001' }, { asset: 'unknown-asset' }, { scheme: 'unsupported' }])('keeps wallet policy checks before signing: %j', async overrides => {
     const fetch = vi.fn().mockResolvedValueOnce(paymentResponse(challenge(overrides))); vi.stubGlobal('fetch', fetch);
     await expect(client(kind).api.request(endpoint)).rejects.toMatchObject({ code: 'PAYMENT_REQUIRED' });
