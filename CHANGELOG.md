@@ -1,5 +1,105 @@
 # Changelog
 
+## 2.0.0
+
+### Major Changes
+
+- [#657](https://github.com/nansen-ai/nansen-cli/pull/657) [`55c5539`](https://github.com/nansen-ai/nansen-cli/commit/55c55397daabe48a8b4458fa4f1950025ede6295) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Plain `nansen login` now requests fresh browser approval and saves a revocable session in the OS credential store, even when NANSEN_API_KEY is set. Scripts that previously used plain login to save an environment key must use explicit `--human` or `--api-key` setup. Environment keys still override saved authentication for commands. Add `--no-browser`, safe machine login events, offline session diagnostics and wallet-preserving logout. Selected sessions renew automatically; rejected or uncertain renewal requires fresh login. Browser login is intended for a gated prerelease cohort before normal-release promotion.
+
+  Automatic x402 wallet payment now requires anonymous access. A selected API key, including a valid key returning 402, no longer triggers automatic signing or credit purchase. Top up that account or use an explicit manual payment signature; anonymous automatic payments and manual API-key payments retain their behavior.
+
+  Native credential operations acquire helper-owned execution exclusion before receiving secrets and retain it through executor termination, preventing a surviving helper from overtaking logout recovery after CLI process death. Native-daemon outstanding-write cancellation remains an OS acceptance gap; physical deletion is best effort.
+
+  Keep cancellation cleanup conservative after ambiguous issuance, preserve damaged recovery journals with actionable diagnostics, and restrict login/logout telemetry to fixed paths and allowed metadata.
+
+  First-party browser sessions request `nansen:api` for API-key-equivalent account permissions, including smart-alert CRUD and trading API operations under existing account/plan/endpoint checks. Read-scoped CLI sessions require fresh login; existing OAuth/MCP read grants are not broadened. Hosted swap simulation now uses the selected credential on the matching trusted API origin, without exposing it to third-party RPCs or granting wallet signing authority.
+
+  Hosted simulation rejects selected-account authentication/authorization failures instead of degrading past them; wallet signing checks remain unchanged.
+
+  Preserve anonymous hosted-simulation warn-and-proceed behavior on 401/403 while selected account credentials still fail closed. Resolve a missing home environment through the OS home directory, and refuse relative authentication storage paths.
+
+  Explicit API-key login now saves the same API URL used to verify the key, preserving staging or custom API configuration.
+
+### Minor Changes
+
+- [#658](https://github.com/nansen-ai/nansen-cli/pull/658) [`70e56a7`](https://github.com/nansen-ai/nansen-cli/commit/70e56a729364546f32d2a60fdb3fcf0ad68b1050) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Automatically renew selected browser sessions under the shared credential owner. Coordinate concurrent commands, recover complete stored replacements, and require login after uncertain rotation without replaying consumed tokens or falling back to keys/payments. Renewal upgrades saved authentication metadata to v2; logout retains v2, so recovery requires a tested v2-compatible version; no in-place pre-v2 downgrade is supported.
+
+  Renewal preserves the first-party nansen:api grant for account API permissions, including smart alerts and matching-origin hosted trade simulation. Read-only or unscoped credentials are not upgraded. Wallet signing and MCP integration-key provisioning remain separate.
+
+  Stop automatic renewal after five consecutive proven non-consuming failures, with a durable counter and cooldown across commands. Malformed retry metadata fails closed without silently switching credentials.
+
+  Show the fresh-login recovery command during renewal cooldowns, including server-requested waits of up to 24 hours.
+
+- [#670](https://github.com/nansen-ai/nansen-cli/pull/670) [`1faade8`](https://github.com/nansen-ai/nansen-cli/commit/1faade8450b8e5205e8f2d4d32722c742d089b23) Thanks [@gulshngill](https://github.com/gulshngill)! - Add `nansen cache stats` and safe cache controls. `nansen cache stats` reports, for each cache the CLI keeps under `~/.nansen` (saved API responses, the credit cost map, the update check), how many entries it holds, how many bytes that is on disk, the age of its oldest and newest entry, the effective TTL, and how many entries are already expired — as a text report, or as an object with `--json`. Hits and misses are not recorded on disk, and the report says so rather than guessing.
+
+  `nansen cache clear` now takes an explicit target — `responses` (the default), `cost-map`, `update-check` or `all` — and prints exactly what it removed. It only ever deletes entries in the cache it was pointed at; credentials, wallets, saved quotes and config are never touched, and a symlink in the cache directory is skipped rather than followed.
+
+  Which commands cache is now documented rather than guessable: `nansen schema` carries a `caching` section, `nansen cache` explains it in its own help, and `--cache`/`--no-cache` are listed in the schema's global options alongside `--cache-ttl`. `NANSEN_NO_CACHE=1` is a new flagless equivalent of `--no-cache`, for wrappers that cannot change the command line.
+
+  Stats are aggregates only: only timestamp metadata is used, and no cached payload, request parameter, endpoint path or cache key is ever printed.
+
+- [#668](https://github.com/nansen-ai/nansen-cli/pull/668) [`77b7020`](https://github.com/nansen-ai/nansen-cli/commit/77b7020af913f777dcf45fea82af19a47d3221f3) Thanks [@gulshngill](https://github.com/gulshngill)! - Add `--debug` request tracing. `--debug` (or `NANSEN_DEBUG=1`) prints HTTP trace events to stderr — method, URL, response status, time-to-response-headers in milliseconds (TTFB; excluding body download/parsing), retry decisions (attempt, reason, delay) and the server request id — so auth, timing, retry and response-shape problems can be diagnosed without guesswork. stdout still carries only the JSON/CSV, so piping is unaffected. The trace never prints credentials or response bodies: header values are withheld entirely, and query-string values are blanked whenever the parameter names a key, token, secret, signature, password or auth, as is any remaining credential-shaped value.
+
+  Migration: `DEBUG=1` no longer enables Nansen diagnostics. Use `NANSEN_DEBUG=1` (or `--debug`) instead.
+
+- [#656](https://github.com/nansen-ai/nansen-cli/pull/656) [`7faeb1c`](https://github.com/nansen-ai/nansen-cli/commit/7faeb1c40bf2524fa04f81cdfe80f895a60c93db) Thanks [@gulshngill](https://github.com/gulshngill)! - Add `--paginate` (alias `--all`) to fetch every page of a list-returning command in one call (API-275). Starts at `--page`, uses `--limit` as the page size, and stops on a short or empty page, on server completion metadata, on a repeated page, or after `--max-pages` requests (default 10, maximum 1000). `--max-pages` is parsed only when pagination is active and is otherwise ignored. The merged response keeps the first page's shape with rows de-duplicated and adds `pagination: { page, pages_fetched, next_page, complete }`; `next_page` tells you where to resume when the cap was hit, and the stderr credit summary totals live page requests. Default single-page behaviour is unchanged.
+
+  Table, CSV, and stream output now intentionally use the same row extraction as pagination: they render rows inside nested `{ data: { data: [...] } }` and `{ data: { results: [...] } }` envelopes, and inside an unambiguous descriptive top-level array key such as `trades` or `holdings`, individually instead of treating the envelope as one row. Envelopes with multiple top-level arrays are not guessed.
+
+  This remains a minor release because the default JSON contract is unchanged; only the opt-in table, CSV, and NDJSON handling of a previously inconsistent, undocumented envelope shape is normalized.
+
+  With `token screener --search --paginate`, `--limit` remains the server page size and each candidate page is separately billed up to `--max-pages`; the merged candidate set is then filtered client-side without slicing it back to one page.
+
+- [#706](https://github.com/nansen-ai/nansen-cli/pull/706) [`201290f`](https://github.com/nansen-ai/nansen-cli/commit/201290f8ffb849e63ae11396be30ac4edc39baf2) Thanks [@gulshngill](https://github.com/gulshngill)! - Add `nansen login --api-key-stdin` to verify and save a key from a pipe or protected file without placing it in command arguments or printing it.
+
+- [#703](https://github.com/nansen-ai/nansen-cli/pull/703) [`6b1e707`](https://github.com/nansen-ai/nansen-cli/commit/6b1e707f088379405df2ff724b0836cc39ff3ecc) Thanks [@gulshngill](https://github.com/gulshngill)! - `token screener --search` now says how far it looked. The client-side filter can only find a token among the candidate rows it fetched (the first 500 by default, more with `--limit`/`--page`, every traversed page with `--paginate`), so the response adds `_meta.search: { query, searched, matched, complete }`: `searched` is the number of candidate rows scanned, `matched` the number of matches before `--page`/`--limit` slicing, and `complete: false` means the API had more rows beyond that window, so an empty or short result no longer looks the same as "the token does not exist". `complete` follows the server's `is_last_page` (or the `--paginate` traversal summary) when present and falls back to "the window came back full". When the search was cut short a one-line note also goes to stderr with the ways to widen it (`--limit` up to 1000, `--paginate`, or a higher `--max-pages`) or narrow the candidates (`--filters`), so `--fields`, `--table`, `--format csv` and `--stream` callers that never see `_meta` still learn about it. Row data and `pagination` are unchanged.
+
+### Patch Changes
+
+- [#659](https://github.com/nansen-ai/nansen-cli/pull/659) [`a5f4529`](https://github.com/nansen-ai/nansen-cli/commit/a5f452935dafc91775ed7e0c4b81473c93ea7846) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Align browser onboarding, help and shipped skills with API-key-equivalent nansen:api account permissions. Preserve automatic renewal, configured-key precedence, separate wallet signing and persistent MCP integration keys. Verify the installed npm executable and shared browser/key command transports; retain native recovery and release gates.
+
+  Require an explicit yes before installing the optional AI coding skill. Pressing Enter skips installation.
+
+- [#670](https://github.com/nansen-ai/nansen-cli/pull/670) [`1faade8`](https://github.com/nansen-ai/nansen-cli/commit/1faade8450b8e5205e8f2d4d32722c742d089b23) Thanks [@gulshngill](https://github.com/gulshngill)! - Use the default response TTL when cache stats receives an invalid TTL. Reject invalid clock values. Match the expiry boundary used by each cache reader, and reject invalid timestamp metadata in the readers.
+
+- [#670](https://github.com/nansen-ai/nansen-cli/pull/670) [`1faade8`](https://github.com/nansen-ai/nansen-cli/commit/1faade8450b8e5205e8f2d4d32722c742d089b23) Thanks [@gulshngill](https://github.com/gulshngill)! - Reject invalid cache subcommands, empty clear targets, and extra positional arguments before deleting files. Fix cache stats for large response caches.
+
+  Show an informational message when a selected cache has no entries to clear.
+
+- [#694](https://github.com/nansen-ai/nansen-cli/pull/694) [`2eb2164`](https://github.com/nansen-ai/nansen-cli/commit/2eb21643fcbd1b528c89b16017ae7d21e93b414e) Thanks [@FlashWayne](https://github.com/FlashWayne)! - EVM swaps, approvals and bridge deposits refuse a transaction whose worst-case gas cost (fee cap × gas limit) exceeds 1 ETH, checked for the swap before any approval is sent. `--max-tx-fee <eth>` on `trade execute` and `bridge execute` changes the cap, and `0` disables it. A fee or gas limit that is zero, negative or malformed is refused too.
+
+- [#678](https://github.com/nansen-ai/nansen-cli/pull/678) [`eff5ef3`](https://github.com/nansen-ai/nansen-cli/commit/eff5ef34167759cdb646a09043147bf9d8903df7) Thanks [@0xShadowX](https://github.com/0xShadowX)! - `wallet send` no longer tells an EVM user to top up SOL when the RPC rejects the transaction for insufficient native balance
+
+- [#690](https://github.com/nansen-ai/nansen-cli/pull/690) [`da7aed8`](https://github.com/nansen-ai/nansen-cli/commit/da7aed8c085d943c01cc347bc233d62308b5a492) Thanks [@FlashWayne](https://github.com/FlashWayne)! - `perp order` and `perp close` refuse a price or size at or above 1e21 instead of encoding it as `"1e+21"` in the signed action, which Hyperliquid rejects after signing
+
+- [#659](https://github.com/nansen-ai/nansen-cli/pull/659) [`a5f4529`](https://github.com/nansen-ai/nansen-cli/commit/a5f452935dafc91775ed7e0c4b81473c93ea7846) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Keep installation successful and show an authentication repair tip when onboarding cannot load or select credentials.
+
+- [#627](https://github.com/nansen-ai/nansen-cli/pull/627) [`1be85a2`](https://github.com/nansen-ai/nansen-cli/commit/1be85a27945193d2ae4e513413c83f7a72827434) Thanks [@kome12](https://github.com/kome12)! - Harden EVM bridge deposit quote and execute validation.
+
+- [#685](https://github.com/nansen-ai/nansen-cli/pull/685) [`ca758cc`](https://github.com/nansen-ai/nansen-cli/commit/ca758ccb53c865a33007e3643d98c7aa67de99ba) Thanks [@kriss39](https://github.com/kriss39)! - `perp order` take-profit/stop-loss side validation and `perp transfer` amount bounds now throw coded `INVALID_INPUT` errors like the rest of the perp input guards
+
+- [#691](https://github.com/nansen-ai/nansen-cli/pull/691) [`8930137`](https://github.com/nansen-ai/nansen-cli/commit/8930137b6a0578d965aa72f5220acad63a7414be) Thanks [@FlashWayne](https://github.com/FlashWayne)! - WalletConnect results are parsed without counting braces inside string values, so a wallet message containing `}` no longer makes a successful transaction or x402 payment look like a failure
+
+- [#698](https://github.com/nansen-ai/nansen-cli/pull/698) [`cd3db5a`](https://github.com/nansen-ai/nansen-cli/commit/cd3db5a825dd3ff7d57cae5e47cf3710863b8c80) Thanks [@FlashWayne](https://github.com/FlashWayne)! - `perp` commands refuse to run when `NANSEN_HL_API_URL` points at the Hyperliquid testnet, instead of signing mainnet asset ids into testnet actions and showing mainnet positions for a testnet account
+
+- [#687](https://github.com/nansen-ai/nansen-cli/pull/687) [`25408eb`](https://github.com/nansen-ai/nansen-cli/commit/25408eb1779dbf53491b8b9a5c8073643c0a3b19) Thanks [@Bruce039](https://github.com/Bruce039)! - Version comparison (update notifier, `doctor`) reads a prerelease-suffixed component numerically instead of as 0, so `1.2.10-beta` no longer compares below `1.2.9`. Build metadata is now ignored when ranking, so `1.2.3+build.7` and `1.2.3` compare equal, and a prerelease ranks below the release it precedes.
+
+- [#684](https://github.com/nansen-ai/nansen-cli/pull/684) [`5485795`](https://github.com/nansen-ai/nansen-cli/commit/5485795c39105d17afb19ec4f9d682aff88c8ce0) Thanks [@kriss39](https://github.com/kriss39)! - `research profiler trace` clamps `--width` to 1-50 (as `--depth` is clamped to 1-5) and stops expanding the counterparty graph after 1000 nodes, reporting `stats.truncated`, so a hub address can no longer turn one command into hundreds of API calls
+
+- [#692](https://github.com/nansen-ai/nansen-cli/pull/692) [`250d51f`](https://github.com/nansen-ai/nansen-cli/commit/250d51f81ee92ca7fde8e765b2b3e1bb3d692ec3) Thanks [@FlashWayne](https://github.com/FlashWayne)! - `trade quote` refuses an amount that resolves to zero base units (for example a fraction of a cent with `--amount-unit usd`) instead of requesting a quote for nothing
+
+- [#702](https://github.com/nansen-ai/nansen-cli/pull/702) [`04c444c`](https://github.com/nansen-ai/nansen-cli/commit/04c444c53d9a2047a3564dbcbb2c208232435e6a) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - `perp order` now rejects a take-profit or stop-loss on the wrong side of entry before resolving the signing context, so a wallet's first order no longer submits the one-time builder-fee approval on chain for an order that was never valid
+
+- [#680](https://github.com/nansen-ai/nansen-cli/pull/680) [`009cf9d`](https://github.com/nansen-ai/nansen-cli/commit/009cf9df3b6fbd9f9487d1b0bdd7b541ff875265) Thanks [@kriss39](https://github.com/kriss39)! - Write wallet config and key files atomically with owner-only permissions regardless of umask, and report a corrupt wallet file by name instead of hiding every other wallet behind a JSON parse error
+
+- [#700](https://github.com/nansen-ai/nansen-cli/pull/700) [`20c43ba`](https://github.com/nansen-ai/nansen-cli/commit/20c43ba01cc133c2bc118a63f6b363b0b18b1ecf) Thanks [@FlashWayne](https://github.com/FlashWayne)! - x402 auto-payment tries the cheapest viable option a server offers first, instead of whichever it listed first
+
+- [#708](https://github.com/nansen-ai/nansen-cli/pull/708) [`59ebd64`](https://github.com/nansen-ai/nansen-cli/commit/59ebd646599874d58e68293b3138e63089d303c6) Thanks [@gulshngill](https://github.com/gulshngill)! - x402 payments skip an option whose chain has no key in the wallet with a clear reason (for example `wallet "main" has no Solana key`) instead of a raw JavaScript error, and the self-sponsored Solana `feePayer` error no longer points only at Base as the alternative.
+
+- [#683](https://github.com/nansen-ai/nansen-cli/pull/683) [`2743fea`](https://github.com/nansen-ai/nansen-cli/commit/2743feaf858998f87af8b4e864a8ef0791e51341) Thanks [@Bruce039](https://github.com/Bruce039)! - x402 Solana payments honour `NANSEN_SOLANA_RPC` for blockhash and balance calls instead of always using the public mainnet endpoint. The blockhash fetch also rejects a malformed RPC URL up front without echoing it (private RPC URLs often embed an API key), times out after 15s so a hanging endpoint no longer stalls payment fallback, and defaults to the shared RPC registry rather than a hardcoded public endpoint.
+
+- [#686](https://github.com/nansen-ai/nansen-cli/pull/686) [`2b3541a`](https://github.com/nansen-ai/nansen-cli/commit/2b3541a3f040d022b0963d3305c5f014579137bd) Thanks [@Bruce039](https://github.com/Bruce039)! - x402 Solana payments refuse an option whose `feePayer` is the paying wallet, instead of building a transaction that fails at broadcast. The payment loop now logs why it skipped an option and moves on to the next one.
+
 ## 1.46.0
 
 ### Minor Changes
