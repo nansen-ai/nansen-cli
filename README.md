@@ -26,7 +26,7 @@ nansen account               # free live check, including with zero research cre
 nansen logout                # clear saved API auth; preserve wallets and environment keys
 ```
 
-Browser login requires working native credential storage and enabled server admission. Normal-release acceptance is pending; no published browser cohort is established by this branch. See [storage, supported scope and recovery](docs/browser-login.md). Email/password and Google sign-in are supported by the device-flow contract; employee-gated audiences require Google. Apple device sign-in remains deferred.
+Browser login requires working native credential storage and enabled server admission. Normal-release acceptance is pending; no published browser cohort is established by this branch. See [storage, supported scope and recovery](docs/browser-login.md). Email/password and Google sign-in are supported by the device-flow contract. Apple device sign-in remains deferred.
 
 Existing API-key users can run commands directly with `NANSEN_API_KEY`. It overrides the saved session, even after successful browser login. To deliberately save an injected key, use explicit `nansen login --human`; without an environment key this prompts in a human terminal. `nansen login --api-key <key>` remains available but puts the key in shell history. Saved-auth mutations require the native lock binding. Get a conventional key at [agent setup](https://app.nansen.ai/auth/agent-setup); MCP installation exports a separate persistent API key; it does not export browser sessions.
 
