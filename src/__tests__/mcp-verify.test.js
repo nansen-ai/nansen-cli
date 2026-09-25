@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { formatMcpVerifyReport, runMcpVerifyChecks } from '../mcp-verify.js';
 import { runCLI, SCHEMA } from '../cli.js';
+import { MCP_CLIENT_CONFIG } from '../mcp-client-config.js';
 
 const API_KEY = 'nk_test_1234567890abcdef';
 
@@ -44,10 +45,13 @@ describe('remediation URLs (API-390)', () => {
   // duplicate or a 403 -- a second failure on top of the one that sent them there.
   // Matches nansen-ra src/nansen_mcp/api/utils/common.py and the Kong 401 in
   // nansen-api kubernetes/nansen-api-wrapper/manifest.yaml.
+  // The URL itself lives in src/mcp-client-config.json (API-322).
   it('uses the key management URL and none of the rejected alternatives', async () => {
     const src = await import('node:fs').then((fs) =>
       fs.readFileSync(new URL('../mcp-verify.js', import.meta.url), 'utf8'));
-    expect(src).toContain('https://app.nansen.ai/api?tab=api');
+    expect(MCP_CLIENT_CONFIG.apiKeyManageUrl).toBe('https://app.nansen.ai/api?tab=api');
+    expect(src).toContain('MCP_CLIENT_CONFIG.apiKeyManageUrl');
+    expect(src).not.toContain('apiKeySetupUrl');
     expect(src).not.toContain('/account?tab=api');
     expect(src).not.toContain('/auth/agent-setup');
   });

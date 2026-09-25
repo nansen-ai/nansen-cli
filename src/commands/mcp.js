@@ -8,22 +8,27 @@
 
 import { CommandError } from '../api.js';
 import { DEFAULT_MCP_URL, formatMcpVerifyReport, runMcpVerifyChecks } from '../mcp-verify.js';
+import { MCP_CLIENT_CONFIG, buildHttpEntry, buildStdioEntry, mcpRemoteSpec } from '../mcp-client-config.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+// All values below come from src/mcp-client-config.json (API-322), the one
+// maintained source that the README, the GitBook page and the .dxt manifest
+// are generated from. Edit that file, not these constants.
+
 // Hosted Nansen MCP server (streamable HTTP, auth via NANSEN-API-KEY header).
-// Deliberately a constant: a user-supplied URL would let `install` write the
-// API key into a config that sends it to an arbitrary host. NANSEN_BASE_URL
-// (REST dev override) intentionally does not affect this.
-export const NANSEN_MCP_URL = 'https://mcp.nansen.ai/ra/mcp';
+// Deliberately not user-configurable: a user-supplied URL would let `install`
+// write the API key into a config that sends it to an arbitrary host.
+// NANSEN_BASE_URL (REST dev override) intentionally does not affect this.
+export const NANSEN_MCP_URL = MCP_CLIENT_CONFIG.endpoint;
 
 // Claude Desktop's config only supports stdio servers, so it bridges through
 // mcp-remote. Pinned exact so `npx -y` never auto-pulls a compromised future
-// release; bump deliberately.
-export const MCP_REMOTE_PIN = 'mcp-remote@0.2.1';
+// release; bump deliberately (see AGENTS.md > MCP client config).
+export const MCP_REMOTE_PIN = mcpRemoteSpec();
 
-const SERVER_KEY = 'nansen';
+const SERVER_KEY = MCP_CLIENT_CONFIG.serverKey;
 
 // House idiom (see src/api.js CONFIG_DIR): env first so tests can point HOME
 // at a temp dir; os.homedir() as last resort.
@@ -50,7 +55,7 @@ OPTIONS:
                    (an https:// or loopback host). Not needed for --api-key.
 
 The API key is taken from \`nansen login --human\` / NANSEN_API_KEY. Re-run install after
-rotating your key to update the entry. Other clients: https://docs.nansen.ai/mcp/connecting`;
+rotating your key to update the entry. Other clients: ${MCP_CLIENT_CONFIG.docsUrl}`;
 
 /**
  * Resolve the client's config file path for this platform.
@@ -83,16 +88,17 @@ export function buildServerEntry(client, apiKey) {
   switch (client) {
     case 'claude-code':
       // "type" is required — a url without type is treated as broken stdio and skipped
-      return { type: 'http', url: NANSEN_MCP_URL, headers: { 'NANSEN-API-KEY': apiKey } };
+      return buildHttpEntry(apiKey, { withType: true });
     case 'cursor':
-      return { url: NANSEN_MCP_URL, headers: { 'NANSEN-API-KEY': apiKey } };
+      return buildHttpEntry(apiKey);
     case 'claude-desktop':
       // Header name and value must be one arg. mcp-remote parses with
       // /^([A-Za-z0-9_-]+):\s*(.*)$/, so whitespace after the colon is trimmed;
       // what breaks it is an empty value.
       // The ${NANSEN_API_KEY} placeholder is NOT shell syntax: mcp-remote itself
       // substitutes ${VAR} in header values from its process env — see
-      // mcp-remote@0.2.1 dist/chunk-KIPEEEAF.js:29573-29576
+      // mcp-remote@0.2.1 dist/chunk-KIPEEEAF.js:29573-29576 (re-check this
+      // behavior before a pin bump; see AGENTS.md > MCP client config)
       // (`value.replace(/\$\{([^}]+)}/g, ...)`, logging "Replacing ${...} with
       // environment value in header"). Claude Desktop injects the `env` block
       // into the spawned npx process, mcp-remote expands the reference, and the
@@ -100,11 +106,7 @@ export function buildServerEntry(client, apiKey) {
       // the exact written config connects to prod with the substitution logged.
       // Do NOT "fix" this by inlining the key into args.
       // No --allow-http: the URL is HTTPS.
-      return {
-        command: 'npx',
-        args: ['-y', MCP_REMOTE_PIN, NANSEN_MCP_URL, '--header', 'NANSEN-API-KEY:${NANSEN_API_KEY}'],
-        env: { NANSEN_API_KEY: apiKey },
-      };
+      return buildStdioEntry(apiKey);
     default:
       throw new CommandError(`Unknown client: ${client}. Supported: ${SUPPORTED_CLIENTS.join(', ')}`, 'INVALID_PARAMS');
   }

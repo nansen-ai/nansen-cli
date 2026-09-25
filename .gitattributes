@@ -1,0 +1,3 @@
+README.md text eol=lf
+scripts/templates/*.md text eol=lf
+src/mcp-client-config.json text eol=lf

@@ -103,6 +103,8 @@ No published cohort or normal-release acceptance is claimed. The proposed initia
 
 ## MCP
 
+<!-- BEGIN GENERATED: mcp. Do not edit by hand. Edit src/mcp-client-config.json (values) or scripts/templates/readme-mcp.md (prose), not README.md, then run: npm run mcp:generate. -->
+
 Connect any MCP client to Nansen's streamable HTTP server:
 
 - **Endpoint:** `https://mcp.nansen.ai/ra/mcp`
@@ -166,9 +168,11 @@ claude mcp add --transport http nansen https://mcp.nansen.ai/ra/mcp --header "NA
 }
 ```
 
-`mcp-remote` is pinned to an exact version rather than `@latest` because the bridge handles your API key on every request, and `npx` would otherwise pull a new release automatically. `0.2.1` is the current release and the version this config is tested against; bumping it is safe — review the release and update the pin.
+`mcp-remote` is pinned to an exact version rather than `@latest` because the bridge handles your API key on every request, and `npx` would otherwise pull a new release automatically. `0.2.1` is the version this config is tested against. A weekly check reports when a newer release exists; to bump the pin, review the release and follow [MCP client config](AGENTS.md#mcp-client-config).
 
 **Claude Tag (Claude in Slack):** an admin must attach a plugin whose `.mcp.json` points at `https://mcp.nansen.ai/ra/mcp` and add a custom credential allowing the host `mcp.nansen.ai`. See the [Claude Tag custom-connections documentation](https://claude.com/docs/claude-tag/admins/connections/custom). Per-user fallback: use Claude Code or Claude Desktop.
+
+<!-- END GENERATED: mcp -->
 
 ## Trading
 
