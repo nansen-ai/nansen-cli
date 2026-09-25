@@ -103,7 +103,16 @@ describe.each(['api-key', 'session', 'anonymous'])('%s x402 payment policy', kin
 
   it('keeps login verification non-paying through allowPayment:false', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(paymentResponse()); vi.stubGlobal('fetch', fetch);
-    await expect(client(kind, { allowPayment: false }).api.getAccount()).rejects.toMatchObject({ code: 'PAYMENT_REQUIRED' });
+    await expect(client(kind, { allowPayment: false }).api.request(endpoint)).rejects.toMatchObject({ code: 'PAYMENT_REQUIRED' });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(mocks.localSign).not.toHaveBeenCalled();
+    expect(mocks.wcSign).not.toHaveBeenCalled();
+    expect(mocks.privySign).not.toHaveBeenCalled();
+  });
+
+  it('never pays for the free account check, even with automatic payment enabled', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(paymentResponse()); vi.stubGlobal('fetch', fetch);
+    await expect(client(kind).api.getAccount()).rejects.toMatchObject({ code: 'PAYMENT_REQUIRED' });
     expect(fetch).toHaveBeenCalledOnce();
     expect(mocks.localSign).not.toHaveBeenCalled();
     expect(mocks.wcSign).not.toHaveBeenCalled();
@@ -118,8 +127,11 @@ describe.each(['api-key', 'session', 'anonymous'])('%s x402 payment policy', kin
     expect(mocks.wcSign).not.toHaveBeenCalled();
   });
 
-  it('does not send another payment after an ambiguous paid response', async () => {
-    const fetch = vi.fn().mockResolvedValueOnce(paymentResponse()).mockResolvedValueOnce(new Response('{}', { status: 503 }));
+  it.each([401, 403, 429, 451, 503])('does not sign another option or use WalletConnect after a paid HTTP %s', async status => {
+    // More than one supported option ensures the local loop itself must stop,
+    // as well as the fallback to a second wallet provider.
+    const requirements = { accepts: [requirement, { ...requirement, amount: '20000' }] };
+    const fetch = vi.fn().mockResolvedValueOnce(paymentResponse(requirements)).mockImplementation(async () => new Response('{}', { status }));
     vi.stubGlobal('fetch', fetch);
     await expect(client(kind).api.request(endpoint)).rejects.toMatchObject({ code: 'PAYMENT_AMBIGUOUS' });
     expect(fetch).toHaveBeenCalledTimes(2);

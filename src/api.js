@@ -190,9 +190,8 @@ export function browserSessionError(status, data = {}) {
     ? 'Insufficient API credits for the selected account. Top up at https://app.nansen.ai/api?tab=api. No payment was attempted.'
     : code === ErrorCode.PLAN_UPGRADE_REQUIRED ? 'The selected account plan does not include this endpoint. Check upgrade options at https://app.nansen.ai/api?tab=api.'
       : status === 401 ? 'The selected browser session was rejected. Run: nansen login.'
-        : status === 402 ? 'Payment required (x402). Configure and fund a supported wallet, or top up the selected account.'
-          : status === 503 ? 'API authentication is temporarily unavailable. Retry later.'
-            : `API request failed (${status}). The selected account was not changed and no payment was attempted.`;
+        : status === 503 ? 'API authentication is temporarily unavailable. Retry later.'
+          : `API request failed (${status}). The selected account was not changed and no payment was attempted.`;
   return { code, message };
 }
 
@@ -778,7 +777,7 @@ export class NansenAPI {
    * sentinel if the server cleanly, legibly rejected it without settling.
    * Throws a NansenError(PAYMENT_AMBIGUOUS) — instead of returning the sentinel —
    * for any outcome that doesn't prove the payment was rejected: a transport
-   * failure after transmission, an HTTP 5xx, or a response body that can't be
+   * failure after transmission, an admission denial, an HTTP 5xx, or a response body that can't be
    * parsed. In all of those cases the server may already have received and
    * settled the payment, so the caller must not treat it as safe to retry with
    * a different option — that would risk paying twice for the same request.
@@ -846,6 +845,14 @@ export class NansenAPI {
       payment: 'x402',
     });
     if (!paidResponse.ok) {
+      // An admission denial does not prove that a transmitted payment cannot
+      // settle. Stop here instead of authorizing another rail or wallet.
+      if ([401, 403, 429, 451].includes(paidResponse.status)) {
+        throw new NansenError(
+          `x402 payment outcome unknown: paid request was denied (${paidResponse.status}). Not attempting another payment for the same request.`,
+          ErrorCode.PAYMENT_AMBIGUOUS,
+        );
+      }
       // A 5xx doesn't prove the payment was rejected — the server could have
       // processed it before failing to respond. Only a readable non-5xx
       // rejection body is safe to treat as "try the next option".
@@ -901,7 +908,7 @@ export class NansenAPI {
     let credentialHeaders = await this.requestCredentials(extraHeaders);
     // Keys and browser sessions share the same payment policy. Explicit raw
     // authentication headers still cannot be forwarded into a payment retry.
-    const mayAutoPay = this.allowPayment && !Object.keys(extraHeaders).some(k => ['apikey', 'authorization'].includes(k.toLowerCase()));
+    const mayAutoPay = this.allowPayment && options.allowPayment !== false && !Object.keys(extraHeaders).some(k => ['apikey', 'authorization'].includes(k.toLowerCase()));
     const url = `${this.baseUrl}${endpoint}`;
     const { maxRetries, baseDelayMs, maxDelayMs, maxRetryAfterMs, retryOnStatus } = this.retryOptions;
     const shouldRetry = options.retry !== false; // Allow disabling retry per-request
@@ -1061,6 +1068,7 @@ export class NansenAPI {
         } else if (code === ErrorCode.PAYMENT_REQUIRED && response.status === 402) {
           // Try x402 auto-payment: local wallet (with network fallback), then WalletConnect
           const hasManualSignature = Object.keys(extraHeaders).some(k => k.toLowerCase() === 'payment-signature');
+          if (safeSessionError && mayAutoPay) message = 'Payment required (x402). Configure and fund a supported wallet, or top up the selected account.';
           if (this.selection.kind === 'api-key' && !hasManualSignature) message = 'Payment required (x402). Configure and fund a supported wallet, top up the selected account, or explicitly provide --x402-payment-signature.';
 
           if (this.selection.kind === 'api-key' && !hasManualSignature) {
@@ -1242,7 +1250,7 @@ export class NansenAPI {
   // ============= Account Endpoint =============
 
   async getAccount() {
-    return this.request('/api/v1/account', {}, { method: 'GET', cache: false });
+    return this.request('/api/v1/account', {}, { method: 'GET', cache: false, allowPayment: false });
   }
 
   // ============= Chain Endpoints =============

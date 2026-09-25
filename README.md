@@ -38,7 +38,7 @@ nansen login --api-key-stdin --json < /path/to/protected-api-key
 
 This reads one key (up to 4096 bytes, with an optional trailing newline), verifies it, and saves it without printing it. Input must close within 30 seconds. `--json` prints one `saved` event with the effective credential source; errors exit nonzero. As with existing API-key login, the key is stored in `~/.nansen/config.json` using an atomic write with owner-only file permissions (`0600` on POSIX), not in the OS keychain. The native lock binding is required for saving credentials. It does not create an account or issue a key. Avoid commands containing literal secrets, which may enter shell history. Do not combine it with `--api-key`, `--human`, or `--no-browser`. An existing `NANSEN_API_KEY` still overrides the saved credential until you unset it.
 
-Anonymous payment options remain separate:
+Wallet and micropayment options:
 
 - **x402:** create and fund a wallet with USDC on Base/Solana or USDT0 on X Layer. API keys, browser sessions and anonymous requests can all pay a supported HTTP 402 challenge under the same wallet policy and spending limits. The paid retry sends `Payment-Signature` without the account credential. Authentication or authorization failures never trigger payment. Explicit manual API-key payment signatures remain supported.
 - **MPP:** install the separate tempo CLI and use `tempo request`. Browser login does not configure a wallet, sign MPP credentials or purchase credits. See [MPP / Tempo](#mpp--tempo).
