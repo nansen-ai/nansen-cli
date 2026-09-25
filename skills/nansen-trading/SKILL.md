@@ -5,7 +5,6 @@ metadata:
   openclaw:
     requires:
       env:
-        - NANSEN_API_KEY
         - NANSEN_WALLET_PASSWORD
       bins:
         - nansen
@@ -16,6 +15,11 @@ metadata:
         bins: [nansen]
 allowed-tools: Bash(nansen:*)
 ---
+## Authentication
+
+Nansen account API calls accept a selected `nansen:api` browser session or conventional API key with the same permissions. `NANSEN_API_KEY` takes precedence; optional `primaryEnv` preserves configured-key injection. Run `nansen auth status` for offline selection. Cached access expiry alone permits automatic renewal during an authorized task. Stop on anonymous selection, invalid state, blocked/uncertain renewal or actual auth failure; never drop a credential or fall back to anonymous x402 payment. Browser login does not grant wallet signing, privileged service identity or a persistent MCP integration key. Preserve all confirmation, signing, sanctions and geographic checks below. Browser rollout acceptance is still pending.
+
+
 
 # Trade
 
@@ -198,7 +202,7 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 | Var | Purpose |
 |-----|---------|
 | `NANSEN_WALLET_PASSWORD` | **Required for `trade execute`.** Wallet encryption password — persisted in `~/.nansen/.env`. Source before executing: `source ~/.nansen/.env && nansen trade execute ...` |
-| `NANSEN_API_KEY` | API key (also set via `nansen login`). `trade quote` and `trade execute` need it for the pre-trade compliance screen below. |
+| `NANSEN_API_KEY` | API key (also set via explicit `nansen login --human`; browser sessions are not wallet or RPC keys) |
 | `NANSEN_YES` | Set to `1` to skip the `execute` confirmation prompt, like `--yes` |
 
 > **Agents:** Never hold a wallet password only in session memory. If `NANSEN_WALLET_PASSWORD` is not in `~/.nansen/.env`, follow the setup flow in the nansen-wallet-manager skill Password Policy to generate and persist one before proceeding.
@@ -264,3 +268,5 @@ nansen perp account     # account value, unrealized PnL, margin used, withdrawab
 
 - npm: https://www.npmjs.com/package/nansen-cli
 - GitHub: https://github.com/nansen-ai/nansen-cli
+
+Browser login uses `nansen:api` with the same account API permissions as an API key, subject to existing plan/account/endpoint checks. Trading still requires a separately configured wallet and its signing authorization. Hosted simulation uses the selected credential only on the matching trusted Nansen API origin; arbitrary RPC endpoints never receive Nansen credentials.

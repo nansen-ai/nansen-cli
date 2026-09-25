@@ -120,6 +120,18 @@ async function buildPaymentForRequirement(requirement, exported, url) {
     return null;
   }
 
+  // exportWallet returns a null key for a chain the wallet file doesn't hold.
+  // Skip that option with a clear reason instead of failing on the missing key.
+  const rail = isEvmNetwork(requirement.network) ? 'evm' : 'solana';
+  if (!exported[rail]?.privateKey || !exported[rail]?.address) {
+    const chain = rail === 'evm' ? 'EVM' : 'Solana';
+    console.error(
+      `[x402] Skipping ${requirement.network} option: wallet "${exported.name}" has no ${chain} key. ` +
+      'Create a wallet with both keys (nansen wallet create) and make it the default (nansen wallet default <name>).',
+    );
+    return null;
+  }
+
   if (isEvmNetwork(requirement.network)) {
     if ((requirement.extra || {}).assetTransferMethod === 'permit2-exact') {
       const resolvedAmount = resolvePaymentAmount(requirement);
@@ -211,8 +223,11 @@ export async function* createPaymentSignatures(response, url, options = {}) {
     try {
       const sig = await buildPaymentForRequirement(req, exported, url);
       if (sig) yield { signature: sig, network: req.network, asset: req.asset };
-    } catch {
-      // This payment option failed to build, try next
+    } catch (err) {
+      // This payment option failed to build; say why and try the next one
+      // (otherwise a malformed server option only surfaces as a generic
+      // payment failure once every option is exhausted).
+      console.error(`[x402] Skipping ${req.network} option: ${err?.message || err}`);
       continue;
     }
   }

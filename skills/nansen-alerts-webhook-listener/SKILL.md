@@ -4,8 +4,6 @@ description: Set up a local webhook server to receive Nansen smart alerts in rea
 metadata:
   openclaw:
     requires:
-      env:
-        - NANSEN_API_KEY
       bins:
         - nansen
         - node
@@ -16,6 +14,11 @@ metadata:
         bins: [nansen]
 allowed-tools: Bash(nansen:*), Bash(node:*), Bash(npx:*), Bash(ngrok:*), Write
 ---
+## Authentication
+
+Nansen account API calls accept a selected `nansen:api` browser session or conventional API key with the same permissions. `NANSEN_API_KEY` takes precedence; optional `primaryEnv` preserves configured-key injection. Run `nansen auth status` for offline selection. Cached access expiry alone permits automatic renewal during an authorized task. Stop on anonymous selection, invalid state, blocked/uncertain renewal or actual auth failure; never drop a credential or fall back to anonymous x402 payment. Browser login does not grant wallet signing, privileged service identity or a persistent MCP integration key. Preserve all confirmation, signing, sanctions and geographic checks below. Browser rollout acceptance is still pending.
+
+
 
 # Alert Webhook Listener
 

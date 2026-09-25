@@ -293,6 +293,9 @@ describe('trade execute --dry-run / --yes', () => {
     delete process.env.NANSEN_WALLET_PASSWORD;
     delete process.env.NANSEN_YES;
     api = {
+      baseUrl: 'https://api.nansen.ai',
+      selection: { kind: 'session' },
+      requestCredentials: vi.fn(async () => ({ Authorization: 'Bearer selected-test-session' })),
       request: vi.fn(async (_endpoint, body) => ({
         results: body.addresses.map(address => ({ address, sanctioned: false })),
       })),
@@ -327,6 +330,14 @@ describe('trade execute --dry-run / --yes', () => {
     expect(out).toContain('DRY RUN — nothing was broadcast');
     expect(executeBodies).toHaveLength(0);
     expect(promptFn).not.toHaveBeenCalled();
+    expect(api.requestCredentials).toHaveBeenCalledOnce();
+    const simulation = fetch.mock.calls.find(([url]) => String(url).includes('/simulate-swap'));
+    expect(simulation[1].headers.Authorization).toBe('Bearer selected-test-session');
+    expect(simulation[1].headers.apikey).toBeUndefined();
+    expect(simulation[1].redirect).toBe('error');
+    for (const [url, options] of fetch.mock.calls) {
+      if (!String(url).includes('/simulate-swap')) expect(options.headers?.Authorization).toBeUndefined();
+    }
   });
 
   it('--dry-run leaves the quote reusable', async () => {

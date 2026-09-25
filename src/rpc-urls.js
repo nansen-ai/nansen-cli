@@ -23,7 +23,7 @@
  * (nonce, balance, allowance, eth_call revert check) stay on the cheap default.
  *
  * The shipped simulation endpoint is a Nansen-hosted service authenticated with
- * the user's existing Nansen API key (no secret in this public package): the
+ * the user's selected Nansen API credential (no secret in this public package): the
  * trace-capable upstream is reached server-side, so the baked default carries no
  * credential. With no NANSEN_BASE_SIM_RPC override, swap-outcome verification
  * uses this default; if the service is ever unreachable it degrades with a
@@ -60,7 +60,7 @@ export const CHAIN_RPCS = {
 };
 
 // Zero-config default for the shipped Nansen-hosted simulation endpoint. It
-// authenticates with the user's existing Nansen API key (attached automatically
+// authenticates with the user's selected Nansen API credential (attached automatically
 // by swap-simulation.js), and the trace-capable upstream is reached server-side —
 // so this URL carries no secret and is safe to bake into a public package. Never
 // embed an RPC URL that carries an inline token here; any embedded secret would
@@ -89,12 +89,10 @@ export const SIMULATION_RPCS = {
   solana: process.env.NANSEN_SOLANA_SIM_RPC || CHAIN_RPCS.solana,
 };
 
-// Nansen hosts the API key may be forwarded to. Kept to an explicit allowlist
-// (not a `*.nansen.ai` wildcard): the key only ever authenticates the sim proxy
-// on api.nansen.ai, and a wildcard would forward it to any subdomain that
-// resolves — including a misconfigured or compromised one. Add new sim hosts
-// here deliberately if one is ever introduced.
-const NANSEN_HOSTED_SIM_HOSTS = new Set(['api.nansen.ai']);
+// Explicit API origins that may receive simulation credentials. No wildcard,
+// userinfo or alternate port is trusted. Browser sessions additionally require
+// an exact match with their selected API audience in swap-simulation.js.
+const NANSEN_HOSTED_SIM_ORIGINS = new Set(['https://api.nansen.ai', 'https://api.banansen.dev']);
 
 /**
  * Whether a simulation URL is a Nansen-hosted endpoint that may receive the
@@ -104,14 +102,14 @@ const NANSEN_HOSTED_SIM_HOSTS = new Set(['api.nansen.ai']);
  * leak it. So the key is attached ONLY when this returns true — every other
  * endpoint is called anonymously.
  *
- * Trust is: https + hostname is one of NANSEN_HOSTED_SIM_HOSTS. Anything else
+ * Trust is: exact origin is one of NANSEN_HOSTED_SIM_ORIGINS. Anything else
  * (http, other host, unparseable) is untrusted and gets no key.
  */
 export function isNansenHostedUrl(url) {
   try {
     const u = new URL(url);
-    if (u.protocol !== 'https:') return false;
-    return NANSEN_HOSTED_SIM_HOSTS.has(u.hostname.toLowerCase());
+    if (u.username || u.password) return false;
+    return NANSEN_HOSTED_SIM_ORIGINS.has(u.origin);
   } catch {
     return false;
   }

@@ -3868,7 +3868,7 @@ describe('NansenAPI', () => {
         .mockResolvedValueOnce(errorResponse)
         .mockResolvedValueOnce(successResponse);
 
-      const autoPayApi = new NansenAPI('test-key', 'https://api.nansen.ai');
+      const autoPayApi = new NansenAPI(null, 'https://api.nansen.ai');
 
       // Mock the dynamic import — resetModules ensures fresh resolution
       const mockHandleX402Payment = vi.fn().mockResolvedValue('mock-payment-sig');
@@ -3923,7 +3923,7 @@ describe('NansenAPI', () => {
       vi.resetModules();
       vi.doMock('../walletconnect-x402.js', () => ({ handleX402Payment: mockHandleX402Payment }));
 
-      const autoPayApi = new NansenAPI('test-key', 'https://api.nansen.ai');
+      const autoPayApi = new NansenAPI(null, 'https://api.nansen.ai');
       const result = await autoPayApi.smartMoneyNetflow({});
 
       expect(result.netflows).toBeDefined();
@@ -3997,7 +3997,7 @@ describe('NansenAPI', () => {
         handleX402Payment: vi.fn().mockRejectedValue(new Error('No wallet connected')),
       }));
 
-      const autoPayApi = new NansenAPI('test-key', 'https://api.nansen.ai');
+      const autoPayApi = new NansenAPI(null, 'https://api.nansen.ai');
 
       let thrownError;
       try {
@@ -4008,9 +4008,8 @@ describe('NansenAPI', () => {
 
       expect(thrownError).toBeDefined();
       expect(thrownError.code).toBe(ErrorCode.PAYMENT_REQUIRED);
-      expect(thrownError.message).toContain('auto-payment failed');
-      // With an API key, payment requirements details are included for debugging
-      expect(thrownError.details).toHaveProperty('paymentRequirements');
+      expect(thrownError.message).toContain('nansen login');
+      expect(thrownError.details?.paymentRequirements).toBeUndefined();
 
       vi.doUnmock('../walletconnect-x402.js');
     });
@@ -4113,7 +4112,7 @@ describe('NansenAPI', () => {
         }));
         vi.doMock('../walletconnect-x402.js', () => ({ handleX402Payment: mockHandleX402Payment }));
 
-        const autoPayApi = new NansenAPI('test-key', 'https://api.nansen.ai');
+        const autoPayApi = new NansenAPI(null, 'https://api.nansen.ai');
 
         let thrownError;
         try {
@@ -4169,7 +4168,7 @@ describe('NansenAPI', () => {
         vi.resetModules();
         vi.doMock('../walletconnect-x402.js', () => ({ handleX402Payment: mockHandleX402Payment }));
 
-        const autoPayApi = new NansenAPI('test-key', 'https://api.nansen.ai');
+        const autoPayApi = new NansenAPI(null, 'https://api.nansen.ai');
 
         let thrownError;
         try {

@@ -11,11 +11,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ── Mock telemetry before cli.js is imported ──
 const trackSucceeded = vi.fn();
 const trackFailed = vi.fn();
+const trackAuth = vi.fn();
 
 vi.mock('../telemetry.js', async (importOriginal) => ({
   ...(await importOriginal()),
   trackCommandSucceeded: trackSucceeded,
   trackCommandFailed: trackFailed,
+  trackAuthCommand: trackAuth,
   // perp.js imports this for its default order-outcome tracker; the perp flow
   // isn't exercised here, so a bare stub keeps the module import resolvable.
   trackPerpOrderCompleted: vi.fn(),
@@ -55,13 +57,14 @@ function depsWithApi(overrides = {}) {
 }
 
 function wasTracked() {
-  return trackSucceeded.mock.calls.length + trackFailed.mock.calls.length;
+  return trackSucceeded.mock.calls.length + trackFailed.mock.calls.length + trackAuth.mock.calls.length;
 }
 
 describe('telemetry tracking for all first-level commands', () => {
   beforeEach(() => {
     trackSucceeded.mockClear();
     trackFailed.mockClear();
+    trackAuth.mockClear();
   });
 
   // ── Research sub-categories (each is also a top-level deprecated alias) ──
@@ -152,27 +155,27 @@ describe('telemetry tracking for all first-level commands', () => {
 
   it('login (with --api-key)', async () => {
     const err = Object.assign(new Error('Unauthorized'), { code: 'UNAUTHORIZED' });
-    function FailingAPI() {
-      return { getAccount: vi.fn().mockRejectedValue(err) };
-    }
+    const getAccount = vi.fn().mockRejectedValue(err);
+    function FailingAPI() { return { getAccount }; }
     await runCLI(['login', '--api-key', 'test-key'], baseDeps({
       NansenAPIClass: FailingAPI,
-      saveConfigFn: () => {},
+      authState: { begin: vi.fn().mockResolvedValue({}), install: vi.fn(), finish: vi.fn().mockResolvedValue([]) },
       getConfigFileFn: () => '/tmp/fake-config.json',
     }));
     expect(wasTracked()).toBe(1);
-    expect(trackFailed).toHaveBeenCalledOnce();
-    expect(trackFailed.mock.calls[0][0].command).toBe('login');
+    expect(trackAuth).toHaveBeenCalledOnce();
+    expect(trackAuth.mock.calls[0][0]).toMatchObject({ command: 'login', failed: true });
+    expect(getAccount).toHaveBeenCalledOnce();
   });
 
   it('logout', async () => {
     await runCLI(['logout'], baseDeps({
-      deleteConfigFn: () => true,
+      authState: { logout: async () => ({ removed: true, cleanup: [] }) },
       getConfigFileFn: () => '/tmp/fake-config.json',
     }));
     expect(wasTracked()).toBe(1);
-    expect(trackSucceeded).toHaveBeenCalledOnce();
-    expect(trackSucceeded.mock.calls[0][0].command).toBe('logout');
+    expect(trackAuth).toHaveBeenCalledOnce();
+    expect(trackAuth.mock.calls[0][0].command).toBe('logout');
   });
 
   it('schema', async () => {

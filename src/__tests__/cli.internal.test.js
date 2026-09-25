@@ -2147,8 +2147,8 @@ describe('buildCommands', () => {
       log: (msg) => logs.push(msg),
       exit: vi.fn(),
       promptFn: vi.fn(),
-      saveConfigFn: vi.fn(),
-      deleteConfigFn: vi.fn(),
+      authState: { begin: vi.fn().mockResolvedValue({}), install: vi.fn().mockResolvedValue({ cleanup: [] }), finish: vi.fn().mockResolvedValue([]), logout: vi.fn().mockResolvedValue({ removed: false, cleanup: [] }) },
+      browserLoginFn: vi.fn(),
       getConfigFileFn: vi.fn(() => '/home/user/.nansen/config.json'),
       NansenAPIClass: vi.fn(),
       isTTY: true,
@@ -2166,25 +2166,25 @@ describe('buildCommands', () => {
 
   describe('logout command', () => {
     it('should report success when config deleted', async () => {
-      mockDeps.deleteConfigFn.mockReturnValue(true);
+      mockDeps.authState.logout.mockResolvedValue({ removed: true, cleanup: [] });
       await commands.logout([], null, {}, {});
-      expect(logs).toEqual(['✓ Removed /home/user/.nansen/config.json']);
+      expect(logs).toEqual(['Local credentials removed.']);
     });
 
     it('should report when no config found', async () => {
-      mockDeps.deleteConfigFn.mockReturnValue(false);
+      mockDeps.authState.logout.mockResolvedValue({ removed: false, cleanup: [] });
       await commands.logout([], null, {}, {});
-      expect(logs).toEqual(['No saved credentials found']);
+      expect(logs).toEqual(['No saved credentials found.']);
     });
 
     it('should warn when NANSEN_API_KEY remains active', async () => {
       mockDeps.env.NANSEN_API_KEY = 'test-key';
-      mockDeps.deleteConfigFn.mockReturnValue(true);
+      mockDeps.authState.logout.mockResolvedValue({ removed: true, cleanup: [] });
 
       await commands.logout([], null, {}, {});
 
       expect(logs).toEqual([
-        '✓ Removed /home/user/.nansen/config.json',
+        'Local credentials removed.',
         'Warning: NANSEN_API_KEY remains active. Run: unset NANSEN_API_KEY'
       ]);
       expect(mockDeps.NansenAPIClass).not.toHaveBeenCalled();
@@ -2196,7 +2196,7 @@ describe('buildCommands', () => {
       const savedEnv = process.env.NANSEN_API_KEY;
       delete process.env.NANSEN_API_KEY;
       try {
-        await expect(commands.login([], null, {}, {})).rejects.toThrow(/API key/);
+        await expect(commands.login([], null, {}, { 'api-key': '' })).rejects.toThrow(/API key/);
       } finally {
         if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
       }
@@ -2262,15 +2262,14 @@ describe('buildCommands', () => {
 
     it('login help warns that literal keys land in shell history', async () => {
       const logs = [];
-      const localCommands = buildCommands({ ...mockDeps, log: (m) => logs.push(m) });
-      await localCommands.login([], null, { help: true }, {});
+      await runCLI(['login', '--help'], { ...mockDeps, output: m => logs.push(m) });
       const out = logs.join('\n');
       expect(out).toContain('--human');
-      expect(out).toContain('uses NANSEN_API_KEY when already set');
+      expect(out).toContain('Plain login never persists NANSEN_API_KEY');
       expect(out).not.toContain('security find-generic-password');
       expect(out).toMatch(/recorded in shell history/i);
       // the safe path is listed before the history-recording one
-      expect(out.indexOf('--human')).toBeLessThan(out.indexOf('--api-key <key>'));
+      expect(out.indexOf('\n  --human')).toBeLessThan(out.indexOf('\n  --api-key —'));
     });
 
     it('should save config with --api-key option after verification', async () => {
@@ -2280,7 +2279,7 @@ describe('buildCommands', () => {
       await commands.login([], null, {}, { 'api-key': 'valid-api-key' });
 
       expect(mockApi.getAccount).toHaveBeenCalledOnce();
-      expect(mockDeps.saveConfigFn).toHaveBeenCalledWith({
+      expect(mockDeps.authState.install).toHaveBeenCalledWith({}, {
         apiKey: 'valid-api-key',
         baseUrl: 'https://api.nansen.ai'
       });
@@ -2290,7 +2289,7 @@ describe('buildCommands', () => {
       const savedEnv = process.env.NANSEN_API_KEY;
       delete process.env.NANSEN_API_KEY;
       try {
-        const err = await commands.login([], null, {}, {}).catch(e => e);
+        const err = await commands.login([], null, {}, { 'api-key': '' }).catch(e => e);
         expect(err.code).toBe('API_KEY_REQUIRED');
       } finally {
         if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
@@ -2304,7 +2303,7 @@ describe('buildCommands', () => {
       const err = await commands.login([], null, {}, { 'api-key': 'invalid-key' }).catch(e => e);
 
       expect(err.code).toBe('INVALID_API_KEY');
-      expect(mockDeps.saveConfigFn).not.toHaveBeenCalled();
+      expect(mockDeps.authState.install).not.toHaveBeenCalled();
     });
 
     it('should handle network errors during verification', async () => {
@@ -2314,7 +2313,7 @@ describe('buildCommands', () => {
       const err = await commands.login([], null, {}, { 'api-key': 'some-key' }).catch(e => e);
 
       expect(err.code).toBe('VERIFICATION_FAILED');
-      expect(mockDeps.saveConfigFn).not.toHaveBeenCalled();
+      expect(mockDeps.authState.install).not.toHaveBeenCalled();
     });
 
     it('should display account info on successful login', async () => {
@@ -3862,8 +3861,8 @@ describe('login/logout flow', () => {
       log: (msg) => logs.push(msg),
       exit: vi.fn(),
       promptFn: vi.fn(),
-      saveConfigFn: vi.fn(),
-      deleteConfigFn: vi.fn(),
+      authState: { begin: vi.fn().mockResolvedValue({}), install: vi.fn().mockResolvedValue({ cleanup: [] }), finish: vi.fn().mockResolvedValue([]), logout: vi.fn().mockResolvedValue({ removed: false, cleanup: [] }) },
+      browserLoginFn: vi.fn(),
       getConfigFileFn: vi.fn(() => '/home/user/.nansen/config.json'),
       NansenAPIClass: vi.fn(),
       isTTY: true
@@ -3891,7 +3890,7 @@ describe('login/logout flow', () => {
 
       await commands.login([], null, {}, { 'api-key': '  api-key-with-spaces  ' });
 
-      expect(mockDeps.saveConfigFn).toHaveBeenCalledWith({
+      expect(mockDeps.authState.install).toHaveBeenCalledWith({}, {
         apiKey: 'api-key-with-spaces',
         baseUrl: 'https://api.nansen.ai'
       });
@@ -3917,7 +3916,7 @@ describe('login/logout flow', () => {
 
       await commands.login([], null, {}, { 'api-key': 'test-key' });
 
-      expect(mockDeps.saveConfigFn).toHaveBeenCalledWith({
+      expect(mockDeps.authState.install).toHaveBeenCalledWith({}, {
         apiKey: 'test-key',
         baseUrl: 'https://api.nansen.ai'
       });
@@ -3928,7 +3927,7 @@ describe('login/logout flow', () => {
       const savedEnv = process.env.NANSEN_API_KEY;
       delete process.env.NANSEN_API_KEY;
       try {
-        const err = await commands.login([], null, {}, {}).catch(e => e);
+        const err = await commands.login([], null, {}, { 'api-key': '' }).catch(e => e);
         expect(err.code).toBe('API_KEY_REQUIRED');
       } finally {
         if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
@@ -3938,22 +3937,21 @@ describe('login/logout flow', () => {
 
   describe('logout command', () => {
     it('should call deleteConfig', async () => {
-      mockDeps.deleteConfigFn.mockReturnValue(true);
+      mockDeps.authState.logout.mockResolvedValue({ removed: true, cleanup: [] });
       await commands.logout([], null, {}, {});
       
-      expect(mockDeps.deleteConfigFn).toHaveBeenCalled();
+      expect(mockDeps.authState.logout).toHaveBeenCalled();
     });
 
     it('should show success message when config deleted', async () => {
-      mockDeps.deleteConfigFn.mockReturnValue(true);
+      mockDeps.authState.logout.mockResolvedValue({ removed: true, cleanup: [] });
       await commands.logout([], null, {}, {});
       
-      expect(logs.some(l => l.includes('Removed'))).toBe(true);
-      expect(logs.some(l => l.includes('/home/user/.nansen/config.json'))).toBe(true);
+      expect(logs).toContain('Local credentials removed.');
     });
 
     it('should show message when no config exists', async () => {
-      mockDeps.deleteConfigFn.mockReturnValue(false);
+      mockDeps.authState.logout.mockResolvedValue({ removed: false, cleanup: [] });
       await commands.logout([], null, {}, {});
       
       expect(logs.some(l => l.includes('No saved credentials'))).toBe(true);

@@ -15,6 +15,7 @@
  * EVM-only: Solana signs the aggregator transaction verbatim and is out of scope.
  */
 
+import { AuthError } from './auth-credentials.js';
 import { SIMULATION_RPCS, isNansenHostedUrl } from './rpc-urls.js';
 
 // keccak256("Transfer(address,address,uint256)") — shared by ERC-20 and ERC-721.
@@ -202,30 +203,27 @@ function buildSimRpcBody(method, params) {
   return JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
 }
 
-async function postSim(rpcUrl, apiKey, method, params, timeoutMs) {
+async function postSim(rpcUrl, auth, method, params, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    // Attach the Nansen API key ONLY when the endpoint is Nansen-hosted. A
-    // NANSEN_BASE_SIM_RPC override can point at any host (dev node, third-party
-    // trace RPC); forwarding the user's credential there would leak it, so an
-    // untrusted endpoint is always called anonymously (see isNansenHostedUrl).
-    const sendApiKey = Boolean(apiKey) && isNansenHostedUrl(rpcUrl);
+    // Resolve credentials only for the trusted Nansen origin. Custom RPCs
+    // remain anonymous and never open browser custody or receive its tokens.
+    const hosted = isNansenHostedUrl(rpcUrl);
+    let credentials = {};
+    if (hosted && auth.api) {
+      if (new URL(rpcUrl).origin !== auth.api.baseUrl) throw new AuthError('AUTH_ORIGIN_MISMATCH', 'Simulation origin differs from the selected API origin. Configure a matching Nansen simulation endpoint.');
+      credentials = await auth.api.requestCredentials();
+    }
     const res = await fetch(rpcUrl, {
       method: 'POST',
-      // Refuse redirects only when the apikey header is attached — undici
-      // forwards custom credential headers across a cross-origin redirect, so a
-      // redirect would hand the key to whatever host the response points at.
-      // An anonymous call to a user-configured third-party RPC carries nothing
-      // to leak, so it keeps following redirects as before.
-      redirect: sendApiKey ? 'error' : 'follow',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(sendApiKey ? { apikey: apiKey } : {}),
-      },
+      redirect: Object.keys(credentials).length ? 'error' : 'follow',
+      headers: { 'Content-Type': 'application/json', ...credentials },
       body: buildSimRpcBody(method, params),
       signal: controller.signal,
     });
+    // Anonymous simulation outages retain the existing warn-and-proceed policy.
+    if (hosted && auth.api && auth.api.selection.kind !== 'anonymous' && [401, 403].includes(res.status)) throw new AuthError('SIMULATION_ACCESS_DENIED', 'The selected account cannot access hosted simulation. Check account permissions or log in again.');
     const text = await res.text();
     let body;
     try {
@@ -254,7 +252,7 @@ async function postSim(rpcUrl, apiKey, method, params, timeoutMs) {
     }
     return body;
   } catch (e) {
-    if (e instanceof SwapSimulationError) throw e;
+    if (e instanceof AuthError || e instanceof SwapSimulationError) throw e;
     if (e.name === 'AbortError') {
       throw new SwapSimulationError('SIM_RPC_ERROR', `Simulation RPC timed out after ${timeoutMs}ms (${method})`);
     }
@@ -304,7 +302,7 @@ function isRevertError(rpcError) {
   return (rpcError?.message || '').toLowerCase().includes('execution reverted');
 }
 
-async function simulateViaEthSimulateV1(rpcUrl, apiKey, { from, to, data, value }, timeoutMs) {
+async function simulateViaEthSimulateV1(rpcUrl, auth, { from, to, data, value }, timeoutMs) {
   const params = [
     {
       blockStateCalls: [
@@ -319,7 +317,7 @@ async function simulateViaEthSimulateV1(rpcUrl, apiKey, { from, to, data, value 
     },
     'latest',
   ];
-  const body = await postSim(rpcUrl, apiKey, 'eth_simulateV1', params, timeoutMs);
+  const body = await postSim(rpcUrl, auth, 'eth_simulateV1', params, timeoutMs);
   if (body.error) {
     if (isMethodUnsupported(body.error)) {
       throw new SwapSimulationError('NOT_SIM_CAPABLE', `eth_simulateV1 unavailable: ${body.error.message}`);
@@ -368,13 +366,13 @@ function flattenFrames(root) {
   return { logs, frames };
 }
 
-async function simulateViaDebugTraceCall(rpcUrl, apiKey, { from, to, data, value }, timeoutMs) {
+async function simulateViaDebugTraceCall(rpcUrl, auth, { from, to, data, value }, timeoutMs) {
   const params = [
     { from, to, data: data || '0x', value: value || '0x0' },
     'latest',
     { tracer: 'callTracer', tracerConfig: { withLog: true } },
   ];
-  const body = await postSim(rpcUrl, apiKey, 'debug_traceCall', params, timeoutMs);
+  const body = await postSim(rpcUrl, auth, 'debug_traceCall', params, timeoutMs);
   if (body.error) {
     if (isMethodUnsupported(body.error)) {
       throw new SwapSimulationError('NOT_SIM_CAPABLE', `debug_traceCall unavailable: ${body.error.message}`);
@@ -455,11 +453,11 @@ async function simulateViaDebugTraceCall(rpcUrl, apiKey, { from, to, data, value
  *
  * @param {string} chain - chain key (only 'base' is wired today)
  * @param {{ to: string, data: string, value?: string }} swapCall - the swap tx
- * @param {{ from: string, apiKey?: string|null, timeoutMs?: number }} opts
+ * @param {{ from: string, api?: object, timeoutMs?: number }} opts
  * @returns {Promise<{ deltas: Record<string,bigint>, approvals: Array<{token,spender,amount}>, nftOut: Array<{standard,token}>, nftApprovals: Array<{standard,token,operator}>, method: string }>}
  * @throws {SwapSimulationError} on any degrade condition or an in-sim revert.
  */
-export async function simulateAssetChanges(chain, swapCall, { from, apiKey = null, timeoutMs = 20000 } = {}) {
+export async function simulateAssetChanges(chain, swapCall, { from, api, timeoutMs = 20000 } = {}) {
   const rpcUrl = SIMULATION_RPCS[chain];
   if (!rpcUrl) {
     throw new SwapSimulationError('NO_SIM_RPC', `No simulation RPC configured for chain '${chain}'.`);
@@ -470,14 +468,21 @@ export async function simulateAssetChanges(chain, swapCall, { from, apiKey = nul
 
   const call = { from, to: swapCall.to, data: swapCall.data, value: swapCall.value };
 
-  // Primary: eth_simulateV1 (native transfers as synthetic logs, single round
-  // trip). Fall back to debug_traceCall only when eth_simulateV1 is unavailable.
+  // Primary and method fallback share credential selection, origin checks and
+  // error redaction. No transport failure changes account or payment rail.
   try {
-    return await simulateViaEthSimulateV1(rpcUrl, apiKey, call, timeoutMs);
-  } catch (e) {
-    if (e instanceof SwapSimulationError && e.code === 'NOT_SIM_CAPABLE') {
-      return await simulateViaDebugTraceCall(rpcUrl, apiKey, call, timeoutMs);
+    try {
+      return await simulateViaEthSimulateV1(rpcUrl, { api }, call, timeoutMs);
+    } catch (error) {
+      if (error instanceof SwapSimulationError && error.code === 'NOT_SIM_CAPABLE') {
+        return await simulateViaDebugTraceCall(rpcUrl, { api }, call, timeoutMs);
+      }
+      throw error;
     }
-    throw e;
+  } catch (error) {
+    if (api?.selection?.kind === 'session' && error instanceof SwapSimulationError) {
+      throw new SwapSimulationError(error.code, 'Simulation could not verify the swap. Check the selected account access and simulation service.');
+    }
+    throw error;
   }
 }

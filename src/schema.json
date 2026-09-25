@@ -427,7 +427,7 @@
       }
     },
     "research": {
-      "description": "Research and analytics commands. Explicitly blank chain, timeframe, and days options are rejected instead of selecting defaults. Profiler batch rejects blank --delay; trace rejects blank --delay, --depth, and --width.",
+      "description": "Research and analytics commands. Explicitly blank chain, timeframe, and days options are rejected instead of selecting defaults. Profiler batch rejects blank --delay; trace rejects blank --delay, --depth, and --width. Browser nansen:api sessions use the same account API permissions and endpoint checks as API keys.",
       "subcommands": {
         "portfolio": {
           "subcommands": {
@@ -2454,15 +2454,24 @@
     },
     "account": {
       "endpoint": "/api/v1/account",
-      "description": "Show API key status, plan, and remaining credits. Does not consume credits."
+      "description": "Check the effective credential, plan, and remaining credits live. Free, including for a valid zero-credit account. NANSEN_API_KEY overrides saved authentication."
     },
     "auth": {
-      "description": "Offline authentication status. Reports API key presence and source (env var vs config file), base URL, and x402 wallet readiness without any network call. Consumes no credits.",
+      "description": "Offline authentication status. Reports effective credential source, cached/unverified browser session metadata, API key presence, base URL, and x402 wallet readiness without any network call. Consumes no credits.",
       "subcommands": {
         "status": {
           "description": "Show where credentials come from, entirely offline",
           "returns": [
             "logged_in",
+            "effective_credential.kind",
+            "effective_credential.source",
+            "effective_credential.validity",
+            "saved_session.account_id",
+            "saved_session.expires_at",
+            "saved_session.expired",
+            "saved_session.validity",
+            "saved_session.storage_access",
+            "saved_session.renewal_state",
             "api_key.present",
             "api_key.source",
             "api_key.masked",
@@ -2613,7 +2622,7 @@
           ]
         },
         "install": {
-          "description": "Add the Nansen MCP server to a client's config. Client (positional): claude-code, claude-desktop, or cursor. Uses the API key from `nansen login` / NANSEN_API_KEY; re-run after key rotation to update the entry.",
+          "description": "Add the Nansen MCP server to a client's config. Client (positional): claude-code, claude-desktop, or cursor. Uses the API key from `nansen login --human` / NANSEN_API_KEY; re-run after key rotation to update the entry.",
           "args": [
             {
               "name": "client",
@@ -2679,6 +2688,37 @@
           ]
         }
       }
+    },
+    "login": {
+      "description": "Fresh browser approval in every starting state for API-key-equivalent account API permissions (nansen:api). Wallet signing and MCP key export remain separate. Plain login never persists NANSEN_API_KEY; it still overrides commands. Selected sessions renew automatically; uncertain renewal requires fresh login. Native custody and enabled server admission required; release acceptance pending.",
+      "options": {
+        "no-browser": {
+          "type": "boolean",
+          "description": "Print the approval URL/code without opening a browser"
+        },
+        "json": {
+          "type": "boolean",
+          "description": "Browser login: NDJSON pending and one terminal event; automatic in non-TTY. With --api-key-stdin: one saved event with effective_source, environment_key_blank and cleanup."
+        },
+        "human": {
+          "type": "boolean",
+          "description": "Legacy API-key setup: option, environment, then hidden interactive prompt"
+        },
+        "api-key": {
+          "type": "string",
+          "description": "Legacy API key to verify and save; recorded in shell history"
+        },
+        "api-key-stdin": {
+          "type": "boolean",
+          "description": "Read a single API key from a pipe or redirected file (maximum 4096 bytes; input must close within 30 seconds), verify and save it without echoing it. Requires the native lock binding. Cannot combine with --api-key, --human or --no-browser. NANSEN_API_KEY still overrides saved credentials for subsequent commands."
+        }
+      },
+      "returns": {
+        "description": "Operational command. Machine events: pending {verification_uri,user_code,expires_at}; saved {account_id,effective_source,cleanup}; error/cancelled {code,message,cleanup}. Never includes device_code or tokens. Cleanup preserves malformed journals and reports AUTH_JOURNAL_INVALID; unrecognized JSON files remain untouched."
+      }
+    },
+    "logout": {
+      "description": "Clear saved API authentication and attempt browser-family retirement. Preserve wallets and environment keys. Report incomplete local deletion or remote revocation separately. Preserve damaged recovery journals and report auth-operations repair guidance."
     },
     "cache": {
       "description": "Inspect and clear the caches the CLI keeps under ~/.nansen. Reads and deletes local files only: no network call, no credits, and credentials, wallets, saved quotes and config are never changed. CLI startup loads the saved config as usual.",

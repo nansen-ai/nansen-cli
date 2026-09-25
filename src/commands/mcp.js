@@ -49,7 +49,7 @@ OPTIONS:
   --send-api-key   Authorize sending your saved API key to a custom --url
                    (an https:// or loopback host). Not needed for --api-key.
 
-The API key is taken from \`nansen login\` / NANSEN_API_KEY. Re-run install after
+The API key is taken from \`nansen login --human\` / NANSEN_API_KEY. Re-run install after
 rotating your key to update the entry. Other clients: https://docs.nansen.ai/mcp/connecting`;
 
 /**
@@ -356,7 +356,7 @@ export function buildMcpCommands(deps = {}) {
       // install
       const apiKey = apiInstance?.apiKey;
       if (!apiKey) {
-        throw new CommandError('Not logged in. Run: nansen login', 'NOT_LOGGED_IN');
+        throw new CommandError('MCP installation requires an API key. Set NANSEN_API_KEY or run nansen login --human. Browser sessions are not exported to MCP clients.', 'API_KEY_REQUIRED');
       }
 
       // Deliberate asymmetry with uninstall --dry-run (which previews even an

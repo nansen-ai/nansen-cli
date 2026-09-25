@@ -1,6 +1,6 @@
 {
   "name": "nansen-cli",
-  "version": "1.47.0",
+  "version": "2.0.0",
   "description": "AI-agent CLI for Nansen API analytics, DEX swaps, and cross-chain trading",
   "main": "src/index.js",
   "type": "module",
@@ -13,7 +13,8 @@
     "!src/__tests__/**",
     "skills/**",
     "scripts/postinstall.js",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs/browser-login.md"
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
@@ -76,5 +77,9 @@
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
     "@scure/base": "^2.0.0"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring": "2.1.0",
+    "fs-native-extensions": "1.5.1"
   }
 }

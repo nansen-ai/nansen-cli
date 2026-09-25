@@ -80,6 +80,9 @@ const RELAY_ROUTER = '0xf5042e6ffac5a625d4e7848e0b01373d8eb9e222';
 // is covered in trading-sanctions-screening.test.js). Tests here exercise other
 // behaviour, so they get an API instance whose screen always reports clean.
 const screenApi = {
+  baseUrl: 'https://api.nansen.ai',
+  selection: { kind: 'anonymous' },
+  requestCredentials: async () => ({}),
   request: async (endpoint, body) => {
     if (endpoint.startsWith('/api/v1/sanctions/screen')) {
       return { results: (body?.addresses || []).map(address => ({ address, sanctioned: false })) };

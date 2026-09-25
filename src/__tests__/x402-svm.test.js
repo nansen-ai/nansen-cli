@@ -10,6 +10,7 @@ import {
   isSvmNetwork,
   getSolanaRpcUrl,
   buildUnsignedSvmTransaction,
+  createSvmPaymentPayload,
   fetchRecentBlockhash,
 } from '../x402-svm.js';
 import { CHAIN_RPCS } from '../rpc-urls.js';
@@ -161,7 +162,7 @@ describe('buildUnsignedSvmTransaction', () => {
     // We verify the messageBytes starts with 0x80 (v0 prefix)
     expect(messageBytes[0]).toBe(0x80);
     // Header: numRequiredSignatures, numReadonlySignedAccounts, numReadonlyUnsignedAccounts
-    expect(messageBytes[1]).toBeGreaterThanOrEqual(2); // at least feePayer + client
+    expect(messageBytes[1]).toBe(2); // feePayer + client, one per signature slot
   });
 
   it('resolves maxAmountRequired when amount is an empty string (matches resolvePaymentAmount)', () => {
@@ -178,6 +179,33 @@ describe('buildUnsignedSvmTransaction', () => {
     const badReqs = { ...requirements, extra: {} };
     expect(() => buildUnsignedSvmTransaction(badReqs, wallet.address, blockhash))
       .toThrow('feePayer is required');
+  });
+
+  // The transaction always carries two signature slots. A server-supplied
+  // feePayer equal to the payer collapsed the header to one required
+  // signature, producing a transaction that fails sanitization at broadcast.
+  it('refuses a feePayer equal to the paying wallet instead of building a malformed transaction', () => {
+    const selfPay = { ...requirements, extra: { feePayer: wallet.address } };
+    expect(() => buildUnsignedSvmTransaction(selfPay, wallet.address, blockhash))
+      .toThrow(/feePayer is the paying wallet .*Another payment option will be tried; if none succeeds, pay on another network/);
+    expect(() => createSvmPaymentPayload(selfPay, wallet.privateKey, wallet.address, 'https://r', blockhash))
+      .toThrow(/feePayer is the paying wallet/);
+  });
+
+  it('createSvmPaymentPayload signs into slot 1 and leaves the facilitator slot empty', () => {
+    const encoded = createSvmPaymentPayload(requirements, wallet.privateKey, wallet.address, 'https://r', blockhash);
+    const payload = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+    const txBytes = Buffer.from(payload.payload.transaction, 'base64');
+    expect(txBytes[0]).toBe(2);
+    expect(txBytes.subarray(1, 65).every(b => b === 0)).toBe(true);
+    const messageBytes = txBytes.subarray(129);
+    expect(messageBytes[1]).toBe(2);
+    const publicKey = crypto.createPublicKey({
+      key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), base58Decode(wallet.address)]),
+      format: 'der',
+      type: 'spki',
+    });
+    expect(crypto.verify(null, messageBytes, publicKey, txBytes.subarray(65, 129))).toBe(true);
   });
 
   it('transaction has two 64-byte zero signature slots', () => {

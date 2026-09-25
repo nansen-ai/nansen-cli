@@ -4,8 +4,6 @@ description: Guide users through native limit orders on Solana via `nansen trade
 metadata:
   openclaw:
     requires:
-      env:
-        - NANSEN_API_KEY
       bins:
         - nansen
     primaryEnv: NANSEN_API_KEY
@@ -15,6 +13,11 @@ metadata:
         bins: [nansen]
 allowed-tools: Bash(nansen:*)
 ---
+## Authentication
+
+Nansen account API calls accept a selected `nansen:api` browser session or conventional API key with the same permissions. `NANSEN_API_KEY` takes precedence; optional `primaryEnv` preserves configured-key injection. Run `nansen auth status` for offline selection. Cached access expiry alone permits automatic renewal during an authorized task. Stop on anonymous selection, invalid state, blocked/uncertain renewal or actual auth failure; never drop a credential or fall back to anonymous x402 payment. Browser login does not grant wallet signing, privileged service identity or a persistent MCP integration key. Preserve all confirmation, signing, sanctions and geographic checks below. Browser rollout acceptance is still pending.
+
+
 
 # Limit Orders
 
@@ -38,7 +41,7 @@ distinct paths — pick the one that matches the user's chain:
 - The wallet must hold the sell token plus a small amount of SOL for fees.
 - For the alert fallback: a notification channel (Telegram chat ID, Slack or
   Discord webhook, or generic webhook URL).
-- `NANSEN_API_KEY`. Smart alerts are internal-only; non-internal users get 404.
+- A selected nansen:api browser session or conventional API key for smart alerts; existing endpoint restrictions still apply.
 - First-time `trade limit-order create` auto-registers a trading vault and
   caches a JWT at `~/.nansen/limit-order-auth.json` for ~23h.
 

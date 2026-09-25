@@ -4,8 +4,6 @@ description: Wallet management — create (local or Privy server-side), list, sh
 metadata:
   openclaw:
     requires:
-      env:
-        - NANSEN_API_KEY
       bins:
         - nansen
     primaryEnv: NANSEN_API_KEY
@@ -15,20 +13,24 @@ metadata:
         bins: [nansen]
 allowed-tools: Bash(nansen:*)
 ---
+## Authentication
+
+Nansen account API calls accept a selected `nansen:api` browser session or conventional API key with the same permissions. `NANSEN_API_KEY` takes precedence; optional `primaryEnv` preserves configured-key injection. Run `nansen auth status` for offline selection. Cached access expiry alone permits automatic renewal during an authorized task. Stop on anonymous selection, invalid state, blocked/uncertain renewal or actual auth failure; never drop a credential or fall back to anonymous x402 payment. Browser login does not grant wallet signing, privileged service identity or a persistent MCP integration key. Preserve all confirmation, signing, sanctions and geographic checks below. Browser rollout acceptance is still pending.
+
+
 
 # Wallet
 
 ## Auth Setup
 
-```bash
-# Save API key interactively
-nansen login --human
-# Or use NANSEN_API_KEY after provisioning it through your environment/secret manager
-nansen login
+Use a selected nansen:api browser session or conventional API key for Nansen account API calls. Agents should inject `NANSEN_API_KEY` through their environment or secret manager and use commands directly; no login is needed to persist it. Human terminal users can use explicit `nansen login --human` for legacy key setup. With an already injected environment key, that explicit mode saves it without prompting and requires the native auth lock binding.
 
-# Verify
-nansen research profiler labels --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum
+```bash
+# Free live check of the effective API credential
+nansen account
 ```
+
+Plain `nansen login` instead requests fresh browser approval. It does not save an environment key or grant wallet signing/RPC authority. Wallet custody and provider credentials below remain separate.
 
 ## Wallet Providers
 

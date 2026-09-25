@@ -22,7 +22,7 @@ export { readCompactU16 };
 import { CHAIN_RPCS } from './rpc-urls.js';
 import { simulateAssetChanges, SwapSimulationError, hasSimulationRpc } from './swap-simulation.js';
 import { simulateSolanaAssetChanges, SolanaSimulationError, hasSolanaSimulationRpc } from './solana-simulation.js';
-import { packageVersion, CommandError, telemetryHeaders, loadConfig } from './api.js';
+import { packageVersion, CommandError, telemetryHeaders } from './api.js';
 import { screenOrThrow } from './perp.js';
 
 // ============= Constants =============
@@ -1265,10 +1265,10 @@ function toRpcHexValue(value) {
  * @param {string} args.from - the wallet that will sign (the sender simulated)
  * @param {object} args.quote - the quote about to be executed (currentQuote)
  * @param {object} args.quoteData - the loaded quote record (.request, .slippage)
- * @param {string|null} [args.apiKey] - Nansen API key for the hosted endpoint
+ * @param {object} [args.api] - Selected Nansen API client for hosted simulation
  * @param {function} [args.log]
  */
-export async function verifySwapOutcome({ chain, from, quote, quoteData, apiKey = null, log = () => {} }) {
+export async function verifySwapOutcome({ chain, from, quote, quoteData, api, log = () => {} }) {
   if (CHAIN_MAP[chain?.toLowerCase()]?.type !== 'evm') return { proceed: true }; // EVM-only
   // Cross-chain (bridge): the output token settles on the destination chain,
   // so the source-chain simulation still runs but assertSwapOutcome skips
@@ -1296,7 +1296,7 @@ export async function verifySwapOutcome({ chain, from, quote, quoteData, apiKey 
     const sim = await simulateAssetChanges(
       chain,
       { to: tx.to, data: tx.data, value: toRpcHexValue(tx.value) },
-      { from, apiKey },
+      { from, api },
     );
     // A cross-chain bridge may pay a fee in native ETH via msg.value on a
     // token-input route; that surfaces as a native sibling outflow which the
@@ -2302,7 +2302,7 @@ async function preflightTradeExecutionCandidate({
   gasless,
   noSimulate,
   noVerifyOutcome,
-  apiKey,
+  api,
   verifiedTargets,
   log,
 }) {
@@ -2438,7 +2438,7 @@ async function preflightTradeExecutionCandidate({
         from: walletAddress,
         quote,
         quoteData,
-        apiKey,
+        api,
         log,
       });
       if (!outcome.proceed) {
@@ -3001,16 +3001,6 @@ CROSS-CHAIN NOTES (when using --to-chain):
       }
       const maxTxFeeWei = parseMaxTxFeeOption(options['max-tx-fee']);
       const guard = resolveExecuteGuard(flags, { env, isTTY });
-      // Read the API key for the swap-outcome sim endpoint. It's optional (the
-      // check degrades to a warning if the endpoint can't authenticate), so a
-      // malformed config must not crash an in-progress trade — fall back to null.
-      const apiKey = (() => {
-        try {
-          return loadConfig().apiKey;
-        } catch {
-          return null;
-        }
-      })();
 
       if (!quoteId) {
         throw new CommandError(`Usage: nansen trade execute --quote <quoteId> [options]
@@ -3130,7 +3120,7 @@ EXAMPLES:
                 gasless,
                 noSimulate,
                 noVerifyOutcome,
-                apiKey,
+                api: apiInstance,
                 verifiedTargets: verifiedPlanTargets,
                 log,
               });
@@ -3613,7 +3603,7 @@ EXAMPLES:
               // cheap revert check above); degrades with a warning if no
               // simulation endpoint is available.
               if (!noVerifyOutcome) {
-                const outcome = await verifySwapOutcome({ chain, from: walletAddress, quote: currentQuote, quoteData, apiKey, log });
+                const outcome = await verifySwapOutcome({ chain, from: walletAddress, quote: currentQuote, quoteData, api: apiInstance, log });
                 if (!outcome.proceed) {
                   log(`  ❌ ${quoteName} failed swap-outcome verification: ${outcome.reason}`);
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
@@ -3997,7 +3987,7 @@ EXAMPLES:
               // eth_call revert check above; degrades with a warning when no
               // simulation endpoint is set.
               if (!noVerifyOutcome) {
-                const outcome = await verifySwapOutcome({ chain, from: wcAddress, quote: currentQuote, quoteData, apiKey, log });
+                const outcome = await verifySwapOutcome({ chain, from: wcAddress, quote: currentQuote, quoteData, api: apiInstance, log });
                 if (!outcome.proceed) {
                   log(`  ❌ ${quoteName} failed swap-outcome verification: ${outcome.reason}`);
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
@@ -4321,7 +4311,7 @@ EXAMPLES:
               // eth_call revert check above; degrades with a warning when no
               // simulation endpoint is set.
               if (!noVerifyOutcome) {
-                const outcome = await verifySwapOutcome({ chain, from: walletAddress, quote: currentQuote, quoteData, apiKey, log });
+                const outcome = await verifySwapOutcome({ chain, from: walletAddress, quote: currentQuote, quoteData, api: apiInstance, log });
                 if (!outcome.proceed) {
                   log(`  ❌ ${quoteName} failed swap-outcome verification: ${outcome.reason}`);
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);

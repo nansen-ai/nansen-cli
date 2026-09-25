@@ -156,7 +156,7 @@ describe('generateSubcommandHelp', () => {
 
   it('uses the schema example verbatim when one exists, and lists the returned fields', () => {
     const lines = helpLines('auth', 'status');
-    expect(lineStartingWith(lines, 'Returns:')).toContain('Returns: logged_in, api_key.present');
+    expect(lineStartingWith(lines, 'Returns:')).toContain('Returns: logged_in, effective_credential');
     // Hand-written examples are copied as-is: no required options or
     // `--chain` are appended on top of them.
     expect(lines[lines.length - 1]).toBe('Example: nansen auth status --pretty');
