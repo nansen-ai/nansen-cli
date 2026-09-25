@@ -120,7 +120,7 @@ describe('browser login public command integration', () => {
 });
 
 describe('selected credential and payment boundary', () => {
-  it.each([401, 402, 403, 503])('a selected key receiving %s never enters automatic payment', async status => {
+  it.each([401, 403, 503])('a selected key receiving %s never enters automatic payment', async status => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: 'denied' }), { status })); vi.stubGlobal('fetch', fetch);
     const api = new NansenAPI('selected-invalid-A', 'https://api.nansen.ai', { retry: { maxRetries: 0 } });
     const paid = vi.spyOn(api, '_x402Retry');
@@ -151,7 +151,7 @@ describe('selected credential and payment boundary', () => {
     await expect(api.getAccount()).rejects.toMatchObject({ code: 'SESSION_RENEWAL_UNCERTAIN' }); expect(fetch).toHaveBeenCalledOnce();
     expect(fetch.mock.calls[0][0]).toBe(bundle.issuer + '/token/refresh');
   });
-  it('browser session errors never echo tokens and never fall back', async () => {
+  it('browser session errors without a payment challenge never echo tokens or pay', async () => {
     const f = fixture(); const bundle = sessionFixture(); const attempt = await f.state.begin(); await f.state.install(attempt, { bundle, baseUrl: bundle.audience }); await f.state.finish(attempt);
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: bundle.accessToken }), { status: 402 })); vi.stubGlobal('fetch', fetch);
     const api = new NansenAPI(null, bundle.audience, { credential: resolveCredential({ env: f.env }), authState: f.state });
@@ -269,11 +269,11 @@ it.each(['', '   '])('legacy --human prompts when the environment key is blank (
   expect(log.mock.calls.flat().join('\n')).not.toContain('You can now use');
   expect(resolveCredential({ env: f.env })).toMatchObject({ kind: 'api-key', source: 'env', apiKey: value });
 });
-it('returns a manual payment challenge for an API key without signing or retrying', async () => {
+it('returns a manual payment challenge when automatic payment is disabled', async () => {
   const requirements = { accepts: [{ scheme: 'exact', network: 'eip155:8453', amount: '1' }] };
   const fetch = vi.fn(async () => new Response(JSON.stringify({ message: 'Payment required' }), { status: 402, headers: { 'payment-required': Buffer.from(JSON.stringify(requirements)).toString('base64') } }));
   vi.stubGlobal('fetch', fetch);
-  const api = new NansenAPI('synthetic-key', 'https://api.nansen.ai');
+  const api = new NansenAPI('synthetic-key', 'https://api.nansen.ai', { allowPayment: false });
   const payment = vi.spyOn(api, '_x402Retry');
   const error = await api.getAccount().catch(e => e);
   expect(error.code).toBe('PAYMENT_REQUIRED');

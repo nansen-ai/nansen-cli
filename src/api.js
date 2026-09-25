@@ -190,8 +190,9 @@ export function browserSessionError(status, data = {}) {
     ? 'Insufficient API credits for the selected account. Top up at https://app.nansen.ai/api?tab=api. No payment was attempted.'
     : code === ErrorCode.PLAN_UPGRADE_REQUIRED ? 'The selected account plan does not include this endpoint. Check upgrade options at https://app.nansen.ai/api?tab=api.'
       : status === 401 ? 'The selected browser session was rejected. Run: nansen login.'
-        : status === 503 ? 'API authentication is temporarily unavailable. Retry later.'
-          : `API request failed (${status}). The selected account was not changed and no payment was attempted.`;
+        : status === 402 ? 'Payment required (x402). Configure and fund a supported wallet, or top up the selected account.'
+          : status === 503 ? 'API authentication is temporarily unavailable. Retry later.'
+            : `API request failed (${status}). The selected account was not changed and no payment was attempted.`;
   return { code, message };
 }
 
@@ -803,6 +804,9 @@ export class NansenAPI {
     let paidResponse;
     const startedAt = Date.now();
     // The signature itself is never traced — only that a paid retry went out.
+    // As in the legacy key flow, payment authenticates this retry on its own.
+    // Do not attach requestCredentials(): Bearer plus payment is rejected by API
+    // admission, and neither this retry nor its result changes saved selection.
     traceRequest({ method, url, attempt: 1, payment: 'x402' });
     try {
       paidResponse = await fetch(url, {
@@ -895,7 +899,9 @@ export class NansenAPI {
     this.lastEndpoint = endpoint;
     const extraHeaders = { ...this.defaultHeaders, ...options.headers };
     let credentialHeaders = await this.requestCredentials(extraHeaders);
-    const mayAutoPay = this.allowPayment && this.selection.kind === 'anonymous' && !Object.keys(extraHeaders).some(k => ['apikey', 'authorization'].includes(k.toLowerCase()));
+    // Keys and browser sessions share the same payment policy. Explicit raw
+    // authentication headers still cannot be forwarded into a payment retry.
+    const mayAutoPay = this.allowPayment && !Object.keys(extraHeaders).some(k => ['apikey', 'authorization'].includes(k.toLowerCase()));
     const url = `${this.baseUrl}${endpoint}`;
     const { maxRetries, baseDelayMs, maxDelayMs, maxRetryAfterMs, retryOnStatus } = this.retryOptions;
     const shouldRetry = options.retry !== false; // Allow disabling retry per-request
@@ -1036,6 +1042,9 @@ export class NansenAPI {
         if (nestedMatch) message = nestedMatch[1];
         const safeSessionError = this.selection.kind === 'session' ? browserSessionError(response.status, data) : null;
         const code = safeSessionError?.code || statusToErrorCode(response.status, data);
+        // Keep a body-only challenge available to the signer without exposing
+        // the authenticated error body through browser-session diagnostics.
+        const bodyPaymentRequirements = response.status === 402 ? data.paymentRequirements : undefined;
         const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'));
         if (this.selection.kind === 'session') {
           message = safeSessionError.message;
@@ -1049,10 +1058,10 @@ export class NansenAPI {
           message = message.replace(/\.+$/, '') + '. This filter is not supported for this token/chain combination. Do not retry.';
         } else if (code === ErrorCode.CREDITS_EXHAUSTED) {
           message = message.replace(/\.+$/, '') + '. No retry will help. Check your Nansen dashboard for credit balance.';
-        } else if (code === ErrorCode.PAYMENT_REQUIRED) {
+        } else if (code === ErrorCode.PAYMENT_REQUIRED && response.status === 402) {
           // Try x402 auto-payment: local wallet (with network fallback), then WalletConnect
           const hasManualSignature = Object.keys(extraHeaders).some(k => k.toLowerCase() === 'payment-signature');
-          if (this.selection.kind === 'api-key' && !hasManualSignature) message = 'Payment is required for the selected API key. Top up at https://app.nansen.ai/api?tab=api or explicitly provide --x402-payment-signature. Automatic wallet payment is available only without a selected credential.';
+          if (this.selection.kind === 'api-key' && !hasManualSignature) message = 'Payment required (x402). Configure and fund a supported wallet, top up the selected account, or explicitly provide --x402-payment-signature.';
 
           if (this.selection.kind === 'api-key' && !hasManualSignature) {
             const paymentHeader = response.headers.get('payment-required');
@@ -1092,7 +1101,7 @@ export class NansenAPI {
                 // treated as an ordinary payment failure — there is no other
                 // provider to fall back to here, and retrying could double-pay.
                 if (privyErr instanceof NansenError && privyErr.code === ErrorCode.PAYMENT_AMBIGUOUS) throw privyErr;
-                message = `x402 Privy payment failed: ${privyErr.message}`;
+                message = safeSessionError ? 'x402 Privy payment failed. Check the wallet configuration and balance.' : `x402 Privy payment failed: ${privyErr.message}`;
               }
             } else {
               // Local wallet or no wallet: existing local wallet + WalletConnect flow
@@ -1121,11 +1130,11 @@ export class NansenAPI {
                   try {
                     paymentRequirements = JSON.parse(Buffer.from(paymentHeader, 'base64').toString('utf8'));
                   } catch {
-                    data.paymentRequiredRaw = paymentHeader;
+                    if (!safeSessionError) data.paymentRequiredRaw = paymentHeader;
                   }
                 }
-                if (!paymentRequirements && data.paymentRequirements) {
-                  paymentRequirements = data.paymentRequirements;
+                if (!paymentRequirements && bodyPaymentRequirements) {
+                  paymentRequirements = bodyPaymentRequirements;
                 }
 
                 if (paymentRequirements) {
@@ -1140,7 +1149,9 @@ export class NansenAPI {
                     // ordinary "payment failed" that invites the caller to
                     // retry the whole request (and sign yet another payment).
                     if (x402Err instanceof NansenError && x402Err.code === ErrorCode.PAYMENT_AMBIGUOUS) throw x402Err;
-                    message = 'No API key configured. Three ways to authenticate:\n' +
+                    message = this.selection.kind !== 'anonymous'
+                      ? 'x402 wallet payment failed. Check the wallet configuration and balance, or top up the selected account.'
+                      : 'No API key configured. Three ways to authenticate:\n' +
                       '  1. API key: run `nansen login --human` or set NANSEN_API_KEY (get key at https://app.nansen.ai/auth/agent-setup)\n' +
                       '  2. x402 micropayment: nansen wallet create + fund with USDC on Base/Solana or USDT0 on X Layer (no API key needed)\n' +
                       '  3. MPP via tempo: install tempo CLI, run `tempo wallet login`, then call the API with `tempo request` (see skills/nansen-mpp-payment)';
