@@ -297,7 +297,7 @@
     "operatorCommandRecord": null
   },
   "acceptanceNotes": {
-    "exactHeadNativeRenewal": "See currentDevValidation for tested e0cb320 archive: live macOS and synthetic Linux. Later source changes require a scoped comparison; historical evidence is not relabeled.",
+    "exactHeadNativeRenewal": "September 23 automatic-renewal evidence remains attributed to e0cb3202. Current archive direct refresh/revocation passed September 25; it does not rerun automatic renewal, rotated persistence or concurrency. See dated records.",
     "fullSessionAccessTokenInvalidation": "Required before rollout: actual logout invalidates original, rotated and copied tokens for that session; other sessions/accounts/API keys unaffected. Refresh-only retirement or natural expiry does not satisfy this gate.",
     "measuredRevocationPropagationAndDurability": "Deployed issuer/gateway/API observed rejection, measured propagation, restart/outage fail-closed behavior and durable retained feed/anchors; recorded/pending receipt is not observed rejection."
   },
@@ -601,6 +601,67 @@
       ]
     },
     "testResourcesDeleted": true,
-    "additionalRestartProbe": "Incomplete: fresh-handler assertions ran, but the test driver called a nonexistent pruner method and exited nonzero. Not counted as a passing restart/retention check."
+    "additionalRestartProbe": "Initial driver failed on a nonexistent pruner method and is not counted. Corrected driver separately passed with two fresh handlers and empty Redis namespaces, retaining the PostgreSQL receipt and preserving its unexpired row during pruning. Not an OS/database restart or retention-age test; see retained outage/restart-result-c.json."
+  },
+  "currentDevValidation20260925": {
+    "sourceHead": "a5f452935dafc91775ed7e0c4b81473c93ea7846",
+    "archiveSha256": "3df4a1c57538ec5296343a82e193653bdb33208937dfc863cf0a5dc445465e30",
+    "apiImage": "b410f52@sha256:5c29d2cf6f6e55487e7bfff47d776a5b3c3d397640ce0f17de8d1146eb2d4e92",
+    "issuerHead": "fdcc167a6e98c0046011fe16b4722e965d9e1231",
+    "started": "2026-09-25T01:11:50.395Z",
+    "finished": "2026-09-25T01:24:49.730Z",
+    "success": true,
+    "scope": "Current-server refresh and revocation, not automatic renewal/persistence",
+    "beforeRetirement": {
+      "original": 200,
+      "rotated": 200,
+      "control": 200
+    },
+    "finalAfterCacheWindow": {
+      "time": "2026-09-25T01:23:38.747Z",
+      "original": {
+        "status": 401,
+        "remainingLifetimeSeconds": 3441
+      },
+      "rotated": {
+        "status": 401,
+        "remainingLifetimeSeconds": 3499
+      },
+      "control": {
+        "status": 200,
+        "remainingLifetimeSeconds": 3488
+      }
+    },
+    "firstBothRejectedSampleStartAfterReceiptMs": 26902,
+    "timingNote": "The sample start is before its sequential requests complete; both rejections were observed approximately 28 seconds after receipt. Not a service SLA.",
+    "independentControlWindowSeconds": 45,
+    "localCleanup": {
+      "configKind": "none",
+      "generationUnreadable": true,
+      "journalCount": 0
+    },
+    "controlCleanup": {
+      "configKind": "none",
+      "generationUnreadable": true,
+      "retirementReceipt": {
+        "remote": "recorded_pending"
+      },
+      "confirmed": true
+    },
+    "holdRestored": {
+      "verified": true,
+      "generation": 2509
+    },
+    "zeroCredit": "Waived by Di, not passed.",
+    "limits": [
+      "Direct mid-life refresh with installed code; original credential remains selected",
+      "Rotated credential remains in memory; child retirement is direct, followed by actual CLI logout of the stored parent",
+      "Only free account requests; no research or billing calls",
+      "No independent API-key or different-account control in this run.",
+      "B retirement was recorded and local cleanup verified; its subsequent server rejection was not sampled.",
+      "Production readiness, live fleet clock/load/alerts, other platforms and distribution remain separate."
+    ],
+    "retainedArtifact": "cli-release-validation-20260924/server-recheck-3/result.json",
+    "retainedArtifactSha256": "46f570778e7c2165f82ac3a6afbed582c95a9cd937b208a406b6453c4ef3c5dc"
   }
 }
