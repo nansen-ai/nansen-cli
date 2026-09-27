@@ -13,9 +13,9 @@ This checklist is for maintainers. It does not announce a release or approve pro
 
 ## Distribution controls
 
-The current workflows require repository variable `CLI_PUBLICATION_ENABLED` to equal `true` for publication and ClawHub sync. Missing or false keeps those jobs disabled. This gate does not control server-side browser access.
+After lint and tests pass on a push to `main`, Changesets updates the release PR when pending changesets exist. Once the release PR is merged and there are no pending changesets, it publishes any unpublished package version to npm and creates a GitHub release. Keep the release PR unmerged until validation is complete.
 
-Before relying on the gate, check for older ungated workflow runs and manual publication paths. Enable publication only for an approved release window. A code-review approval is not permission to publish or activate production.
+ClawHub sync runs after a successful npm publication and can also be started manually. Manual sync distributes the selected revision's skills independently of the release PR; run it only when those skills are ready for distribution. Server-side browser access is controlled separately.
 
 ## Recovery and rollback
 
