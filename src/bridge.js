@@ -13,6 +13,7 @@ import * as path from 'node:path';
 import { CommandError, validateAddress } from './api.js';
 import { signSecp256k1 } from './crypto.js';
 import {
+  assertEvmFeeWithinCap,
   convertToBaseUnits,
   evmRpcCall,
   getEvmNonce,
@@ -1941,12 +1942,12 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         : [signerAddress];
       await screenOrThrow(apiInstance, screenAddresses);
 
-      // These checks need only the cached quote and public signer address. A
+      // These checks use the quote, public signer address, and current EVM fees. A
       // dry run must execute them before returning at the gate; a real run
       // preserves the established password/error ordering by executing them
       // after credentials resolve. Cache the result so each invocation can run
       // the preflight at most once even if the guard's control flow changes.
-      const preflightPlan = () => {
+      const preflightPlan = async () => {
         let evmIntent = null;
         let hlIntent = null;
         if (execution_type === 'evm_transaction') {
@@ -1956,6 +1957,22 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
             requestedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
           };
           preflightEvmBridgeSteps(steps, evmIntent);
+          // Check the whole plan before an approval can spend gas or grant an
+          // allowance. Match signing's fee resolution and numeric gas normalization;
+          // the signer checks again if network fees change during execution.
+          for (const step of steps) {
+            for (const item of step.items || []) {
+              if (item.status === 'complete') continue;
+              const txData = item.data;
+              const fees = await resolveEvmStepFees(evmIntent.chain, txData, feeOverrides);
+              assertEvmFeeWithinCap(
+                fees.maxFeePerGas || fees.gasPrice,
+                BigInt(txData.gas || txData.gasLimit || '210000').toString(),
+                `bridge step "${step.id}"`,
+                feeOverrides.maxTxFeeWei,
+              );
+            }
+          }
         } else if (execution_type === 'hyperliquid_signature') {
           const currencyIn = quoteData.response.details?.currencyIn;
           if (quoteData.requestedAmountBaseUnits != null && currencyIn?.amount != null) {
@@ -1997,7 +2014,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
       // --yes/non-TTY retain the established ordering (credentials first,
       // preflight immediately before signing).
       const shouldPreflightPlan = guard.dryRun || (guard.isTTY && !guard.assumeYes);
-      let preflightResult = shouldPreflightPlan ? preflightPlan() : null;
+      let preflightResult = shouldPreflightPlan ? await preflightPlan() : null;
 
       // ── Acknowledgement gate: --dry-run / --yes ──────────────────────
       // Placed before the signing credentials are loaded and well before the
@@ -2023,7 +2040,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
       // different wallet than the one just screened if the default changed in
       // between.
       const creds = resolveSigningCredentials(signer);
-      preflightResult ??= preflightPlan();
+      preflightResult ??= await preflightPlan();
       const { evmIntent, hlIntent } = preflightResult;
 
       // Consume the quote at each INDIVIDUAL broadcast, before any receipt wait.
