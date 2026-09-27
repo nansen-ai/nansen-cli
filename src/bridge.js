@@ -1958,7 +1958,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
           };
           preflightEvmBridgeSteps(steps, evmIntent);
           // Check the whole plan before an approval can spend gas or grant an
-          // allowance. Use the same fee resolution and gas fallback as signing;
+          // allowance. Match signing's fee resolution and numeric gas normalization;
           // the signer checks again if network fees change during execution.
           for (const step of steps) {
             for (const item of step.items || []) {
@@ -1967,7 +1967,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
               const fees = await resolveEvmStepFees(evmIntent.chain, txData, feeOverrides);
               assertEvmFeeWithinCap(
                 fees.maxFeePerGas || fees.gasPrice,
-                txData.gas || txData.gasLimit || '210000',
+                BigInt(txData.gas || txData.gasLimit || '210000').toString(),
                 `bridge step "${step.id}"`,
                 feeOverrides.maxTxFeeWei,
               );

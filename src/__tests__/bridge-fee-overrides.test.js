@@ -321,6 +321,8 @@ describe('bridge execute overrides', () => {
   it.each([
     ['quoted EIP-1559 fees', {}, {}],
     ['gasLimit alias', { depositGas: { gasLimit: '0x33450' } }, {}],
+    ['uppercase gas prefix', { depositGas: { gas: '0X33450' } }, {}],
+    ['uppercase gasLimit prefix', { depositGas: { gasLimit: '0X33450' } }, {}],
     ['signer gas fallback', { depositGas: {} }, {}],
     ['explicit max fee', { fees: { maxFeePerGas: '1000000' } }, { 'max-fee': '10' }],
     ['explicit priority fee', { fees: { maxFeePerGas: '1000000' } }, { 'priority-fee': '10' }],
@@ -363,6 +365,19 @@ describe('bridge execute overrides', () => {
     await cmds.execute([], api, {}, { quote: 'bridge-fee-cap', wallet: 'w', 'max-tx-fee': cap });
     expect(signEvmTransaction).toHaveBeenCalledTimes(2);
     expect(evmRpcCall.mock.calls.filter(([, method]) => method === 'eth_sendRawTransaction')).toHaveLength(2);
+  });
+
+  it.each(['gas', 'gasLimit'])('accepts uppercase hex in %s at the exact cap with the real signer', async (field) => {
+    const actual = await vi.importActual('../trading.js');
+    signEvmTransaction
+      .mockImplementationOnce(actual.signEvmTransaction)
+      .mockImplementationOnce(actual.signEvmTransaction);
+    writeFeeCapQuote({ depositGas: { [field]: '0X33450' } });
+    const cmds = buildBridgeCommands({ log: () => {} });
+    await cmds.execute([], api, {}, { quote: 'bridge-fee-cap', wallet: 'w', 'max-tx-fee': '0.0021' });
+    const broadcasts = evmRpcCall.mock.calls.filter(([, method]) => method === 'eth_sendRawTransaction');
+    expect(broadcasts).toHaveLength(2);
+    for (const [, , [signedTx]] of broadcasts) expect(signedTx).toMatch(/^0x02[0-9a-f]+$/);
   });
 
   it('does not price or sign completed items', async () => {
