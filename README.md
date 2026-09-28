@@ -453,11 +453,39 @@ inconsistent totals while pages are being fetched, later rows can be omitted. Co
 
 ## Output Format
 
-> **Compatibility note:** `--table`, `--format csv`, and `--stream` now render an
-> unambiguous descriptive top-level array (for example, `trades` or `holdings`)
-> as one row per item, even without `--paginate`. Older versions rendered the
-> enclosing response object as a single row. Envelopes with multiple candidate
-> data arrays remain unexpanded.
+### Migrating row output from 1.46.0 to 2.0.0
+
+`--table`, `--format csv`, and `--stream` now render each item in a nested
+`data.data` array as a separate row or NDJSON line, even without `--paginate`.
+For example, if `nansen token screener --format csv` receives this response body:
+
+```json
+{"data":{"data":[{"a":1},{"a":2}]}}
+```
+
+The CSV output changes from one row containing the nested object as a JSON string:
+
+```csv
+data
+"{""data"":[{""a"":1},{""a"":2}]}"
+```
+
+to two rows with the item field as the header:
+
+```csv
+a
+1
+2
+```
+
+`--table` makes the same one-to-two-row change. `--stream` changes from one
+NDJSON line for the enclosing object to one line per item. A single unambiguous
+descriptive top-level array, such as `trades` or `holdings`, also expands into
+individual rows or lines. Older versions rendered its enclosing object as one
+row or line. Envelopes with multiple candidate data arrays remain unexpanded.
+Default JSON output still contains the complete response body.
+
+### Response envelope
 
 ```json
 { "success": true,  "data": <api_response> }
