@@ -111,7 +111,7 @@ async function loFetch(method, endpoint, { token, body, query } = {}) {
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
-  if (process.env.NANSEN_API_KEY) {
+  if (process.env.NANSEN_API_KEY?.trim()) {
     headers['X-API-Key'] = process.env.NANSEN_API_KEY;
   }
 
