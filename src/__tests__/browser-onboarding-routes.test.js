@@ -40,7 +40,7 @@ function assertSkillScope(rows, docs) {
     expect(metadata.primaryEnv, name).toBe('NANSEN_API_KEY');
     expect(metadata.requiredEnv, name).toEqual(name === 'nansen-trading' ? ['NANSEN_WALLET_PASSWORD'] : []);
     expect(text).toContain('## Authentication'); expect(text).toContain('nansen:api');
-    expect(text).toContain('Browser rollout acceptance is still pending.');
+    expect(text).toContain('macOS arm64 preview scope');
     groups[families.some(f => walletFamilies.has(f)) ? 'walletWorkflow' : 'accountApi'].push(name);
   }
   expect(Object.values(groups).flat().sort()).toEqual(Object.keys(docs).sort());

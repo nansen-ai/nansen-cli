@@ -1,10 +1,10 @@
 # Browser login
 
-Browser login saves a session after you approve the CLI in your browser. This source includes browser login, but normal-release acceptance is still pending. No published browser-login cohort is established by these docs. Existing direct API-key commands remain available.
+Browser login saves a session after you approve the CLI in your browser. It is available in Nansen CLI 2.0.0 and enabled in production. Existing direct API-key commands remain available.
 
 ## Preview platform scope
 
-The proposed initial preview is limited to macOS arm64, a local Terminal in a GUI login session, an unlocked login Keychain and a local home directory. It remains subject to release approval. Background agents, SSH sessions and network or synchronized home directories are not qualified by a successful local Terminal login.
+The initial preview is limited to macOS arm64, a local Terminal in a GUI login session, an unlocked login Keychain and a local home directory. Background agents, SSH sessions and network or synchronized home directories are not qualified by a successful local Terminal login.
 
 Linux live remote-login qualification is pending. Windows is excluded from the initial preview. The presence of an OS adapter or native prebuilt package does not establish support. Desktop prompt cancellation and OS login/reboot persistence remain unverified.
 
@@ -26,7 +26,7 @@ Plain `nansen login` always requests fresh browser approval, even when you alrea
 
 Ordinary commands prefer an existing supported explicit credential override, then `NANSEN_API_KEY`, then the active saved credential. Plain login does not copy an environment key into config. The candidate browser session is checked independently before it replaces a saved credential. An environment key still takes precedence afterward; unset it to use the saved session.
 
-Explicit legacy key setup remains available through `nansen login --human` and `nansen login --api-key <key>`. Prefer the hidden prompt over placing secrets in shell arguments. Legacy setup retains option, environment, then hidden-prompt precedence. No new global key option or named profile is introduced.
+Explicit legacy key setup remains available through `nansen login --human`, `nansen login --api-key-stdin` and `nansen login --api-key <key>`. Prefer the hidden prompt or stdin from a secret manager or protected file over placing secrets in shell arguments. Legacy setup retains option, environment, then hidden-prompt precedence. No new global key option or named profile is introduced.
 
 | Starting state | Plain login | Ordinary commands after success |
 | --- | --- | --- |
@@ -112,6 +112,6 @@ Set `DO_NOT_TRACK=1` or `NANSEN_NO_TELEMETRY=1` to disable telemetry. Login/logo
 
 ## Release status
 
-Browser-login publication and production access require separate release approval. The proposed platform scope above is not a normal-release support claim. Current source code or a passing test does not establish that browser login is enabled for your account. Use the documented API-key setup if browser access is unavailable.
+Nansen CLI 2.0.0 was published on September 28, 2026, and browser login is enabled in production. The preview platform limits above still apply. Publication does not qualify additional operating systems or terminal environments. Use API-key commands outside that scope or when browser access is unavailable.
 
 Maintainers should use the [release checklist](https://github.com/nansen-ai/nansen-cli/blob/main/docs/releases/browser-login-checklist.md) in the repository. Internal validation captures, deployment inventories and incident records belong in access-controlled project records, not the public package.
