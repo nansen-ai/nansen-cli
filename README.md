@@ -485,6 +485,8 @@ individual rows or lines. Older versions rendered its enclosing object as one
 row or line. Envelopes with multiple candidate data arrays remain unexpanded.
 Default JSON output still contains the complete response body.
 
+### Response envelope
+
 ```json
 { "success": true,  "data": <api_response> }
 { "success": false, "error": "message", "code": "ERROR_CODE", "status": 401, "requestId": "...", "details": { ... } }

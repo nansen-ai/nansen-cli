@@ -2,4 +2,4 @@
 "nansen-cli": patch
 ---
 
-Document the 2.0.0 table, CSV, and NDJSON row output change in the 2.0.1 release notes.
+Explain the 2.0.0 `data.data` and descriptive-array row changes for table, CSV, and NDJSON output in the README, with a token screener before/after CSV example. Default JSON output is unchanged.
