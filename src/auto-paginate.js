@@ -22,8 +22,13 @@ function hasObjectRows(rows) {
 
 // Shared by collectPages and cli.js's formatTable/formatCsv/formatStream so
 // pagination and output formatting recognise the same row shapes.
-export function locateRows(page, { descriptive = false } = {}) {
+export function locateRows(page, { descriptive = false, descriptiveKey, allowEmptyDescriptive = false } = {}) {
   if (page?.success === false) return null;
+  if (descriptiveKey) {
+    const rows = page?.[descriptiveKey];
+    if (!Array.isArray(rows) || !hasObjectRows(rows)) return null;
+    return { rows, key: descriptiveKey, rebuild: mergedRows => ({ ...page, [descriptiveKey]: mergedRows }) };
+  }
   if (Array.isArray(page) && hasObjectRows(page)) return { rows: page, rebuild: rows => ({ data: rows }) };
   if (Array.isArray(page?.data) && hasObjectRows(page.data)) return { rows: page.data, rebuild: rows => ({ ...page, data: rows }) };
   if (Array.isArray(page?.results) && hasObjectRows(page.results)) return { rows: page.results, rebuild: rows => ({ ...page, results: rows }) };
@@ -54,12 +59,15 @@ export function locateRows(page, { descriptive = false } = {}) {
   // `balances`, etc.) rather than `data`. Only a populated array of objects
   // can identify rows here. Empty or primitive arrays may be envelope fields.
   if (descriptive && page && typeof page === 'object') {
-    const arrays = Object.entries(page)
-      .filter(([key, value]) => key !== 'pagination'
-        && Array.isArray(value) && value.length > 0 && hasObjectRows(value));
-    if (arrays.length === 1) {
-      const [key, rows] = arrays[0];
-      return { rows, rebuild: mergedRows => ({ ...page, [key]: mergedRows }) };
+    const fields = Object.entries(page).filter(([key]) => key !== 'pagination' && key !== 'success');
+    const arrays = fields.filter(([, value]) => Array.isArray(value) && value.length > 0 && hasObjectRows(value));
+    // Pagination can recognize an empty first page only when the array is
+    // the entire payload apart from status and pagination metadata.
+    const emptyOnly = allowEmptyDescriptive && fields.length === 1
+      && Array.isArray(fields[0][1]) && fields[0][1].length === 0;
+    if (arrays.length === 1 || (arrays.length === 0 && emptyOnly)) {
+      const [key, rows] = arrays[0] || fields[0];
+      return { rows, key, rebuild: mergedRows => ({ ...page, [key]: mergedRows }) };
     }
   }
   return null;
@@ -143,7 +151,11 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
     const res = await fetchPage({ ...pagination, page });
     pagesFetched++;
     if (res?.success === false) throw failedPageError(res, page);
-    const located = locateRows(res, { descriptive: true });
+    const located = locateRows(res, {
+      descriptive: true,
+      descriptiveKey: first?.key,
+      allowEmptyDescriptive: first === undefined,
+    });
     if (first === undefined) {
       if (!located) return res;
       first = located;
