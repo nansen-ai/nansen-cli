@@ -108,7 +108,7 @@ describe('stdin login command', () => {
     await login([], null, { 'api-key-stdin': true, json: true }, {});
     expect(deps.log).toHaveBeenCalledOnce();
     expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({
-      event: 'saved', effective_source: envKey === undefined ? 'config' : 'env', environment_key_blank: envKey === '', cleanup: [],
+      event: 'saved', effective_source: envKey ? 'env' : 'config', environment_key_blank: envKey === '', cleanup: [],
     });
   });
 

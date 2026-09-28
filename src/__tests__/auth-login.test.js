@@ -265,9 +265,21 @@ it.each(['', '   '])('legacy --human prompts when the environment key is blank (
   await commands.login([], null, { human: true }, {});
   expect(promptFn).toHaveBeenCalledOnce();
   expect(JSON.parse(fs.readFileSync(f.file)).apiKey).toBe('synthetic-key');
-  expect(log.mock.calls.flat().join('\n')).toContain('Commands will fail until you unset it');
-  expect(log.mock.calls.flat().join('\n')).not.toContain('You can now use');
-  expect(resolveCredential({ env: f.env })).toMatchObject({ kind: 'api-key', source: 'env', apiKey: value });
+  expect(log.mock.calls.flat().join('\n')).toContain('You can now use');
+  expect(resolveCredential({ env: f.env })).toMatchObject({ kind: 'api-key', source: 'config', apiKey: 'synthetic-key' });
+});
+it.each(['', '   '])('uses the saved key for a normal command with a blank environment key (%j)', async value => {
+  const f = fixture(); f.env.NANSEN_API_KEY = value;
+  fs.writeFileSync(f.file, JSON.stringify({ apiKey: 'saved-key' }));
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ plan: 'test' }), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+  class SavedKeyAPI extends NansenAPI {
+    constructor(key, url, options) { super(key, url, { ...options, credential: resolveCredential({ env: f.env }) }); }
+  }
+  await runCLI(['account'], { env: f.env, NansenAPIClass: SavedKeyAPI, output: vi.fn(), errorOutput: vi.fn(), exit: vi.fn(), trackFn: vi.fn(), trackFailed: vi.fn() });
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(fetch.mock.calls[0][1].headers.apikey).toBe('saved-key');
+  expect(authConfigView(f.env).apiKeySource).toBe('config');
 });
 it('returns a manual payment challenge when automatic payment is disabled', async () => {
   const requirements = { accepts: [{ scheme: 'exact', network: 'eip155:8453', amount: '1' }] };

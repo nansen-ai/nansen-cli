@@ -57,7 +57,7 @@ describe('offline postinstall selection with shared resolver', () => {
     ['v1 session', pointer(1), undefined, 'cached metadata is unverified', true],
     ['v2 session', pointer(2), undefined, 'cached metadata is unverified', true],
     ['env overrides session', pointer(2), 'synthetic-env-secret', 'API key is configured', true],
-    ['empty env overrides key', { apiKey: 'synthetic-key-secret' }, '', 'needs attention', false],
+    ['empty env uses saved key', { apiKey: 'synthetic-key-secret' }, '', 'API key is configured', true],
     ['tombstone suppresses legacy', { apiKey: 'synthetic-key-secret', auth: { version: 1, active: { kind: 'none' } } }, undefined, 'browser approval', false],
     ['corrupt config', '{invalid', undefined, 'needs attention', false],
     ['missing config', null, undefined, 'browser approval', false],
