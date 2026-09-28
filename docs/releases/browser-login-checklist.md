@@ -2,6 +2,8 @@
 
 This checklist is for maintainers. It does not announce a release or approve production access. Store account-specific test evidence, deployment inventories and incident details in access-controlled project records.
 
+CLI 2.0.0 was published and production browser access enabled on September 28, 2026. The [preview platform scope](../browser-login.md#preview-platform-scope) remains limited. Use this checklist for subsequent releases; retain waived or deferred checks in private release records.
+
 ## Before release
 
 - Name the supported OS, architecture and terminal environments. Test the packaged artifact on each advertised platform with its real native credential store.

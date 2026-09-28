@@ -104,7 +104,7 @@ describe('Package Integrity', () => {
     expect(recovery).toContain('## Offline recovery without native locking');
     expect(recovery).toContain('v2');
     expect(existsSync(join(packageRoot, 'docs/releases/api508-evidence.json'))).toBe(false);
-    expect(readFileSync(join(packageRoot, 'skills/nansen-wallet-profiler/SKILL.md'), 'utf8')).toContain('Browser rollout acceptance is still pending.');
+    expect(readFileSync(join(packageRoot, 'skills/nansen-wallet-profiler/SKILL.md'), 'utf8')).toContain('macOS arm64 preview scope');
     expect(result).toContain('nansen');
     expect(result).toContain('COMMANDS');
     expect(existsSync(join(tmpDir, 'node_modules/nansen-cli/docs/browser-login.md'))).toBe(true);
