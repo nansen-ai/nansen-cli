@@ -2698,7 +2698,7 @@
         },
         "json": {
           "type": "boolean",
-          "description": "Browser login: NDJSON pending and one terminal event; automatic in non-TTY. With --api-key-stdin: one saved event with effective_source, environment_key_blank and cleanup."
+          "description": "Browser login: NDJSON pending and one terminal event with an interactive terminal; non-TTY exits with a JSON error envelope whose code is NOT_A_TTY. With --api-key-stdin: one saved event with effective_source, environment_key_blank and cleanup."
         },
         "human": {
           "type": "boolean",
