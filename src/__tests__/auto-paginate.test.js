@@ -42,6 +42,22 @@ describe('locateRows descriptive envelopes', () => {
       pagination: [{ page: 1 }],
     }, { descriptive: true })).toBeNull();
   });
+
+  it('does not select primitive or empty descriptive arrays as rows', () => {
+    expect(locateRows({ labels: ['smart money', 'fund'] }, { descriptive: true })).toBeNull();
+    expect(locateRows({ summary: { total: 5 }, warnings: [] }, { descriptive: true })).toBeNull();
+  });
+
+  it('selects the populated object array when another descriptive array is empty', () => {
+    const page = { trades: [{ a: 1 }], alerts: [] };
+    expect(locateRows(page, { descriptive: true })?.rows).toEqual(page.trades);
+  });
+
+  it('keeps explicit empty row arrays but rejects populated primitive arrays', () => {
+    expect(locateRows({ data: [] })?.rows).toEqual([]);
+    expect(locateRows({ data: ['smart money'] })).toBeNull();
+    expect(locateRows({ data: { data: [{ a: 1 }, { a: 2 }] } })?.rows).toEqual([{ a: 1 }, { a: 2 }]);
+  });
 });
 
 describe('collectPages', () => {

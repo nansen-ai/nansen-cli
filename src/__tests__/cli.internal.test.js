@@ -1815,6 +1815,22 @@ describe('parseArgs negative numbers', () => {
 });
 
 describe('formatOutput', () => {
+  it.each([
+    [{ data: { data: [{ a: 1 }, { a: 2 }] } }, 'a\n1\n2', '1'],
+    [{ data: ['smart money', 'fund'] }, 'data\n"[""smart money"",""fund""]"', 'data'],
+    [{ labels: ['smart money', 'fund'] }, 'labels\n"[""smart money"",""fund""]"', 'labels'],
+    [{ summary: { total: 5 }, warnings: [] }, 'summary,warnings\n"{""total"":5}",[]', 'summary'],
+    [{ trades: [{ a: 1 }], alerts: [] }, 'a\n1', 'a'],
+  ])('formats row selection consistently in CSV and table output', (payload, csvText, tableText) => {
+    expect(formatOutput(payload, { csv: true }).text).toBe(csvText);
+    expect(formatOutput(payload, { table: true }).text).toContain(tableText);
+  });
+
+  it('streams the envelope when its only array contains primitive values', () => {
+    const payload = { labels: ['smart money', 'fund'] };
+    expect(formatStream(payload)).toBe(JSON.stringify(payload));
+  });
+
   it('should return compact JSON by default', () => {
     const result = formatOutput({ a: 1 });
     expect(result.type).toBe('json');

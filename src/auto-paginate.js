@@ -16,14 +16,18 @@ export const DEFAULT_MAX_PAGES = 10;
 // unbounded memory and billed API work from a long-running agent.
 export const MAX_PAGES_LIMIT = 1000;
 
+function hasObjectRows(rows) {
+  return rows.every(row => row !== null && typeof row === 'object' && !Array.isArray(row));
+}
+
 // Shared by collectPages and cli.js's formatTable/formatCsv/formatStream so
 // pagination and output formatting recognise the same row shapes.
 export function locateRows(page, { descriptive = false } = {}) {
   if (page?.success === false) return null;
-  if (Array.isArray(page)) return { rows: page, rebuild: rows => ({ data: rows }) };
-  if (Array.isArray(page?.data)) return { rows: page.data, rebuild: rows => ({ ...page, data: rows }) };
-  if (Array.isArray(page?.results)) return { rows: page.results, rebuild: rows => ({ ...page, results: rows }) };
-  if (Array.isArray(page?.data?.data)) {
+  if (Array.isArray(page) && hasObjectRows(page)) return { rows: page, rebuild: rows => ({ data: rows }) };
+  if (Array.isArray(page?.data) && hasObjectRows(page.data)) return { rows: page.data, rebuild: rows => ({ ...page, data: rows }) };
+  if (Array.isArray(page?.results) && hasObjectRows(page.results)) return { rows: page.results, rebuild: rows => ({ ...page, results: rows }) };
+  if (Array.isArray(page?.data?.data) && hasObjectRows(page.data.data)) {
     return {
       rows: page.data.data,
       rebuild: rows => {
@@ -35,7 +39,7 @@ export function locateRows(page, { descriptive = false } = {}) {
       },
     };
   }
-  if (Array.isArray(page?.data?.results)) {
+  if (Array.isArray(page?.data?.results) && hasObjectRows(page.data.results)) {
     return {
       rows: page.data.results,
       rebuild: rows => {
@@ -47,12 +51,12 @@ export function locateRows(page, { descriptive = false } = {}) {
   }
 
   // Older endpoints use a descriptive top-level key (`trades`, `holdings`,
-  // `balances`, etc.) rather than `data`. A single array is unambiguous; do
-  // not count pagination metadata as rows or guess when an envelope contains
-  // several independent data arrays.
+  // `balances`, etc.) rather than `data`. Only a populated array of objects
+  // can identify rows here. Empty or primitive arrays may be envelope fields.
   if (descriptive && page && typeof page === 'object') {
     const arrays = Object.entries(page)
-      .filter(([key, value]) => key !== 'pagination' && Array.isArray(value));
+      .filter(([key, value]) => key !== 'pagination'
+        && Array.isArray(value) && value.length > 0 && hasObjectRows(value));
     if (arrays.length === 1) {
       const [key, rows] = arrays[0];
       return { rows, rebuild: mergedRows => ({ ...page, [key]: mergedRows }) };
