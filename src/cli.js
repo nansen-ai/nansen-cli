@@ -2525,8 +2525,8 @@ export async function runCLI(rawArgs, deps = {}) {
   const inputInteractiveDeps = {
     ...deps,
     isTTY: isInputTTY,
-    stdoutTTY: isTTY,
-    stdinTTY: isInputTTY,
+    stdoutTTY: isTTY === true,
+    stdinTTY: isInputTTY === true,
     promptFn: deps.promptFn ?? prompt,
     confirmationPromptFn: deps.confirmationPromptFn ?? promptForConfirmation,
     confirmationLog: deps.confirmationLog ?? errorOutput,

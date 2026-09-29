@@ -261,6 +261,20 @@ it.each([[false, true], [true, false], [false, false]])('runCLI rejects browser 
   }
   expect(browserLoginFn).not.toHaveBeenCalled();
 });
+it('treats redirected stdout with undefined isTTY as non-interactive', async () => {
+  const f = fixture(); const browserLoginFn = vi.fn(); const output = vi.fn();
+  const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: undefined });
+  try {
+    const result = await runCLI(['login'], { env: f.env, authState: f.state, isInputTTY: true, browserLoginFn, output, errorOutput: vi.fn(), exit: vi.fn() });
+    expect(result).toMatchObject({ type: 'error', data: { code: 'NOT_A_TTY' } });
+    expect(browserLoginFn).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(f.home, '.nansen', 'auth-operations'))).toBe(false);
+  } finally {
+    if (descriptor) Object.defineProperty(process.stdout, 'isTTY', descriptor);
+    else delete process.stdout.isTTY;
+  }
+});
 it.each(['', '   '])('legacy --human prompts when the environment key is blank (%j)', async value => {
   const f = fixture(); const promptFn = vi.fn().mockResolvedValue('synthetic-key');
   f.env.NANSEN_API_KEY = value;
