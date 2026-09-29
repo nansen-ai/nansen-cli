@@ -20,7 +20,7 @@ const temp = mkdtempSync(path.join(tmpdir(), 'nansen-native-install-'));
 const install = path.join(temp, 'install');
 const home = path.join(temp, 'home');
 const config = path.join(home, '.nansen', 'config.json');
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const npm = 'npm';
 const env = {
   ...process.env,
   HOME: home,
@@ -78,8 +78,13 @@ try {
   }
 
   const fetchMock = path.join(temp, 'fetch-mock.mjs');
-  writeFileSync(fetchMock, `globalThis.fetch = async (input) => {
-    if (new URL(input).pathname !== '/api/v1/account') throw new Error('Unexpected API request');
+  // Explicit API-key login verifies GET /api/v1/account. Reject other paths
+  // or methods so new authentication traffic is investigated.
+  writeFileSync(fetchMock, `globalThis.fetch = async (input, options) => {
+    const url = new URL(input);
+    if (url.pathname !== '/api/v1/account' || options?.method !== 'GET') {
+      throw new Error('Unexpected API request during native auth smoke test');
+    }
     return new Response(JSON.stringify({ user_id: 'native-install-test', plan: 'test' }), {
       status: 200, headers: { 'content-type': 'application/json' }
     });
@@ -109,5 +114,5 @@ try {
   }
   console.log(`${source} ${process.version} ${process.platform}/${process.arch}: keyring loaded, lock ${expected}, login/logout checked`);
 } finally {
-  rmSync(temp, { recursive: true, force: true });
+  rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
