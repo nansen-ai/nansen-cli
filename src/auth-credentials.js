@@ -46,7 +46,7 @@ export function readAuthConfig(env = process.env, devConfigPath = DEV_CONFIG) {
 }
 export function resolveCredential({ env = process.env, explicitKey, snapshot = readAuthConfig(env) } = {}) {
   if (explicitKey !== undefined) return explicitKey === null ? { kind: 'anonymous', source: null } : { kind: 'api-key', source: 'explicit', apiKey: explicitKey };
-  if (env.NANSEN_API_KEY !== undefined) return { kind: 'api-key', source: 'env', apiKey: env.NANSEN_API_KEY };
+  if (typeof env.NANSEN_API_KEY === 'string' && env.NANSEN_API_KEY.trim()) return { kind: 'api-key', source: 'env', apiKey: env.NANSEN_API_KEY };
   if (snapshot.configError) return { kind: 'invalid', source: 'config', error: snapshot.configError };
   const { config } = snapshot;
   if (config.auth?.active?.kind === 'session') return { kind: 'session', source: 'session', ...config.auth.active, selectionEpoch: config.auth.selectionEpoch };

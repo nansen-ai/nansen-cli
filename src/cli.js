@@ -1601,12 +1601,10 @@ export function buildCommands(deps = {}) {
       } finally { await authState.finish(attempt); }
       const blankEnvKey = env.NANSEN_API_KEY !== undefined && !env.NANSEN_API_KEY.trim();
       if (fromStdin && flags.json) {
-        log(JSON.stringify({ event: 'saved', effective_source: env.NANSEN_API_KEY !== undefined ? 'env' : 'config', environment_key_blank: blankEnvKey, cleanup }));
+        log(JSON.stringify({ event: 'saved', effective_source: blankEnvKey || env.NANSEN_API_KEY === undefined ? 'config' : 'env', environment_key_blank: blankEnvKey, cleanup }));
         return;
       }
-      if (env.NANSEN_API_KEY !== undefined) log(blankEnvKey
-        ? 'NANSEN_API_KEY is blank. Commands will fail until you unset it or supply a valid environment key.'
-        : 'Commands still use NANSEN_API_KEY. Unset it to use the saved credential.');
+      if (env.NANSEN_API_KEY?.trim()) log('Commands still use NANSEN_API_KEY. Unset it to use the saved credential.');
 
       log(`✓ Saved to ${getConfigFileFn()}\n`);
       // Verification responses may reflect the submitted key. Stdin login
@@ -1617,7 +1615,7 @@ export function buildCommands(deps = {}) {
       if (!fromStdin && accountInfo?.credits_remaining !== undefined) {
         log(`Credits remaining: ${accountInfo.credits_remaining}`);
       }
-      log(blankEnvKey ? '\nUnset NANSEN_API_KEY to use the saved credential, then try:' : '\nYou can now use the Nansen CLI. Try:');
+      log('\nYou can now use the Nansen CLI. Try:');
       log('  nansen research token screener --chain solana --pretty');
     },
 
@@ -1626,7 +1624,7 @@ export function buildCommands(deps = {}) {
       if (result.cleanup.some(item => item.local === 'incomplete')) log('Saved authentication selection cleared; secure-store deletion incomplete.');
       else log(result.removed ? 'Local credentials removed.' : 'No saved credentials found.');
       for (const message of cleanupMessage(result.cleanup)) log(message);
-      if (env.NANSEN_API_KEY !== undefined) log('Warning: NANSEN_API_KEY remains active. Run: unset NANSEN_API_KEY');
+      if (env.NANSEN_API_KEY?.trim()) log('Warning: NANSEN_API_KEY remains active. Run: unset NANSEN_API_KEY');
     },
 
     'help': async (_args, _apiInstance, _flags, _options) => {
