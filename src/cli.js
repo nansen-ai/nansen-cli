@@ -463,7 +463,7 @@ export function formatTable(data) {
   let records = located?.rows || [];
   if (!located && typeof data === 'object' && data !== null) {
     // Single object - convert to array
-    records = [data];
+    records = [Array.isArray(data) ? { data } : data];
   }
 
   if (records.length === 0) {
@@ -527,7 +527,7 @@ export function formatCsv(data) {
   const located = locateRows(data, { descriptive: true });
   let records = located?.rows || [];
   if (!located && typeof data === 'object' && data !== null) {
-    records = [data];
+    records = [Array.isArray(data) ? { data } : data];
   }
 
   if (records.length === 0) return '';
@@ -570,7 +570,7 @@ export function formatOutput(data, { pretty = false, table = false, csv = false 
     if (data.success === false) {
       return { type: 'error', text: formatErrorText(data, { csv }) };
     }
-    const body = data.data || data;
+    const body = Array.isArray(data.data) ? data : data.data || data;
     return csv
       ? { type: 'csv', text: formatCsv(body) }
       : { type: 'table', text: formatTable(body) };

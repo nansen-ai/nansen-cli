@@ -42,6 +42,27 @@ describe('locateRows descriptive envelopes', () => {
       pagination: [{ page: 1 }],
     }, { descriptive: true })).toBeNull();
   });
+
+  it('does not select primitive or empty descriptive arrays as rows', () => {
+    expect(locateRows({ labels: ['smart money', 'fund'] }, { descriptive: true })).toBeNull();
+    expect(locateRows({ summary: { total: 5 }, warnings: [] }, { descriptive: true })).toBeNull();
+  });
+
+  it('selects the populated object array when another descriptive array is empty', () => {
+    const page = { trades: [{ a: 1 }], alerts: [] };
+    expect(locateRows(page, { descriptive: true })?.rows).toEqual(page.trades);
+  });
+
+  it('uses a known descriptive key for an empty later page', () => {
+    expect(locateRows({ trades: [] }, { descriptiveKey: 'trades' })?.rows).toEqual([]);
+    expect(locateRows({ alerts: [] }, { descriptiveKey: 'trades' })).toBeNull();
+  });
+
+  it('keeps explicit empty row arrays but rejects populated primitive arrays', () => {
+    expect(locateRows({ data: [] })?.rows).toEqual([]);
+    expect(locateRows({ data: ['smart money'] })).toBeNull();
+    expect(locateRows({ data: { data: [{ a: 1 }, { a: 2 }] } })?.rows).toEqual([{ a: 1 }, { a: 2 }]);
+  });
 });
 
 describe('collectPages', () => {
@@ -349,6 +370,23 @@ describe('collectPages', () => {
     const res = await collectPages(fetchPage, { page: 1, per_page: 2 });
     expect(fetchPage).toHaveBeenCalledTimes(2);
     expect(res.trades).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+  });
+
+  it('finishes a descriptive list when its last page is empty', async () => {
+    const fetchPage = vi.fn(async ({ page }) => ({ trades: page === 1 ? [{ id: 1 }, { id: 2 }] : [] }));
+    const result = await collectPages(fetchPage, { page: 1, per_page: 2 });
+    expect(result.trades).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(result.pagination).toMatchObject({ pages_fetched: 2, next_page: null, complete: true });
+  });
+
+  it('finishes a descriptive list with an empty first page', async () => {
+    const result = await collectPages(async () => ({ trades: [] }), { page: 1, per_page: 2 });
+    expect(result).toEqual({ trades: [], pagination: { page: 1, pages_fetched: 1, next_page: null, complete: true } });
+  });
+
+  it('does not choose an empty warnings array when another field carries data', async () => {
+    const result = await collectPages(async () => ({ summary: { total: 5 }, warnings: [] }), { page: 1, per_page: 2 });
+    expect(result).toEqual({ summary: { total: 5 }, warnings: [] });
   });
 
   it('returns a non-list first page unchanged after a single request', async () => {
