@@ -131,7 +131,7 @@ async function testQuery() {
   if (selection.kind === "anonymous") {
     log();
     log(`Run ${CYAN}nansen login${RESET} for browser approval, or use NANSEN_API_KEY directly.`);
-    log(`Browser login requires a supported OS credential store and enabled server admission. See docs/browser-login.md in this package.`);
+    log(`Browser login is enabled in production; saved sessions need a supported OS credential store. See docs/browser-login.md in this package.`);
     return;
   }
 
