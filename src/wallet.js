@@ -603,7 +603,7 @@ export const WALLET_SUBCOMMANDS = [
  * Build wallet command handlers for integration into CLI.
  */
 export function buildWalletCommands(deps = {}) {
-  const { log = console.log, errorOutput = console.error } = deps;
+  const { log = console.log } = deps;
 
   return {
     'wallet': async (args, apiInstance, flags, options) => {
@@ -740,24 +740,11 @@ export function buildWalletCommands(deps = {}) {
         },
 
         'list': async () => {
-          const result = listWallets();
-          // Human-readable summary goes to stderr only — stdout carries just the
-          // JSON envelope (returned below), consistent with every other command,
-          // so `nansen wallet list | jq .` and similar scripting doesn't break.
-          if (result.wallets.length === 0) {
-            errorOutput('No wallets found. Create one with: nansen wallet create');
-          } else {
-            errorOutput('');
-            for (const w of result.wallets) {
-              const star = w.isDefault ? ' ★' : '';
-              const providerTag = w.provider === 'privy' ? ' (privy)' : '';
-              errorOutput(`  ${w.name}${star}${providerTag}`);
-              errorOutput(`    EVM:    ${w.evm}`);
-              errorOutput(`    Solana: ${w.solana}`);
-              errorOutput('');
-            }
-          }
-          return result;
+          // Read-only data: return it so the CLI prints the standard JSON
+          // envelope on stdout, in a terminal or a pipe alike. A readable
+          // summary here would break agents that capture stderr alongside
+          // stdout or run under a pseudo-terminal.
+          return listWallets();
         },
 
         'show': async () => {

@@ -700,66 +700,79 @@ describe('Wallet list/show CLI output for provider', () => {
       }));
 
     const { buildWalletCommands } = await import('../wallet.js');
-    const errOutput = [];
-    const cmds = buildWalletCommands({ errorOutput: (m) => errOutput.push(m), exit: () => {} });
-    await cmds.wallet(['list'], null, {}, {});
+    const cmds = buildWalletCommands({ log: () => {}, exit: () => {} });
+    const result = await cmds.wallet(['list'], null, {}, {});
 
-    // Human-readable summary (with provider tag) goes to stderr, not stdout.
-    const joined = errOutput.join('\n');
-    expect(joined).toContain('privy');
+    expect(result.wallets[0].provider).toBe('privy');
   });
 });
 
-describe('Wallet list stdout/stderr separation (issue #154)', () => {
-  it('list returns JSON-serializable data instead of printing to stdout', async () => {
+describe('wallet list emits the JSON envelope on stdout (issue #154)', () => {
+  function writeWallet(name, defaultWallet = name) {
     const walletsDir = path.join(tempDir, '.nansen', 'wallets');
     fs.mkdirSync(walletsDir, { recursive: true });
     fs.writeFileSync(path.join(walletsDir, 'config.json'),
-      JSON.stringify({ defaultWallet: 'w1', passwordHash: null }));
-    fs.writeFileSync(path.join(walletsDir, 'w1.json'),
+      JSON.stringify({ defaultWallet, passwordHash: null }), { mode: 0o600 });
+    fs.writeFileSync(path.join(walletsDir, `${name}.json`),
       JSON.stringify({
-        name: 'w1', provider: 'local',
+        name, provider: 'local',
         evm: { address: '0xAddr' },
         solana: { address: 'SolAddr' },
         createdAt: '2026-01-01T00:00:00Z',
-      }));
+      }), { mode: 0o600 });
+  }
 
-    const { buildWalletCommands } = await import('../wallet.js');
+  async function runList(extraArgs, { isTTY }) {
+    const { runCLI } = await import('../cli.js');
     const stdout = [];
-    const stderrOut = [];
-    const cmds = buildWalletCommands({
-      log: (m) => stdout.push(m),
-      errorOutput: (m) => stderrOut.push(m),
+    const stderr = [];
+    await runCLI(['wallet', 'list', ...extraArgs], {
+      output: (m) => stdout.push(m),
+      errorOutput: (m) => stderr.push(m),
       exit: () => {},
+      isTTY,
     });
-    const result = await cmds.wallet(['list'], null, {}, {});
+    return { stdout: stdout.join('\n'), stderr: stderr.join('\n') };
+  }
 
-    // Nothing written to stdout (log) — the CLI dispatcher is responsible for
-    // printing the JSON envelope from the returned value.
-    expect(stdout).toHaveLength(0);
-    // Human summary went to stderr instead.
-    expect(stderrOut.join('\n')).toContain('w1');
-    // The returned value is exactly what should be JSON-serialized to stdout.
-    expect(result).toEqual({
-      wallets: [expect.objectContaining({ name: 'w1', isDefault: true })],
-      defaultWallet: 'w1',
+  // Output must not depend on whether stdout is a terminal: agents can run
+  // under a pseudo-terminal and would otherwise get unparseable text.
+  for (const isTTY of [false, true]) {
+    it(`prints one parseable envelope and nothing on stderr (isTTY=${isTTY})`, async () => {
+      writeWallet('w1');
+
+      const { stdout, stderr } = await runList([], { isTTY });
+
+      expect(JSON.parse(stdout)).toEqual({
+        success: true,
+        data: {
+          wallets: [{
+            name: 'w1', provider: 'local', evm: '0xAddr', solana: 'SolAddr',
+            createdAt: '2026-01-01T00:00:00Z', isDefault: true,
+          }],
+          defaultWallet: 'w1',
+        },
+      });
+      expect(stderr).toBe('');
     });
+  }
+
+  it('returns an empty list rather than a hint when there are no wallets', async () => {
+    const { stdout, stderr } = await runList([], { isTTY: true });
+
+    expect(JSON.parse(stdout)).toEqual({
+      success: true,
+      data: { wallets: [], defaultWallet: null },
+    });
+    expect(stderr).toBe('');
   });
 
-  it('list with no wallets still returns structured data, message goes to stderr', async () => {
-    const { buildWalletCommands } = await import('../wallet.js');
-    const stdout = [];
-    const stderrOut = [];
-    const cmds = buildWalletCommands({
-      log: (m) => stdout.push(m),
-      errorOutput: (m) => stderrOut.push(m),
-      exit: () => {},
-    });
-    const result = await cmds.wallet(['list'], null, {}, {});
+  it('honours --fields', async () => {
+    writeWallet('w1');
 
-    expect(stdout).toHaveLength(0);
-    expect(stderrOut.join('\n')).toContain('No wallets found');
-    expect(result).toEqual({ wallets: [], defaultWallet: null });
+    const { stdout } = await runList(['--fields', 'name,evm'], { isTTY: false });
+
+    expect(JSON.parse(stdout).data).toEqual({ wallets: [{ name: 'w1', evm: '0xAddr' }] });
   });
 });
 
