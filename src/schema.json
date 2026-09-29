@@ -2385,6 +2385,16 @@
               "description": "Wallet name"
             }
           },
+          "returns": [
+            "name",
+            "provider",
+            "evm",
+            "solana",
+            "createdAt",
+            "isDefault",
+            "privyWalletIds.evm",
+            "privyWalletIds.solana"
+          ],
           "examples": [
             "nansen wallet show <name>"
           ]
@@ -2418,7 +2428,7 @@
           ]
         },
         "export": {
-          "description": "Export private keys (redacted by default; pass --reveal or --file <path> for the actual keys)",
+          "description": "Export private keys (redacted by default: returns the addresses as JSON with no keys; pass --reveal or --file <path> for the actual keys)",
           "options": {
             "reveal": {
               "type": "boolean",
@@ -2429,6 +2439,12 @@
               "description": "Write private keys to this path instead of stdout (created with 0600 permissions, refuses to overwrite)"
             }
           },
+          "returns": [
+            "name",
+            "redacted",
+            "evm.address",
+            "solana.address"
+          ],
           "examples": [
             "nansen wallet export <name>",
             "nansen wallet export <name> --file backup.json"
