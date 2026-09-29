@@ -2690,7 +2690,7 @@
       }
     },
     "login": {
-      "description": "Fresh browser approval in every starting state for API-key-equivalent account API permissions (nansen:api). Wallet signing and MCP key export remain separate. Plain login never persists NANSEN_API_KEY; it still overrides commands. Selected sessions renew automatically; uncertain renewal requires fresh login. Native custody and enabled server admission required; release acceptance pending.",
+      "description": "Fresh browser approval in every starting state for API-key-equivalent account API permissions (nansen:api). Wallet signing and MCP key export remain separate. Plain login never persists NANSEN_API_KEY; it still overrides commands. Selected sessions renew automatically; uncertain renewal requires fresh login. Browser login is enabled in production; saved sessions need native storage (see docs/browser-login.md).",
       "options": {
         "no-browser": {
           "type": "boolean",

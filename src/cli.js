@@ -1129,7 +1129,7 @@ AUTHENTICATION:
   Authentication failures never trigger payment; login verification and nansen account never auto-pay.
   Browser sessions renew automatically; uncertain renewal requires fresh login.
   Browser nansen:api sessions have API-key-equivalent account permissions; wallet signing is separate.
-  Browser login needs native storage and enabled server admission; release gates remain open.
+  Browser login is enabled in production; saved sessions need native storage (see docs/browser-login.md).
   Public API endpoints keep their usual account, plan and credit checks; MCP key export is separate.
 
 TRADING:

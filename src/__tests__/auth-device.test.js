@@ -92,13 +92,12 @@ it.each(['access_denied', 'expired_token'])('classifies %s as unissued only with
   }
 });
 
-it('names cohort setup gates without inferring their actual server values', () => {
+it('points unsupported revocation coverage at a fresh login and the session issuer', () => {
   const bundle = sessionFixture(); const parts = bundle.accessToken.split('.');
   const claims = JSON.parse(Buffer.from(parts[1], 'base64url')); delete claims.session_access_revocation_version;
   parts[1] = Buffer.from(JSON.stringify(claims)).toString('base64url'); bundle.accessToken = parts.join('.');
-  expect(() => validateSession(bundle)).toThrow('may not be enabled');
-  expect(() => validateSession(bundle)).toThrow('SESSION_ACCESS_REVOCATION_ENABLED');
-  expect(() => validateSession(bundle)).toThrow('BROWSER_SESSION_ACCOUNT_ENABLED');
+  expect(() => validateSession(bundle)).toThrow('Run nansen login again');
+  expect(() => validateSession(bundle)).toThrow("session issuer's API audience and revocation claim");
 });
 it.each(['not-a-jwt', 'e30.e30.signature'])('reports malformed issued expiry as a token-response failure (%s)', async access_token => {
   const onIssued = vi.fn();
