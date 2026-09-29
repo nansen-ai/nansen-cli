@@ -8,6 +8,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import crypto from 'crypto';
+import { RLP } from '@ethereumjs/rlp';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -2077,6 +2078,58 @@ describe('EVM swap gas zero fallback (execute)', () => {
 
     expect(logs.some(l => l.includes('Using estimated gas 31500 (quote had no gas)'))).toBe(true);
     expect(rpcMethods.filter(m => m === 'eth_estimateGas').length).toBeGreaterThan(0);
+  });
+
+  describe.each([
+    ['legacy', { gasPrice: '1000000' }, 2],
+    ['EIP-1559', { maxFeePerGas: '1000000', maxPriorityFeePerGas: '1000000' }, 4],
+  ])('local wallet %s resolved gas', (_type, fees, gasIndex) => {
+    it.each([
+      ['both fields', '300000', { gas: '21000', gasLimit: '50000' }, false, 300000],
+      ['gas only', '300000', { gas: '21000' }, false, 300000],
+      ['gasLimit only', undefined, { gasLimit: '50000' }, false, 50000],
+      ['estimated gas', undefined, { gas: '0', gasLimit: '0' }, false, 31500],
+      ['fallback gas', undefined, { gas: '0', gasLimit: '0' }, true, 210000],
+    ])('signs the resolved limit with %s', async (_name, gas, txGas, estimateGasError, expectedGas) => {
+      createWallet('default', 'testpass');
+      process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+      const { executeBodies } = stubGasFallbackFetch({ estimateGasError });
+      const quoteId = saveQuote({
+        success: true,
+        quotes: [{
+          aggregator: 'lifi',
+          inputMint: BASE_ETH,
+          outputMint: BASE_USDC,
+          inAmount: '1000000000000000000',
+          outAmount: '3000000000',
+          gas,
+          transaction: {
+            to: LIFI_ROUTER,
+            data: '0x12345678',
+            value: '1000000000000000000',
+            ...txGas,
+            ...fees,
+          },
+        }],
+      }, 'base', 'local', null, null, {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: showWallet('default').evm,
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+        }),
+      });
+
+      const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+      await cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId });
+
+      expect(executeBodies).toHaveLength(1);
+      const raw = Buffer.from(executeBodies[0].signedTransaction.slice(2), 'hex');
+      const fields = RLP.decode(gasIndex === 4 ? raw.subarray(1) : raw);
+      expect(BigInt('0x' + Buffer.from(fields[gasIndex]).toString('hex'))).toBe(BigInt(expectedGas));
+    });
   });
 
   it('WalletConnect ERC-20: skips approval and sends swap with estimated gas when quote has no gas', async () => {
