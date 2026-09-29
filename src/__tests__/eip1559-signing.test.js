@@ -293,3 +293,33 @@ describe('signEvmTransaction fee ceiling', () => {
     expect(signEvmTransaction({ ...base, gasPrice: '5000000000' }, KEY, 'base', 1)).toMatch(/^0x/);
   });
 });
+
+describe.each([
+  ['legacy', { gasPrice: '1000000' }, 2],
+  ['EIP-1559', { maxFeePerGas: '1000000' }, 4],
+])('resolved gas override for %s signing', (_type, fees, gasIndex) => {
+  const tx = { to: TX.to, gas: '21000', gasLimit: '50000', ...fees };
+
+  it('checks the resolved gas against the fee cap', () => {
+    expect(() => signEvmTransaction(tx, KEY, 'base', 0, {
+      gasLimit: 300000,
+      maxTxFeeWei: 100000000000n,
+    })).toThrow(/300000 gas.*above the.*fee cap/);
+  });
+
+  it('refuses a zero override instead of falling back to the quote', () => {
+    expect(() => signEvmTransaction(tx, KEY, 'base', 0, { gasLimit: 0 }))
+      .toThrow(/invalid gas limit/);
+  });
+
+  it.each([
+    [{ gas: '21000', gasLimit: '50000' }, 21000],
+    [{ gasLimit: '50000' }, 50000],
+    [{}, 210000],
+  ])('preserves quote/default gas selection without an override: %j', (gasFields, expected) => {
+    const raw = signEvmTransaction({ to: TX.to, ...fees, ...gasFields }, KEY, 'base', 0);
+    const bytes = Buffer.from(raw.slice(2), 'hex');
+    const fields = RLP.decode(gasIndex === 4 ? bytes.subarray(1) : bytes);
+    expect(bufToBigInt(fields[gasIndex])).toBe(BigInt(expected));
+  });
+});

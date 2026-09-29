@@ -847,13 +847,14 @@ export async function normalizeSolanaTransaction(transaction, rpcUrl, getExpecte
  * @param {string} chain - Chain name
  * @param {number} nonce - Account nonce
  * @param {object} [opts]
+ * @param {string|number|bigint} [opts.gasLimit] - Resolved gas limit, overriding quote transaction fields
  * @param {string} [opts.label='swap'] - What is being signed, for the fee-cap error
  * @param {bigint} [opts.maxTxFeeWei] - Fee cap in wei (--max-tx-fee); 0n disables it
  * @returns {string} 0x-prefixed signed transaction hex
  */
 // Pure EVM encode/sign primitive. Quote authorization and request-intent binding
 // happen upstream before this function receives transaction calldata.
-export function signEvmTransaction(txData, privateKeyHex, chain, nonce, { label = 'swap', maxTxFeeWei = MAX_EVM_TX_FEE_WEI } = {}) {
+export function signEvmTransaction(txData, privateKeyHex, chain, nonce, { gasLimit, label = 'swap', maxTxFeeWei = MAX_EVM_TX_FEE_WEI } = {}) {
   const chainConfig = CHAIN_MAP[chain];
   if (!chainConfig || chainConfig.type !== 'evm') {
     throw new Error(`Unsupported EVM chain: ${chain}`);
@@ -861,7 +862,7 @@ export function signEvmTransaction(txData, privateKeyHex, chain, nonce, { label 
 
   const common = {
     nonce,
-    gasLimit: toHex(txData.gas || txData.gasLimit || '210000'),
+    gasLimit: toHex(gasLimit ?? (txData.gas || txData.gasLimit || '210000')),
     to: txData.to,
     value: toHex(txData.value || '0'),
     data: txData.data || '0x',
@@ -4417,8 +4418,6 @@ EXAMPLES:
               const txData = currentQuote.transaction;
               const finalGas = await resolveEvmSwapGasLimit(currentQuote, { chain, from: walletAddress });
               logEvmSwapGasResolution(log, currentQuote, txData, finalGas);
-              if (txData.gasLimit) txData.gasLimit = String(finalGas);
-              else txData.gas = String(finalGas);
 
               log('  Fetching nonce...');
               await new Promise(r => setTimeout(r, 1000));
@@ -4431,7 +4430,7 @@ EXAMPLES:
                 exported.evm.privateKey,
                 chain,
                 nonce,
-                { maxTxFeeWei },
+                { gasLimit: finalGas, maxTxFeeWei },
               );
             }
 
