@@ -4,6 +4,7 @@
  */
 
 import { NansenError, ErrorCode } from '../api.js';
+import { parseCsvOption } from '../query-options.js';
 
 // ============= Formatting =============
 
@@ -53,10 +54,13 @@ export function formatAlertsTable(alerts) {
  * Parse a token string "address:chain" into { address, chain }.
  * Handles single string or array of strings (from repeated --token flags).
  */
-function parseTokens(tokenArg) {
-  if (!tokenArg) return undefined;
+function parseTokens(tokenArg, name) {
+  if (tokenArg === undefined || tokenArg === '') return undefined;
   const tokens = Array.isArray(tokenArg) ? tokenArg : [tokenArg];
   return tokens.map(t => {
+    if (typeof t !== 'string') {
+      throw new NansenError(`--${name} values must be strings`, ErrorCode.INVALID_PARAMS);
+    }
     const colonIdx = t.lastIndexOf(':');
     if (colonIdx === -1) throw new NansenError(`Invalid token format: "${t}". Expected address:chain`, ErrorCode.INVALID_PARAMS);
     return { address: t.slice(0, colonIdx), chain: t.slice(colonIdx + 1) };
@@ -67,10 +71,13 @@ function parseTokens(tokenArg) {
  * Parse a subject string "type:value" into { type, value }.
  * Handles single string or array (from repeated --subject flags).
  */
-function parseSubjects(subjectArg) {
-  if (!subjectArg) return undefined;
+function parseSubjects(subjectArg, name) {
+  if (subjectArg === undefined || subjectArg === '') return undefined;
   const subjects = Array.isArray(subjectArg) ? subjectArg : [subjectArg];
   return subjects.map(s => {
+    if (typeof s !== 'string') {
+      throw new NansenError(`--${name} values must be strings`, ErrorCode.INVALID_PARAMS);
+    }
     const colonIdx = s.indexOf(':');
     if (colonIdx === -1) throw new NansenError(`Invalid subject format: "${s}". Expected type:value`, ErrorCode.INVALID_PARAMS);
     return { type: s.slice(0, colonIdx), value: s.slice(colonIdx + 1) };
@@ -102,29 +109,60 @@ function deepMergePlain(target, source) {
  * Normalise chains option to array.
  */
 function parseChains(chainsOpt) {
-  if (!chainsOpt) return undefined;
-  if (Array.isArray(chainsOpt)) return chainsOpt;
-  return chainsOpt.split(',').map(s => s.trim()).filter(Boolean);
+  return parseCsvOption(chainsOpt, 'chains');
+}
+
+/**
+ * Parse a CLI option value as a finite number, or throw a clear error.
+ *
+ * Plain `Number(val)` turns garbage input ("abc") into NaN, and
+ * `JSON.stringify` silently turns NaN into `null` — so a typo'd
+ * --usd-min/--market-cap-max/etc. would vanish from the request instead of
+ * failing loudly, and the alert would ship without the filter the user
+ * asked for.
+ */
+function parseFiniteNumber(raw, name) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    throw new NansenError(`Invalid --${name} "${raw}": must be a number`, ErrorCode.INVALID_PARAMS);
+  }
+  return n;
+}
+
+/**
+ * Validate a single-value string filter option (e.g. --chain, --token-address).
+ * Empty string/undefined mean "not provided"; any other non-string value
+ * (e.g. `--chain '{}'`, from parseArgs' JSON.parse of option values) is
+ * rejected instead of crashing on .toLowerCase() or being silently dropped
+ * by a falsy check.
+ */
+function parseStringFilter(val, name) {
+  if (val === undefined || val === '') return undefined;
+  if (typeof val !== 'string') {
+    throw new NansenError(`--${name} must be a string`, ErrorCode.INVALID_PARAMS);
+  }
+  return val;
+}
+
+function parseNonNegativeIntegerOption(raw, name) {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new NansenError(`--${name} must be a non-negative integer, got "${raw}"`, ErrorCode.INVALID_PARAMS);
+  }
+  return n;
 }
 
 /**
  * Build a { min, max } range object from two option values.
  * Returns undefined if neither is provided.
  */
-function buildRange(minVal, maxVal) {
+function buildRange(minVal, maxVal, name) {
   if (minVal === undefined && maxVal === undefined) return undefined;
   const r = {};
-  if (minVal !== undefined) r.min = Number(minVal);
-  if (maxVal !== undefined) r.max = Number(maxVal);
+  if (minVal !== undefined) r.min = parseFiniteNumber(minVal, `${name}-min`);
+  if (maxVal !== undefined) r.max = parseFiniteNumber(maxVal, `${name}-max`);
   return r;
-}
-
-/**
- * Normalise a repeatable string option to array, or undefined if absent.
- */
-function normArray(val) {
-  if (!val) return undefined;
-  return Array.isArray(val) ? val : [val];
 }
 
 /**
@@ -138,31 +176,31 @@ export function buildSmTokenFlowsData(options) {
 
   const flowFields = ['inflow-1h', 'inflow-1d', 'inflow-7d', 'outflow-1h', 'outflow-1d', 'outflow-7d', 'netflow-1h', 'netflow-1d', 'netflow-7d'];
   for (const field of flowFields) {
-    const range = buildRange(options[`${field}-min`], options[`${field}-max`]);
+    const range = buildRange(options[`${field}-min`], options[`${field}-max`], field);
     if (range) {
       // Convert CLI key "inflow-1h" → data key "inflow_1h"
       data[field.replace(/-/g, '_')] = range;
     }
   }
 
-  const tokens = parseTokens(options.token);
-  const excludeTokens = parseTokens(options['exclude-token']);
+  const tokens = parseTokens(options.token, 'token');
+  const excludeTokens = parseTokens(options['exclude-token'], 'exclude-token');
   if (tokens) data.inclusion = { ...data.inclusion, tokens };
   if (excludeTokens) data.exclusion = { ...data.exclusion, tokens: excludeTokens };
 
-  const sectors = normArray(options['token-sector']);
+  const sectors = parseCsvOption(options['token-sector'], 'token-sector');
   if (sectors) data.inclusion = { ...data.inclusion, tokenSectors: sectors };
-  const excludeSectors = normArray(options['exclude-token-sector']);
+  const excludeSectors = parseCsvOption(options['exclude-token-sector'], 'exclude-token-sector');
   if (excludeSectors) data.exclusion = { ...data.exclusion, tokenSectors: excludeSectors };
 
   if (options['token-age-max'] !== undefined) {
-    data.inclusion = { ...data.inclusion, tokenAge: { max: Number(options['token-age-max']) } };
+    data.inclusion = { ...data.inclusion, tokenAge: { max: parseFiniteNumber(options['token-age-max'], 'token-age-max') } };
   }
 
-  const marketCapRange = buildRange(options['market-cap-min'], options['market-cap-max']);
+  const marketCapRange = buildRange(options['market-cap-min'], options['market-cap-max'], 'market-cap');
   if (marketCapRange) data.inclusion = { ...data.inclusion, marketCap: marketCapRange };
 
-  const fdvRange = buildRange(options['fdv-min'], options['fdv-max']);
+  const fdvRange = buildRange(options['fdv-min'], options['fdv-max'], 'fdv');
   if (fdvRange) data.inclusion = { ...data.inclusion, fdvUsd: fdvRange };
 
   return data;
@@ -177,47 +215,46 @@ export function buildCommonTokenTransferData(options) {
   const chains = parseChains(options.chains);
   if (chains) data.chains = chains;
 
-  if (options.events) {
-    data.events = typeof options.events === 'string' ? options.events.split(',') : options.events;
-  }
+  const events = parseCsvOption(options.events, 'events');
+  if (events) data.events = events;
 
-  const usdRange = buildRange(options['usd-min'], options['usd-max']);
+  const usdRange = buildRange(options['usd-min'], options['usd-max'], 'usd');
   if (usdRange) data.usdValue = usdRange;
 
-  const amountRange = buildRange(options['token-amount-min'], options['token-amount-max']);
+  const amountRange = buildRange(options['token-amount-min'], options['token-amount-max'], 'token-amount');
   if (amountRange) data.tokenAmount = amountRange;
 
-  const subjects = parseSubjects(options.subject);
+  const subjects = parseSubjects(options.subject, 'subject');
   if (subjects) data.subjects = subjects;
 
-  const counterparties = parseSubjects(options.counterparty);
+  const counterparties = parseSubjects(options.counterparty, 'counterparty');
   if (counterparties) data.counterparties = counterparties;
 
-  const tokens = parseTokens(options.token);
-  const excludeTokens = parseTokens(options['exclude-token']);
+  const tokens = parseTokens(options.token, 'token');
+  const excludeTokens = parseTokens(options['exclude-token'], 'exclude-token');
   if (tokens) data.inclusion = { ...data.inclusion, tokens };
   if (excludeTokens) data.exclusion = { ...data.exclusion, tokens: excludeTokens };
 
-  const sectors = normArray(options['token-sector']);
+  const sectors = parseCsvOption(options['token-sector'], 'token-sector');
   if (sectors) data.inclusion = { ...data.inclusion, tokenSectors: sectors };
-  const excludeSectors = normArray(options['exclude-token-sector']);
+  const excludeSectors = parseCsvOption(options['exclude-token-sector'], 'exclude-token-sector');
   if (excludeSectors) data.exclusion = { ...data.exclusion, tokenSectors: excludeSectors };
 
   const tokenAgeMin = options['token-age-min'];
   const tokenAgeMax = options['token-age-max'];
   if (tokenAgeMin !== undefined || tokenAgeMax !== undefined) {
     const tokenAge = {};
-    if (tokenAgeMin !== undefined) tokenAge.min = Number(tokenAgeMin);
-    if (tokenAgeMax !== undefined) tokenAge.max = Number(tokenAgeMax);
+    if (tokenAgeMin !== undefined) tokenAge.min = parseFiniteNumber(tokenAgeMin, 'token-age-min');
+    if (tokenAgeMax !== undefined) tokenAge.max = parseFiniteNumber(tokenAgeMax, 'token-age-max');
     data.inclusion = { ...data.inclusion, tokenAge };
   }
 
-  const marketCapRange = buildRange(options['market-cap-min'], options['market-cap-max']);
+  const marketCapRange = buildRange(options['market-cap-min'], options['market-cap-max'], 'market-cap');
   if (marketCapRange) data.inclusion = { ...data.inclusion, marketCap: marketCapRange };
 
-  const excludeFrom = parseSubjects(options['exclude-from']);
+  const excludeFrom = parseSubjects(options['exclude-from'], 'exclude-from');
   if (excludeFrom) data.exclusion = { ...data.exclusion, fromTargets: excludeFrom };
-  const excludeTo = parseSubjects(options['exclude-to']);
+  const excludeTo = parseSubjects(options['exclude-to'], 'exclude-to');
   if (excludeTo) data.exclusion = { ...data.exclusion, toTargets: excludeTo };
 
   return data;
@@ -232,19 +269,16 @@ export function buildSmartContractCallData(options) {
   const chains = parseChains(options.chains);
   if (chains) data.chains = chains;
 
-  const usdRange = buildRange(options['usd-min'], options['usd-max']);
+  const usdRange = buildRange(options['usd-min'], options['usd-max'], 'usd');
   if (usdRange) data.usdValue = usdRange;
 
-  if (options['signature-hash']) {
-    data.signatureHash = Array.isArray(options['signature-hash'])
-      ? options['signature-hash']
-      : [options['signature-hash']];
-  }
+  const signatureHash = parseCsvOption(options['signature-hash'], 'signature-hash');
+  if (signatureHash) data.signatureHash = signatureHash;
 
-  const callers = parseSubjects(options.caller);
-  const contracts = parseSubjects(options.contract);
-  const excludeCallers = parseSubjects(options['exclude-caller']);
-  const excludeContracts = parseSubjects(options['exclude-contract']);
+  const callers = parseSubjects(options.caller, 'caller');
+  const contracts = parseSubjects(options.contract, 'contract');
+  const excludeCallers = parseSubjects(options['exclude-caller'], 'exclude-caller');
+  const excludeContracts = parseSubjects(options['exclude-contract'], 'exclude-contract');
 
   if (callers) data.inclusion = { ...data.inclusion, caller: callers };
   if (contracts) data.inclusion = { ...data.inclusion, smartContract: contracts };
@@ -584,6 +618,11 @@ USAGE:
         'list': async () => {
           if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAMS);
 
+          const offset = parseNonNegativeIntegerOption(options.offset, 'offset');
+          const limit = parseNonNegativeIntegerOption(options.limit, 'limit');
+          const tokenAddress = parseStringFilter(options['token-address'], 'token-address');
+          const chainFilter = parseStringFilter(options.chain, 'chain');
+
           const results = await apiInstance.alertsList();
           let alerts = Array.isArray(results) ? results : results?.alerts ?? results?.data ?? [];
 
@@ -591,24 +630,39 @@ USAGE:
           if (options.type) alerts = alerts.filter(a => a.type === options.type);
           if (flags.enabled) alerts = alerts.filter(a => a.isEnabled === true);
           if (flags.disabled) alerts = alerts.filter(a => a.isEnabled === false);
-          if (options['token-address']) {
-            const addr = options['token-address'].toLowerCase();
+          if (tokenAddress) {
+            const addr = tokenAddress.toLowerCase();
             alerts = alerts.filter(a => {
               const allTokens = [...(a.data?.inclusion?.tokens ?? []), ...(a.data?.exclusion?.tokens ?? [])];
               return allTokens.some(t => t.address?.toLowerCase() === addr);
             });
           }
-          if (options.chain) {
-            const ch = options.chain.toLowerCase();
+          if (chainFilter) {
+            const ch = chainFilter.toLowerCase();
             alerts = alerts.filter(a => {
               const chains = a.data?.chains;
               return Array.isArray(chains) && chains.some(c => c.toLowerCase() === ch || c === 'all');
             });
           }
 
-          // Pagination (applied after filtering)
-          if (options.offset) alerts = alerts.slice(Number(options.offset));
-          if (options.limit) alerts = alerts.slice(0, Number(options.limit));
+          // Pagination (applied after filtering). Validate strictly rather than
+          // silently misbehaving on bad input:
+          //   - `if (options.offset)` / `if (options.limit)` treat 0 as "not set"
+          //     (falsy), so `--offset 0` / `--limit 0` were silently ignored
+          //     instead of being honored.
+          //   - `Number("abc")` is NaN, and `Array.prototype.slice` coerces a NaN
+          //     argument to 0 — so `--offset abc` silently became a no-op and
+          //     `--limit abc` silently returned zero results, with no error
+          //     telling the caller their input wasn't a number at all.
+          //   - Negative values (`--offset -1`) were accepted and fed straight
+          //     into `slice()`, which treats negative indices as "from the end" —
+          //     silently returning the wrong slice instead of rejecting the input.
+          if (offset !== undefined) {
+            alerts = alerts.slice(offset);
+          }
+          if (limit !== undefined) {
+            alerts = alerts.slice(0, limit);
+          }
 
           return alerts;
         },

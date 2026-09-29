@@ -28,7 +28,19 @@ On confirm, re-run steps 1-2 on it. Reserve step 3 (counterparties) for the seed
 
 ## L2 Coverage
 
-When step 3 returns sparse results on a mainnet EVM address, extend to L2s (4 calls):
+When step 3 returns sparse results on a mainnet EVM address, extend to L2s. `--chain all`
+detects each address's chain and covers the EVM chains in a single call, and takes up to
+10 addresses at once (every row carries the wallet_address it belongs to):
+
+```bash
+nansen research profiler counterparties-batch --addresses "$ADDR" --chain all --days 90 --limit 50
+```
+
+Rows come back as contiguous per-wallet blocks ordered by wallet address, so with several
+addresses a small page holds one wallet only — raise `--limit` and page with `--page N`.
+
+`counterparties-batch` is capped at 90 days. For a wider window, fall back to the
+per-chain loop:
 
 ```bash
 for CHAIN in base arbitrum optimism polygon; do
@@ -39,5 +51,5 @@ done
 ## Cost Warnings
 
 - `trace` is credit-heavy; keep `--width 3` or lower
-- L2 counterparty checks above add 4 API calls per address
+- The per-chain L2 loop above costs 4 API calls per address; `counterparties-batch --chain all` is 1
 - Historical balances reveal past holdings on drained wallets — useful fingerprint

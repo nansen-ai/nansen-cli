@@ -3,9 +3,9 @@
  * resolveBooleanOption accepts: `--neg-risk`, `--neg-risk true|false`,
  * `--neg-risk 1|0`.
  *
- * parseArgs JSON-parses bare `true`/`false` into booleans, so the handler must
- * not compare the raw option against the string 'true' — that inverted the
- * filter (`--neg-risk true` sent `neg_risk: false`).
+ * parseArgs hands `--neg-risk true` / `--neg-risk false` to the handler as
+ * the strings 'true' / 'false', so the handler must go through
+ * resolveBooleanOption rather than treat any present value as true.
  */
 
 import { describe, it, expect, vi } from 'vitest';

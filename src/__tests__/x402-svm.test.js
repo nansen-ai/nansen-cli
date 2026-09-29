@@ -2,7 +2,7 @@
  * Tests for x402 Solana payment module
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import crypto from 'crypto';
 import { base58Decode, base58Encode } from '../wallet.js';
 import {
@@ -10,6 +10,7 @@ import {
   isSvmNetwork,
   getSolanaRpcUrl,
   buildUnsignedSvmTransaction,
+  fetchRecentBlockhash,
 } from '../x402-svm.js';
 
 // Inline Solana wallet generation (from wallet.js PR #26, not yet merged)
@@ -94,12 +95,21 @@ describe('isSvmNetwork', () => {
 });
 
 describe('getSolanaRpcUrl', () => {
-  it('should return mainnet URL by default', () => {
+  it('should return mainnet URL for the canonical mainnet CAIP-2 id', () => {
     expect(getSolanaRpcUrl('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp')).toContain('mainnet');
   });
 
-  it('should return devnet URL', () => {
+  it('should return devnet URL for the canonical devnet CAIP-2 id', () => {
     expect(getSolanaRpcUrl('solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1')).toContain('devnet');
+  });
+
+  it('should return testnet URL for the canonical testnet CAIP-2 id', () => {
+    expect(getSolanaRpcUrl('solana:4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z')).toContain('testnet');
+  });
+
+  it('throws for an unknown solana:* network instead of falling back to mainnet', () => {
+    expect(() => getSolanaRpcUrl('solana:bogus')).toThrow(/Unsupported Solana network/);
+    expect(() => getSolanaRpcUrl('solana:not-a-real-network-id')).toThrow(/Unsupported Solana network/);
   });
 });
 
@@ -158,5 +168,54 @@ describe('buildUnsignedSvmTransaction', () => {
     // Next 128 bytes should be zeros (two placeholder signatures)
     const sigSlots = txBytes.subarray(1, 129);
     expect(sigSlots.every(b => b === 0)).toBe(true);
+  });
+});
+
+describe('fetchRecentBlockhash', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns the recent blockhash from a valid RPC response', async () => {
+    const bh = base58Encode(crypto.randomBytes(32));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ result: { value: { blockhash: bh } } }),
+    }));
+    await expect(fetchRecentBlockhash('http://unused')).resolves.toBe(bh);
+  });
+
+  it('surfaces JSON-RPC errors as actionable blockhash failures', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ error: { code: 429, message: 'rate limited' } }),
+    }));
+    await expect(fetchRecentBlockhash('http://unused'))
+      .rejects.toThrow(/Solana RPC failed while fetching a recent blockhash: rate limited/);
+  });
+
+  it('rejects a response missing result.value.blockhash with an actionable message', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ result: {} }),
+    }));
+    await expect(fetchRecentBlockhash('http://unused'))
+      .rejects.toThrow(/Solana RPC returned no recent blockhash/);
+  });
+
+  it('rejects a non-2xx HTTP response with the status code', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => 'Service Unavailable',
+    }));
+    await expect(fetchRecentBlockhash('http://unused'))
+      .rejects.toThrow(/Solana RPC returned HTTP 503/);
+  });
+
+  it('rejects a fetch/network failure with an actionable message', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    await expect(fetchRecentBlockhash('http://unused'))
+      .rejects.toThrow(/Solana RPC unavailable while fetching a recent blockhash/);
   });
 });

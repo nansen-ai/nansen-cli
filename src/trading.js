@@ -5,6 +5,7 @@
  * Zero external dependencies — uses Node.js built-in crypto only.
  */
 
+import { rejectBlankOption } from './query-options.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -87,22 +88,41 @@ export function resolveTokenAddress(symbolOrAddress, chainName) {
  * @returns {Promise<*>} Parsed result value
  * @throws {Error} If chain has no configured RPC or the RPC returns an error
  */
+// Error codes let a broadcasting caller (bridge.js) tell a DEFINITIVE rejection
+// (the node refused the tx — nothing is in flight, safe to retry) apart from an
+// AMBIGUOUS failure (a gateway/transport error that may have dropped the ack
+// AFTER the node accepted the tx), so it can fail closed only on the latter:
+//   - RPC_UNCONFIGURED — no URL; thrown before any request leaves the process
+//   - RPC_NETWORK_ERROR — request left but no response (reset/timeout): ambiguous
+//   - RPC_HTTP_ERROR    — non-JSON HTTP response (e.g. a 502 gateway page): ambiguous
+//   - RPC_JSON_ERROR    — a JSON-RPC { error }: the node definitively rejected it
 export async function evmRpcCall(chain, method, params = []) {
   const rpcUrl = CHAIN_RPCS[chain];
-  if (!rpcUrl) throw new Error(`No RPC URL configured for chain: ${chain}`);
-  const res = await fetch(rpcUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-  });
+  if (!rpcUrl) throw Object.assign(new Error(`No RPC URL configured for chain: ${chain}`), { code: 'RPC_UNCONFIGURED' });
+  let res;
+  try {
+    res = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    });
+  } catch (netErr) {
+    // The request left this process but no response came back. A reset or
+    // timeout can strike AFTER the node accepted the payload, so a caller that
+    // just broadcast a tx cannot assume it was never sent.
+    throw Object.assign(new Error(`RPC request to ${chain} failed for ${method}: ${netErr.message}`), { code: 'RPC_NETWORK_ERROR' });
+  }
   const text = await res.text();
   let body;
   try {
     body = JSON.parse(text);
   } catch {
-    throw new Error(`RPC endpoint returned non-JSON response (HTTP ${res.status}) for ${method}: ${text.slice(0, 100)}`);
+    throw Object.assign(
+      new Error(`RPC endpoint returned non-JSON response (HTTP ${res.status}) for ${method}: ${text.slice(0, 100)}`),
+      { code: 'RPC_HTTP_ERROR', status: res.status },
+    );
   }
-  if (body.error) throw new Error(`RPC error (${method}): ${body.error.message}`);
+  if (body.error) throw Object.assign(new Error(`RPC error (${method}): ${body.error.message}`), { code: 'RPC_JSON_ERROR' });
   return body.result;
 }
 
@@ -186,19 +206,72 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       await new Promise(r => setTimeout(r, retryDelayMs));
     }
 
-    const res = await fetch(`${TRADING_API_URL}/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(params),
-    });
+    let res;
+    try {
+      res = await fetch(`${TRADING_API_URL}/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(params),
+      });
+    } catch (netErr) {
+      // The POST left this process but no response came back (a reset/timeout).
+      // That may have struck AFTER the backend received the signed tx and
+      // broadcast it — indistinguishable from "never sent" — so treat it as
+      // BROADCAST_FAILED, the same fail-closed class as a 502. Retrying re-sends
+      // the SAME signed bytes (a byte-identical replay a node dedupes), so a
+      // retry here can't itself double-broadcast; only exhausting them fails
+      // closed at the caller (isFatalBroadcastError → mark the quote spent).
+      lastError = Object.assign(
+        new Error(`Execute POST to /execute failed: ${netErr.message}`),
+        { code: 'BROADCAST_FAILED' }
+      );
+      if (attempt < retries) continue;
+      throw lastError;
+    }
 
-    const text = await res.text();
+    let text;
+    try {
+      text = await res.text();
+    } catch (bodyErr) {
+      // Headers arrived but the body read failed (a truncated/reset response).
+      // Like the network case above, the backend may already have broadcast, so
+      // fail closed as BROADCAST_FAILED rather than surface a codeless error the
+      // candidate loop would treat as nonfatal. A retry re-sends byte-identical
+      // bytes a node dedupes.
+      lastError = Object.assign(
+        new Error(`Execute response body read failed (status ${res.status}): ${bodyErr.message}`),
+        { code: 'BROADCAST_FAILED', status: res.status }
+      );
+      if (res.status >= 500 && attempt < retries) continue;
+      throw lastError;
+    }
+
+    // Parse up front so a JSON body can be preserved as structured details — but
+    // the classification below never lets a parseable body downgrade an
+    // ambiguous status to its own (nonfatal) code.
     let body;
+    let parsed = true;
     try {
       body = JSON.parse(text);
     } catch {
+      parsed = false;
+    }
+
+    // ANY 5xx is ambiguous no matter the body SHAPE: the gateway may have
+    // forwarded the signed tx upstream before failing (a JSON 502/504 like
+    // { code: "UPSTREAM_TIMEOUT" } is exactly that case, and a 500/504 carries
+    // the same "forwarded then lost the ack" risk as a 502/503). Classify EVERY
+    // 5xx as BROADCAST_FAILED and keep the body only as details — never fall
+    // through to the !res.ok branch below, which would surface a nonfatal
+    // upstream code and let the candidate loop broadcast the next quote on top
+    // of a live tx.
+    if (res.status >= 500) {
+      // Only append the simulation fee hint for a NON-JSON body. A structured
+      // JSON error (e.g. { code: "UPSTREAM_TIMEOUT" }) already explains itself
+      // via `details`; tacking "you may be out of SOL" onto a gateway timeout
+      // would misdirect the user.
       const chainType = params.chain && CHAIN_MAP[params.chain]?.type;
-      const feeHint = res.status === 502
+      const feeHint = !parsed
         ? chainType === 'solana'
           ? ' This often means the transaction failed simulation — check that you have enough SOL for fees (~0.005 SOL minimum).'
           : chainType === 'evm'
@@ -206,11 +279,22 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
             : ''
         : '';
       lastError = Object.assign(
-        new Error(`Execute API returned non-JSON response (status ${res.status}).${feeHint || ' This may be a Cloudflare challenge or server error.'}`),
-        { code: 'BROADCAST_FAILED', status: res.status, details: text.slice(0, 200) }
+        new Error(`Execute API returned ${res.status} — treating as an ambiguous broadcast failure; the transaction may already be live.${feeHint}`),
+        { code: 'BROADCAST_FAILED', status: res.status, details: parsed ? body : text.slice(0, 200) }
       );
-      // Retry on 502/503 (likely transient Cloudflare issues)
-      if ((res.status === 502 || res.status === 503) && attempt < retries) continue;
+      // Retry (re-POSTs byte-identical bytes) then fail closed at the caller.
+      if (attempt < retries) continue;
+      throw lastError;
+    }
+
+    if (!parsed) {
+      // Non-JSON on a sub-500 status (a Cloudflare challenge or HTML error
+      // page). A clean sub-500 HTTP response is a definitive edge/backend
+      // rejection, so it stays nonfatal and leaves the quote reusable.
+      lastError = Object.assign(
+        new Error(`Execute API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`),
+        { code: 'EXECUTE_ERROR', status: res.status, details: text.slice(0, 200) }
+      );
       throw lastError;
     }
 
@@ -552,8 +636,22 @@ export function signSolanaTransaction(transactionBase64, privateKeyHex) {
 // blockhash fetch (no wasted RPC round trip on a request we're going to reject).
 const SIZE_CHECK_BLOCKHASH = '11111111111111111111111111111111';
 
+function formatInstructionDataForError(value) {
+  try {
+    const s = JSON.stringify(value);
+    return s.length > 200 ? s.slice(0, 200) + '…' : s;
+  } catch {
+    return String(value);
+  }
+}
+
 function decodeInstructionData(hex) {
   if (hex == null || hex === '') return Buffer.alloc(0); // some instructions legitimately carry no data
+  if (typeof hex !== 'string') {
+    throw new Error(
+      `Cannot compile Solana transaction: instruction data is not valid hex (${formatInstructionDataForError(hex)})`
+    );
+  }
   const body = hex.startsWith('0x') ? hex.slice(2) : hex;
   // Buffer.from(str, 'hex') silently drops a trailing odd nibble and stops at
   // the first non-hex character, so it would decode malformed data into a
@@ -845,6 +943,12 @@ export async function waitForReceipt(chain, txHash, timeoutMs = 180000, pollMs =
  *   - RECEIPT_TIMEOUT  — receipt never landed; the tx may still be pending, so
  *                        retrying would race a second tx against the same nonce
  *                        (a confirmed on-chain revert is NOT this — it may retry)
+ *   - BROADCAST_FAILED — /execute returned an uninterpretable response (non-JSON,
+ *                        typically a 502/503 after all retries) AFTER we POSTed
+ *                        the signed tx. A dropped ack is indistinguishable from
+ *                        "never sent", so the backend may already have broadcast
+ *                        it; failing closed here trades a needless re-quote for
+ *                        never trying the next candidate on top of a live tx.
  *
  * @param {Error} err
  * @returns {boolean}
@@ -852,7 +956,8 @@ export async function waitForReceipt(chain, txHash, timeoutMs = 180000, pollMs =
 function isFatalBroadcastError(err) {
   return err?.code === 'TXHASH_MISMATCH'
     || err?.code === 'INVALID_SIGNED_TX'
-    || err?.code === 'RECEIPT_TIMEOUT';
+    || err?.code === 'RECEIPT_TIMEOUT'
+    || err?.code === 'BROADCAST_FAILED';
 }
 
 /**
@@ -1924,6 +2029,12 @@ export function buildTradingCommands(deps = {}) {
 
   return {
     'quote': async (args, apiInstance, flags, options) => {
+      for (const [name, example] of [
+        ['swap-mode', 'exactIn'], ['wallet', '<name>'], ['to-chain', 'solana'],
+        ['aggregator', 'relay'], ['amount-unit', 'base'],
+      ]) {
+        rejectBlankOption(options[name], name, example);
+      }
       const chain = options.chain || args[0];
       const toChainRaw = options['to-chain'];
       const fromRaw = options.from || options['from-token'] || args[1];
@@ -1957,6 +2068,15 @@ export function buildTradingCommands(deps = {}) {
       // can't become a 300% slippage tolerance.
       for (const [optName, optVal] of [['slippage', slippage], ['max-auto-slippage', maxAutoSlippage]]) {
         if (optVal == null) continue;
+        // A blank value must not read as "not supplied": `Number('')` is 0, which
+        // would pass the range check below and satisfy the exactOut cap
+        // requirement even though the caller supplied no number.
+        if (typeof optVal === 'string' && optVal.trim() === '') {
+          throw new CommandError(
+            `Invalid --${optName} "". Use a decimal between 0 and 1 (e.g. 0.03 for 3%).`,
+            'INVALID_SLIPPAGE'
+          );
+        }
         const n = Number(optVal);
         if (!Number.isFinite(n) || n < 0 || n > 1) {
           throw new CommandError(
@@ -2123,9 +2243,19 @@ CROSS-CHAIN NOTES (when using --to-chain):
         let walletProvider = 'local';
         let privyWalletIds = null;
         if (isWalletConnect) {
-          walletAddress = await getWalletConnectAddress(chainType);
+          // Scoped to this chain's ID (see getWalletConnectAddress's chainId
+          // param): a session approved only for a different EVM chain must
+          // not be treated as valid here just because it's "some eip155:*"
+          // account -- EVM addresses are identical across chains. chainId is
+          // only ever passed for 'evm': Solana's chainConfig.chainId (501) is
+          // not a CAIP-2 EIP-155 chain ID, and getWalletConnectAddress's own
+          // Solana branch already does its own exact match unconditionally --
+          // passing 501 through here would break it, not narrow it further.
+          walletAddress = chainType === 'evm'
+            ? await getWalletConnectAddress(chainType, chainConfig.chainId)
+            : await getWalletConnectAddress(chainType);
           if (!walletAddress) {
-            throw new CommandError('No WalletConnect session active. Run: walletconnect connect', 'NO_WALLET');
+            throw new CommandError(`No WalletConnect session active for chain "${chain}". Run: walletconnect connect`, 'NO_WALLET');
           }
         } else if (walletName) {
           const wallet = showWallet(walletName);
@@ -2235,9 +2365,9 @@ CROSS-CHAIN NOTES (when using --to-chain):
             }
           }
         }
-        if (slippage) params.slippagePercent = slippage;
+        if (slippage != null) params.slippagePercent = slippage;
         if (autoSlippage) params.autoSlippage = true;
-        if (maxAutoSlippage) params.maxAutoSlippagePercent = maxAutoSlippage;
+        if (maxAutoSlippage != null) params.maxAutoSlippagePercent = maxAutoSlippage;
         if (swapMode !== 'exactIn') params.swapMode = swapMode;
 
         const response = await getQuote(params);
@@ -2370,6 +2500,7 @@ CROSS-CHAIN NOTES (when using --to-chain):
     },
 
     'execute': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.wallet, 'wallet', '<name>');
       const quoteId = options.quote || options['quote-id'] || args[0];
       const walletName = options.wallet;
       const noSimulate = flags['no-simulate'];
@@ -2474,10 +2605,20 @@ EXAMPLES:
 
           exported = exportWallet(effectiveWalletName, password);
         } else {
-          // Verify WalletConnect session is still active and address matches quote
-          const wcAddress = await getWalletConnectAddress(chainType);
+          // Verify WalletConnect session is still active, approved for this
+          // chain, and its address matches the quote. Chain-scoped (see
+          // getWalletConnectAddress's chainId param) because an address
+          // match alone can't tell a session on the right chain from one on
+          // the wrong chain -- EVM addresses are identical across chains.
+          // chainId is only ever passed for 'evm': Solana's chainConfig.chainId
+          // (501) is not a CAIP-2 EIP-155 chain ID, and getWalletConnectAddress's
+          // own Solana branch already does its own exact match unconditionally --
+          // passing 501 through here would break it, not narrow it further.
+          const wcAddress = chainType === 'evm'
+            ? await getWalletConnectAddress(chainType, chainConfig.chainId)
+            : await getWalletConnectAddress(chainType);
           if (!wcAddress) {
-            throw new CommandError('No WalletConnect session active. Run: walletconnect connect', 'NO_WALLET');
+            throw new CommandError(`No WalletConnect session active for chain "${chain}". Run: walletconnect connect`, 'NO_WALLET');
           }
           // Check address matches the one used during quoting
           const quoteWallet = quoteData.response?.quotes?.[0]?.transaction?.from
@@ -2937,14 +3078,24 @@ EXAMPLES:
               requestId = currentQuote.metadata?.requestId;
 
             } else if (isWalletConnect) {
-              // EVM via WalletConnect: wallet signs and may broadcast
-              const wcAddress = await getWalletConnectAddress(chainType);
-              // A session dropped mid-execute returns null here. Without this
+              // EVM via WalletConnect: wallet signs and may broadcast.
+              // chainType is always 'evm' here (unguarded, unlike the two
+              // other call sites) -- the Solana WalletConnect path is fully
+              // handled above in the `if (chainConfig.type === 'solana')`
+              // branch, so this `else if` is only ever reached for EVM.
+              // Scoped to this chain's ID, not just "any EVM account" -- a
+              // session approved only for a different chain must not sign
+              // here. EVM addresses are identical across chains, so the
+              // address-based checks below (assertQuoteMatchesRequest) can't
+              // catch a session connected to the wrong chain on their own.
+              const wcAddress = await getWalletConnectAddress(chainType, chainConfig.chainId);
+              // A session dropped mid-execute, or one that's connected but not
+              // approved for this chain, returns null here. Without this
               // guard a null address would fall through to assertQuoteMatchesRequest,
               // whose `request.walletAddress && walletAddress` condition would
               // silently skip the signer-binding check. Fail closed instead.
               if (!wcAddress) {
-                throw new CommandError('WalletConnect session lost during execute. Reconnect with `walletconnect connect` and retry.', 'NO_WALLET');
+                throw new CommandError('No WalletConnect session for this chain. Reconnect with `walletconnect connect` and retry.', 'NO_WALLET');
               }
               const isNative = isNativeToken(currentQuote.inputMint);
 
@@ -3561,7 +3712,16 @@ EXAMPLES:
               execParams.requestId = requestId; // Solana Jupiter Ultra
             }
 
-            const result = await executeTransaction(execParams);
+            // A retry re-POSTs the signed payload. For a normal swap that's a
+            // byte-identical replay the node dedupes, so retrying an ambiguous
+            // 5xx/network failure can't itself double-broadcast. But a --gasless
+            // Relay swap sends a signed AUTHORIZATION, and Relay's solver
+            // broadcasts its OWN wrapping tx from it (the returned txHash is not
+            // our bytes) — so a re-POST after the solver already picked it up
+            // can't be deduped at the node level and risks a second solve. For
+            // gasless we therefore don't retry: a single POST either succeeds or
+            // fails closed (BROADCAST_FAILED marks the quote spent and aborts).
+            const result = await executeTransaction(execParams, { retries: gasless ? 0 : undefined });
 
             if (result.status === 'Success') {
               let txId = result.signature || result.txHash;
@@ -3698,10 +3858,22 @@ EXAMPLES:
             }
 
           } catch (quoteErr) {
+            // A BROADCAST_FAILED throws out of executeTransaction — BEFORE the
+            // normal markQuoteExecuted runs — so nothing has recorded this quote
+            // as spent. The signed tx may already be live on the backend (a 502
+            // on the ack, not on the send), so fail closed: mark it here so a
+            // later "trade execute --quote <id>" (or an agent auto-retry) is
+            // refused before it re-signs under a fresh nonce. No broadcast hash
+            // is recorded — we don't have one — which yields loadQuote's generic
+            // "may still be pending, check the explorer" message.
+            if (quoteErr?.code === 'BROADCAST_FAILED') {
+              markQuoteExecuted(quoteId);
+            }
             // Post-broadcast failures abort the whole execute — never retry the
             // next quote once a transaction is already out and its outcome is
-            // unknown (mismatch, underivable local hash, or an unconfirmed
-            // receipt timeout). See isFatalBroadcastError.
+            // unknown (mismatch, underivable local hash, an unconfirmed receipt
+            // timeout, or an ambiguous broadcast failure). See
+            // isFatalBroadcastError.
             if (isFatalBroadcastError(quoteErr)) throw quoteErr;
             const msg = quoteErr.message || '';
             log(`  ❌ Quote ${quoteName} failed: ${msg}`);

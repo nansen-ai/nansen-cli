@@ -83,7 +83,7 @@ describe('refreshCostMapIfStale', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nansen-cost-refresh-test-'));
     process.env.HOME = tempDir;
     vi.resetModules();
-    vi.stubGlobal('fetch', vi.fn(async () => ({ json: async () => spec })));
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => spec })));
     ({ refreshCostMapIfStale, getCostForEndpoint } = await import('../cost-cache.js'));
   });
 
@@ -148,5 +148,78 @@ describe('refreshCostMapIfStale', () => {
     await refreshCostMapIfStale();
     expect(fetch).toHaveBeenCalledOnce();
     expect(getCostForEndpoint('/api/v1/foo')).toEqual({ free: 3, pro: 5 });
+  });
+
+  // Seed a stale cache holding known-good costs. A failed refresh must leave it
+  // alone: overwriting it would both lose the costs and stamp fetchedAt fresh,
+  // which suppresses the next attempt for a full 24h.
+  function seedStale() {
+    fs.mkdirSync(cacheDir(), { recursive: true });
+    const stale = Date.now() - 25 * 60 * 60 * 1000;
+    fs.writeFileSync(cacheFile(), JSON.stringify({
+      costs: { '/api/v1/foo': { free: 1, pro: 2 } },
+      fetchedAt: stale,
+    }));
+    return stale;
+  }
+
+  it('ignores a non-2xx response that still returns JSON', async () => {
+    const stale = seedStale();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: 'internal' }),
+    })));
+
+    await refreshCostMapIfStale();
+
+    const parsed = JSON.parse(fs.readFileSync(cacheFile(), 'utf8'));
+    expect(parsed.costs).toEqual({ '/api/v1/foo': { free: 1, pro: 2 } });
+    expect(parsed.fetchedAt).toBe(stale);
+  });
+
+  it('retries on the next call after a failed refresh instead of backing off', async () => {
+    seedStale();
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })));
+    await refreshCostMapIfStale();
+
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => spec })));
+    await refreshCostMapIfStale();
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(getCostForEndpoint('/api/v1/foo')).toEqual({ free: 3, pro: 5 });
+  });
+
+  it('ignores a 2xx body that is not the spec', async () => {
+    const stale = seedStale();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ message: 'maintenance' }),
+    })));
+
+    await refreshCostMapIfStale();
+
+    const parsed = JSON.parse(fs.readFileSync(cacheFile(), 'utf8'));
+    expect(parsed.costs).toEqual({ '/api/v1/foo': { free: 1, pro: 2 } });
+    expect(parsed.fetchedAt).toBe(stale);
+  });
+
+  // A real spec whose endpoints simply carry no x-credit-cost is a valid answer,
+  // so it is cached. Without this boundary the guard above would refetch the
+  // whole spec on every invocation.
+  it('caches an empty cost map when the spec has paths but no costs', async () => {
+    seedStale();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ paths: { '/api/v1/foo': { get: {} } } }),
+    })));
+
+    await refreshCostMapIfStale();
+
+    const parsed = JSON.parse(fs.readFileSync(cacheFile(), 'utf8'));
+    expect(parsed.costs).toEqual({});
+    expect(parsed.fetchedAt).toBeGreaterThan(Date.now() - 60_000);
   });
 });

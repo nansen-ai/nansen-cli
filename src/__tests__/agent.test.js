@@ -425,6 +425,58 @@ describe('agent command', () => {
       const fetchOptions = fetchSpy.mock.calls[0][1];
       expect(fetchOptions.signal).toBeInstanceOf(AbortSignal);
     });
+
+    // Abort can fire mid-body-read, not just during the fetch() call itself.
+    function mockAbortingBody() {
+      // No `yield` here on purpose — the mocked stream never produces a
+      // frame before aborting, so this isn't a generator, just a manual
+      // async iterator whose first next() rejects.
+      return {
+        [Symbol.asyncIterator]() {
+          return {
+            next() {
+              return Promise.reject(
+                new DOMException('The operation was aborted', 'AbortError')
+              );
+            },
+          };
+        },
+      };
+    }
+
+    function mockAbortingResponse() {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'text/event-stream' }),
+        body: mockAbortingBody(),
+      };
+    }
+
+    it('throws TIMEOUT (not a raw AbortError) when the abort fires during streaming output', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockAbortingResponse());
+
+      try {
+        await cmd(['test'], mockApi(), {}, {});
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(NansenError);
+        expect(err.code).toBe(ErrorCode.TIMEOUT);
+        expect(err.message).toContain('120s');
+      }
+    });
+
+    it('throws TIMEOUT (not a raw AbortError) when the abort fires during JSON mode', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockAbortingResponse());
+
+      try {
+        await cmd(['test'], mockApi(), { json: true }, {});
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(NansenError);
+        expect(err.code).toBe(ErrorCode.TIMEOUT);
+      }
+    });
   });
 
   // ── Conversation ID validation ──
@@ -597,5 +649,38 @@ describe('consumeSSEStream', () => {
     );
     const result = await consumeSSEStream(response);
     expect(result.text).toBe('ok');
+  });
+
+  it('flushes a trailing delta chunk with no terminating blank line', async () => {
+    // Server closes the connection right after the last event, without a
+    // final \n\n. This is a realistic SSE termination pattern (socket
+    // close signals end-of-stream) and must not silently drop data.
+    const response = mockSSEResponse(
+      'data: {"type":"delta","text":"hello"}\n'
+    );
+    const result = await consumeSSEStream(response);
+    expect(result.text).toBe('hello');
+  });
+
+  it('flushes a trailing finish event with no terminating blank line', async () => {
+    const response = mockSSEResponse([
+      'data: {"type":"delta","text":"hi"}\n\n',
+      'data: {"type":"finish","conversation_id":"abc-123"}\n',
+    ]);
+    const result = await consumeSSEStream(response);
+    expect(result.text).toBe('hi');
+    expect(result.conversationId).toBe('abc-123');
+  });
+
+  it('does not flush a leftover buffer after [DONE] has already been seen', async () => {
+    // Guard against the flush accidentally re-processing/duplicating data
+    // when the stream terminates normally via [DONE].
+    const onDelta = vi.fn();
+    const response = mockSSEResponse(
+      'data: {"type":"delta","text":"before"}\n\ndata: [DONE]\n\n'
+    );
+    const result = await consumeSSEStream(response, { onDelta });
+    expect(result.text).toBe('before');
+    expect(onDelta).toHaveBeenCalledTimes(1);
   });
 });

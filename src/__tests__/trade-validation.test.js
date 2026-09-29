@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { validateQuoteInput, fetchNativeBalance, fetchTokenBalance, validateBalance, resolvePercentAmount, validateGasBalance, GASLESS_MIN_TRADE_USD, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertInputWithinMax, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, assertSolanaSwapOutcome, MAX_UINT256, needsAllowanceRevoke } from '../trade-validation.js';
+import { validateQuoteInput, fetchNativeBalance, fetchTokenBalance, validateBalance, resolvePercentAmount, validateGasBalance, GASLESS_MIN_TRADE_USD, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertInputWithinMax, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, assertSolanaSwapOutcome, assertLimitOrderDepositOutcome, assertLimitOrderCancelOutcome, assertLimitOrderDepositDestination, MAX_UINT256, needsAllowanceRevoke } from '../trade-validation.js';
 import { SOL_SENTINEL } from '../solana-simulation.js';
-import { base58Decode, generateSolanaWallet } from '../wallet.js';
+import crypto from 'crypto';
+import { base58Decode, base58Encode, generateSolanaWallet } from '../wallet.js';
 
 describe('validateQuoteInput', () => {
   const validSolana = {
@@ -1484,6 +1485,18 @@ describe('assertSwapOutcome', () => {
   };
   const exactInQuote = { inputMint: USDC, outputMint: DAI, inAmount: '1000000', outAmount: '1000000' };
 
+  // exactIn native-ETH bridge: 0.1 ETH → USDC cross-chain, used by refund-slack tests.
+  const nativeBridgeRequest = {
+    chain: 'base', walletAddress: '0xwallet',
+    fromToken: NATIVE, toToken: USDC,
+    swapMode: 'exactIn', toChain: 'solana',
+    amount: '100000000000000000', maxInputAmount: '100000000000000000', // 0.1 ETH
+  };
+  const nativeBridgeQuote = {
+    inputMint: NATIVE, outputMint: USDC,
+    inAmount: '100000000000000000', outAmount: '1000000',
+  };
+
   it('passes a benign exactIn swap within cap and above min output', () => {
     const sim = { deltas: { [USDC]: -1000000n, [DAI]: 1000000n }, approvals: [] };
     expect(() => assertSwapOutcome(exactInRequest, exactInQuote, sim, { slippage: 0.03, expectedSpenders: [ROUTER] }))
@@ -1726,6 +1739,25 @@ describe('assertSwapOutcome', () => {
       .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*other than the one you are selling/i);
   });
 
+  it('bridge: native fee tolerance does not unlock an ERC-20 intermediate token outflow', () => {
+    // A bridge with a tolerated native ETH fee (within siblingDustThreshold) and
+    // a wallet-owned ERC-20 intermediate token both leaving the wallet must still
+    // fail closed. The native tolerance is narrow and token-type-specific; it
+    // cannot be used to launder an ERC-20 sibling drain as an "intermediate".
+    const intermediate = '0xaaaa000000000000000000000000000000000001';
+    const bridgeRequest = { ...exactInRequest, toChain: 'solana' };
+    const sim = {
+      deltas: {
+        [USDC]: -1000000n,
+        [NATIVE]: -1_000_000_000_000_000n, // 0.001 ETH fee — within the threshold
+        [intermediate]: -42n,              // wallet-owned intermediate ERC-20
+      },
+      approvals: [],
+    };
+    expect(() => assertSwapOutcome(bridgeRequest, exactInQuote, sim, { siblingDustThreshold: 2_000_000_000_000_000n }))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*other than the one you are selling/i);
+  });
+
   it('bridge: rejects a no-op transaction that spends no input (intent-relative floor)', () => {
     // A bridge skips assertion 2 (output arrival), which for a normal swap is
     // what proves the input actually left. Empty deltas must not pass as a
@@ -1733,7 +1765,7 @@ describe('assertSwapOutcome', () => {
     const bridgeRequest = { ...exactInRequest, toChain: 'solana' };
     const sim = { deltas: {}, approvals: [] };
     expect(() => assertSwapOutcome(bridgeRequest, exactInQuote, sim, {}))
-      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
   });
 
   it('bridge: rejects a partial outflow far below the requested input (intent-relative floor)', () => {
@@ -1743,7 +1775,7 @@ describe('assertSwapOutcome', () => {
     const bridgeRequest = { ...exactInRequest, toChain: 'solana' };
     const sim = { deltas: { [USDC]: -1n }, approvals: [] };
     expect(() => assertSwapOutcome(bridgeRequest, exactInQuote, sim, {}))
-      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
   });
 
   it('bridge: fails closed on an unrecognized swap mode (does not fall into the weaker exactOut floor)', () => {
@@ -1795,6 +1827,78 @@ describe('assertSwapOutcome', () => {
     // weakening of assertion 2 — request.toChain is unset here (same-chain).
     const sim = { deltas: { [USDC]: -1000000n }, approvals: [] }; // no output at all
     expect(() => assertSwapOutcome(exactInRequest, exactInQuote, sim, { slippage: 0.03 }))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*minimum acceptable output/i);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Native-input exact-in bridge: refund slack
+  // Some routers receive msg.value = request.amount and refund a small unused
+  // remainder, making the net outflow slightly below the requested input.
+  // ---------------------------------------------------------------------------
+
+  it('native exact-in bridge: passes when outflow is within the refund slack (0.001 ETH below requested)', () => {
+    const sim = { deltas: { [NATIVE]: -99000000000000000n }, approvals: [] }; // 0.001 ETH refunded
+    expect(() => assertSwapOutcome(nativeBridgeRequest, nativeBridgeQuote, sim, {})).not.toThrow();
+  });
+
+  it('native exact-in bridge: rejects zero outflow (no-op bridge)', () => {
+    const sim = { deltas: {}, approvals: [] };
+    expect(() => assertSwapOutcome(nativeBridgeRequest, nativeBridgeQuote, sim, {}))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
+  });
+
+  it('native exact-in bridge: rejects a far-below-requested outflow beyond refund slack', () => {
+    const sim = { deltas: { [NATIVE]: -1n }, approvals: [] }; // nearly nothing spent
+    expect(() => assertSwapOutcome(nativeBridgeRequest, nativeBridgeQuote, sim, {}))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
+  });
+
+  it('ERC-20 exact-in bridge: rejects even a 1-unit shortfall (no slack for token input)', () => {
+    const bridgeRequest = { ...exactInRequest, toChain: 'solana' };
+    const sim = { deltas: { [USDC]: -999999n }, approvals: [] }; // 1 below requested 1,000,000
+    expect(() => assertSwapOutcome(bridgeRequest, exactInQuote, sim, {}))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
+  });
+
+  it('native exact-in bridge: passes at exactly the slack boundary (outflow = requested - slack)', () => {
+    // 0.1 ETH - 0.002 ETH = 0.098 ETH — outflow is right at the floor.
+    const sim = { deltas: { [NATIVE]: -98000000000000000n }, approvals: [] };
+    expect(() => assertSwapOutcome(nativeBridgeRequest, nativeBridgeQuote, sim, {})).not.toThrow();
+  });
+
+  it('native exact-in bridge: rejects one wei below the slack boundary', () => {
+    // 0.098 ETH - 1 wei is below the floor.
+    const sim = { deltas: { [NATIVE]: -97999999999999999n }, approvals: [] };
+    expect(() => assertSwapOutcome(nativeBridgeRequest, nativeBridgeQuote, sim, {}))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
+  });
+
+  it('native exact-in bridge: sub-slack-threshold amount uses half-requested floor (0.003 ETH bridge)', () => {
+    // 0.003 ETH is below 2 × EVM_BRIDGE_NATIVE_INPUT_REFUND_SLACK (~0.004 ETH), so the
+    // applied slack is capped at requested / 2n = 0.0015 ETH. The floor is 50% of requested.
+    const smallRequest = {
+      ...nativeBridgeRequest,
+      amount: '3000000000000000', maxInputAmount: '3000000000000000',
+    };
+    const smallQuote = { ...nativeBridgeQuote, inAmount: '3000000000000000' };
+    // Exactly at the half-requested floor: passes.
+    expect(() => assertSwapOutcome(smallRequest, smallQuote, { deltas: { [NATIVE]: -1500000000000000n }, approvals: [] }, {})).not.toThrow();
+    // One wei below: fails.
+    expect(() => assertSwapOutcome(smallRequest, smallQuote, { deltas: { [NATIVE]: -1499999999999999n }, approvals: [] }, {}))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
+  });
+
+  it('same-chain native exact-in swap: not affected by bridge floor slack; assertion 2 governs', () => {
+    // inputIsNative is true but isBridge is false — the bridge floor block never
+    // runs, and the swap is judged by output arrival (assertion 2).
+    const req = {
+      chain: 'base', walletAddress: '0xwallet',
+      fromToken: NATIVE, toToken: USDC,
+      swapMode: 'exactIn', amount: '100000000000000000', maxInputAmount: '100000000000000000',
+    };
+    const quote = { inputMint: NATIVE, outputMint: USDC, inAmount: '100000000000000000', outAmount: '1000000' };
+    const sim = { deltas: { [NATIVE]: -99000000000000000n }, approvals: [] }; // no USDC arrives
+    expect(() => assertSwapOutcome(req, quote, sim, {}))
       .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*minimum acceptable output/i);
   });
 });
@@ -2140,6 +2244,507 @@ describe('assertSolanaSwapOutcome', () => {
     const sim = { deltas: { [SOL_USDC]: -1000000n } }; // no output at all
     expect(() => assertSolanaSwapOutcome(splInRequest, splInQuote, sim, { slippage: 0.03 }))
       .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*minimum acceptable output/i);
+  });
+});
+
+describe('assertLimitOrderDepositOutcome', () => {
+  const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  // MAX_PRIORITY_FEE_LAMPORTS (10M) + NATIVE_SIBLING_DUST_LAMPORTS (3M).
+  const SLACK = 13_000_000n;
+
+  it('passes an SPL input leaving the wallet by exactly amount', () => {
+    const sim = { deltas: { [USDC]: -1_000_000n } };
+    expect(assertLimitOrderDepositOutcome(sim, { inputMint: USDC, amount: 1_000_000n }))
+      .toEqual({ verified: true });
+  });
+
+  it('rejects an SPL input outflow exceeding amount (upper bound)', () => {
+    const sim = { deltas: { [USDC]: -1_000_001n } };
+    expect(() => assertLimitOrderDepositOutcome(sim, { inputMint: USDC, amount: 1_000_000n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*exceeding the deposit amount/i);
+  });
+
+  it('passes a native-SOL input within amount + fee/rent slack', () => {
+    const sim = { deltas: { [SOL_SENTINEL]: -(1_000_000_000n + SLACK) } };
+    expect(assertLimitOrderDepositOutcome(sim, { inputMint: SOL_SENTINEL, amount: 1_000_000_000n }))
+      .toEqual({ verified: true });
+  });
+
+  it('rejects a native-SOL input beyond amount + fee/rent slack', () => {
+    const sim = { deltas: { [SOL_SENTINEL]: -(1_000_000_000n + SLACK + 1n) } };
+    expect(() => assertLimitOrderDepositOutcome(sim, { inputMint: SOL_SENTINEL, amount: 1_000_000_000n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*exceeding the deposit amount/i);
+  });
+
+  it('rejects a sibling native-SOL drain alongside a benign SPL deposit (repro shape)', () => {
+    // The reproduced bug: a SystemProgram.transfer of 0.123 SOL to an attacker
+    // address, alongside a legitimate USDC deposit.
+    const sim = { deltas: { [USDC]: -1_000_000n, [SOL_SENTINEL]: -123_456_789n } };
+    expect(() => assertLimitOrderDepositOutcome(sim, { inputMint: USDC, amount: 1_000_000n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*other than the one you are depositing/i);
+  });
+
+  it('tolerates native-SOL fee/rent dust as a sibling on an SPL deposit', () => {
+    const sim = { deltas: { [USDC]: -1_000_000n, [SOL_SENTINEL]: -2_000_000n } };
+    expect(assertLimitOrderDepositOutcome(sim, { inputMint: USDC, amount: 1_000_000n }))
+      .toEqual({ verified: true });
+  });
+
+  it('rejects a partial reroute of the SPL input (lower bound)', () => {
+    const sim = { deltas: { [USDC]: -500_000n } }; // half of `amount`
+    expect(() => assertLimitOrderDepositOutcome(sim, { inputMint: USDC, amount: 1_000_000n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*not the exact deposit amount/i);
+  });
+
+  it('rejects any SPL outflow shortfall, however small', () => {
+    const sim = { deltas: { [USDC]: -999_999n } };
+    expect(() => assertLimitOrderDepositOutcome(sim, { inputMint: USDC, amount: 1_000_000n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*not the exact deposit amount/i);
+  });
+
+  it('rejects a native-SOL input below amount minus fee/rent slack (floor)', () => {
+    const sim = { deltas: { [SOL_SENTINEL]: -(1_000_000_000n - SLACK - 1n) } };
+    expect(() => assertLimitOrderDepositOutcome(sim, { inputMint: SOL_SENTINEL, amount: 1_000_000_000n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*below the deposit amount/i);
+  });
+
+  it('rejects a zero-outflow deposit (subsumed by the floor)', () => {
+    const sim = { deltas: {} };
+    expect(() => assertLimitOrderDepositOutcome(sim, { inputMint: USDC, amount: 1_000_000n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH/);
+  });
+
+  it('rejects a native-SOL deposit whose amount is too small to verify against slack, even with zero outflow', () => {
+    // For amount <= NATIVE_FEE_RENT_SLACK_LAMPORTS the ±slack window swallows the entire
+    // requested amount, so outflow magnitude alone can't tell a genuine (if undersized)
+    // deposit from a no-op. Fail closed rather than admit any outflow, zero included.
+    const sim = { deltas: {} };
+    expect(() => assertLimitOrderDepositOutcome(sim, { inputMint: SOL_SENTINEL, amount: 1n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*too small[\s\S]*slack/i);
+  });
+
+  it('rejects a native-SOL deposit whose amount is too small to verify against slack, even with a nonzero fee-only outflow (regression: used to pass)', () => {
+    // The gap this closes: previously, requiring only a nonzero outflow below this
+    // threshold let an unrelated fee-only outflow "prove" the requested SOL was escrowed.
+    const sim = { deltas: { [SOL_SENTINEL]: -5000n } };
+    expect(() => assertLimitOrderDepositOutcome(sim, { inputMint: SOL_SENTINEL, amount: 1n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*too small[\s\S]*slack/i);
+  });
+
+  it('rejects a native-SOL deposit at the slack threshold (amount == slack, still unverifiable)', () => {
+    const sim = { deltas: { [SOL_SENTINEL]: -(SLACK + 5000n) } };
+    expect(() => assertLimitOrderDepositOutcome(sim, { inputMint: SOL_SENTINEL, amount: SLACK }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*too small[\s\S]*slack/i);
+  });
+
+  it('verifies a native-SOL deposit just above the slack threshold', () => {
+    const cap = SLACK + 1n; // smallest amount for which the floor is meaningfully > 0
+    const sim = { deltas: { [SOL_SENTINEL]: -cap } };
+    expect(assertLimitOrderDepositOutcome(sim, { inputMint: SOL_SENTINEL, amount: cap }))
+      .toEqual({ verified: true });
+  });
+
+  it('fails closed on a non-integer simulated delta', () => {
+    const sim = { deltas: { [USDC]: 'not-a-number' } };
+    expect(() => assertLimitOrderDepositOutcome(sim, { inputMint: USDC, amount: 1_000_000n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*not an integer/i);
+  });
+});
+
+describe('assertLimitOrderCancelOutcome', () => {
+  const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  const SLACK = 13_000_000n; // NATIVE_FEE_RENT_SLACK_LAMPORTS
+
+  it('passes a pure inflow of the order\'s own input asset (withdrawal returning funds to the wallet)', () => {
+    const sim = { deltas: { [USDC]: 1_000_000n } };
+    expect(assertLimitOrderCancelOutcome(sim, { inputMint: USDC })).toEqual({ verified: true });
+  });
+
+  it('tolerates native-SOL fee/rent dust', () => {
+    const sim = { deltas: { [USDC]: 1_000_000n, [SOL_SENTINEL]: -2_000_000n } };
+    expect(assertLimitOrderCancelOutcome(sim, { inputMint: USDC })).toEqual({ verified: true });
+  });
+
+  it('folds a WSOL-mint order input to the native sentinel so a native refund matches', () => {
+    const WSOL = 'So11111111111111111111111111111111111111112';
+    const sim = { deltas: { [SOL_SENTINEL]: 1_000_000_000n } };
+    expect(assertLimitOrderCancelOutcome(sim, { inputMint: WSOL })).toEqual({ verified: true });
+  });
+
+  it('rejects any SPL outflow during cancellation', () => {
+    const otherMint = 'Other11111111111111111111111111111111111';
+    const sim = { deltas: { [USDC]: 1_000_000n, [otherMint]: -1n } };
+    expect(() => assertLimitOrderCancelOutcome(sim, { inputMint: USDC }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*left your wallet during cancellation/i);
+  });
+
+  it('rejects a native-SOL outflow beyond fee/rent dust', () => {
+    const sim = { deltas: { [USDC]: 1_000_000n, [SOL_SENTINEL]: -14_000_000n } };
+    expect(() => assertLimitOrderCancelOutcome(sim, { inputMint: USDC }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*left your wallet during cancellation/i);
+  });
+
+  it('rejects an empty delta set (a crafted cancel tx that touches the wallet not at all)', () => {
+    // The gap this closes: a malicious withdrawal could redirect the vault's
+    // escrowed funds to a third party without ever moving anything through or
+    // from the wallet's own tracked accounts, showing an empty (or dust-only)
+    // delta set that used to verify successfully.
+    const sim = { deltas: {} };
+    expect(() => assertLimitOrderCancelOutcome(sim, { inputMint: USDC }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*produced no inflow/i);
+  });
+
+  it('rejects a fee-only outflow with no offsetting inflow (same gap, non-empty dust)', () => {
+    const sim = { deltas: { [SOL_SENTINEL]: -3000n } }; // network fee only, nothing returned
+    expect(() => assertLimitOrderCancelOutcome(sim, { inputMint: USDC }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*produced no inflow/i);
+  });
+
+  it('rejects an inflow of an unrelated asset when the order\'s own input asset never returns (redirect-then-decoy)', () => {
+    // The gap this closes: the old check accepted ANY positive delta as proof of a
+    // refund. A crafted cancel could redirect the escrowed USDC elsewhere, then close
+    // an unrelated, empty token account back to the wallet for its rent — a real,
+    // unrelated inflow that used to satisfy "some inflow happened" without the actual
+    // escrowed asset (USDC) ever coming back.
+    const decoyMint = 'Decoy111111111111111111111111111111111111';
+    const sim = { deltas: { [decoyMint]: 2_039_280n } }; // rent reclaimed from closing an empty ATA
+    expect(() => assertLimitOrderCancelOutcome(sim, { inputMint: USDC }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*produced no inflow of the deposited asset/i);
+  });
+
+  it('rejects a decoy inflow even alongside a partial/short outflow of the real input asset', () => {
+    // Same gap, but the redirect leaves a small residual balance behind — still not a
+    // genuine inflow of the deposited asset, so this must not pass on the decoy alone.
+    const decoyMint = 'Decoy111111111111111111111111111111111111';
+    const sim = { deltas: { [USDC]: 0n, [decoyMint]: 2_039_280n } };
+    expect(() => assertLimitOrderCancelOutcome(sim, { inputMint: USDC }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*produced no inflow of the deposited asset/i);
+  });
+
+  it('fails closed when the order\'s input mint is missing from context', () => {
+    const sim = { deltas: { [USDC]: 1_000_000n } };
+    expect(() => assertLimitOrderCancelOutcome(sim, {}))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*input mint is missing/i);
+    expect(() => assertLimitOrderCancelOutcome(sim))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*input mint is missing/i);
+  });
+
+  // --- refund-amount binding: a bare >0 inflow is not enough when the expected
+  // remaining refund is known; the returned amount must match it. ---
+
+  it('passes when an SPL refund matches the expected remaining amount exactly', () => {
+    const sim = { deltas: { [USDC]: 1_000_000n } };
+    expect(assertLimitOrderCancelOutcome(sim, { inputMint: USDC, amount: 1_000_000n }))
+      .toEqual({ verified: true });
+  });
+
+  it('rejects a dust SPL refund far below the expected remaining amount (redirect-most-of-escrow)', () => {
+    // The gap this closes: a crafted cancel reroutes nearly all the escrow and refunds a
+    // single unit of the right mint — a real, correct-asset inflow that satisfies >0 but
+    // is nowhere near the amount the order still owes.
+    const sim = { deltas: { [USDC]: 1n } };
+    expect(() => assertLimitOrderCancelOutcome(sim, { inputMint: USDC, amount: 1_000_000n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*not the expected remaining refund/i);
+  });
+
+  it('rejects an SPL refund above the expected remaining amount', () => {
+    const sim = { deltas: { [USDC]: 1_000_001n } };
+    expect(() => assertLimitOrderCancelOutcome(sim, { inputMint: USDC, amount: 1_000_000n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*not the expected remaining refund/i);
+  });
+
+  it('passes a native-SOL refund within fee/rent slack of the expected amount', () => {
+    // Net inflow is the refund minus this tx's fee — a hair under the expected amount.
+    const sim = { deltas: { [SOL_SENTINEL]: 1_000_000_000n - 5000n } };
+    expect(assertLimitOrderCancelOutcome(sim, { inputMint: SOL_SENTINEL, amount: 1_000_000_000n }))
+      .toEqual({ verified: true });
+  });
+
+  it('rejects a native-SOL refund below the expected amount minus slack', () => {
+    const sim = { deltas: { [SOL_SENTINEL]: 1_000_000_000n - SLACK - 1n } };
+    expect(() => assertLimitOrderCancelOutcome(sim, { inputMint: SOL_SENTINEL, amount: 1_000_000_000n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*outside the expected remaining refund/i);
+  });
+
+  it('fails closed for a native-SOL expected refund at or below the fee/rent slack (band would degenerate to dust)', () => {
+    // At expected <= SLACK the lower bound (expected - slack) is <= 0, so a two-sided band
+    // can no longer distinguish a genuine small refund from a 1-lamport dust inflow that
+    // reroutes the rest of the escrow. Must refuse rather than admit the bare-positive floor.
+    const dust = { deltas: { [SOL_SENTINEL]: 1n } };
+    expect(() => assertLimitOrderCancelOutcome(dust, { inputMint: SOL_SENTINEL, amount: SLACK }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*too small relative to the fee\/rent slack/i);
+    expect(() => assertLimitOrderCancelOutcome(dust, { inputMint: SOL_SENTINEL, amount: 10_000_000n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*too small relative to the fee\/rent slack/i);
+    // Even a full-magnitude refund just under the slack is refused — unverifiable, not signed.
+    const full = { deltas: { [SOL_SENTINEL]: 10_000_000n } };
+    expect(() => assertLimitOrderCancelOutcome(full, { inputMint: SOL_SENTINEL, amount: 10_000_000n }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*too small relative to the fee\/rent slack/i);
+  });
+
+  it('verifies a native-SOL refund once the expected amount clears the slack', () => {
+    const sim = { deltas: { [SOL_SENTINEL]: SLACK + 1n } };
+    expect(assertLimitOrderCancelOutcome(sim, { inputMint: SOL_SENTINEL, amount: SLACK + 1n }))
+      .toEqual({ verified: true });
+  });
+
+  it('falls back to a bare positive-inflow check when the expected amount is absent (omitted or zero)', () => {
+    const sim = { deltas: { [USDC]: 1n } };
+    expect(assertLimitOrderCancelOutcome(sim, { inputMint: USDC })).toEqual({ verified: true });
+    expect(assertLimitOrderCancelOutcome(sim, { inputMint: USDC, amount: 0n }))
+      .toEqual({ verified: true });
+  });
+
+  it('throws on a non-null but unparseable expected amount (call-site bug, never silently degrades)', () => {
+    const sim = { deltas: { [USDC]: 1n } };
+    expect(() => assertLimitOrderCancelOutcome(sim, { inputMint: USDC, amount: 'not-a-number' }))
+      .toThrow(/LIMIT_ORDER_OUTCOME_MISMATCH[\s\S]*is not an integer/i);
+  });
+});
+
+describe('assertLimitOrderDepositDestination', () => {
+  // Jupiter Trigger V2 funds each order through a per-order token account created
+  // in-tx via System::CreateAccountWithSeed(base = vault, seed, owner = TokenProg)
+  // — NOT the canonical ATA. These tests reproduce that real shape (confirmed by a
+  // live create round-trip) so the check is exercised against what actually lands
+  // on-chain, not a fabricated ATA transfer.
+  const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+  const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+  const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  const WSOL = 'So11111111111111111111111111111111111111112';
+
+  function encodeCompactU16(value) {
+    if (value < 0x80) return Buffer.from([value]);
+    if (value < 0x4000) return Buffer.from([(value & 0x7f) | 0x80, (value >> 7) & 0x7f]);
+    return Buffer.from([(value & 0x7f) | 0x80, ((value >> 7) & 0x7f) | 0x80, (value >> 14) & 0x03]);
+  }
+
+  function buildTransaction({ accountKeys, instructions }) {
+    const parts = [Buffer.from([1, 0, accountKeys.length - 1])];
+    parts.push(encodeCompactU16(accountKeys.length));
+    for (const k of accountKeys) parts.push(base58Decode(k));
+    parts.push(base58Decode(accountKeys[0]));
+    parts.push(encodeCompactU16(instructions.length));
+    for (const ix of instructions) {
+      parts.push(Buffer.from([ix.programIdIndex]));
+      parts.push(encodeCompactU16(ix.accountIndexes.length));
+      for (const idx of ix.accountIndexes) parts.push(Buffer.from([idx]));
+      parts.push(encodeCompactU16(ix.data.length));
+      parts.push(ix.data);
+    }
+    const messageBytes = Buffer.concat(parts);
+    return Buffer.concat([Buffer.from([1]), Buffer.alloc(64), messageBytes]).toString('base64');
+  }
+
+  // Pubkey::create_with_seed(base, seed, owner) = base58(sha256(base || seed || owner)).
+  function seededAccount(base, seed, owner = TOKEN_PROGRAM) {
+    return base58Encode(crypto.createHash('sha256')
+      .update(Buffer.concat([base58Decode(base), Buffer.from(seed, 'utf8'), base58Decode(owner)]))
+      .digest());
+  }
+
+  // System::CreateAccountWithSeed instruction data (bincode layout).
+  function createWithSeedData(base, seed, owner = TOKEN_PROGRAM, { lamports = 2039280, space = 165 } = {}) {
+    const seedBytes = Buffer.from(seed, 'utf8');
+    const idx = Buffer.alloc(4); idx.writeUInt32LE(3);
+    const seedLen = Buffer.alloc(8); seedLen.writeBigUInt64LE(BigInt(seedBytes.length));
+    const lam = Buffer.alloc(8); lam.writeBigUInt64LE(BigInt(lamports));
+    const sp = Buffer.alloc(8); sp.writeBigUInt64LE(BigInt(space));
+    return Buffer.concat([idx, base58Decode(base), seedLen, seedBytes, lam, sp, base58Decode(owner)]);
+  }
+
+  // SPL Token::InitializeAccount3 instruction data: [18, owner pubkey].
+  function initializeAccount3Data(owner) {
+    return Buffer.concat([Buffer.from([18]), base58Decode(owner)]);
+  }
+
+  // System::Transfer(lamports) instruction data.
+  function systemTransferData(lamports = 100000000) {
+    const idx = Buffer.alloc(4); idx.writeUInt32LE(2);
+    const lam = Buffer.alloc(8); lam.writeBigUInt64LE(BigInt(lamports));
+    return Buffer.concat([idx, lam]);
+  }
+
+  // Build a realistic SPL-input deposit: CreateAccountWithSeed(base=vault) then a
+  // wallet-authorized transfer of `mint` into the seeded account.
+  function splDeposit({ wallet, vault, mint, seed = 'order-seed-abc', dest, transferKind = 'checked', createBase, tokenOwner }) {
+    const seededBase = createBase || vault;
+    const seededAcct = seededAccount(seededBase, seed);
+    const destination = dest || seededAcct;
+    const sourceAta = generateSolanaWallet().address;
+    const keys = [wallet, sourceAta, mint, seededAcct, TOKEN_PROGRAM, SYSTEM_PROGRAM, seededBase];
+    const idxOf = (k) => { const i = keys.indexOf(k); return i >= 0 ? i : (keys.push(k) - 1); };
+    const destIdx = idxOf(destination);
+    const instructions = [
+      // CreateAccountWithSeed: [payer, created(=seededAcct), base]
+      { programIdIndex: keys.indexOf(SYSTEM_PROGRAM), accountIndexes: [0, keys.indexOf(seededAcct), keys.indexOf(seededBase)], data: createWithSeedData(seededBase, seed) },
+      // InitializeAccount3: [account, mint], owner in data.
+      { programIdIndex: keys.indexOf(TOKEN_PROGRAM), accountIndexes: [keys.indexOf(seededAcct), 2], data: initializeAccount3Data(tokenOwner || vault) },
+    ];
+    if (transferKind === 'checked') {
+      // TransferChecked: [source, mint, dest, authority]
+      instructions.push({ programIdIndex: keys.indexOf(TOKEN_PROGRAM), accountIndexes: [1, 2, destIdx, 0], data: Buffer.from([12, 0, 0, 0, 0, 0, 0, 0, 0, 6]) });
+    } else {
+      // Transfer: [source, dest, authority]
+      instructions.push({ programIdIndex: keys.indexOf(TOKEN_PROGRAM), accountIndexes: [1, destIdx, 0], data: Buffer.from([3, 64, 66, 15, 0, 0, 0, 0, 0]) });
+    }
+    return buildTransaction({ accountKeys: keys, instructions });
+  }
+
+  // Build a realistic native-SOL deposit: CreateAccountWithSeed(base=vault) then a
+  // wallet System::Transfer of lamports into the seeded (wrapped-SOL) account.
+  function nativeDeposit({ wallet, vault, seed = 'order-seed-sol', dest, createBase, tokenOwner }) {
+    const seededBase = createBase || vault;
+    const seededAcct = seededAccount(seededBase, seed);
+    const destination = dest || seededAcct;
+    const keys = [wallet, seededAcct, TOKEN_PROGRAM, SYSTEM_PROGRAM, seededBase];
+    const idxOf = (k) => { const i = keys.indexOf(k); return i >= 0 ? i : (keys.push(k) - 1); };
+    const destIdx = idxOf(destination);
+    const instructions = [
+      { programIdIndex: keys.indexOf(SYSTEM_PROGRAM), accountIndexes: [0, keys.indexOf(seededAcct), keys.indexOf(seededBase)], data: createWithSeedData(seededBase, seed) },
+      // InitializeAccount3: [account, mint], owner in data.
+      { programIdIndex: keys.indexOf(TOKEN_PROGRAM), accountIndexes: [keys.indexOf(seededAcct), idxOf(WSOL)], data: initializeAccount3Data(tokenOwner || vault) },
+      // System::Transfer: [from, to]
+      { programIdIndex: keys.indexOf(SYSTEM_PROGRAM), accountIndexes: [0, destIdx], data: systemTransferData() },
+    ];
+    return buildTransaction({ accountKeys: keys, instructions });
+  }
+
+  it('allows a TransferChecked into the vault-seeded deposit account', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const tx = splDeposit({ wallet, vault, mint: USDC });
+    expect(assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC, vaultOwner: vault }))
+      .toEqual({ verified: true });
+  });
+
+  it('allows a native System::Transfer into the vault-seeded deposit account', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const tx = nativeDeposit({ wallet, vault });
+    expect(assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: WSOL, vaultOwner: vault }))
+      .toEqual({ verified: true });
+  });
+
+  it('rejects when no wallet-authorized deposit transfer is present', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const seed = 'order-seed-no-transfer';
+    const seededAcct = seededAccount(vault, seed);
+    const keys = [wallet, seededAcct, USDC, TOKEN_PROGRAM, SYSTEM_PROGRAM, vault];
+    const tx = buildTransaction({
+      accountKeys: keys,
+      instructions: [
+        { programIdIndex: 4, accountIndexes: [0, 1, 5], data: createWithSeedData(vault, seed) },
+        { programIdIndex: 3, accountIndexes: [1, 2], data: initializeAccount3Data(vault) },
+      ],
+    });
+
+    expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC, vaultOwner: vault }))
+      .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*no wallet-authorized deposit transfer/i);
+  });
+
+  it('rejects a TransferChecked to an account not seeded off the vault (the drain the ticket describes)', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const attacker = generateSolanaWallet().address;
+    // Deposit account is seeded off the ATTACKER, not the trusted vault.
+    const tx = splDeposit({ wallet, vault, mint: USDC, createBase: attacker });
+    expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC, vaultOwner: vault }))
+      .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*vault-seeded deposit account/i);
+  });
+
+  it('rejects a TransferChecked whose destination is not the seeded account', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const elsewhere = generateSolanaWallet().address;
+    const tx = splDeposit({ wallet, vault, mint: USDC, dest: elsewhere });
+    expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC, vaultOwner: vault }))
+      .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*vault-seeded deposit account/i);
+  });
+
+  it('rejects a TransferChecked into a vault-seeded account initialized with attacker authority', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const attacker = generateSolanaWallet().address;
+    const tx = splDeposit({ wallet, vault, mint: USDC, tokenOwner: attacker });
+    expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC, vaultOwner: vault }))
+      .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*authority[\s\S]*expected vault owner/i);
+  });
+
+  it('rejects a TransferChecked into a vault-seeded account without a matching initializer', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const seed = 'order-seed-no-init';
+    const seededAcct = seededAccount(vault, seed);
+    const sourceAta = generateSolanaWallet().address;
+    const keys = [wallet, sourceAta, USDC, seededAcct, TOKEN_PROGRAM, SYSTEM_PROGRAM, vault];
+    const tx = buildTransaction({
+      accountKeys: keys,
+      instructions: [
+        { programIdIndex: 5, accountIndexes: [0, 3, 6], data: createWithSeedData(vault, seed) },
+        { programIdIndex: 4, accountIndexes: [1, 2, 3, 0], data: Buffer.from([12, 0, 0, 0, 0, 0, 0, 0, 0, 6]) },
+      ],
+    });
+
+    expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC, vaultOwner: vault }))
+      .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*trusted vault authority/i);
+  });
+
+  it('rejects a native System::Transfer whose destination is not the seeded account', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const elsewhere = generateSolanaWallet().address;
+    const tx = nativeDeposit({ wallet, vault, dest: elsewhere });
+    expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: WSOL, vaultOwner: vault }))
+      .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*native transfer[\s\S]*vault-seeded deposit account/i);
+  });
+
+  it('rejects a TransferChecked for the wrong mint', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const wrongMint = generateSolanaWallet().address;
+    const tx = splDeposit({ wallet, vault, mint: wrongMint });
+    expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC, vaultOwner: vault }))
+      .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*instead of deposit mint/i);
+  });
+
+  it('rejects a classic Transfer to an account not seeded off the vault', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const elsewhere = generateSolanaWallet().address;
+    const tx = splDeposit({ wallet, vault, mint: USDC, dest: elsewhere, transferKind: 'plain' });
+    expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC, vaultOwner: vault }))
+      .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*vault-seeded deposit account/i);
+  });
+
+  it('rejects when CreateAccountWithSeed target does not match its base/seed/owner derivation', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const seed = 'order-seed-xyz';
+    const realSeeded = seededAccount(vault, seed);
+    const spoofed = generateSolanaWallet().address; // != realSeeded
+    const sourceAta = generateSolanaWallet().address;
+    // The instruction claims to create `spoofed` but its data derives `realSeeded`.
+    const keys = [wallet, sourceAta, USDC, spoofed, TOKEN_PROGRAM, SYSTEM_PROGRAM, vault];
+    const tx = buildTransaction({
+      accountKeys: keys,
+      instructions: [
+        { programIdIndex: 5, accountIndexes: [0, 3, 6], data: createWithSeedData(vault, seed) },
+        { programIdIndex: 4, accountIndexes: [3, 2], data: initializeAccount3Data(vault) },
+        { programIdIndex: 4, accountIndexes: [1, 2, 3, 0], data: Buffer.from([12, 0, 0, 0, 0, 0, 0, 0, 0, 6]) },
+      ],
+    });
+    expect(realSeeded).not.toBe(spoofed);
+    expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC, vaultOwner: vault }))
+      .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*does not match its base\/seed\/owner/i);
+  });
+
+  it('throws when the vault owner is not provided', () => {
+    const wallet = generateSolanaWallet().address;
+    const vault = generateSolanaWallet().address;
+    const tx = splDeposit({ wallet, vault, mint: USDC });
+    expect(() => assertLimitOrderDepositDestination(tx, { walletAddress: wallet, inputMint: USDC }))
+      .toThrow(/LIMIT_ORDER_DESTINATION_MISMATCH[\s\S]*missing vault owner/i);
   });
 });
 

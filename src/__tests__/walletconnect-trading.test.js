@@ -141,6 +141,48 @@ describe('getWalletConnectAddress', () => {
     const address = await getWalletConnectAddress();
     expect(address).toBe('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
   });
+
+  it('returns the matching account when chainId matches the session (regression)', async () => {
+    mockExecFile(JSON.stringify({
+      connected: true,
+      accounts: [{ chain: 'eip155:8453', address: '0xBaseAddr0000000000000000000000000000000' }],
+    }));
+
+    const address = await getWalletConnectAddress('evm', 8453);
+    expect(address).toBe('0xBaseAddr0000000000000000000000000000000');
+  });
+
+  it('rejects a session approved for a different EVM chain instead of returning any eip155:* account (regression)', async () => {
+    // Before this check existed, chainType === 'evm' matched ANY eip155:*
+    // account regardless of which specific chain it was approved for -- a
+    // session connected only to Ethereum mainnet (1) would be handed back
+    // as if it were valid for Base (8453) too, since EVM addresses are
+    // identical across chains and the code never compared the chain ID.
+    mockExecFile(JSON.stringify({
+      connected: true,
+      accounts: [{ chain: 'eip155:1', address: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4' }],
+    }));
+
+    const address = await getWalletConnectAddress('evm', 8453);
+    expect(address).toBeNull();
+  });
+
+  it('still matches any eip155:* account when chainId is omitted (backward compat)', async () => {
+    mockExecFile(JSON.stringify({
+      connected: true,
+      accounts: [{ chain: 'eip155:1', address: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4' }],
+    }));
+
+    const address = await getWalletConnectAddress('evm');
+    expect(address).toBe('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+  });
+
+  it('returns null for chainId lookup when no accounts are approved for any chain', async () => {
+    mockExecFile(JSON.stringify({ connected: true, accounts: [] }));
+
+    const address = await getWalletConnectAddress('evm', 8453);
+    expect(address).toBeNull();
+  });
 });
 
 // ============= sendTransactionViaWalletConnect =============

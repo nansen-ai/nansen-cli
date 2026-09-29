@@ -31,11 +31,18 @@ import {
   cancelOrderRequest,
   confirmCancelOrder,
 } from '../limit-order.js';
-import { createWallet } from '../wallet.js';
+import { createWallet, base58Decode, base58Encode, generateSolanaWallet } from '../wallet.js';
+import { SIMULATION_RPCS } from '../rpc-urls.js';
+
+const TEST_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const TEST_WSOL_MINT = 'So11111111111111111111111111111111111111112';
+const TEST_VAULT_PUBKEY = '11111111111111111111111111111111';
+const TEST_TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
 let originalHome;
 let tempDir;
 let originalFetch;
+let originalSolanaSimRpc;
 
 beforeEach(() => {
   originalHome = process.env.HOME;
@@ -43,12 +50,19 @@ beforeEach(() => {
   process.env.HOME = tempDir;
   originalFetch = global.fetch;
   global.fetch = vi.fn();
+  // Force limit-order outcome verification to gracefully degrade by default so
+  // existing happy-path tests (which don't mock the sim RPC's own fetch calls)
+  // stay green. Tests that exercise the outcome layer itself set this back to
+  // a truthy value locally.
+  originalSolanaSimRpc = SIMULATION_RPCS.solana;
+  SIMULATION_RPCS.solana = null;
 });
 
 afterEach(() => {
   process.env.HOME = originalHome;
   fs.rmSync(tempDir, { recursive: true, force: true });
   global.fetch = originalFetch;
+  SIMULATION_RPCS.solana = originalSolanaSimRpc;
   vi.restoreAllMocks();
 });
 
@@ -230,9 +244,9 @@ describe('API client', () => {
   });
 
   it('getVault sends correct query params', async () => {
-    mockFetchResponse({ vaultPubkey: 'vault123', userPubkey: 'pub1' });
+    mockFetchResponse({ vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' });
     const result = await getVault('jwt-token', 'pub1');
-    expect(result.vaultPubkey).toBe('vault123');
+    expect(result.vaultPubkey).toBe('11111111111111111111111111111111');
 
     const [url, opts] = global.fetch.mock.calls[0];
     expect(url).toContain('userPubkey=pub1');
@@ -593,7 +607,7 @@ describe('buildLimitOrderCommands', () => {
     });
 
     it('accepts valid slippage-bps and forwards it to createOrder', async () => {
-      createTestWallet('lo-create-slip');
+      const wallet = createTestWallet('lo-create-slip');
       const logs = [];
       const exit = vi.fn();
       const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
@@ -601,8 +615,8 @@ describe('buildLimitOrderCommands', () => {
       mockFetchSequence([
         { body: { challenge: 'sign this' } },
         { body: { token: 'jwt-123' } },
-        { body: { vaultPubkey: 'vault123', userPubkey: 'pub1' } },
-        { body: { transaction: buildFakeBase64Tx(), requestId: 'dep-req-1' } },
+        { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' } },
+        { body: { transaction: buildFakeBase64Tx({ walletPubkey: wallet.solana }), requestId: 'dep-req-1' } },
         { body: { id: 'order-slip', txSignature: 'sig-slip' }, status: 201 },
       ]);
 
@@ -616,6 +630,8 @@ describe('buildLimitOrderCommands', () => {
       expect(logs.some(l => l.includes('Limit order created'))).toBe(true);
       const createBody = JSON.parse(global.fetch.mock.calls[4][1].body);
       expect(createBody.slippageBps).toBe(100);
+      expect(createBody.expiresAt).toBeGreaterThan(Date.now() + 29 * 86400000);
+      expect(createBody.expiresAt).toBeLessThanOrEqual(Date.now() + 30 * 86400000);
     });
 
     it('rejects EVM token address for --from', async () => {
@@ -646,7 +662,7 @@ describe('buildLimitOrderCommands', () => {
     });
 
     it('accepts valid Solana mint address', async () => {
-      createTestWallet('lo-addr-test');
+      const wallet = createTestWallet('lo-addr-test');
       const logs = [];
       const exit = vi.fn();
       const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
@@ -654,8 +670,8 @@ describe('buildLimitOrderCommands', () => {
       mockFetchSequence([
         { body: { challenge: 'sign this' } },
         { body: { token: 'jwt-123' } },
-        { body: { vaultPubkey: 'vault1', userPubkey: 'pub1' } },
-        { body: { transaction: buildFakeBase64Tx(), requestId: 'dep-1' } },
+        { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' } },
+        { body: { transaction: buildFakeBase64Tx({ walletPubkey: wallet.solana }), requestId: 'dep-1' } },
         { body: { id: 'order-1', txSignature: 'sig-1' }, status: 201 },
       ]);
 
@@ -706,7 +722,7 @@ describe('buildLimitOrderCommands', () => {
      */
     async function createAndGetInputAmount(amountStr, fromToken = 'SOL') {
       const walletName = `lo-amt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      createTestWallet(walletName);
+      const wallet = createTestWallet(walletName);
       const logs = [];
       const exit = vi.fn();
       const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
@@ -715,8 +731,8 @@ describe('buildLimitOrderCommands', () => {
       mockFetchSequence([
         { body: { challenge: 'sign this' } },          // [0] auth/challenge
         { body: { token: 'jwt-123' } },                 // [1] auth/verify
-        { body: { vaultPubkey: 'vault1', userPubkey: 'pub1' } }, // [2] vault check
-        { body: { transaction: buildFakeBase64Tx(), requestId: 'dep-1' } }, // [3] deposit/craft
+        { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' } }, // [2] vault check
+        { body: { transaction: buildFakeBase64Tx({ walletPubkey: wallet.solana, inputMint: fromToken === 'USDC' ? TEST_USDC_MINT : TEST_WSOL_MINT }), requestId: 'dep-1' } }, // [3] deposit/craft
         { body: { id: 'order-1', txSignature: 'sig-1' }, status: 201 },    // [4] createOrder
       ]);
 
@@ -815,7 +831,7 @@ describe('buildLimitOrderCommands', () => {
     });
 
     it('executes full create flow with local wallet', async () => {
-      createTestWallet('lo-create-test');
+      const wallet = createTestWallet('lo-create-test');
 
       const logs = [];
       const exit = vi.fn();
@@ -826,8 +842,8 @@ describe('buildLimitOrderCommands', () => {
       mockFetchSequence([
         { body: { challenge: 'sign this' } },
         { body: { token: 'jwt-123' } },
-        { body: { vaultPubkey: 'vault123', userPubkey: 'pub1' } },
-        { body: { transaction: buildFakeBase64Tx(), requestId: 'dep-req-1' } },
+        { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' } },
+        { body: { transaction: buildFakeBase64Tx({ walletPubkey: wallet.solana }), requestId: 'dep-req-1' } },
         { body: { id: 'order-abc', txSignature: 'sig-xyz' }, status: 201 },
       ]);
 
@@ -855,7 +871,7 @@ describe('buildLimitOrderCommands', () => {
     });
 
     it('auto-registers vault when not found', async () => {
-      createTestWallet('lo-vault-test');
+      const wallet = createTestWallet('lo-vault-test');
 
       const logs = [];
       const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit: vi.fn() });
@@ -865,8 +881,8 @@ describe('buildLimitOrderCommands', () => {
         { body: { challenge: 'sign this' } },
         { body: { token: 'jwt-123' } },
         { body: { message: 'Vault not found' }, status: 404 }, // getVault returns no vault
-        { body: { vaultPubkey: 'newVault', userPubkey: 'pub1' }, status: 201 }, // registerVault
-        { body: { transaction: buildFakeBase64Tx(), requestId: 'dep-1' } },
+        { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' }, status: 201 }, // registerVault
+        { body: { transaction: buildFakeBase64Tx({ walletPubkey: wallet.solana }), requestId: 'dep-1' } },
         { body: { id: 'order-1', txSignature: 'sig-1' }, status: 201 },
       ]);
 
@@ -878,6 +894,35 @@ describe('buildLimitOrderCommands', () => {
       expect(logs.some(l => l.includes('Registering vault'))).toBe(true);
       // Should have made 6 API calls (challenge, verify, getVault, registerVault, craftDeposit, createOrder)
       expect(global.fetch).toHaveBeenCalledTimes(6);
+    });
+
+    it('recovers vault address by re-fetching when register reports "already registered"', async () => {
+      const wallet = createTestWallet('lo-vault-race');
+
+      const logs = [];
+      const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit: vi.fn() });
+
+      // getVault initially misses, registerVault loses the race, second getVault recovers the address.
+      mockFetchSequence([
+        { body: { challenge: 'sign this' } },
+        { body: { token: 'jwt-123' } },
+        { body: { message: 'Vault not found' }, status: 404 }, // [1] getVault: miss
+        { body: { message: 'vault already registered' }, status: 409 }, // [2] registerVault: race lost
+        { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' } }, // [3] getVault retry: recovered
+        { body: { transaction: buildFakeBase64Tx({ walletPubkey: wallet.solana }), requestId: 'dep-1' } },
+        { body: { id: 'order-1', txSignature: 'sig-1' }, status: 201 },
+      ]);
+
+      await cmds.create([], null, {}, {
+        from: 'SOL', to: 'USDC', amount: '1', 'trigger-mint': 'SOL', 'trigger-condition': 'below', 'trigger-price': '80',
+        wallet: 'lo-vault-race',
+      });
+
+      // Did not fail with the "cannot determine vault address" guard.
+      expect(logs.some(l => l.includes('Could not determine'))).toBe(false);
+      expect(logs.some(l => l.includes('Limit order created'))).toBe(true);
+      // challenge, verify, getVault, registerVault, getVault-retry, craftDeposit, createOrder
+      expect(global.fetch).toHaveBeenCalledTimes(7);
     });
   });
 
@@ -896,6 +941,8 @@ describe('buildLimitOrderCommands', () => {
 
       await cmds.list([], null, {}, { wallet: 'lo-list-test' });
       expect(logs.some(l => l.includes('No limit orders found'))).toBe(true);
+      const params = new URL(global.fetch.mock.calls[2][0]).searchParams;
+      expect(Object.fromEntries(params)).toMatchObject({ limit: '20', offset: '0', dir: 'desc' });
     });
 
     it('formats and displays orders', async () => {
@@ -1123,29 +1170,534 @@ describe('buildLimitOrderCommands', () => {
   });
 });
 
+// ============= Outcome verification (fail-closed) =============
+//
+// These exercise the create/cancel handlers with a real (non-null) simulation
+// RPC configured, proving a simulated drain refuses to sign rather than
+// proceeding. The handlers never throw (each wraps its body in try/catch and
+// calls exit(1)), so the observable signal is: exit(1), a "Refusing to sign"
+// log line, and the fact that the downstream submit endpoint (createOrder /
+// confirmCancelOrder) was never reached — asserted via the mocked fetch call
+// count, since a module-local signTransaction spy can't intercept the
+// handler's internal call.
+describe('outcome verification (fail-closed)', () => {
+
+  it('create: refuses to sign a deposit whose input transfer is not bound to a vault-seeded account', async () => {
+    const wallet = createTestWallet('lo-destination-deposit-drain');
+    const vaultPubkey = generateSolanaWallet().address;
+    const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    // A crafted deposit that moves the input token to an attacker account with no
+    // System::CreateAccountWithSeed(base = vault) — so nothing binds the funds to
+    // the trusted vault. Must fail closed before signing.
+    const nonVaultAcct = generateSolanaWallet().address;
+    const depositTx = buildTokenTransferCheckedTx({
+      walletPubkey: wallet.solana,
+      mint: USDC,
+      destination: nonVaultAcct,
+    });
+
+    mockFetchSequence([
+      { body: { challenge: 'sign this' } },
+      { body: { token: 'jwt-123' } },
+      { body: { vaultPubkey, userPubkey: wallet.solana } },
+      { body: { transaction: depositTx, requestId: 'dep-req-1' } },
+      { body: { id: 'order-should-not-submit', txSignature: 'sig-unused' }, status: 201 },
+    ]);
+
+    const logs = [];
+    const exit = vi.fn();
+    const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+
+    await cmds.create([], null, {}, {
+      from: 'USDC', to: 'SOL', amount: '1',
+      'trigger-mint': 'SOL', 'trigger-condition': 'below', 'trigger-price': '80',
+      wallet: 'lo-destination-deposit-drain',
+    });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(logs.some(l => /LIMIT_ORDER_DESTINATION_MISMATCH/i.test(l))).toBe(true);
+    // Fail-closed before the createOrder call (4 fetches: challenge, verify, vault, craft).
+    expect(global.fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it('create: refuses to sign a deposit whose simulated outflow exceeds the requested amount (repro)', async () => {
+    SIMULATION_RPCS.solana = 'http://sol-sim.test';
+    const wallet = createTestWallet('lo-outcome-deposit-drain');
+    const depositTx = buildLimitOrderTx({ walletPubkey: wallet.solana });
+
+    mockFetchSequence([
+      { body: { challenge: 'sign this' } },
+      { body: { token: 'jwt-123' } },
+      { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' } },
+      { body: { transaction: depositTx, requestId: 'dep-req-1' } },
+      // sim: getMultipleAccounts — pre-state for the wallet's native account.
+      { body: { result: { value: [solanaNativeAccountInfo(2_000_000_000)] } } },
+      // sim: simulateTransaction — post-state shows a 1.123456789 SOL outflow,
+      // not the requested 1 SOL (the reproduced SystemProgram-transfer drain).
+      { body: { result: { value: { err: null, accounts: [solanaNativeAccountInfo(2_000_000_000 - 1_123_456_789)] } } } },
+    ]);
+
+    const logs = [];
+    const exit = vi.fn();
+    const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+
+    await cmds.create([], null, {}, {
+      from: 'SOL', to: 'USDC', amount: '1',
+      'trigger-mint': 'SOL', 'trigger-condition': 'below', 'trigger-price': '80',
+      wallet: 'lo-outcome-deposit-drain',
+    });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(logs.some(l => /Refusing to sign deposit/i.test(l))).toBe(true);
+    expect(logs.some(l => /LIMIT_ORDER_OUTCOME_MISMATCH/i.test(l))).toBe(true);
+    // 6 calls: challenge, verify, getVault, craftDeposit, getMultipleAccounts,
+    // simulateTransaction — createOrder (the 7th) must never fire.
+    expect(global.fetch).toHaveBeenCalledTimes(6);
+  });
+
+  it('create: fails fast on a native-SOL amount too small to verify, before any network call', async () => {
+    // Below NATIVE_FEE_RENT_SLACK_LAMPORTS (13,000,000 lamports = 0.013 SOL), outcome
+    // verification can't distinguish a genuine deposit from a fee-only outflow (see the
+    // assertLimitOrderDepositOutcome unit tests) and always fails closed. Catching this
+    // before crafting the deposit avoids a wasted API round-trip and a confusing
+    // LIMIT_ORDER_OUTCOME_MISMATCH error deep in the signing flow.
+    SIMULATION_RPCS.solana = 'http://sol-sim.test';
+    createTestWallet('lo-outcome-tiny-native');
+
+    const logs = [];
+    const exit = vi.fn();
+    const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+
+    await cmds.create([], null, {}, {
+      from: 'SOL', to: 'USDC', amount: '0.01', // 10,000,000 lamports < slack
+      'trigger-mint': 'SOL', 'trigger-condition': 'below', 'trigger-price': '80',
+      wallet: 'lo-outcome-tiny-native',
+    });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(logs.some(l => /too small to verify/i.test(l))).toBe(true);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('cancel: refuses to sign a withdrawal that drains an SPL token from the wallet', async () => {
+    SIMULATION_RPCS.solana = 'http://sol-sim.test';
+    const wallet = createTestWallet('lo-outcome-cancel-drain');
+    const siblingMint = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+    const siblingTokenAccount = generateSolanaWallet().address;
+    const cancelTx = buildLimitOrderTx({ walletPubkey: wallet.solana, extraWritableKey: siblingTokenAccount });
+
+    const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    mockFetchSequence([
+      { body: { challenge: 'sign' } },
+      { body: { token: 'jwt' } },
+      // order lookup — needed to bind the refund check to the order's own input asset.
+      { body: { orders: [{ id: 'order-1', inputMint: USDC, inputAmount: '1000000', fills: [] }] } },
+      { body: { id: 'order-1', transaction: cancelTx, requestId: 'cancel-req-1' } },
+      // sim: getMultipleAccounts — pre-state: wallet native + a token account
+      // the wallet owns, holding 1,000,000 base units.
+      {
+        body: {
+          result: {
+            value: [
+              solanaNativeAccountInfo(2_000_000_000),
+              solanaTokenAccountInfo({ mint: siblingMint, owner: wallet.solana, amount: 1_000_000 }),
+            ],
+          },
+        },
+      },
+      // sim: simulateTransaction — wallet's native balance only drops by a
+      // fee (well within dust), but the token account is fully drained: a
+      // cancel should only ever return funds TO the wallet.
+      {
+        body: {
+          result: {
+            value: {
+              err: null,
+              accounts: [
+                solanaNativeAccountInfo(2_000_000_000 - 5000),
+                solanaTokenAccountInfo({ mint: siblingMint, owner: wallet.solana, amount: 0 }),
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    const logs = [];
+    const exit = vi.fn();
+    const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+
+    await cmds.cancel([], null, {}, { order: 'order-1', wallet: 'lo-outcome-cancel-drain' });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(logs.some(l => /Refusing to sign withdrawal/i.test(l))).toBe(true);
+    expect(logs.some(l => /LIMIT_ORDER_OUTCOME_MISMATCH/i.test(l))).toBe(true);
+    // 6 calls: challenge, verify, order lookup, cancelRequest, getMultipleAccounts,
+    // simulateTransaction — confirmCancelOrder (the 7th) must never fire.
+    expect(global.fetch).toHaveBeenCalledTimes(6);
+    // Order lookup must be scoped to active orders — a user with >100 total orders
+    // (including past history) must not have the cancellable one pushed off page 1.
+    const orderLookupUrl = global.fetch.mock.calls[2][0];
+    expect(orderLookupUrl).toContain('state=active');
+  });
+
+  it('cancel: refuses to sign when the order cannot be found in the lookup, rather than skipping the asset-binding check', async () => {
+    SIMULATION_RPCS.solana = 'http://sol-sim.test';
+    createTestWallet('lo-outcome-cancel-notfound');
+
+    mockFetchSequence([
+      { body: { challenge: 'sign' } },
+      { body: { token: 'jwt' } },
+      // order lookup finds no matching order — fail closed, don't proceed as if
+      // verification were simply unavailable.
+      { body: { orders: [{ id: 'some-other-order', inputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }] } },
+    ]);
+
+    const logs = [];
+    const exit = vi.fn();
+    const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+
+    await cmds.cancel([], null, {}, { order: 'order-1', wallet: 'lo-outcome-cancel-notfound' });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(logs.some(l => /Could not find order order-1/i.test(l))).toBe(true);
+    // 3 calls: challenge, verify, order lookup — cancelOrderRequest (the 4th) must never fire.
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('cancel: refuses to sign (with an unparseable-specific message) when the order amounts cannot be parsed', async () => {
+    SIMULATION_RPCS.solana = 'http://sol-sim.test';
+    createTestWallet('lo-outcome-cancel-badmeta');
+    const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+    mockFetchSequence([
+      { body: { challenge: 'sign' } },
+      { body: { token: 'jwt' } },
+      // order found, but inputAmount is unparseable — classifyCancelRefund can't bind a
+      // magnitude, so the verifier would silently downgrade to a bare positive-inflow check.
+      // Fail closed instead of signing a withdrawal whose refund size we can't verify.
+      { body: { orders: [{ id: 'order-1', inputMint: USDC, inputAmount: 'not-a-number', fills: [] }] } },
+    ]);
+
+    const logs = [];
+    const exit = vi.fn();
+    const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+
+    await cmds.cancel([], null, {}, { order: 'order-1', wallet: 'lo-outcome-cancel-badmeta' });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    // Distinct from the fully-filled case: this must name the parse failure, not the
+    // generic "could not determine" wording it replaced.
+    expect(logs.some(l => /amounts couldn't be parsed/i.test(l))).toBe(true);
+    // 3 calls: challenge, verify, order lookup — cancelOrderRequest (the 4th) must never fire.
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('cancel: refuses to sign (with a fully-filled-specific message) when nothing is left to refund', async () => {
+    SIMULATION_RPCS.solana = 'http://sol-sim.test';
+    createTestWallet('lo-outcome-cancel-filled');
+    const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+    mockFetchSequence([
+      { body: { challenge: 'sign' } },
+      { body: { token: 'jwt' } },
+      // order found and parseable, but fully filled: fills consume the entire input, so the
+      // remaining refund is 0. That's a normal terminal state, not corrupt metadata — the
+      // user should be told plainly the order can't be cancelled, not shown a parse error.
+      { body: { orders: [{ id: 'order-1', inputMint: USDC, inputAmount: '1000000', fills: [{ inputAmount: '1000000' }] }] } },
+    ]);
+
+    const logs = [];
+    const exit = vi.fn();
+    const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+
+    await cmds.cancel([], null, {}, { order: 'order-1', wallet: 'lo-outcome-cancel-filled' });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(logs.some(l => /fully filled/i.test(l) && /nothing left to refund/i.test(l))).toBe(true);
+    // Must NOT misreport this as a parse failure.
+    expect(logs.some(l => /couldn't be parsed/i.test(l))).toBe(false);
+    // 3 calls: challenge, verify, order lookup — cancelOrderRequest (the 4th) must never fire.
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('create: proceeds (graceful degrade) when the simulation RPC errors out mid-flight', async () => {
+    SIMULATION_RPCS.solana = 'http://sol-sim.test';
+    const wallet = createTestWallet('lo-outcome-degrade');
+    const depositTx = buildLimitOrderTx({ walletPubkey: wallet.solana });
+
+    mockFetchSequence([
+      { body: { challenge: 'sign this' } },
+      { body: { token: 'jwt-123' } },
+      { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' } },
+      { body: { transaction: depositTx, requestId: 'dep-req-1' } },
+      // sim: getMultipleAccounts fails outright (transport/RPC error) — must
+      // degrade (warn + proceed), not block a legitimate deposit.
+      { body: { error: { message: 'rate limited' } }, status: 200 },
+      { body: { id: 'order-1', txSignature: 'sig-1' }, status: 201 },
+    ]);
+
+    const logs = [];
+    const exit = vi.fn();
+    const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+
+    await cmds.create([], null, {}, {
+      from: 'SOL', to: 'USDC', amount: '1',
+      'trigger-mint': 'SOL', 'trigger-condition': 'below', 'trigger-price': '80',
+      wallet: 'lo-outcome-degrade',
+    });
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(logs.some(l => /could not run.*proceeding without/i.test(l))).toBe(true);
+    expect(logs.some(l => l.includes('Limit order created'))).toBe(true);
+  });
+
+  it('cancel: proceeds (graceful degrade) when the simulation RPC errors out mid-flight', async () => {
+    SIMULATION_RPCS.solana = 'http://sol-sim.test';
+    const wallet = createTestWallet('lo-outcome-cancel-degrade');
+    const cancelTx = buildLimitOrderTx({ walletPubkey: wallet.solana });
+
+    const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    mockFetchSequence([
+      { body: { challenge: 'sign' } },
+      { body: { token: 'jwt' } },
+      // order lookup — needed to bind the refund check to the order's own input asset.
+      { body: { orders: [{ id: 'order-1', inputMint: USDC, inputAmount: '1000000', fills: [] }] } },
+      { body: { id: 'order-1', transaction: cancelTx, requestId: 'cancel-req-1' } },
+      // sim: getMultipleAccounts fails outright (transport/RPC error) — must
+      // degrade (warn + proceed), not block a legitimate cancellation.
+      { body: { error: { message: 'rate limited' } }, status: 200 },
+      { body: { id: 'order-1', txSignature: 'cancel-sig-abc' } },
+    ]);
+
+    const logs = [];
+    const exit = vi.fn();
+    const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+
+    await cmds.cancel([], null, {}, { order: 'order-1', wallet: 'lo-outcome-cancel-degrade' });
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(logs.some(l => /could not run.*proceeding without/i.test(l))).toBe(true);
+    expect(logs.some(l => l.includes('Order cancelled'))).toBe(true);
+  });
+
+  it('cancel: refuses a withdrawal that refunds only a dust amount of the right asset (redirect-most-of-escrow)', async () => {
+    SIMULATION_RPCS.solana = 'http://sol-sim.test';
+    const wallet = createTestWallet('lo-outcome-cancel-dust');
+    const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const usdcAccount = generateSolanaWallet().address;
+    const cancelTx = buildLimitOrderTx({ walletPubkey: wallet.solana, extraWritableKey: usdcAccount });
+
+    mockFetchSequence([
+      { body: { challenge: 'sign' } },
+      { body: { token: 'jwt' } },
+      // order still owes 1,000,000 base units (nothing filled yet).
+      { body: { orders: [{ id: 'order-1', inputMint: USDC, inputAmount: '1000000', fills: [] }] } },
+      { body: { id: 'order-1', transaction: cancelTx, requestId: 'cancel-req-1' } },
+      // sim pre-state: wallet native + an empty USDC account the wallet owns.
+      {
+        body: {
+          result: {
+            value: [
+              solanaNativeAccountInfo(2_000_000_000),
+              solanaTokenAccountInfo({ mint: USDC, owner: wallet.solana, amount: 0 }),
+            ],
+          },
+        },
+      },
+      // sim post-state: only 1 base unit of USDC comes back — a real inflow of the
+      // right asset, but nowhere near the 1,000,000 the order still owes.
+      {
+        body: {
+          result: {
+            value: {
+              err: null,
+              accounts: [
+                solanaNativeAccountInfo(2_000_000_000 - 5000),
+                solanaTokenAccountInfo({ mint: USDC, owner: wallet.solana, amount: 1 }),
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    const logs = [];
+    const exit = vi.fn();
+    const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+
+    await cmds.cancel([], null, {}, { order: 'order-1', wallet: 'lo-outcome-cancel-dust' });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(logs.some(l => /Refusing to sign withdrawal/i.test(l))).toBe(true);
+    expect(logs.some(l => /not the expected remaining refund/i.test(l))).toBe(true);
+    // confirmCancelOrder (the 7th call) must never fire.
+    expect(global.fetch).toHaveBeenCalledTimes(6);
+  });
+
+  it('cancel: paginates the active-order lookup so an order past page 1 is still found', async () => {
+    SIMULATION_RPCS.solana = 'http://sol-sim.test';
+    const wallet = createTestWallet('lo-outcome-cancel-paginate');
+    const cancelTx = buildLimitOrderTx({ walletPubkey: wallet.solana });
+    const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+    // A full first page of 100 unrelated active orders, target on page 2.
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ id: `other-${i}`, inputMint: USDC }));
+    mockFetchSequence([
+      { body: { challenge: 'sign' } },
+      { body: { token: 'jwt' } },
+      { body: { orders: page1, pagination: { total: 150, limit: 100, offset: 0 } } },
+      { body: { orders: [{ id: 'order-1', inputMint: USDC, inputAmount: '1000000', fills: [] }], pagination: { total: 150, limit: 100, offset: 100 } } },
+      { body: { id: 'order-1', transaction: cancelTx, requestId: 'cancel-req-1' } },
+      // sim RPC errors out — degrade + proceed. The point of this test is that the
+      // lookup FOUND the order (no "could not find" hard-fail), not the outcome check.
+      { body: { error: { message: 'rate limited' } }, status: 200 },
+      { body: { id: 'order-1', txSignature: 'cancel-sig' } },
+    ]);
+
+    const logs = [];
+    const exit = vi.fn();
+    const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+
+    await cmds.cancel([], null, {}, { order: 'order-1', wallet: 'lo-outcome-cancel-paginate' });
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(logs.some(l => /Could not find order/i.test(l))).toBe(false);
+    expect(logs.some(l => l.includes('Order cancelled'))).toBe(true);
+    // Two lookup calls: page 1 at offset 0, page 2 at offset 100.
+    expect(global.fetch.mock.calls[2][0]).toContain('offset=0');
+    expect(global.fetch.mock.calls[3][0]).toContain('offset=100');
+    expect(global.fetch.mock.calls[3][0]).toContain('state=active');
+  });
+});
+
 // ============= Helpers =============
 
+function testSeededAccount(base, seed, owner = TEST_TOKEN_PROGRAM) {
+  return base58Encode(crypto.createHash('sha256')
+    .update(Buffer.concat([base58Decode(base), Buffer.from(seed, 'utf8'), base58Decode(owner)]))
+    .digest());
+}
+
+function createWithSeedInstructionData(base, seed, owner = TEST_TOKEN_PROGRAM, { lamports = 2039280, space = 165 } = {}) {
+  const seedBytes = Buffer.from(seed, 'utf8');
+  const idx = Buffer.alloc(4); idx.writeUInt32LE(3);
+  const seedLen = Buffer.alloc(8); seedLen.writeBigUInt64LE(BigInt(seedBytes.length));
+  const lam = Buffer.alloc(8); lam.writeBigUInt64LE(BigInt(lamports));
+  const sp = Buffer.alloc(8); sp.writeBigUInt64LE(BigInt(space));
+  return Buffer.concat([idx, base58Decode(base), seedLen, seedBytes, lam, sp, base58Decode(owner)]);
+}
+
+function initializeAccount3InstructionData(owner) {
+  return Buffer.concat([Buffer.from([18]), base58Decode(owner)]);
+}
+
+function systemTransferInstructionData(lamports = 1000000000) {
+  const idx = Buffer.alloc(4); idx.writeUInt32LE(2);
+  const lam = Buffer.alloc(8); lam.writeBigUInt64LE(BigInt(lamports));
+  return Buffer.concat([idx, lam]);
+}
+
+function buildStaticDepositTx({
+  walletPubkey = generateSolanaWallet().address,
+  inputMint = TEST_WSOL_MINT,
+  vaultPubkey = TEST_VAULT_PUBKEY,
+  extraWritableKey,
+} = {}) {
+  const seed = 'test-order-seed';
+  const seededAcct = testSeededAccount(vaultPubkey, seed);
+  const isNative = inputMint === TEST_WSOL_MINT;
+  const sourceAta = extraWritableKey || (isNative ? null : generateSolanaWallet().address);
+  const keys = sourceAta
+    ? [walletPubkey, sourceAta, inputMint, seededAcct, TEST_TOKEN_PROGRAM, TEST_VAULT_PUBKEY]
+    : [walletPubkey, seededAcct, inputMint, TEST_TOKEN_PROGRAM, TEST_VAULT_PUBKEY];
+  const idxOf = (key) => {
+    const existing = keys.indexOf(key);
+    if (existing >= 0) return existing;
+    keys.push(key);
+    return keys.length - 1;
+  };
+  const tokenProgramIdx = idxOf(TEST_TOKEN_PROGRAM);
+  const systemProgramIdx = idxOf(TEST_VAULT_PUBKEY);
+  const vaultIdx = idxOf(vaultPubkey);
+  const seededIdx = idxOf(seededAcct);
+  const mintIdx = idxOf(inputMint);
+  const walletIdx = idxOf(walletPubkey);
+
+  const instructions = [
+    { programIdIndex: systemProgramIdx, accountIndexes: [walletIdx, seededIdx, vaultIdx], data: createWithSeedInstructionData(vaultPubkey, seed) },
+    { programIdIndex: tokenProgramIdx, accountIndexes: [seededIdx, mintIdx], data: initializeAccount3InstructionData(vaultPubkey) },
+  ];
+  if (isNative && !sourceAta) {
+    instructions.push({ programIdIndex: systemProgramIdx, accountIndexes: [walletIdx, seededIdx], data: systemTransferInstructionData() });
+  } else {
+    const sourceIdx = idxOf(sourceAta);
+    instructions.push({ programIdIndex: tokenProgramIdx, accountIndexes: [sourceIdx, mintIdx, seededIdx, walletIdx], data: Buffer.from([12, 64, 66, 15, 0, 0, 0, 0, 0, 6]) });
+  }
+
+  const writableCount = sourceAta ? 2 : 1;
+  const header = Buffer.from([1, 0, Math.max(0, keys.length - writableCount)]);
+  const numKeys = Buffer.from([keys.length]);
+  const keyBytes = Buffer.concat(keys.map((k) => base58Decode(k)));
+  const blockhash = Buffer.alloc(32, 0x03);
+  const encodedInstructions = instructions.map((ix) => Buffer.concat([
+    Buffer.from([ix.programIdIndex, ix.accountIndexes.length, ...ix.accountIndexes, ix.data.length]),
+    ix.data,
+  ]));
+  const message = Buffer.concat([header, numKeys, keyBytes, blockhash, Buffer.from([instructions.length]), ...encodedInstructions]);
+  return Buffer.concat([Buffer.from([1]), Buffer.alloc(64), message]).toString('base64');
+}
+
 /**
- * Build a minimal valid base64-encoded Solana VersionedTransaction.
- * This is a simplified fake for testing — just needs to be parseable
- * by signSolanaTransaction (compact-u16 sig count + 64-byte sig slot + message).
+ * Build a parseable legacy Solana transaction whose first account key is the
+ * real wallet pubkey (writable, the only required signer) so
+ * simulateSolanaAssetChanges can locate and track it. extraWritableKey, when
+ * given, is a second writable non-signer account (used to simulate a token
+ * account the wallet owns). The instruction contents are a statically valid
+ * limit-order deposit so destination validation can pass before outcome checks.
  */
-function buildFakeBase64Tx() {
-  // A valid, parseable legacy transaction with a single benign instruction:
-  // 1 signature slot, then a legacy message [header][2 account keys][blockhash]
-  // [1 instruction referencing a non-SPL program]. It must actually parse —
-  // assertSolanaInstructionsSafe (run before signing on this path) now rejects
-  // unparseable transactions rather than silently ignoring them.
-  const sigCount = Buffer.from([0x01]);
-  const emptySig = Buffer.alloc(64, 0);
-  const header = Buffer.from([1, 0, 1]); // 1 signer (writable), 1 readonly unsigned (the program)
-  const numKeys = Buffer.from([0x02]);
-  const signerKey = Buffer.alloc(32, 0x01); // account index 0 = signer / fee payer
-  const programKey = Buffer.alloc(32, 0x02); // account index 1 = an arbitrary (non-SPL) program
+function buildLimitOrderTx({ walletPubkey, extraWritableKey, inputMint = TEST_WSOL_MINT, vaultPubkey = TEST_VAULT_PUBKEY } = {}) {
+  return buildStaticDepositTx({ walletPubkey, extraWritableKey, inputMint, vaultPubkey });
+}
+
+function buildTokenTransferCheckedTx({ walletPubkey, mint, destination }) {
+  const sourceAta = generateSolanaWallet().address;
+  const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+  const keys = [walletPubkey, sourceAta, mint, destination, TOKEN_PROGRAM];
+  const header = Buffer.from([1, 0, 1]);
+  const numKeys = Buffer.from([keys.length]);
+  const keyBytes = Buffer.concat(keys.map((k) => base58Decode(k)));
   const blockhash = Buffer.alloc(32, 0x03);
   const numInstructions = Buffer.from([0x01]);
-  // instruction: programIdIndex=1, 1 account (index 0), 1 data byte
-  const instruction = Buffer.from([0x01, 0x01, 0x00, 0x01, 0x00]);
-  const message = Buffer.concat([header, numKeys, signerKey, programKey, blockhash, numInstructions, instruction]);
-  return Buffer.concat([sigCount, emptySig, message]).toString('base64');
+  // TransferChecked: [source, mint, destination, authority]
+  const data = Buffer.from([12, 64, 66, 15, 0, 0, 0, 0, 0, 6]);
+  const instruction = Buffer.concat([
+    Buffer.from([4, 4, 1, 2, 3, 0, data.length]),
+    data,
+  ]);
+  const message = Buffer.concat([header, numKeys, keyBytes, blockhash, numInstructions, instruction]);
+  return Buffer.concat([Buffer.from([1]), Buffer.alloc(64), message]).toString('base64');
+}
+
+/** Native-SOL account info shape expected from a getMultipleAccounts/simulateTransaction response. */
+function solanaNativeAccountInfo(lamports) {
+  return { lamports, owner: '11111111111111111111111111111111', data: ['', 'base64'], executable: false, rentEpoch: 0 };
+}
+
+/** jsonParsed SPL-token account info shape. */
+function solanaTokenAccountInfo({ mint, owner, amount }) {
+  return {
+    lamports: 2039280,
+    owner: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    data: { program: 'spl-token', parsed: { type: 'account', info: { mint, owner, tokenAmount: { amount: String(amount), decimals: 6 } } } },
+    executable: false,
+    rentEpoch: 0,
+  };
+}
+
+/**
+ * Build a valid parseable limit-order deposit transaction for command tests.
+ */
+function buildFakeBase64Tx({ walletPubkey, inputMint = TEST_WSOL_MINT, vaultPubkey = TEST_VAULT_PUBKEY } = {}) {
+  return buildStaticDepositTx({ walletPubkey, inputMint, vaultPubkey });
 }

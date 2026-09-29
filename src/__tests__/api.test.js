@@ -9,7 +9,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { NansenAPI, ErrorCode } from '../api.js';
+import {
+  NansenAPI,
+  ErrorCode,
+  clearCache,
+  COUNTERPARTIES_BATCH_MAX_ADDRESSES,
+  COUNTERPARTIES_BATCH_MAX_DAYS,
+  COUNTERPARTIES_BATCH_CHAINS
+} from '../api.js';
 
 const LIVE_TEST = process.env.NANSEN_LIVE_TEST === '1';
 const API_KEY = process.env.NANSEN_API_KEY || 'test-key';
@@ -149,6 +156,18 @@ const MOCK_RESPONSES = {
   addressCounterparties: {
     counterparties: [
       { address: '0x789', volume_usd: 100000 }
+    ]
+  },
+  addressCounterpartiesBatch: {
+    pagination: { page: 1, per_page: 10, total_pages: 1 },
+    data: [
+      {
+        wallet_address: '0x28c6c06298d514db089934071355e5743bf21d60',
+        counterparty_address: '0x789',
+        chain: 'ethereum',
+        interaction_count: 12,
+        total_volume_usd: 100000
+      }
     ]
   },
   addressPnlSummary: {
@@ -440,6 +459,44 @@ describe('NansenAPI', () => {
     it('should accept custom base URL', () => {
       const customApi = new NansenAPI('test-key', 'https://custom.api.com');
       expect(customApi.baseUrl).toBe('https://custom.api.com');
+    });
+  });
+
+  // =================== Cache Isolation (request-level) ===================
+  // Regression coverage for the `useCache && cacheContext` guards in request()
+  // (the read before fetch and the write after it) — exercised through the
+  // public request() call sites, not just the underlying cache helpers.
+
+  describe('Cache isolation via request()', () => {
+    afterEach(() => {
+      clearCache();
+    });
+
+    it('does not serve one API key\'s cached response to a different API key', async () => {
+      if (LIVE_TEST) return;
+
+      const endpoint = '/api/v1/cache-isolation-test';
+      const body = { probe: true };
+      const apiA = new NansenAPI('key-a', 'https://api.nansen.ai', { cache: { enabled: true } });
+      const apiB = new NansenAPI('key-b', 'https://api.nansen.ai', { cache: { enabled: true } });
+
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ secret: 'A' }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ secret: 'B' }) });
+
+      const resultA = await apiA.request(endpoint, body);
+      expect(resultA.secret).toBe('A');
+
+      // Different identity must miss the cache and hit the network again.
+      const resultB = await apiB.request(endpoint, body);
+      expect(resultB.secret).toBe('B');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+
+      // Same identity as the first call must now be served from cache.
+      const resultACached = await apiA.request(endpoint, body);
+      expect(resultACached.secret).toBe('A');
+      expect(resultACached._meta.fromCache).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -1078,6 +1135,311 @@ describe('NansenAPI', () => {
         expect(body.pagination.page).toBe(1);
         // Assert the legacy field name is NOT used
         expect(body.pagination.recordsPerPage).toBeUndefined();
+      });
+    });
+
+    describe('addressCounterpartiesBatch', () => {
+      const WALLET_A = TEST_DATA.ethereum.address;
+      const WALLET_B = '0x21a31ee1afc51d94c2efccaa2092ad1028285549';
+      const checksumCased = addr => '0x' + addr.slice(2).toUpperCase();
+      const evmAddresses = count => Array.from(
+        { length: count },
+        (_, i) => `0x${String(i + 1).padStart(40, '0')}`
+      );
+      // Client-side guards must reject before anything is sent
+      const expectNoFetch = () => {
+        if (LIVE_TEST) return;
+        expect(mockFetch).not.toHaveBeenCalled();
+      };
+
+      it('should post wallet_addresses, chain, date and pagination to the batch endpoint', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        const result = await api.addressCounterpartiesBatch({
+          addresses: [WALLET_A, WALLET_B],
+          chain: 'ethereum',
+          days: 7,
+          pagination: { page: 1, per_page: 2 }
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.wallet_addresses).toEqual([WALLET_A, WALLET_B]);
+        expect(body.chain).toBe('ethereum');
+        expect(body.pagination).toEqual({ page: 1, per_page: 2 });
+        expect(body.date.from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(body.date.to).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        // The request model rejects unknown fields, so nothing else may be sent
+        expect(Object.keys(body).sort()).toEqual(['chain', 'date', 'pagination', 'wallet_addresses']);
+
+        expect(result.data[0]).toHaveProperty('wallet_address', WALLET_A);
+      });
+
+      it('should default to chain "all" when the caller omits it', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({ addresses: [WALLET_A] });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        // Must match the CLI dispatch default, or a library caller silently
+        // gets a different chain than the documented one
+        expect(body.chain).toBe('all');
+        // 'all' still normalises EVM casing for the dedupe key
+        expect(body.wallet_addresses).toEqual([WALLET_A]);
+      });
+
+      it('should send source_input, filters and order_by only when provided', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: [WALLET_A],
+          chain: 'ethereum',
+          sourceInput: 'Tokens',
+          filters: { total_volume_usd: { min: 1000 } },
+          orderBy: [{ field: 'total_volume_usd', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.source_input).toBe('Tokens');
+        expect(body.filters).toEqual({ total_volume_usd: { min: 1000 } });
+        expect(body.order_by).toEqual([{ field: 'total_volume_usd', direction: 'DESC' }]);
+      });
+
+      it('should dedupe on the normalized address, not the raw string', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: [WALLET_A, ` ${checksumCased(WALLET_A)} `, WALLET_B],
+          chain: 'ethereum'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.wallet_addresses).toEqual([WALLET_A, WALLET_B]);
+      });
+
+      it('should not count a checksum-cased repeat against the address limit', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+        const atLimit = evmAddresses(COUNTERPARTIES_BATCH_MAX_ADDRESSES);
+
+        await api.addressCounterpartiesBatch({
+          addresses: [...atLimit, checksumCased(atLimit[0])],
+          chain: 'ethereum'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.wallet_addresses).toHaveLength(COUNTERPARTIES_BATCH_MAX_ADDRESSES);
+      });
+
+      it('should send Solana-only batches under the default chain', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: [TEST_DATA.solana.address],
+          chain: 'all'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.wallet_addresses).toEqual([TEST_DATA.solana.address]);
+        expect(body.chain).toBe('all');
+      });
+
+      it('should reject a batch that mixes EVM and Solana addresses', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({
+            addresses: [WALLET_A, TEST_DATA.solana.address],
+            chain: 'all'
+          })
+        ).rejects.toThrow(/chain='all' auto-detects either ecosystem/);
+        expectNoFetch();
+      });
+
+      it('should reject a malformed address when chain is all', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: [WALLET_A, '0xtypo'], chain: 'all' })
+        ).rejects.toThrow(/0xtypo/);
+        expectNoFetch();
+      });
+
+      it('should reject a malformed address for a named chain', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: [WALLET_A, 'not-an-address'], chain: 'ethereum' })
+        ).rejects.toThrow(/Invalid address "not-an-address" for chain "ethereum": Invalid EVM address format/);
+        expectNoFetch();
+      });
+
+      it('should reject an unsupported named chain before sending addresses', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: ['arbitrary-file-line'], chain: 'zksync' })
+        ).rejects.toThrow(/Unsupported chain "zksync" for batch counterparties/);
+        expectNoFetch();
+      });
+
+      // The chain allowlist is the upstream ProfilerChain enum, not this CLI's
+      // EVM_CHAINS set. Those two disagree in both directions (nansen-cli#624
+      // review follow-up), so both directions are pinned here.
+      it('should accept every chain in the endpoint allowlist', () => {
+        expect([...COUNTERPARTIES_BATCH_CHAINS].sort()).toEqual([
+          'all', 'arbitrum', 'arc', 'avalanche', 'base', 'bitcoin', 'bnb',
+          'ethereum', 'hyperevm', 'injective', 'iotaevm', 'linea', 'mantle',
+          'mantra', 'monad', 'near', 'optimism', 'plasma', 'polygon',
+          'robinhood', 'sei', 'solana', 'sonic', 'starknet', 'sui', 'ton',
+          'tron'
+        ]);
+      });
+
+      it.each(['scroll', 'ronin'])(
+        'should reject %s, a chain the endpoint no longer serves',
+        async unsupported => {
+          await expect(
+            api.addressCounterpartiesBatch({ addresses: [WALLET_A], chain: unsupported })
+          ).rejects.toThrow(new RegExp(`Unsupported chain "${unsupported}" for batch counterparties`));
+          expectNoFetch();
+        }
+      );
+
+      it('should send a non-EVM chain the endpoint supports', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: ['TQ5NMqJjhpQGK7YJbESmJxrhqrHmYgHgfF'],
+          chain: 'tron'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.chain).toBe('tron');
+        expect(body.wallet_addresses).toEqual(['TQ5NMqJjhpQGK7YJbESmJxrhqrHmYgHgfF']);
+      });
+
+      it('should not lowercase an address on a case-sensitive non-EVM chain', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: ['UQAbC-dEfGhIjKlMnOpQrStUvWxYz0123456789_AbCdEfGhIjKl'],
+          chain: 'ton'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.wallet_addresses).toEqual(['UQAbC-dEfGhIjKlMnOpQrStUvWxYz0123456789_AbCdEfGhIjKl']);
+      });
+
+      it('should still reject arbitrary --file lines on a chain it cannot format-check', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: ['not an address, just a line'], chain: 'tron' })
+        ).rejects.toThrow(/address-shaped token/);
+        expectNoFetch();
+      });
+
+      // Raw TON addresses are `<workchain>:<64 hex>`; the ":" (and the leading
+      // "-" on the masterchain) fail the generic shape floor, so they get an
+      // explicit chain-aware pass. Both workchains are pinned here.
+      it.each([
+        ['basechain', '0:2cf3b5b8c891003f5d3bd9d5d2f3d1a9a5f1b2c3d4e5f60718293a4b5c6d7e8f'],
+        ['masterchain', '-1:2CF3B5B8C891003F5D3BD9D5D2F3D1A9A5F1B2C3D4E5F60718293A4B5C6D7E8F']
+      ])('should send a raw TON %s address unchanged', async (_label, rawAddress) => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({ addresses: [rawAddress], chain: 'ton' });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.chain).toBe('ton');
+        expect(body.wallet_addresses).toEqual([rawAddress]);
+      });
+
+      it.each([
+        ['a short hex tail', '0:abcdef'],
+        ['a non-numeric workchain', 'x:2cf3b5b8c891003f5d3bd9d5d2f3d1a9a5f1b2c3d4e5f60718293a4b5c6d7e8f'],
+        ['whitespace', '0:2cf3b5b8c891003f5d3bd9d5d2f3d1a9a5f1b2c3d4e5f60718293a4b5c6d7e8f extra']
+      ])('should still reject a raw-TON lookalike with %s', async (_label, bad) => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: [bad], chain: 'ton' })
+        ).rejects.toThrow(/raw TON address/);
+        expectNoFetch();
+      });
+
+      it('should not accept a raw TON address on another chain', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({
+            addresses: ['0:2cf3b5b8c891003f5d3bd9d5d2f3d1a9a5f1b2c3d4e5f60718293a4b5c6d7e8f'],
+            chain: 'tron'
+          })
+        ).rejects.toThrow(/address-shaped token/);
+        expectNoFetch();
+      });
+
+      it('should normalise chain "bsc" to "bnb" and validate as EVM', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: [checksumCased(WALLET_A)],
+          chain: 'bsc'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.chain).toBe('bnb');
+        expect(body.wallet_addresses).toEqual([WALLET_A]);
+      });
+
+      it('should reject a malformed address on chain "bsc" as an EVM address', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: ['arbitrary-file-line'], chain: 'bsc' })
+        ).rejects.toThrow(/Invalid address "arbitrary-file-line" for chain "bnb": Invalid EVM address format/);
+        expectNoFetch();
+      });
+
+      it('should reject more than the maximum distinct addresses', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({
+            addresses: evmAddresses(COUNTERPARTIES_BATCH_MAX_ADDRESSES + 1),
+            chain: 'ethereum'
+          })
+        ).rejects.toThrow(
+          new RegExp(`at most ${COUNTERPARTIES_BATCH_MAX_ADDRESSES} distinct addresses`)
+        );
+        expectNoFetch();
+      });
+
+      it('should require at least one address', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: [], chain: 'ethereum' })
+        ).rejects.toThrow(/--addresses .* or --file <path>/);
+        expectNoFetch();
+      });
+
+      it('should reject a lookback window longer than the maximum', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({
+            addresses: [WALLET_A],
+            chain: 'ethereum',
+            days: COUNTERPARTIES_BATCH_MAX_DAYS + 30
+          })
+        ).rejects.toThrow(new RegExp(`capped at ${COUNTERPARTIES_BATCH_MAX_DAYS} days`));
+        expectNoFetch();
+      });
+
+      it('should accept a window at the maximum', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: [WALLET_A],
+          chain: 'ethereum',
+          days: COUNTERPARTIES_BATCH_MAX_DAYS
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        const diffDays = Math.round(
+          (new Date(body.date.to) - new Date(body.date.from)) / (1000 * 60 * 60 * 24)
+        );
+        expect(diffDays).toBe(COUNTERPARTIES_BATCH_MAX_DAYS);
+      });
+
+      it('should reject a non-positive or non-numeric days value', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: [WALLET_A], chain: 'ethereum', days: 0 })
+        ).rejects.toThrow(/--days must be a positive number/);
+
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: [WALLET_A], chain: 'ethereum', days: parseInt('abc', 10) })
+        ).rejects.toThrow(/--days must be a positive number/);
+        expectNoFetch();
       });
     });
 
@@ -3469,6 +3831,131 @@ describe('NansenAPI', () => {
 
       vi.doUnmock('../walletconnect-x402.js');
     });
+
+    // Issue #583: an ambiguous outcome after a signed payment was already
+    // transmitted (a 5xx, a transport failure, or an unreadable body) must
+    // not be treated as an ordinary rejection — the server may have already
+    // settled it, so signing and sending another payment would risk paying
+    // twice for the same logical request.
+    describe('ambiguous outcomes after transmission (issue #583)', () => {
+      it('does not fall back to WalletConnect after an ambiguous local-wallet outcome', async () => {
+        if (LIVE_TEST) return;
+
+        const paymentReqs = {
+          accepts: [{
+            scheme: 'exact',
+            asset: '0xUSDC',
+            payTo: '0xR',
+            amount: '1',
+            network: 'base',
+            extra: { name: 'X', version: '1', chainId: 1 },
+          }],
+        };
+        const paymentHeader = btoa(JSON.stringify(paymentReqs));
+
+        const errorResponse = {
+          ok: false,
+          status: 402,
+          json: async () => ({ message: 'Payment required' }),
+          headers: { get: (h) => h === 'payment-required' ? paymentHeader : null },
+        };
+        // The paid retry fails with a 5xx — ambiguous, not a clean rejection.
+        const ambiguousRetryResponse = {
+          ok: false,
+          status: 503,
+          json: async () => ({ error: 'internal error' }),
+        };
+        mockFetch
+          .mockResolvedValueOnce(errorResponse)
+          .mockResolvedValueOnce(ambiguousRetryResponse);
+
+        const mockHandleX402Payment = vi.fn().mockResolvedValue('walletconnect-sig');
+        vi.resetModules();
+        // Skip real wallet/crypto setup: yield one already-built local signature.
+        vi.doMock('../x402.js', () => ({
+          createPaymentSignatures: async function* () {
+            yield { signature: 'local-sig', network: 'eip155:8453', asset: '0xUSDC' };
+          },
+          checkX402Balance: vi.fn().mockResolvedValue(null),
+        }));
+        vi.doMock('../walletconnect-x402.js', () => ({ handleX402Payment: mockHandleX402Payment }));
+
+        const autoPayApi = new NansenAPI('test-key', 'https://api.nansen.ai');
+
+        let thrownError;
+        try {
+          await autoPayApi.smartMoneyNetflow({});
+        } catch (err) {
+          thrownError = err;
+        }
+
+        expect(thrownError).toBeDefined();
+        expect(thrownError.code).toBe(ErrorCode.PAYMENT_AMBIGUOUS);
+        // Exactly the initial 402 + the one ambiguous paid retry — no second
+        // payment attempt via WalletConnect.
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+        expect(mockHandleX402Payment).not.toHaveBeenCalled();
+
+        vi.doUnmock('../x402.js');
+        vi.doUnmock('../walletconnect-x402.js');
+      });
+
+      it('propagates PAYMENT_AMBIGUOUS instead of a generic failure message when the WalletConnect paid retry is ambiguous', async () => {
+        if (LIVE_TEST) return;
+
+        const paymentReqs = {
+          accepts: [{
+            scheme: 'exact',
+            asset: '0xUSDC',
+            payTo: '0xR',
+            amount: '1',
+            network: 'base',
+            extra: { name: 'X', version: '1', chainId: 1 },
+          }],
+        };
+        const paymentHeader = btoa(JSON.stringify(paymentReqs));
+
+        const errorResponse = {
+          ok: false,
+          status: 402,
+          json: async () => ({ message: 'Payment required' }),
+          headers: { get: (h) => h === 'payment-required' ? paymentHeader : null },
+        };
+        const ambiguousRetryResponse = {
+          ok: false,
+          status: 503,
+          json: async () => ({ error: 'internal error' }),
+        };
+        mockFetch
+          .mockResolvedValueOnce(errorResponse)
+          .mockResolvedValueOnce(ambiguousRetryResponse);
+
+        // No local wallet configured (empty temp HOME) — falls straight
+        // through to WalletConnect, which signs successfully.
+        const mockHandleX402Payment = vi.fn().mockResolvedValue('walletconnect-sig');
+        vi.resetModules();
+        vi.doMock('../walletconnect-x402.js', () => ({ handleX402Payment: mockHandleX402Payment }));
+
+        const autoPayApi = new NansenAPI('test-key', 'https://api.nansen.ai');
+
+        let thrownError;
+        try {
+          await autoPayApi.smartMoneyNetflow({});
+        } catch (err) {
+          thrownError = err;
+        }
+
+        expect(thrownError).toBeDefined();
+        expect(thrownError.code).toBe(ErrorCode.PAYMENT_AMBIGUOUS);
+        expect(thrownError.message).toMatch(/not attempting another payment/i);
+        // Only the one paid attempt via WalletConnect — no retry loop, no
+        // second signature.
+        expect(mockHandleX402Payment).toHaveBeenCalledTimes(1);
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+
+        vi.doUnmock('../walletconnect-x402.js');
+      });
+    });
   });
 
   // =================== Smart Alert Endpoints ===================
@@ -3494,6 +3981,26 @@ describe('NansenAPI', () => {
       const result = await api.alertsCreate(params);
       expectFetchCalledWith('/api/v1/smart-alert', { name: 'Test', type: 'sm-token-flows' });
       expect(result).toHaveProperty('id', 'alert-2');
+    });
+
+    it('alertsCreate should not retry after an ambiguous network failure', async () => {
+      if (LIVE_TEST) return;
+      vi.useFakeTimers();
+      let createdAlerts = 0;
+      mockFetch.mockImplementation(async () => {
+        createdAlerts += 1;
+        throw new Error('response lost after create');
+      });
+
+      const params = { name: 'Test', type: 'sm-token-flows', timeWindow: '1h', channels: [], data: {} };
+      let thrownError;
+      const promise = api.alertsCreate(params).catch(error => { thrownError = error; });
+      await vi.runAllTimersAsync();
+      await promise;
+
+      expect(thrownError?.message).toContain('response lost after create');
+      expect(createdAlerts).toBe(1);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it('alertsUpdate should PATCH /api/v1/smart-alert', async () => {
@@ -3527,10 +4034,9 @@ describe('NansenAPI', () => {
   // =================== Supported Chains ===================
 
   describe('Supported Chains', () => {
-    const CHAINS = [
-      'ethereum', 'solana', 'base', 'bnb', 'arbitrum',
-      'polygon', 'optimism', 'avalanche', 'linea', 'scroll'
-    ];
+    const CHAINS = JSON.parse(
+      fs.readFileSync(new URL('../schema.json', import.meta.url), 'utf8')
+    ).chains;
 
     it('should accept all documented chains', async () => {
       for (const chain of CHAINS) {

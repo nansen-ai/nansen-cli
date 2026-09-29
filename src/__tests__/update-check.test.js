@@ -297,6 +297,63 @@ describe('scheduleUpdateCheck atomic write', () => {
       await new Promise(resolve => server.close(resolve));
     }
   });
+
+  it('does not cache a non-2xx registry response', async () => {
+    const server = http.createServer((_req, res) => {
+      res.statusCode = 500;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ version: '99.0.0', error: 'temporary failure' }));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+
+    const dir = path.join(tempDir, '.nansen');
+    const file = path.join(dir, 'update-check.json');
+    const script = buildCheckScript(dir, file, `http://127.0.0.1:${port}/nansen-cli/latest`);
+
+    try {
+      // Exit code guards against a false negative: a child that dies before it
+      // reaches the write also leaves no cache file.
+      const exitCode = await new Promise((resolve, reject) => {
+        const child = childProcess.spawn(process.execPath, ['-e', script], { stdio: 'ignore' });
+        child.on('exit', resolve);
+        child.on('error', reject);
+      });
+
+      expect(exitCode).toBe(0);
+      expect(fs.existsSync(file)).toBe(false);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  it('does not mark the cache fresh when a 2xx response has no version', async () => {
+    const server = http.createServer((_req, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ error: 'missing package metadata' }));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+
+    const dir = path.join(tempDir, '.nansen');
+    const file = path.join(dir, 'update-check.json');
+    const script = buildCheckScript(dir, file, `http://127.0.0.1:${port}/nansen-cli/latest`);
+
+    try {
+      // Exit code guards against a false negative: a child that dies before it
+      // reaches the write also leaves no cache file.
+      const exitCode = await new Promise((resolve, reject) => {
+        const child = childProcess.spawn(process.execPath, ['-e', script], { stdio: 'ignore' });
+        child.on('exit', resolve);
+        child.on('error', reject);
+      });
+
+      expect(exitCode).toBe(0);
+      expect(fs.existsSync(file)).toBe(false);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
 });
 
 // =================== CLI Integration ===================

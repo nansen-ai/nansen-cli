@@ -104,6 +104,20 @@ describe('CLI Smoke Tests', () => {
     expect(combined).toContain('trade quote');
   });
 
+  it.each(['points leaderboard', 'research points leaderboard'])('%s fails without suggesting another unavailable command', (command) => {
+    const { stdout, stderr, exitCode } = runCLI(command, {
+      env: { NO_UPDATE_NOTIFIER: '1', NANSEN_NO_TELEMETRY: '1' }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(stdout)).toMatchObject({
+      success: false,
+      code: 'COMMAND_UNAVAILABLE',
+      error: 'The points leaderboard endpoint has been removed. Run "nansen research" to explore other analytics commands.'
+    });
+    expect(stderr).toBe('');
+  });
+
   // =================== JSON Output Format ===================
 
   it('should output valid JSON on error', () => {

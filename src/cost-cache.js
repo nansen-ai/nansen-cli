@@ -77,13 +77,21 @@ export async function refreshCostMapIfStale() {
     let spec;
     try {
       const res = await fetch(OPENAPI_URL, { signal: controller.signal });
+      // An error body still parses as JSON. Writing it would stamp fetchedAt
+      // fresh, replacing known-good costs with an empty map and suppressing the
+      // next attempt for STALE_MS.
+      if (!res.ok) return;
       spec = await res.json();
     } finally {
       clearTimeout(timer);
     }
 
+    // No paths object means this is not the spec. Treat it as a failed fetch
+    // rather than as "every endpoint is free".
+    if (!spec?.paths || typeof spec.paths !== 'object') return;
+
     const costs = {};
-    for (const [p, methods] of Object.entries(spec.paths || {})) {
+    for (const [p, methods] of Object.entries(spec.paths)) {
       for (const op of Object.values(methods)) {
         if (op['x-credit-cost']) {
           costs[p] = op['x-credit-cost'];

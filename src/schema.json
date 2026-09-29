@@ -410,7 +410,7 @@
       }
     },
     "research": {
-      "description": "Research and analytics commands",
+      "description": "Research and analytics commands. Explicitly blank chain, timeframe, and days options are rejected instead of selecting defaults. Profiler batch rejects blank --delay; trace rejects blank --delay, --depth, and --width.",
       "subcommands": {
         "portfolio": {
           "subcommands": {
@@ -481,7 +481,8 @@
                   "description": "Chain to query"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -507,7 +508,8 @@
                   "description": "Chain to profile the address on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -528,7 +530,8 @@
                   "description": "Chain to profile the address on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -565,9 +568,35 @@
                   "description": "Chain to profile the address on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
+                }
+              }
+            },
+            "counterparties-batch": {
+              "endpoint": "/api/v1/profiler/address/counterparties/batch",
+              "description": "Top counterparties by volume for up to 10 wallets in one request. Results are not aggregated: every row carries the wallet_address it belongs to, returned as contiguous per-wallet blocks ordered by wallet address — raise --limit and page with --page N to reach later wallets",
+              "options": {
+                "addresses": {
+                  "type": "string",
+                  "description": "Comma-separated list (or JSON array) of up to 10 distinct wallet addresses; required unless --file <path> is provided"
+                },
+                "file": {
+                  "type": "string",
+                  "description": "Read addresses from this file instead of --addresses: a JSON array of addresses, or one address per line"
+                },
+                "chain": {
+                  "type": "string",
+                  "default": "all",
+                  "description": "Chain to profile every address on: all, arbitrum, arc, avalanche, base, bitcoin, bnb, ethereum, hyperevm, injective, iotaevm, linea, mantle, mantra, monad, near, optimism, plasma, polygon, robinhood, sei, solana, sonic, starknet, sui, ton, tron ('bsc' is accepted and sent as 'bnb'). One ecosystem per request: EVM and Solana addresses cannot be mixed. The default 'all' auto-detects the ecosystem across EVM chains, or Solana for a Solana-only batch"
+                },
+                "days": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "default": 30,
+                  "description": "Lookback window in days (max 90 for this command)"
                 }
               }
             },
@@ -586,7 +615,8 @@
                   "description": "Chain to profile the address on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -634,7 +664,8 @@
                   "description": "Chain to profile the address on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -677,7 +708,8 @@
                   "description": "Hyperliquid trader address"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -698,7 +730,8 @@
                   "description": "Chain to profile the address on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -749,17 +782,19 @@
                   "description": "Chain to profile the address on"
                 },
                 "depth": {
-                  "type": "number",
+                  "type": "integer",
                   "default": 2,
-                  "description": "Hops to follow from the starting address (1-5)"
+                  "description": "Hops to follow from the starting address (1-5); valid integers outside the range are clamped"
                 },
                 "width": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 10,
                   "description": "Counterparties to follow at each hop"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days at each hop"
                 },
@@ -784,7 +819,8 @@
                   "description": "Chain to compare the wallets on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -810,7 +846,8 @@
                   "description": "Token contract address (mint address on Solana)"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 },
@@ -829,7 +866,7 @@
             },
             "who-bought-sold": {
               "endpoint": "/api/v1/tgm/who-bought-sold",
-              "description": "Recent buyers and sellers",
+              "description": "Recent buyers and sellers. Explicitly blank --buy-or-sell values are rejected; omission keeps BUY.",
               "options": {
                 "chain": {
                   "type": "string",
@@ -842,7 +879,8 @@
                   "description": "Token contract address (mint address on Solana)"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 },
@@ -871,7 +909,8 @@
                   "description": "Token contract address (mint address on Solana)"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -892,7 +931,8 @@
                   "description": "Token contract address (mint address on Solana)"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -933,7 +973,8 @@
                   "description": "Token contract address (mint address on Solana)"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 },
@@ -953,7 +994,8 @@
                   "description": "Perp symbol, e.g. BTC"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 },
@@ -984,7 +1026,8 @@
                   "description": "Perp symbol, e.g. BTC"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -1151,7 +1194,8 @@
               "description": "Screen perpetual futures contracts",
               "options": {
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 },
@@ -1181,7 +1225,8 @@
               "description": "Perpetual futures PnL leaderboard",
               "options": {
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 },
@@ -1440,7 +1485,7 @@
           "description": "Nansen Points analytics",
           "subcommands": {
             "leaderboard": {
-              "description": "Points leaderboard"
+              "description": "Points leaderboard (unavailable)"
             }
           }
         },
@@ -1834,6 +1879,7 @@
       "description": "Smart alert management — create, update, toggle, delete alerts",
       "subcommands": {
         "list": {
+          "endpoint": "/api/v1/smart-alert/list",
           "description": "List all alerts",
           "returns": [
             "id",
@@ -1847,7 +1893,9 @@
           ]
         },
         "create": {
+          "endpoint": "/api/v1/smart-alert",
           "description": "Create a new alert",
+          "notes": "Sent as POST /api/v1/smart-alert. alerts update PATCHes the same path; the schema declares routes by path only, so the two subcommands intentionally share one endpoint entry and one credit cost.",
           "options": {
             "name": {
               "type": "string",
@@ -1898,7 +1946,9 @@
           }
         },
         "update": {
+          "endpoint": "/api/v1/smart-alert",
           "description": "Update an existing alert. Usage: nansen alerts update <id> [options]",
+          "notes": "Sent as PATCH /api/v1/smart-alert. alerts create POSTs the same path; the schema declares routes by path only, so the two subcommands intentionally share one endpoint entry and one credit cost.",
           "options": {
             "name": {
               "type": "string",
@@ -1951,6 +2001,7 @@
           }
         },
         "toggle": {
+          "endpoint": "/api/v1/smart-alert/toggle",
           "description": "Enable or disable an alert. Usage: nansen alerts toggle <id> --enabled|--disabled",
           "options": {
             "enabled": {
@@ -1964,6 +2015,7 @@
           }
         },
         "delete": {
+          "endpoint": "/api/v1/smart-alert/{alertId}",
           "description": "Delete an alert. Usage: nansen alerts delete <id>",
           "options": {}
         }
@@ -1973,7 +2025,7 @@
       "description": "DEX trading commands",
       "subcommands": {
         "quote": {
-          "description": "Get a DEX swap quote (same-chain or cross-chain)",
+          "description": "Get a DEX swap quote (same-chain or cross-chain). Explicitly blank --swap-mode, --wallet, --to-chain, --aggregator, and --amount-unit values are rejected.",
           "options": {
             "chain": {
               "type": "string",
@@ -2043,7 +2095,7 @@
           ]
         },
         "execute": {
-          "description": "Sign and broadcast a quoted trade",
+          "description": "Sign and broadcast a quoted trade. Explicitly blank --wallet values are rejected.",
           "options": {
             "quote": {
               "type": "string",
@@ -2109,7 +2161,7 @@
           "description": "Limit order management (Solana only)",
           "subcommands": {
             "create": {
-              "description": "Place a new limit order",
+              "description": "Place a new limit order. Explicitly blank --expires values are rejected; omission keeps the 30d default. Explicitly blank --wallet values are rejected.",
               "options": {
                 "from": {
                   "type": "string",
@@ -2163,7 +2215,7 @@
               ]
             },
             "list": {
-              "description": "List your limit orders",
+              "description": "List your limit orders. Explicitly blank --wallet, --limit, --offset, --dir, and --mint values are rejected.",
               "options": {
                 "state": {
                   "type": "string",
@@ -2202,7 +2254,7 @@
               ]
             },
             "cancel": {
-              "description": "Cancel an open limit order",
+              "description": "Cancel an open limit order. Explicitly blank --wallet values are rejected.",
               "options": {
                 "order": {
                   "type": "string",
@@ -2219,7 +2271,7 @@
               ]
             },
             "update": {
-              "description": "Update trigger price or slippage on an existing order",
+              "description": "Update trigger price or slippage on an existing order. Explicitly blank --wallet values are rejected.",
               "options": {
                 "order": {
                   "type": "string",
@@ -2251,10 +2303,24 @@
       "description": "Wallet management. x402 auto-payments are guarded by a client-side policy: per-payment USD cap via NANSEN_X402_MAX_AMOUNT (default 1.00; 'unlimited' to disable) and an optional recipient allowlist via NANSEN_X402_ALLOWED_PAYTO (comma-separated addresses).",
       "subcommands": {
         "create": {
-          "description": "Create a new wallet"
+          "description": "Create a new wallet. Explicitly blank --name values are rejected for local and Privy wallets.",
+          "options": {
+            "unsafe-no-password": {
+              "type": "boolean",
+              "description": "Skip encryption; private keys are stored unencrypted on disk (local only)"
+            }
+          },
+          "examples": [
+            "nansen wallet create --name trading",
+            "nansen wallet create --name agent-wallet --provider privy"
+          ]
         },
         "list": {
-          "description": "List all wallets"
+          "description": "List all wallets",
+          "examples": [
+            "nansen wallet list",
+            "nansen wallet list --pretty"
+          ]
         },
         "show": {
           "description": "Show wallet details",
@@ -2262,10 +2328,13 @@
             "name": {
               "description": "Wallet name"
             }
-          }
+          },
+          "examples": [
+            "nansen wallet show <name>"
+          ]
         },
         "send": {
-          "description": "Send tokens or native currency",
+          "description": "Send tokens or native currency. Explicitly blank --token and --wallet values are rejected; omit them for native currency and the default wallet.",
           "options": {
             "to": {
               "type": "string",
@@ -2280,23 +2349,64 @@
             },
             "amount": {
               "type": "string",
-              "required": true,
-              "description": "Amount to send in human-readable units, e.g. 1.5"
+              "description": "Amount to send in human-readable units, e.g. 1.5. Required unless --max is set"
+            },
+            "max": {
+              "type": "boolean",
+              "description": "Send the entire spendable balance instead of --amount"
             }
-          }
+          },
+          "examples": [
+            "nansen wallet send --to <address> --amount 1.5 --chain evm",
+            "nansen wallet send --to <address> --max --chain solana"
+          ]
         },
         "export": {
-          "description": "Export private keys"
+          "description": "Export private keys (redacted by default; pass --reveal or --file <path> for the actual keys)",
+          "options": {
+            "reveal": {
+              "type": "boolean",
+              "description": "Print private keys in plaintext to stdout (explicit acknowledgement; warns on interactive terminals)"
+            },
+            "file": {
+              "type": "string",
+              "description": "Write private keys to this path instead of stdout (created with 0600 permissions, refuses to overwrite)"
+            }
+          },
+          "examples": [
+            "nansen wallet export <name>",
+            "nansen wallet export <name> --file backup.json"
+          ]
         },
         "delete": {
-          "description": "Delete a wallet"
+          "description": "Delete a wallet",
+          "examples": [
+            "nansen wallet delete <name>"
+          ]
         },
         "default": {
-          "description": "Set default wallet"
+          "description": "Set default wallet",
+          "examples": [
+            "nansen wallet default <name>"
+          ]
+        },
+        "forget-password": {
+          "description": "Forget the saved wallet password, removing it from the OS keychain and from the local credentials file. Later commands fall back to NANSEN_WALLET_PASSWORD or an interactive prompt (--human).",
+          "examples": [
+            "nansen wallet forget-password"
+          ]
+        },
+        "secure": {
+          "description": "Move a wallet password that is held in the local credentials file or in NANSEN_WALLET_PASSWORD into the OS keychain, then delete the plaintext copy. Verifies the password against the stored hash first, reports success when it is already in the keychain, and fails with KEYCHAIN_UNAVAILABLE when no OS keychain is reachable.",
+          "examples": [
+            "nansen wallet secure",
+            "NANSEN_WALLET_PASSWORD=<password> nansen wallet secure"
+          ]
         }
       }
     },
     "account": {
+      "endpoint": "/api/v1/account",
       "description": "Show API key status, plan, and remaining credits. Does not consume credits."
     },
     "auth": {
@@ -2353,6 +2463,7 @@
       "description": "Web search and fetch commands",
       "subcommands": {
         "search": {
+          "endpoint": "/api/v1/search/web-search",
           "description": "Search the web for one or more queries in parallel",
           "options": {
             "query": {
@@ -2371,6 +2482,7 @@
           ]
         },
         "fetch": {
+          "endpoint": "/api/v1/search/web-fetch",
           "description": "Fetch and analyze content from one or more URLs using AI",
           "options": {
             "url": {
@@ -2390,6 +2502,10 @@
       }
     },
     "agent": {
+      "apiEndpoints": [
+        "/api/v1/agent/fast",
+        "/api/v1/agent/expert"
+      ],
       "description": "Nansen AI research agent — ask questions about wallets, tokens, and on-chain activity",
       "options": {
         "expert": {
@@ -2431,7 +2547,11 @@
             "url": {
               "type": "string",
               "default": "https://mcp.nansen.ai/ra/mcp",
-              "description": "Hosted MCP server URL"
+              "description": "Hosted MCP server URL. A saved API key is not sent to a non-default URL unless you pass --send-api-key, and never over plain HTTP to a non-loopback host."
+            },
+            "send-api-key": {
+              "type": "boolean",
+              "description": "Presence-only flag — pass it bare, never with a value (`--send-api-key false` is rejected). Authorizes sending your saved API key to a custom --url (must be https:// or a loopback host). Not needed when you pass --api-key explicitly."
             },
             "json": {
               "type": "boolean",
@@ -2441,7 +2561,8 @@
           "examples": [
             "npx -y nansen-cli mcp verify",
             "nansen mcp verify --json",
-            "nansen mcp verify --url https://mcp.example.dev/ra/mcp --api-key <key>"
+            "nansen mcp verify --url https://mcp.example.dev/ra/mcp --api-key <key>",
+            "nansen mcp verify --url https://mcp.example.dev/ra/mcp --send-api-key"
           ]
         },
         "install": {
@@ -2540,9 +2661,18 @@
       "description": "Disable automatic retry on rate limits/errors"
     },
     "retries": {
-      "type": "number",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
       "default": 3,
-      "description": "Max retry attempts"
+      "description": "Max retry attempts (non-negative safe integer)"
+    },
+    "cache-ttl": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "default": 300,
+      "description": "Cache TTL in seconds (non-negative safe integer; 0 disables cache reads)"
     },
     "format": {
       "type": "string",
@@ -2558,24 +2688,42 @@
     }
   },
   "chains": [
-    "ethereum",
-    "solana",
-    "base",
-    "bnb",
+    "algorand",
+    "aptos",
     "arbitrum",
-    "polygon",
-    "optimism",
+    "arc",
     "avalanche",
-    "linea",
-    "scroll",
-    "mantle",
-    "ronin",
-    "sei",
-    "plasma",
-    "sonic",
-    "monad",
+    "base",
+    "bitcoin",
+    "bitlayer",
+    "bnb",
+    "chiliz",
+    "citrea",
+    "ethereum",
+    "gravity",
     "hyperevm",
-    "iotaevm"
+    "hyperliquid",
+    "injective",
+    "iotaevm",
+    "linea",
+    "mantle",
+    "mantra",
+    "monad",
+    "near",
+    "optimism",
+    "plasma",
+    "polygon",
+    "robinhood",
+    "sei",
+    "solana",
+    "sonic",
+    "stacks",
+    "starknet",
+    "stellar",
+    "sui",
+    "ton",
+    "tron",
+    "viction"
   ],
   "smartMoneyLabels": [
     "Fund",

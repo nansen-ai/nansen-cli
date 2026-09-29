@@ -1577,6 +1577,141 @@ describe('WalletConnect execute support', () => {
     vi.restoreAllMocks();
   });
 
+  it('scopes the WalletConnect address lookup to the quote chain before signing', async () => {
+    const addrSpy = vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmocktx' });
+
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn(async () => ({
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify({ result: { status: '0x1', blockNumber: '0x100' } })),
+      json: () => Promise.resolve({ result: { status: '0x1', blockNumber: '0x100' } }),
+    }));
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'lifi',
+        inputMint: BASE_ETH,
+        outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        inAmount: '1000000000000000000',
+        outAmount: '3000000000',
+        transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '200000' },
+      }],
+    }, 'base', 'walletconnect', null, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({
+        walletAddress: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+        fromToken: BASE_ETH,
+        toToken: BASE_USDC,
+        amount: '1000000000000000000',
+        maxInputAmount: '1000000000000000000',
+      }),
+    });
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await cmds.execute([], null, {}, { quote: quoteId });
+
+    // Base's chain ID (8453), not just "some EVM account" -- the call right
+    // before signing/broadcasting must be scoped to the chain being used.
+    expect(addrSpy.mock.calls.some(call => call[0] === 'evm' && call[1] === 8453)).toBe(true);
+
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('rejects execute when the WalletConnect session is connected but not to the quote chain (regression)', async () => {
+    // Before the fix: getWalletConnectAddress(chainType) ignored the chain ID
+    // entirely and returned any eip155:* account, so a session approved only
+    // for a different chain would silently sign/broadcast here. EVM
+    // addresses are identical across chains, so nothing else in this path
+    // (assertQuoteMatchesRequest included) could have caught the mismatch.
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockImplementation(async (chainType, chainId) => {
+      if (chainType !== 'evm') return null;
+      // Session is connected -- but only approved for Ethereum mainnet (1), not Base (8453).
+      return chainId === 1 ? '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4' : null;
+    });
+    vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmocktx' });
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'lifi',
+        inputMint: BASE_ETH,
+        outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        inAmount: '1000000000000000000',
+        outAmount: '3000000000',
+        transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '200000' },
+      }],
+    }, 'base', 'walletconnect', null, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({
+        walletAddress: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+        fromToken: BASE_ETH,
+        toToken: BASE_USDC,
+        amount: '1000000000000000000',
+        maxInputAmount: '1000000000000000000',
+      }),
+    });
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow('No WalletConnect session active for chain "base"');
+
+    vi.restoreAllMocks();
+  });
+
+  it('rejects execute when the WalletConnect session switches to a different chain between the pre-check and signing (regression)', async () => {
+    // The pre-check right after loading the quote (line ~2571) and the check
+    // immediately before signing (line ~3036) both call
+    // getWalletConnectAddress -- deliberately, to close the gap where a
+    // session could disconnect or switch chains in between (same rationale
+    // as the pre-existing "session dropped mid-execute" guard this extends).
+    // Simulate that gap: the session is on the right chain for the first
+    // check, then switches before the second one runs.
+    let calls = 0;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockImplementation(async (chainType, chainId) => {
+      if (chainType !== 'evm') return null;
+      calls++;
+      if (calls === 1) return chainId === 8453 ? '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4' : null;
+      // Second call onward: session has moved to a different chain.
+      return chainId === 8453 ? null : '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4';
+    });
+    vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmocktx' });
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'lifi',
+        inputMint: BASE_ETH,
+        outputMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        inAmount: '1000000000000000000',
+        outAmount: '3000000000',
+        transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '200000' },
+      }],
+    }, 'base', 'walletconnect', null, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({
+        walletAddress: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+        fromToken: BASE_ETH,
+        toToken: BASE_USDC,
+        amount: '1000000000000000000',
+        maxInputAmount: '1000000000000000000',
+      }),
+    });
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], null, {}, { quote: quoteId })).rejects.toThrow('No WalletConnect session for this chain');
+    expect(calls).toBeGreaterThanOrEqual(2);
+
+    vi.restoreAllMocks();
+  });
+
   it('should allow Solana + walletconnect for execute', async () => {
     vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
     vi.spyOn(wcTrading, 'sendSolanaTransactionViaWalletConnect').mockResolvedValue({ signedTransaction: '5K4Ld...' });
@@ -3489,7 +3624,13 @@ describe('API error handling', () => {
     global.fetch = origFetch;
   });
 
-  it('should surface UPSTREAM_BROADCAST_ERROR from execute API', async () => {
+  it('fails closed on a 502 from execute API, preserving the upstream body as details', async () => {
+    // A 502 is ambiguous no matter the body: the gateway may have forwarded the
+    // signed tx upstream before failing, so we can't trust a JSON error code
+    // (even "simulation failed") to prove the tx never went out. executeTransaction
+    // classifies it BROADCAST_FAILED — the fail-closed class that marks the quote
+    // spent and aborts — rather than surfacing the upstream code as nonfatal. The
+    // original code/message is preserved as `details` so nothing is lost.
     const origFetch = global.fetch;
     const errorBody = JSON.stringify({
       code: 'UPSTREAM_BROADCAST_ERROR',
@@ -3502,10 +3643,66 @@ describe('API error handling', () => {
     });
 
     const { executeTransaction } = await import('../trading.js');
+    // retries default to 2 with a 1.5s delay; drop both so the test doesn't wait.
     await expect(executeTransaction({
       signedTransaction: 'test',
       chain: 'solana',
-    })).rejects.toThrow('simulation failed');
+    }, { retries: 0 })).rejects.toMatchObject({
+      code: 'BROADCAST_FAILED',
+      status: 502,
+      details: { code: 'UPSTREAM_BROADCAST_ERROR', message: 'Jupiter Ultra execute failed: transaction simulation failed' },
+    });
+
+    global.fetch = origFetch;
+  });
+
+  it('fails closed on a parseable 504 from execute API (every 5xx is ambiguous)', async () => {
+    // A 504 with a structured body — { code: "UPSTREAM_TIMEOUT" } — is NOT a
+    // definitive "never sent": the gateway may have forwarded the signed tx
+    // upstream and then lost the ack on the timeout. Classifying it by its own
+    // (nonfatal) code would let the candidate loop broadcast the next quote on
+    // top of a live tx, so executeTransaction folds it into BROADCAST_FAILED
+    // like a 502/503, preserving the upstream body as `details`.
+    const origFetch = global.fetch;
+    const errorBody = JSON.stringify({
+      code: 'UPSTREAM_TIMEOUT',
+      message: 'Upstream request timed out',
+    });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 504,
+      text: async () => errorBody,
+    });
+
+    const { executeTransaction } = await import('../trading.js');
+    await expect(executeTransaction({
+      signedTransaction: 'test',
+      chain: 'base',
+    }, { retries: 0 })).rejects.toMatchObject({
+      code: 'BROADCAST_FAILED',
+      status: 504,
+      details: { code: 'UPSTREAM_TIMEOUT', message: 'Upstream request timed out' },
+    });
+
+    global.fetch = origFetch;
+  });
+
+  it('treats non-JSON sub-500 execute responses as nonfatal execute errors', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      text: async () => '<!DOCTYPE html><html><body>rate limited</body></html>',
+    });
+
+    const { executeTransaction } = await import('../trading.js');
+    await expect(executeTransaction({
+      signedTransaction: 'test',
+      chain: 'solana',
+    }, { retries: 0 })).rejects.toMatchObject({
+      code: 'EXECUTE_ERROR',
+      status: 429,
+    });
 
     global.fetch = origFetch;
   });
@@ -5414,6 +5611,75 @@ describe('Relay aggregator: --gasless flag dispatch', () => {
     vi.unstubAllGlobals();
   });
 
+  it('does NOT retry the /execute POST on an ambiguous 5xx for a gasless swap (no double-solve)', async () => {
+    // A --gasless Relay swap POSTs a signed authorization; Relay's solver
+    // broadcasts its own wrapping tx from it, so a re-POST after the solver
+    // already picked it up can't be deduped at the node level and risks a second
+    // solve. executeTransaction must therefore be called with retries:0 for
+    // gasless — a single POST that fails closed — unlike a normal swap where the
+    // byte-identical replay is safe to retry. Regression guard: exactly ONE POST
+    // to /execute even though the response is a retryable-looking 502.
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+
+    let executePosts = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
+        executePosts += 1;
+        return Promise.resolve({
+          ok: false,
+          status: 502,
+          text: () => Promise.resolve('<!DOCTYPE html><html>502 Bad Gateway</html>'),
+        });
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null })) });
+    }));
+
+    const sigCount = Buffer.from([0x01]);
+    const emptySig = Buffer.alloc(64);
+    const message = Buffer.from([0x01, 0x00, 0x01, 0x02, ...Buffer.alloc(32), ...Buffer.alloc(32), ...Buffer.alloc(32), 0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00]);
+    const txBase64 = Buffer.concat([sigCount, emptySig, message]).toString('base64');
+
+    const quoteId = saveQuote({
+      success: true,
+      metadata: { quoteId: 'backend-relay-quote-id' },
+      quotes: [{
+        aggregator: 'relay',
+        inputMint: '11111111111111111111111111111111',
+        outputMint: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+        inAmount: '1000000000',
+        outAmount: '180000000',
+        approvalAddress: '',
+        transaction: txBase64,
+        metadata: {
+          requestId: 'relay-req-gas',
+          isCrossChain: true,
+          bridgeTool: 'relay',
+          steps: [{ kind: 'transaction', items: [{ data: 'opaque-step-blob' }] }],
+        },
+      }],
+    }, 'solana', 'local', null, 'base', {
+      swapMode: 'exactIn',
+      request: solanaIntent({
+        walletAddress: showWallet('default').solana,
+        fromToken: '11111111111111111111111111111111',
+        toToken: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+        toChain: 'base',
+        amount: '1000000000',
+        maxInputAmount: '1000000000',
+      }),
+    });
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], null, { gasless: true }, { quote: quoteId })).rejects.toThrow();
+
+    expect(executePosts).toBe(1); // no retry — the gasless authorization is not re-POSTed
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    vi.unstubAllGlobals();
+  });
+
   it('throws GASLESS_UNSUPPORTED_AGGREGATOR when --gasless is used on a LiFi quote', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
@@ -6122,6 +6388,32 @@ describe('Relay aggregator: --aggregator filter on trade quote', () => {
       amount: '1000000',
       'swap-mode': 'exactOut',
     })).rejects.toThrow(/max-auto-slippage/i);
+  });
+
+  it('rejects a blank --max-auto-slippage instead of sending an uncapped exactOut quote', async () => {
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    // `--max-auto-slippage ""` reaches the handler as an empty string, which
+    // Number() turns into 0: in range, not null, and then falsy when the request
+    // is built, so the exactOut cap requirement would pass with no cap sent.
+    await expect(cmds.quote([], null, { 'auto-slippage': true }, {
+      chain: 'base',
+      from: 'USDC',
+      to: 'ETH',
+      amount: '1000000',
+      'swap-mode': 'exactOut',
+      'max-auto-slippage': '',
+    })).rejects.toThrow(/Invalid --max-auto-slippage/);
+  });
+
+  it('rejects a blank --slippage rather than reading it as zero', async () => {
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.quote([], null, {}, {
+      chain: 'base',
+      from: 'USDC',
+      to: 'ETH',
+      amount: '1000000',
+      slippage: '',
+    })).rejects.toThrow(/Invalid --slippage/);
   });
 });
 
@@ -7214,6 +7506,10 @@ describe('Solana exactOut ceiling — requires an explicit --max-input', () => {
 });
 
 describe('Relay Solana-source bridge: raw-instruction transaction shape', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('execute compiles and signs a Relay raw {instructions} quote instead of crashing', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
@@ -7225,7 +7521,7 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
       const urlStr = typeof url === 'string' ? url : url.toString();
       const body = opts?.body ? (() => { try { return JSON.parse(opts.body); } catch { return {}; } })() : {};
       if (body.method === 'getLatestBlockhash') {
-        return Promise.resolve({ json: () => Promise.resolve({ result: { value: { blockhash: FAKE_BLOCKHASH } } }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ result: { value: { blockhash: FAKE_BLOCKHASH } } }) });
       }
       if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
         executeBodies.push(body);
@@ -7300,7 +7596,6 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
     expect(signedTx.subarray(1, 65).every(b => b === 0)).toBe(false);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
-    vi.unstubAllGlobals();
   });
 
   it('rejects an instruction with malformed hex data instead of silently truncating it', async () => {
@@ -7320,12 +7615,36 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
       .rejects.toThrow(/not valid hex/);
   });
 
+  it('rejects non-string instruction data with the invalid-hex error, without fetching the blockhash', async () => {
+    const signer = generateSolanaWallet().address;
+    const badQuote = (data) => ({
+      instructions: [{
+        keys: [{ pubkey: signer, isSigner: true, isWritable: true }],
+        programId: generateSolanaWallet().address,
+        data,
+      }],
+    });
+
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await expect(compileRawSolanaTransaction(badQuote([1, 2, 3]), 'http://unused', async () => signer))
+      .rejects.toThrow(/instruction data is not valid hex/);
+    await expect(compileRawSolanaTransaction(badQuote({ bytes: [1, 2, 3] }), 'http://unused', async () => signer))
+      .rejects.toThrow(/instruction data is not valid hex/);
+    await expect(compileRawSolanaTransaction(badQuote(123), 'http://unused', async () => signer))
+      .rejects.toThrow(/instruction data is not valid hex/);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('normalize dispatches the raw-instructions shape even when a data field is also present', async () => {
     const signer = generateSolanaWallet().address;
     // A hypothetical future shape carrying BOTH instructions and data: the
     // Relay compiler must win, not the OKX base58-decode branch. base58Decode
     // would throw on this non-base58 data, so reaching it at all is the failure.
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
       json: () => Promise.resolve({ result: { value: { blockhash: generateSolanaWallet().address } } }),
     }));
     const mixed = {
@@ -7338,7 +7657,6 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
     };
     const b64 = await normalizeSolanaTransaction(mixed, 'http://unused', async () => signer);
     expect(Buffer.from(b64, 'base64').length).toBeGreaterThan(0);
-    vi.unstubAllGlobals();
   });
 
   it('rejects an instruction set that requires more than one signature', async () => {

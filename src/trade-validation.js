@@ -4,8 +4,10 @@
  * bad amounts) before any network call.
  */
 
+import crypto from 'crypto';
 import { validateAddress } from './api.js';
 import { CHAIN_RPCS } from './rpc-urls.js';
+import { base58Encode } from './wallet.js';
 import { parseTransactionMessage, resolveStaticAccount } from './solana-tx.js';
 import { SOL_SENTINEL } from './solana-simulation.js';
 import { EVM_NATIVE_SENTINEL } from './swap-simulation.js';
@@ -20,10 +22,20 @@ const SPL_TOKEN_PROGRAMS = new Set([
   'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
   'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
 ]);
+const SPL_TRANSFER = 3;
 const SPL_APPROVE = 4;
 const SPL_SET_AUTHORITY = 6;
 const SPL_CLOSE_ACCOUNT = 9;
+const SPL_TRANSFER_CHECKED = 12;
 const SPL_APPROVE_CHECKED = 13;
+const SPL_INITIALIZE_ACCOUNT = 1;
+const SPL_INITIALIZE_ACCOUNT2 = 16;
+const SPL_INITIALIZE_ACCOUNT3 = 18;
+
+const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+const SYSTEM_INSTR_TRANSFER = 2;
+const SYSTEM_INSTR_CREATE_ACCOUNT_WITH_SEED = 3;
+const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 
 const COMPUTE_BUDGET_PROGRAM = 'ComputeBudget111111111111111111111111111111';
 const COMPUTE_BUDGET_SET_UNIT_LIMIT = 2;
@@ -161,6 +173,14 @@ const NATIVE_TOKEN_ADDRESSES = {
 // defence-in-depth loss ceiling, not a fee estimate — revisit if a route ever
 // legitimately needs more.
 export const EVM_BRIDGE_NATIVE_FEE_SLACK = 2_000_000_000_000_000n; // 0.002 ETH
+
+// Tolerance for a native-ETH refund on an exact-in bridge: some routers receive
+// msg.value = request.amount and return a small unused remainder, so the sim's net
+// outflow can be slightly below the requested input on a correctly funded bridge.
+// Same numeric cap as EVM_BRIDGE_NATIVE_FEE_SLACK (conservative, gas-independent);
+// kept separate so sibling-fee and input-refund tolerances protect distinct
+// assertions and remain distinguishable in reviews.
+export const EVM_BRIDGE_NATIVE_INPUT_REFUND_SLACK = 2_000_000_000_000_000n; // 0.002 ETH
 
 // Native SOL has two on-chain spellings that denote the same asset: the
 // canonical wrapped-SOL mint (what the CLI resolves `SOL` to and persists as
@@ -954,7 +974,9 @@ export function isBridgeRequest(request) {
  * Four assertions, all derived from the persisted request intent + the quote:
  *   1. the input token leaves the wallet by no MORE than maxInputAmount. Native
  *      input excludes gas: the sim deltas are log-based, so gas (not a transfer
- *      log) is never counted.
+ *      log) is never counted. For exact-in cross-chain bridges with native ETH
+ *      input, the lower outflow floor is relaxed by EVM_BRIDGE_NATIVE_INPUT_REFUND_SLACK
+ *      to tolerate routers that refund a small unused remainder of msg.value.
  *   2. the output token arrives by AT LEAST minOut — exactOut: >= the requested
  *      output; exactIn: the quoted output reduced by the slippage in effect.
  *      SKIPPED for a cross-chain bridge: the output settles on the destination
@@ -1021,6 +1043,7 @@ export function assertSwapOutcome(request, quote, sim, { slippage, expectedSpend
 
   // Bridges skip only assertion 2 (output arrival) below — see isBridgeRequest.
   const isBridge = isBridgeRequest(request);
+  const inputIsNative = inputToken === EVM_NATIVE_SENTINEL;
 
   // --- Assertion 1: input outflow within the spend ceiling ---
   // This bounds the outflow by maxInputAmount (the slippage-buffered ceiling),
@@ -1061,8 +1084,9 @@ export function assertSwapOutcome(request, quote, sim, { slippage, expectedSpend
   // fee-only or 1-unit no-op would still verify a bridge that never funded its
   // input. For exactIn the outflow must be ~the requested input (assertion 1
   // already caps it above); for exactOut the input is variable up to the cap, so
-  // only a positive-outflow floor is meaningful. EVM native input delta is the
-  // transferred value with gas excluded, so the outflow is exact — no fee slack.
+  // only a positive-outflow floor is meaningful. For native ETH input the floor
+  // is relaxed by EVM_BRIDGE_NATIVE_INPUT_REFUND_SLACK to tolerate routers that
+  // refund a small unused portion of msg.value; token input floors remain exact.
   if (isBridge) {
     if (swapMode === 'exactIn') {
       if (request.amount == null) throw fail('bridge exactIn request is missing the requested input amount.');
@@ -1073,8 +1097,19 @@ export function assertSwapOutcome(request, quote, sim, { slippage, expectedSpend
         throw fail(`requested input amount (${request.amount}) is not an integer.`);
       }
       if (requested <= 0n) throw fail(`bridge exactIn request has a non-positive input amount (${requested}).`);
-      if (outflow < requested) {
-        throw fail(`the bridge moved only ${outflow} of the input token (${inputToken}) out of the wallet, below the requested input (${requested}); a bridge must spend its full input on the source chain.`);
+      const floorSlack = inputIsNative ? EVM_BRIDGE_NATIVE_INPUT_REFUND_SLACK : 0n;
+      // Cap at requested / 2n: for bridges below 2 × EVM_BRIDGE_NATIVE_INPUT_REFUND_SLACK
+      // (~0.004 ETH), the applied slack shrinks proportionally so the floor stays ≥ 50 %
+      // of the requested amount rather than collapsing toward zero.
+      const appliedSlack = floorSlack < requested / 2n ? floorSlack : requested / 2n;
+      const minOutflow = requested - appliedSlack;
+      if (outflow < minOutflow) {
+        throw fail(
+          `the bridge moved only ${outflow} of the input token (${inputToken}) out of the wallet, ` +
+          `below the minimum required outflow (${minOutflow})` +
+          `${inputIsNative ? ` (requested ${requested} minus native refund slack ${appliedSlack})` : ''}` +
+          `; a bridge must spend its input on the source chain.`
+        );
       }
     } else if (outflow <= 0n) {
       throw fail(`the bridge moved no input token (${inputToken}) out of the wallet; a bridge must spend its input on the source chain.`);
@@ -1152,6 +1187,17 @@ export function assertSwapOutcome(request, quote, sim, { slippage, expectedSpend
   // threshold the caller passes (gas is already excluded from the native delta).
   // ERC-20 siblings and every same-chain swap keep strict-zero. This mirrors the
   // native-only carve-out assertSolanaSwapOutcome already applies for SOL.
+  //
+  // Empirically (survey of the shipping quote path, Sept 2026) no reachable Base
+  // token-input bridge route charges such a native fee: the live aggregator for
+  // Base bridges returns tx.value 0 on token inputs, and the other aggregator
+  // returns no Base route at all. So this carve-out is latent defense-in-depth
+  // today, kept because backend routing can change (a new route, or a fee added).
+  //
+  // Wallet-owned intermediate-token bridge routes are intentionally unsupported
+  // here unless a future quote format identifies the intermediate token and a
+  // safe maximum outflow. Treat every ERC-20 sibling as strict-zero so a route
+  // cannot drain unrelated wallet holdings under the label of "intermediate".
   const nativeDust = isBridge && siblingDustThreshold > 0n ? siblingDustThreshold : 0n;
   for (const [token, delta] of Object.entries(deltas)) {
     if (token === inputToken) continue; // its outflow is bounded by assertion 1
@@ -1225,7 +1271,7 @@ const NATIVE_SIBLING_DUST_LAMPORTS = 3_000_000n; // ~0.003 SOL
 // leaves the wallet as native SOL regardless of whether SOL is the input,
 // output, or an uninvolved sibling of the swap, so all three assertions below
 // need the same combined slack or a legitimate high-priority-fee trade false-blocks.
-const NATIVE_FEE_RENT_SLACK_LAMPORTS = MAX_PRIORITY_FEE_LAMPORTS + NATIVE_SIBLING_DUST_LAMPORTS;
+export const NATIVE_FEE_RENT_SLACK_LAMPORTS = MAX_PRIORITY_FEE_LAMPORTS + NATIVE_SIBLING_DUST_LAMPORTS;
 
 /**
  * The Solana sibling of assertSwapOutcome. Solana signs the aggregator's
@@ -1478,6 +1524,218 @@ export function assertSolanaSwapOutcome(request, quote, sim, { slippage, sibling
 }
 
 /**
+ * Verify a limit-order DEPOSIT's simulated wallet effect against intent.
+ * Fails closed (code LIMIT_ORDER_OUTCOME_MISMATCH) unless:
+ *   1. the input token leaves the wallet by EXACTLY `amount` for an SPL input, or
+ *      within `amount` ± NATIVE_FEE_RENT_SLACK_LAMPORTS for a native-SOL input
+ *      (two-sided: upper bound caps the drain, lower bound rejects a partial reroute), and
+ *   2. no token OTHER than the input leaves the wallet (native-SOL dust tolerated).
+ * NOTE: this bounds MAGNITUDE, not destination. The create command pairs it with
+ * assertLimitOrderDepositDestination so a wallet-authorized SPL transfer of the
+ * deposited asset must land in the vault's token account.
+ * There is no output leg — the deposit funds the vault, nothing returns to the wallet.
+ *
+ * @param {{deltas: Record<string, bigint|string|number>}} sim - simulateSolanaAssetChanges result
+ * @param {{inputMint: string, amount: bigint|string|number}} ctx
+ *   (walletAddress is NOT needed here — the sim already keyed its deltas relative to the wallet)
+ * @throws {Error} with `code = 'LIMIT_ORDER_OUTCOME_MISMATCH'` on any failed assertion.
+ */
+export function assertLimitOrderDepositOutcome(sim, { inputMint, amount }) {
+  const fail = (detail) => {
+    const e = new Error(`Limit-order deposit outcome mismatch (LIMIT_ORDER_OUTCOME_MISMATCH): ${detail} Refusing to sign.`);
+    e.code = 'LIMIT_ORDER_OUTCOME_MISMATCH';
+    return e;
+  };
+
+  if (!sim || typeof sim !== 'object' || sim.deltas == null) {
+    throw fail('simulation returned no asset changes to verify.');
+  }
+
+  const deltas = {};
+  for (const [k, v] of Object.entries(sim.deltas)) {
+    let amt;
+    try {
+      amt = typeof v === 'bigint' ? v : BigInt(v);
+    } catch {
+      throw fail(`simulated delta for ${k} (${v}) is not an integer.`);
+    }
+    deltas[k] = amt;
+  }
+
+  const foldNative = (mint) => (mint && SOLANA_NATIVE_SOL_ALIASES.has(mint) ? SOL_SENTINEL : mint);
+  const inputAsset = foldNative(inputMint);
+  if (!inputAsset) {
+    throw fail('deposit is missing the input token address.');
+  }
+  const inputIsNative = inputAsset === SOL_SENTINEL;
+
+  let cap;
+  try {
+    cap = BigInt(amount);
+  } catch {
+    throw fail(`deposit amount (${amount}) is not an integer.`);
+  }
+
+  const effectiveCap = inputIsNative ? cap + NATIVE_FEE_RENT_SLACK_LAMPORTS : cap;
+  const inputDelta = deltas[inputAsset] || 0n;
+  const outflow = inputDelta < 0n ? -inputDelta : 0n;
+
+  // --- magnitude bound: UPPER ---
+  if (outflow > effectiveCap) {
+    throw fail(`the input token (${inputAsset}) left the wallet by ${outflow}, exceeding the deposit amount (${cap}${inputIsNative ? ` plus fee/rent slack` : ''}).`);
+  }
+
+  // --- magnitude bound: LOWER (floor) ---
+  // The deposit must actually escrow the full `amount`; a partial outflow means the tx
+  // rerouted or under-funded the deposit. Two cases, because native SOL carries fee/rent noise:
+  if (inputIsNative) {
+    // A native deposit's outflow is amount + base/priority fee + net ATA rent, so it is
+    // normally ABOVE cap; the floor mainly catches a grossly under-funded deposit. But for
+    // a tiny `amount` (<= the slack itself) the (cap - slack) window swallows the entire
+    // requested amount, so outflow magnitude alone can no longer distinguish a genuine
+    // (if undersized) deposit from an unrelated fee-only outflow that never escrowed
+    // anything — admitting any nonzero outflow there would reopen exactly that gap.
+    // Fail closed instead of trying to verify an amount the slack makes unverifiable.
+    if (cap <= NATIVE_FEE_RENT_SLACK_LAMPORTS) {
+      throw fail(`the deposit amount (${cap}) is too small relative to the fee/rent slack (${NATIVE_FEE_RENT_SLACK_LAMPORTS}) to verify by outflow magnitude.`);
+    }
+    const floor = cap - NATIVE_FEE_RENT_SLACK_LAMPORTS;
+    if (outflow < floor) {
+      throw fail(`the input token (${inputAsset}) left the wallet by only ${outflow}, below the deposit amount (${cap} minus fee/rent slack).`);
+    }
+  } else {
+    // SPL deposit escrows EXACTLY `amount`; no fee is taken in the token, so the delta is
+    // exact. Require equality — any shortfall is a partial drain / reroute (fail closed).
+    if (outflow !== cap) {
+      throw fail(`the input token (${inputAsset}) left the wallet by ${outflow}, not the exact deposit amount (${cap}).`);
+    }
+  }
+
+  // --- sibling loop: no OTHER token leaves the wallet (native-SOL dust tolerated) ---
+  for (const [token, delta] of Object.entries(deltas)) {
+    if (token === inputAsset) continue;
+    if (delta >= 0n) continue;
+    const dust = token === SOL_SENTINEL ? NATIVE_FEE_RENT_SLACK_LAMPORTS : 0n;
+    if (-delta > dust) {
+      throw fail(`a token other than the one you are depositing (${token}) left the wallet (delta ${delta}).`);
+    }
+  }
+
+  return { verified: true };
+}
+
+/**
+ * Verify a limit-order CANCEL's simulated wallet effect. A withdrawal is authorised by the
+ * vault PDA and only returns funds TO the wallet, so NO token may leave the wallet except
+ * native-SOL fee/rent dust, AND the order's own input asset must be refunded — by the full
+ * expected remaining amount when it is known (`amount`), otherwise at least a genuine
+ * inflow (> 0). Binding to the amount matters: a crafted "cancel" that redirects nearly all
+ * the escrow elsewhere and refunds only a single dust unit of the right mint (or produces an
+ * unrelated inflow, e.g. closing an empty token account back to the wallet for its rent)
+ * would satisfy a bare > 0 check while draining the deposit. Fails closed otherwise.
+ *
+ * NOTE: this bounds MAGNITUDE (the right asset returns in the right amount), not destination
+ * — a redirect of the correct asset+amount to a non-wallet address first, followed by a
+ * genuine top-up of that same asset back to the wallet from elsewhere, would still pass.
+ * That is closed by the vault-destination binding fast-follow, not here.
+ *
+ * @param {{deltas: Record<string, bigint|string|number>}} sim
+ *   (no walletAddress in ctx — the sim already keyed its deltas relative to the wallet)
+ * @param {{inputMint: string, amount?: bigint|string|number}} ctx - the order's own deposited
+ *   asset (the refund must land here) and its expected remaining refund in base units. When
+ *   `amount` is OMITTED the check falls back to requiring a positive inflow only — this fallback
+ *   is DELIBERATELY WEAKER than the magnitude bind and is not a safe default: a caller that can
+ *   know the expected refund MUST pass it and fail closed when it is absent (as the cancel
+ *   command does — see classifyCancelRefund in limit-order.js), rather than relying on this
+ *   bare-inflow path, which admits a dust-refund/redirect it cannot catch. A non-null `amount`
+ *   that won't parse to an integer is a call-site bug and throws (never silently degrades).
+ * @throws {Error} with `code = 'LIMIT_ORDER_OUTCOME_MISMATCH'` on any failed assertion.
+ */
+export function assertLimitOrderCancelOutcome(sim, { inputMint, amount } = {}) {
+  const fail = (detail) => {
+    const e = new Error(`Limit-order cancel outcome mismatch (LIMIT_ORDER_OUTCOME_MISMATCH): ${detail} Refusing to sign.`);
+    e.code = 'LIMIT_ORDER_OUTCOME_MISMATCH';
+    return e;
+  };
+
+  if (!inputMint) {
+    throw fail('the order\'s input mint is missing; cannot verify which asset the withdrawal must refund.');
+  }
+
+  if (!sim || typeof sim !== 'object' || sim.deltas == null) {
+    throw fail('simulation returned no asset changes to verify.');
+  }
+
+  const deltas = {};
+  for (const [k, v] of Object.entries(sim.deltas)) {
+    let amt;
+    try {
+      amt = typeof v === 'bigint' ? v : BigInt(v);
+    } catch {
+      throw fail(`simulated delta for ${k} (${v}) is not an integer.`);
+    }
+    deltas[k] = amt;
+  }
+
+  const foldNative = (mint) => (mint && SOLANA_NATIVE_SOL_ALIASES.has(mint) ? SOL_SENTINEL : mint);
+  const inputAsset = foldNative(inputMint);
+
+  for (const [token, delta] of Object.entries(deltas)) {
+    if (delta >= 0n) continue;
+    const dust = token === SOL_SENTINEL ? NATIVE_FEE_RENT_SLACK_LAMPORTS : 0n;
+    if (-delta > dust) {
+      throw fail(`a token (${token}) left your wallet during cancellation (delta ${delta}); a withdrawal should only return funds to you.`);
+    }
+  }
+
+  const inflow = deltas[inputAsset] || 0n;
+  if (inflow <= 0n) {
+    throw fail(`the withdrawal produced no inflow of the deposited asset (${inputAsset}) to your wallet; a cancel must return your deposited funds.`);
+  }
+
+  // Bind the refund MAGNITUDE to the order's expected remaining input when it is known.
+  // Without this, the > 0 check above is satisfied by a single dust unit, so a crafted
+  // cancel could reroute nearly the whole escrow and still verify.
+  // A caller either KNOWS the expected refund (pass it) or genuinely doesn't (omit it, taking
+  // the deliberately weaker bare-inflow path — see the @param note). A non-null value that
+  // won't parse is neither: it's a bug at the call site, so fail closed rather than silently
+  // drop to the weak path and hand back the stronger-sounding guarantee the name implies.
+  let expected;
+  if (amount != null) {
+    try {
+      expected = BigInt(amount);
+    } catch {
+      throw fail(`the expected refund amount (${amount}) is not an integer; cannot verify refund magnitude.`);
+    }
+  }
+  if (expected != null && expected > 0n) {
+    if (inputAsset === SOL_SENTINEL) {
+      // Net native inflow is the refund minus this tx's fee, plus any temp-WSOL rent
+      // returned, so it sits within ± fee/rent slack of the expected refund. Two-sided —
+      // BUT when the expected refund is itself <= that slack, the lower bound
+      // (expected - slack) collapses to <= 0 and the band degenerates to the bare
+      // inflow > 0 floor above: a single dust lamport would verify while the rest of the
+      // escrow is rerouted elsewhere. Fail closed instead, exactly as the deposit asserter
+      // does for an amount the slack makes unverifiable, rather than admit a floor below a
+      // meaningful bound.
+      if (expected <= NATIVE_FEE_RENT_SLACK_LAMPORTS) {
+        throw fail(`the expected remaining refund (${expected}) is too small relative to the fee/rent slack (${NATIVE_FEE_RENT_SLACK_LAMPORTS}) to verify by native-SOL inflow magnitude.`);
+      }
+      const lo = expected - NATIVE_FEE_RENT_SLACK_LAMPORTS;
+      const hi = expected + NATIVE_FEE_RENT_SLACK_LAMPORTS;
+      if (inflow < lo || inflow > hi) {
+        throw fail(`the withdrawal returned ${inflow} of native SOL, outside the expected remaining refund (${expected} ± fee/rent slack); a cancel must return the full remaining deposit.`);
+      }
+    } else if (inflow !== expected) {
+      // SPL escrow returns EXACTLY the remaining input — no fee is taken in the token.
+      throw fail(`the withdrawal returned ${inflow} of the deposited asset (${inputAsset}), not the expected remaining refund (${expected}); a cancel must return the full remaining deposit.`);
+    }
+  }
+
+  return { verified: true };
+}
+
+/**
  * Statically inspect a Solana transaction's instructions for drain vectors a
  * balance-delta simulation can't see — granting a token delegate, changing a
  * token account's authority, or closing an account to a stranger — and for an
@@ -1505,10 +1763,16 @@ export function assertSolanaSwapOutcome(request, quote, sim, { slippage, sibling
  * proceeds) when no simulation RPC endpoint is configured, so this static
  * check plus the metadata binding remain the ONLY transaction-level guards
  * whenever a sim RPC is unavailable. Limit-order vault deposit/cancel
- * (limit-order.js) call only this static check, not verifySolanaSwapOutcome —
- * they have no swap quote (no declared input/output pair) to bind an outcome
- * check against, so the sibling-transfer gap described above is still open
- * there; tracked as a follow-up, not covered here.
+ * (limit-order.js) have no swap quote (no declared input/output pair), so they
+ * use their own outcome asserters instead — assertLimitOrderDepositOutcome and
+ * assertLimitOrderCancelOutcome, run via verifyLimitOrderOutcome immediately
+ * after this check — which close the sibling-transfer gap and bound the
+ * deposit/withdrawal magnitude the same way assertSolanaSwapOutcome does for
+ * swaps. What those asserters cannot see is *destination*: a deposit that
+ * moves exactly `amount` of the input token to a non-vault address still
+ * passes, since balance-delta simulation of the wallet's own accounts can't
+ * tell where funds landed. That is tracked as a separate fast-follow (binding
+ * the vault's token-account destination), not covered here.
  *
  * Within that scope, the SPL Token program requires the *authority* of
  * Approve/ApproveChecked/SetAuthority/CloseAccount to sign the transaction,
@@ -1630,4 +1894,179 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
   }
 
   return parsed;
+}
+
+/**
+ * Statically bind a limit-order deposit's wallet-sourced outflow to a token
+ * account provably derived from the trusted vault owner. This closes the
+ * destination gap balance-delta simulation cannot see: a tx can spend exactly
+ * the requested amount from the wallet while sending it to an attacker's
+ * account.
+ *
+ * The real on-chain shape (confirmed by a live create round-trip) is NOT the
+ * vault's canonical ATA. Jupiter Trigger V2 funds each order through a fresh
+ * per-order token account created in the same transaction via
+ * System::CreateAccountWithSeed(base = vaultOwner, seed = <per-order>,
+ * owner = Token program), then:
+ *   - SPL input  → TransferChecked / Transfer of the input token into it, or
+ *   - native SOL → System::Transfer of lamports into it, then SyncNative.
+ * So the destination is per-order and changes every craft; we can't pin a fixed
+ * address. Instead we recompute create_with_seed(base, seed, owner) from the
+ * transaction's own CreateAccountWithSeed instruction, require base == the
+ * trusted vaultOwner, and bind every wallet-sourced transfer to that recomputed
+ * account. This is stronger than an ATA equality check: the destination is
+ * provably seeded off the vault the backend told us to deposit into.
+ *
+ * This check is intentionally limit-order-specific; generic swaps cannot
+ * require a single destination.
+ */
+export function assertLimitOrderDepositDestination(txBase64, { walletAddress, inputMint, vaultOwner } = {}) {
+  const fail = (detail) => {
+    const e = new Error(`Limit-order deposit destination mismatch (LIMIT_ORDER_DESTINATION_MISMATCH): ${detail} Refusing to sign.`);
+    e.code = 'LIMIT_ORDER_DESTINATION_MISMATCH';
+    return e;
+  };
+
+  if (!walletAddress) throw fail('missing signing wallet address.');
+  if (!inputMint) throw fail('missing deposit input mint.');
+  if (!vaultOwner) throw fail('missing vault owner address.');
+
+  const parsed = parseTransactionMessage(txBase64);
+  const accountAt = (ix, position) => resolveStaticAccount(parsed, ix.accountIndexes[position]);
+  const walletAuthorizes = (ix, authorityPos) => {
+    if (accountAt(ix, authorityPos) === null) return true;
+    for (let i = authorityPos; i < ix.accountIndexes.length; i++) {
+      if (accountAt(ix, i) === walletAddress) return true;
+    }
+    return false;
+  };
+
+  const expectedMint = SOLANA_NATIVE_SOL_ALIASES.has(inputMint) ? WSOL_MINT : inputMint;
+
+  // Pass 1: collect the token accounts this transaction creates via
+  // System::CreateAccountWithSeed seeded off the trusted vault owner, plus the
+  // matching SPL InitializeAccount* owner/mint assignment. A seeded address
+  // alone is not enough: the token-account authority must also be the trusted
+  // vault owner, otherwise the deposit can be withdrawn by whoever controls the
+  // initialized account.
+  const vaultSeededAccounts = new Set();
+  const initializedAccounts = new Map();
+  for (const ix of parsed.instructions) {
+    const programId = resolveStaticAccount(parsed, ix.programIdIndex);
+    if (programId === SYSTEM_PROGRAM) {
+      if (ix.data.length < 4 || ix.data.readUInt32LE(0) !== SYSTEM_INSTR_CREATE_ACCOUNT_WITH_SEED) continue;
+      // Layout: u32 index | 32 base | u64 seedLen | seed | u64 lamports | u64 space | 32 owner
+      let off = 4;
+      const need = (n) => { if (off + n > ix.data.length) throw fail('malformed CreateAccountWithSeed instruction.'); };
+      need(32); const base = ix.data.subarray(off, off + 32); off += 32;
+      need(8); const seedLen = Number(ix.data.readBigUInt64LE(off)); off += 8;
+      need(seedLen); const seed = ix.data.subarray(off, off + seedLen); off += seedLen;
+      need(16); off += 16; // skip lamports (u64) + space (u64)
+      need(32); const owner = ix.data.subarray(off, off + 32);
+      if (base58Encode(base) !== vaultOwner) continue; // not seeded off our vault
+      if (!SPL_TOKEN_PROGRAMS.has(base58Encode(owner))) continue; // not a token account
+      // create_with_seed(base, seed, owner) = base58(sha256(base || seed || owner)).
+      const derived = base58Encode(crypto.createHash('sha256').update(Buffer.concat([base, seed, owner])).digest());
+      // The account the instruction creates (index 1) must equal the recomputed
+      // address; a mismatch means a malformed/crafted instruction — fail closed.
+      const created = accountAt(ix, 1);
+      if (created !== null && created !== derived) {
+        throw fail('CreateAccountWithSeed target does not match its base/seed/owner derivation.');
+      }
+      vaultSeededAccounts.add(derived);
+      continue;
+    }
+
+    if (!SPL_TOKEN_PROGRAMS.has(programId) || ix.data.length === 0) continue;
+    const discriminator = ix.data[0];
+    let account;
+    let mint;
+    let owner;
+
+    if (discriminator === SPL_INITIALIZE_ACCOUNT) {
+      // InitializeAccount: accounts [account, mint, owner, rent].
+      account = accountAt(ix, 0);
+      mint = accountAt(ix, 1);
+      owner = accountAt(ix, 2);
+    } else if (discriminator === SPL_INITIALIZE_ACCOUNT2 || discriminator === SPL_INITIALIZE_ACCOUNT3) {
+      // InitializeAccount2/3: accounts [account, mint, ...], data [disc, owner pubkey].
+      if (ix.data.length < 33) throw fail('malformed InitializeAccount owner field.');
+      account = accountAt(ix, 0);
+      mint = accountAt(ix, 1);
+      owner = base58Encode(ix.data.subarray(1, 33));
+    } else {
+      continue;
+    }
+
+    if (account === null || mint === null || owner === null) {
+      throw fail('token account initializer uses an address only resolvable via an address lookup table.');
+    }
+    initializedAccounts.set(account, { mint, owner });
+  }
+
+  // Pass 2: every wallet-sourced transfer of value must land in a vault-seeded
+  // account that is also initialized in this transaction with the vault as its
+  // token-account authority. Covers both deposit shapes — SPL token transfers
+  // and the native-SOL System::Transfer that funds a wrapped-SOL order account.
+  const requireTrustedDestination = (destination, label) => {
+    if (!vaultSeededAccounts.has(destination)) {
+      throw fail(`wallet-authorized ${label} sends funds to ${destination || 'an address only resolvable via an address lookup table'} instead of a vault-seeded deposit account.`);
+    }
+    const initialized = initializedAccounts.get(destination);
+    if (!initialized) {
+      throw fail(`wallet-authorized ${label} sends funds to ${destination} before verifying it is initialized with the trusted vault authority.`);
+    }
+    if (!tokensEqual(initialized.mint, expectedMint, 'solana')) {
+      throw fail(`vault-seeded token account is initialized for mint ${initialized.mint} instead of deposit mint ${expectedMint}.`);
+    }
+    if (initialized.owner !== vaultOwner) {
+      throw fail(`vault-seeded token account authority is ${initialized.owner} instead of expected vault owner ${vaultOwner}.`);
+    }
+  };
+  let sawValidDepositTransfer = false;
+
+  for (const ix of parsed.instructions) {
+    const programId = resolveStaticAccount(parsed, ix.programIdIndex);
+    if (!programId) {
+      throw fail('transaction invokes a program only resolvable via an address lookup table, so transfer destinations cannot be verified.');
+    }
+
+    if (programId === SYSTEM_PROGRAM) {
+      if (ix.data.length < 4) continue;
+      if (ix.data.readUInt32LE(0) !== SYSTEM_INSTR_TRANSFER) continue;
+      // System::Transfer accounts: [from (signer), to]. `from` must be a signer,
+      // so it can never be ALT-resolved; null means a malformed tx — fail closed.
+      const from = accountAt(ix, 0);
+      if (from === null) throw fail('native transfer source is unresolvable (malformed transaction).');
+      if (from !== walletAddress) continue; // not our funds
+      requireTrustedDestination(accountAt(ix, 1), 'native transfer');
+      sawValidDepositTransfer = true;
+      continue;
+    }
+
+    if (!SPL_TOKEN_PROGRAMS.has(programId) || ix.data.length === 0) continue;
+    const discriminator = ix.data[0];
+    if (discriminator === SPL_TRANSFER) {
+      // Classic Transfer carries no mint in its account list, so we bind only the
+      // destination. Not a weakness: the destination is a vault-seeded account and
+      // the balance-delta gate still bounds which token and how much leave the
+      // wallet. Use TransferChecked (below) for instruction-level mint binding.
+      if (!walletAuthorizes(ix, 2)) continue;
+      requireTrustedDestination(accountAt(ix, 1), 'token transfer');
+      sawValidDepositTransfer = true;
+    } else if (discriminator === SPL_TRANSFER_CHECKED) {
+      if (!walletAuthorizes(ix, 3)) continue;
+      const mint = accountAt(ix, 1);
+      if (!tokensEqual(mint, expectedMint, 'solana')) {
+        throw fail(`wallet-authorized TransferChecked uses mint ${mint || 'an address only resolvable via an address lookup table'} instead of deposit mint ${expectedMint}.`);
+      }
+      requireTrustedDestination(accountAt(ix, 2), 'TransferChecked');
+      sawValidDepositTransfer = true;
+    }
+  }
+
+  if (!sawValidDepositTransfer) {
+    throw fail('no wallet-authorized deposit transfer into a vault-seeded account was detected.');
+  }
+  return { verified: true };
 }

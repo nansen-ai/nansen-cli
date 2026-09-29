@@ -642,6 +642,20 @@ describe('buildResearchCommands handler', () => {
     });
   });
 
+  it('treats a bare --apply-blacklist-filter flag as true', async () => {
+    mockApi = makeMockApi();
+    await cmds.research(['historical-token-ohlcv'], mockApi, { 'apply-blacklist-filter': true }, {
+      'token-address': TOKENS.solana,
+      chain: 'solana',
+      'from-date': FROM,
+      'as-of-date': TO,
+      timeframe: '1d',
+    });
+    expect(mockApi.researchHistoricalTokenOhlcv).toHaveBeenCalledWith(
+      expect.objectContaining({ applyBlacklistFilter: true })
+    );
+  });
+
   it('requires exactly one historical OHLCV snapshot anchor', async () => {
     mockApi = makeMockApi();
     const options = { 'token-address': TOKENS.solana, 'from-date': FROM, timeframe: '1d' };

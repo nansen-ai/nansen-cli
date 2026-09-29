@@ -30,6 +30,11 @@ nansen research profiler labels --address $ADDR --chain $CHAIN
 nansen research profiler related-wallets --address $ADDR --chain $CHAIN
 # 3. Counterparties (paginate with --page N; widen with --days 365 if empty)
 nansen research profiler counterparties --address $ADDR --chain $CHAIN --days 90
+# 3b. Once a cluster is confirmed: counterparties for up to 10 of its wallets in one call
+#     (max --days 90; one ecosystem per request — EVM and Solana cannot be mixed). Rows are
+#     contiguous per-wallet blocks ordered by wallet address: raise --limit and page with
+#     --page N to reach later wallets.
+nansen research profiler counterparties-batch --addresses "addr1,addr2" --chain $CHAIN --days 90 --limit 50
 # 4. Batch profile cluster
 nansen research profiler batch --addresses "addr1,addr2" --chain $CHAIN --include labels,balance,pnl
 # 5. Compare pairs → shared_counterparties, shared_tokens, balances

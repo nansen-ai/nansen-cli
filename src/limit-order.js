@@ -6,12 +6,24 @@
  * Zero external dependencies — uses Node.js built-in crypto only.
  */
 
+import { rejectBlankOption } from './query-options.js';
 import fs from 'fs';
 import path from 'path';
 import { base58Encode, exportWallet, getWalletConfig, showWallet } from './wallet.js';
 import { signEd25519, base58Decode, parseAmount, getTokenInfo } from './transfer.js';
 import { signSolanaTransaction, resolveTokenAddress } from './trading.js';
-import { assertSolanaInstructionsSafe } from './trade-validation.js';
+import {
+  assertSolanaInstructionsSafe,
+  assertLimitOrderDepositDestination,
+  assertLimitOrderDepositOutcome,
+  assertLimitOrderCancelOutcome,
+  NATIVE_FEE_RENT_SLACK_LAMPORTS,
+} from './trade-validation.js';
+import {
+  simulateSolanaAssetChanges,
+  SolanaSimulationError,
+  hasSolanaSimulationRpc,
+} from './solana-simulation.js';
 import { validateTokenAddress, telemetryHeaders, packageVersion } from './api.js';
 import { getWalletConnectAddress, sendSolanaTransactionViaWalletConnect, signSolanaMessageViaWalletConnect } from './walletconnect-trading.js';
 import { retrievePassword } from './keychain.js';
@@ -22,6 +34,7 @@ import { CHAIN_RPCS } from './rpc-urls.js';
 const TRADING_API_URL = process.env.NANSEN_TRADING_API_URL || 'https://trading-api.nansen.ai';
 const LO_PREFIX = '/limit-order/v2';
 const SOLSCAN_TX_URL = 'https://solscan.io/tx/';
+const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 
 // ============= JWT Auth & Caching (Local File) =============
 
@@ -383,6 +396,88 @@ export async function signTransaction(txBase64, walletType, walletInfo) {
   throw new Error(`Unsupported wallet type: ${walletType}`);
 }
 
+/**
+ * The limit-order sibling of verifySolanaSwapOutcome: simulates the deposit/
+ * cancel transaction and checks the resulting balance deltas against the
+ * requested operation, degrading (warn + proceed) on any RPC/sim outage so an
+ * outage never blocks an order — only a real outcome mismatch or an
+ * in-simulation revert refuses to sign.
+ */
+async function verifyLimitOrderOutcome({ kind, walletAddress, txBase64, inputMint, amount, log = () => {} }) {
+  if (!hasSolanaSimulationRpc('solana')) {
+    log('  ⚠ Outcome verification unavailable (no Solana simulation endpoint); proceeding without it.');
+    return { proceed: true };
+  }
+  try {
+    const sim = await simulateSolanaAssetChanges('solana', txBase64, { walletAddress });
+    if (kind === 'deposit') {
+      assertLimitOrderDepositOutcome(sim, { inputMint, amount });
+    } else {
+      assertLimitOrderCancelOutcome(sim, { inputMint, amount });
+    }
+    log(`  ✓ ${kind === 'deposit' ? 'Deposit' : 'Cancellation'} outcome verified (via ${sim.method}).`);
+    return { proceed: true };
+  } catch (e) {
+    if (e instanceof SolanaSimulationError && ['NO_SIM_RPC', 'SIM_RPC_ERROR'].includes(e.code)) {
+      log(`  ⚠ Outcome verification could not run (${e.message}); proceeding without it.`);
+      return { proceed: true };
+    }
+    return { proceed: false, reason: e.message };
+  }
+}
+
+// Page size and scan ceiling for the pre-cancel order lookup. The ceiling is a
+// defensive bound: it stops an unbounded loop if the API never surfaces the order
+// and never reports a total or a short page, at the cost of not finding a target
+// buried beyond it (which then fails closed, same as any not-found order).
+const ACTIVE_ORDER_PAGE = 100;
+const MAX_ACTIVE_ORDERS_SCANNED = 5000;
+
+/**
+ * Find one active order by id, paginating state:'active' until the order is found or
+ * the active set is exhausted, so a user with more than one page of active orders can
+ * still cancel one that doesn't land on page 1. Returns the order object or undefined.
+ */
+async function findActiveOrder(token, userPubkey, orderId) {
+  let offset = 0;
+  while (offset < MAX_ACTIVE_ORDERS_SCANNED) {
+    const page = await listOrders(token, userPubkey, { limit: ACTIVE_ORDER_PAGE, offset, state: 'active' });
+    const orders = page.orders || [];
+    const found = orders.find((o) => o.id === orderId);
+    if (found) return found;
+    offset += orders.length;
+    if (orders.length < ACTIVE_ORDER_PAGE) break; // short/empty page — no more to fetch
+    const total = page.pagination?.total;
+    if (total != null && offset >= total) break; // consumed everything the API reports
+  }
+  return undefined;
+}
+
+/**
+ * Classify how much a cancel should refund: the order's input less whatever has
+ * already been filled (partial fills consume escrow). Returns one of:
+ *   { amount: <bigint> }        the unfilled remainder still owed (always > 0)
+ *   { error: 'unparseable' }    the order's amounts couldn't be parsed as integers
+ *   { error: 'fully-filled' }   parsing succeeded but nothing is left to refund
+ *
+ * The two error cases are kept distinct (not collapsed to a single undefined) so the
+ * cancel command can surface an actionable message: 'unparseable' is an unexpected
+ * API-shape problem, 'fully-filled' is a normal user-facing state (the order already
+ * executed). Both are fatal for the caller — a cancel whose refund magnitude can't be
+ * bound must not be signed — but the user needs to know which one they hit.
+ */
+function classifyCancelRefund(order) {
+  let remaining;
+  try {
+    const total = BigInt(order.inputAmount);
+    const filled = (order.fills || []).reduce((sum, f) => sum + BigInt(f.inputAmount ?? 0), 0n);
+    remaining = total - filled;
+  } catch {
+    return { error: 'unparseable' };
+  }
+  return remaining > 0n ? { amount: remaining } : { error: 'fully-filled' };
+}
+
 // ============= Expiry Parsing =============
 
 /**
@@ -530,6 +625,8 @@ export function buildLimitOrderCommands(deps = {}) {
 
   return {
     'create': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.wallet, 'wallet', '<name>');
+      rejectBlankOption(options.expires, 'expires', '7d');
       const fromRaw = options.from || options['from-token'] || args[0];
       const toRaw = options.to || options['to-token'] || args[1];
       const from = resolveTokenAddress(fromRaw, 'solana');
@@ -621,6 +718,22 @@ EXAMPLES:
         return;
       }
 
+      // Fail fast on a native-SOL amount too small for outcome verification to bound by
+      // magnitude (see assertLimitOrderDepositOutcome's NATIVE_FEE_RENT_SLACK_LAMPORTS
+      // floor) — otherwise this would only surface as a LIMIT_ORDER_OUTCOME_MISMATCH
+      // after crafting and simulating the deposit transaction, well into the flow.
+      // Gated on hasSolanaSimulationRpc deliberately: the floor is a pre-empt of the
+      // magnitude check, so it only applies when that check would actually run. In a
+      // degraded (no-sim-RPC) environment there is no magnitude bound to pre-empt — the
+      // deposit falls back to the static gate alone (verifyLimitOrderOutcome already warns
+      // that outcome verification is unavailable), so blocking a small amount here would
+      // add a floor that the rest of that path doesn't enforce.
+      if (from === WSOL_MINT && hasSolanaSimulationRpc('solana') && BigInt(amountBaseUnits) <= NATIVE_FEE_RENT_SLACK_LAMPORTS) {
+        log(`Error: SOL deposit amount (${amountBaseUnits} lamports) is too small to verify against network fee/rent noise (${NATIVE_FEE_RENT_SLACK_LAMPORTS} lamports). Use a larger amount.`);
+        exit(1);
+        return;
+      }
+
       if (triggerCondition !== 'above' && triggerCondition !== 'below') {
         log('Error: --trigger-condition must be "above" or "below".');
         exit(1);
@@ -673,20 +786,38 @@ EXAMPLES:
         // 3. Check vault, auto-register if needed
         // Backend returns { vaultPubkey: "..." } when vault exists, or throws/returns empty when not
         let hasVault = false;
+        let vaultPubkey;
         try {
           const vaultInfo = await getVault(token, pubkey);
-          hasVault = !!(vaultInfo?.vaultPubkey || vaultInfo?.vaultAddress);
+          vaultPubkey = vaultInfo?.vaultPubkey || vaultInfo?.vaultAddress;
+          hasVault = !!vaultPubkey;
         } catch {
           // No vault found
         }
         if (!hasVault) {
           log('  Registering vault for first-time use...');
           try {
-            await registerVault(token);
+            const vaultInfo = await registerVault(token);
+            vaultPubkey = vaultInfo?.vaultPubkey || vaultInfo?.vaultAddress;
           } catch (regErr) {
             // Vault may already exist — ignore "already registered" errors
             if (!/already registered/i.test(regErr.message)) throw regErr;
           }
+          // Registration either reported "already registered" or returned no
+          // address. The vault exists in both cases, so fetch it to recover the
+          // address rather than failing the deposit below with a misleading
+          // "cannot determine vault address".
+          if (!vaultPubkey) {
+            try {
+              const vaultInfo = await getVault(token, pubkey);
+              vaultPubkey = vaultInfo?.vaultPubkey || vaultInfo?.vaultAddress;
+            } catch {
+              // Still unknown — fall through to the guard below.
+            }
+          }
+        }
+        if (!vaultPubkey) {
+          throw new Error('Could not determine your limit-order vault address; refusing to sign a deposit whose destination cannot be verified.');
         }
 
         // 4. Craft deposit transaction
@@ -699,17 +830,27 @@ EXAMPLES:
         });
 
         // 5. Sign deposit transaction
-        // Same pre-signing drain gate the swap path uses. The legitimate deposit
-        // moves the input token into the already-registered vault (step 3) with an
-        // SPL Transfer/TransferChecked — which this gate does not classify — plus,
-        // when selling native SOL, a temp-WSOL CloseAccount whose rent returns to
-        // the wallet (permitted). Neither trips the delegate/authority/
-        // close-to-stranger checks, so this does not reject a well-formed deposit;
-        // it only fires if the crafted tx additionally grants a delegate, reassigns
-        // authority, or closes to a stranger. Verified live: a real SOL→USDC create
-        // round-trip clears this gate (the API-crafted deposit is a SOL-wrap
-        // transfer into the vault plus a temp-WSOL close-to-self).
+        // Three pre-signing defenses run here. The generic static gate rejects
+        // delegate grants, authority changes, close-to-stranger, and excessive
+        // priority fees. The limit-order destination gate then binds every
+        // wallet-sourced transfer (SPL for token deposits, native System::Transfer
+        // for SOL) to a token account this same tx creates via
+        // CreateAccountWithSeed seeded off the trusted vault owner — the real
+        // Jupiter Trigger V2 deposit shape, confirmed by a live create round-trip.
+        // Finally, balance-delta outcome verification binds magnitude: the input
+        // token must leave the wallet by exactly `amount` (± fee/rent slack for
+        // native SOL) and no other token may leave.
         assertSolanaInstructionsSafe(deposit.transaction, { walletAddress: pubkey });
+        assertLimitOrderDepositDestination(deposit.transaction, {
+          walletAddress: pubkey,
+          inputMint: from,
+          vaultOwner: vaultPubkey,
+        });
+        const depositOutcome = await verifyLimitOrderOutcome({
+          kind: 'deposit', walletAddress: pubkey, txBase64: deposit.transaction,
+          inputMint: from, amount: amountBaseUnits, log,
+        });
+        if (!depositOutcome.proceed) throw new Error(`Refusing to sign deposit — ${depositOutcome.reason}`);
         log('  Signing deposit transaction...');
         const signedDepositTx = await signTransaction(deposit.transaction, walletType, walletInfo);
 
@@ -747,6 +888,11 @@ EXAMPLES:
     },
 
     'list': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.mint, 'mint', 'SOL');
+      rejectBlankOption(options.limit, 'limit', '20');
+      rejectBlankOption(options.offset, 'offset', '0');
+      rejectBlankOption(options.dir, 'dir', 'desc');
+      rejectBlankOption(options.wallet, 'wallet', '<name>');
       const walletName = options.wallet;
       const state = options.state;
       const mint = options.mint ? resolveTokenAddress(options.mint, 'solana') : undefined;
@@ -806,6 +952,7 @@ EXAMPLES:
     },
 
     'cancel': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.wallet, 'wallet', '<name>');
       const orderId = options.order || options['order-id'] || args[0];
       const walletName = options.wallet;
 
@@ -839,23 +986,83 @@ EXAMPLES:
         // 1. Authenticate
         const token = await authenticate(pubkey, walletType, walletInfo, log);
 
-        // 2. Request cancellation — get unsigned withdrawal tx
+        // 2. Look up the order, but only when outcome verification will actually run —
+        // cancel only receives an orderId, not order details, from the caller, and the
+        // refund check below (see assertLimitOrderCancelOutcome) needs to know both which
+        // asset the refund must land in AND how much of it is still owed (the unfilled
+        // remainder). Skip the extra lookup entirely when there's no simulation RPC to
+        // verify against, so a degraded environment doesn't gain a new API dependency for
+        // a check it isn't going to run anyway. Done before requesting cancellation so a
+        // lookup failure fails closed without first consuming a one-time withdrawal request
+        // server-side. Filtered to state: 'active' (the only state a cancellable order can
+        // be in) so filled/cancelled/expired history never crowds out the target — the API
+        // only accepts 'active' or 'past' for this filter. Paginated until the order is
+        // found or the active set is exhausted, so a user with more than one page of active
+        // orders can still cancel one that doesn't land on page 1.
+        let cancelInputMint;
+        let cancelRefundAmount;
+        if (hasSolanaSimulationRpc('solana')) {
+          const order = await findActiveOrder(token, pubkey, orderId);
+          if (!order) {
+            throw new Error(`Could not find order ${orderId} among your active orders; refusing to verify the cancel's refund asset. It may already be filled/cancelled/expired — check with "nansen trade limit-order list --state active".`);
+          }
+          cancelInputMint = order.inputMint;
+          // The whole point of the outcome check is to bind the refund's MAGNITUDE. If the
+          // remaining refund can't be pinned to an exact amount, passing amount: undefined
+          // would silently downgrade the verifier to a bare positive-inflow check —
+          // reopening the dust-refund gap for exactly the metadata we can least trust. Fail
+          // closed instead, with a message that distinguishes the two reasons: unparseable
+          // amounts are an unexpected API-shape problem, a fully-filled order is a normal
+          // state the user should just be told about plainly.
+          const refund = classifyCancelRefund(order);
+          if (refund.error === 'unparseable') {
+            throw new Error(`Found order ${orderId} but its input/fill amounts couldn't be parsed from the order metadata; refusing to sign a cancel whose refund magnitude can't be verified. Check the order with "nansen trade limit-order list --state active".`);
+          }
+          if (refund.error === 'fully-filled') {
+            throw new Error(`Order ${orderId} appears fully filled — there is nothing left to refund, so it can't be cancelled. Check its status with "nansen trade limit-order list --state active".`);
+          }
+          cancelRefundAmount = refund.amount;
+        }
+
+        // 3. Request cancellation — get unsigned withdrawal tx
+        //
+        // NOTE (deliberate, do not "fix" by loosening the check): there is a narrow TOCTOU
+        // window between the lookup in step 2 (which pins cancelRefundAmount to the unfilled
+        // remainder seen then) and this cancellation request. If a partial fill lands in
+        // between, the real withdrawal returns LESS than cancelRefundAmount and the outcome
+        // check in step 4 fails closed on a legitimate cancel. That's acceptable: the user
+        // simply retries and the next lookup sees the new remainder. The safe response to a
+        // spurious failure here is a retry, NOT relaxing the exact-magnitude bind — that bind
+        // is what closes the dust-refund redirect (a crafted withdrawal that reroutes most of
+        // the escrow and returns only a token of the right mint), so widening it reopens the
+        // exact gap this verification exists to close.
         log('  Requesting cancellation...');
         const cancelResult = await cancelOrderRequest(token, orderId);
 
-        // 3. Sign the withdrawal transaction
+        // 4. Sign the withdrawal transaction
         // Withdrawal moves the deposited token back out of the vault; that transfer
         // is authorized by the vault program's PDA, not our wallet, so it isn't a
         // wallet-authorized drain even if it were classified. Any temp-WSOL close
-        // returns rent to the wallet. This gate is defense-in-depth against a
-        // crafted withdrawal that instead grants a delegate, reassigns authority, or
-        // closes to a stranger. Verified live alongside the deposit path via a real
-        // cancel round-trip.
+        // returns rent to the wallet. The static gate below is defense-in-depth
+        // against a crafted withdrawal that instead grants a delegate, reassigns
+        // authority, or closes to a stranger. Balance-delta outcome verification
+        // then binds the withdrawal's effect: since a cancel should only return
+        // funds to the wallet, no token may leave it at all (native-SOL fee/rent
+        // dust tolerated), and the order's own input asset must return by the full
+        // expected remaining amount (looked up in step 2) — not merely a positive
+        // delta, so a redirect of most of the escrow paired with a dust or unrelated
+        // inflow no longer counts. Verified live alongside the deposit path via a
+        // real cancel round-trip.
         assertSolanaInstructionsSafe(cancelResult.transaction, { walletAddress: pubkey });
+        const cancelOutcome = await verifyLimitOrderOutcome({
+          kind: 'cancel', walletAddress: pubkey, txBase64: cancelResult.transaction,
+          inputMint: cancelInputMint, amount: cancelRefundAmount, log,
+        });
+        if (!cancelOutcome.proceed) throw new Error(`Refusing to sign withdrawal — ${cancelOutcome.reason}`);
         log('  Signing withdrawal transaction...');
         const signedTx = await signTransaction(cancelResult.transaction, walletType, walletInfo);
 
-        // 4. Confirm cancellation
+        // 5. Confirm cancellation
         log('  Confirming cancellation...');
         const confirmed = await confirmCancelOrder(token, orderId, {
           signedTransaction: signedTx,
@@ -876,6 +1083,7 @@ EXAMPLES:
     },
 
     'update': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.wallet, 'wallet', '<name>');
       const orderId = options.order || options['order-id'] || args[0];
       const triggerPrice = options['trigger-price'];
       const slippageBps = options['slippage-bps'];

@@ -32,6 +32,10 @@ describe('isUsageError', () => {
     expect(isUsageError({ code: 'MISSING_ARGS' }, { isTTY: true })).toBe(true);
   });
 
+  it('is false for an API error that maps onto a usage code', () => {
+    expect(isUsageError({ code: 'MISSING_PARAM', status: 422 }, { isTTY: true })).toBe(false);
+  });
+
   it('is false when not a TTY, so piped output stays machine-readable', () => {
     expect(isUsageError(usage, { isTTY: false })).toBe(false);
     expect(isUsageError(usage, {})).toBe(false);

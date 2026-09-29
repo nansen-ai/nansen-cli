@@ -134,10 +134,10 @@ const BRIDGE_SPAWN_TIMEOUT = 660_000;
 const BRIDGE_TEST_TIMEOUT = 690_000;
 // Forward: 0.0008 ETH — assumes ~0.001 ETH starting balance, leaves ~0.0002 ETH for gas on the return bridge.
 const CROSS_CHAIN_ETH_AMOUNT = '800000000000000';
-// Reserve 0.008 SOL: covers the SOL↔USDC test swap (2,000,000 lamports) + fees
-// for both swaps (~1,000,000 lamports) + buffer. The SOL↔USDC suite runs after
-// this cross-chain suite, so the reserve must be large enough for it to execute.
-const SOL_GAS_RESERVE = 8_000_000n;
+// Reserve 0.015 SOL: keeps the Solana wallet above validateGasBalance()'s
+// MIN_GAS_AMOUNTS.solana floor after the cross-chain reverse leg, while still
+// covering the following SOL↔USDC test swap, fees for both swaps, and buffer.
+const SOL_GAS_RESERVE = 15_000_000n;
 // Solana RPC for balance queries.
 const SOLANA_RPC = process.env.NANSEN_SOLANA_RPC || 'https://api.mainnet-beta.solana.com';
 
