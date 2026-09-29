@@ -1,5 +1,5 @@
-// Exercise the packed CLI on a fresh install, including its optional bindings.
-// CI runs this script inside glibc and musl Node images.
+// Exercise published or newly packed CLI installs, including optional bindings.
+// CI runs both sources inside glibc and musl Node images.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 
 const expected = process.env.NANSEN_EXPECT_NATIVE_LOCK;
 assert.ok(['available', 'unavailable'].includes(expected), 'Set NANSEN_EXPECT_NATIVE_LOCK');
+const source = process.env.NANSEN_PACKAGE_SOURCE || 'packed';
+assert.ok(['packed', 'published'].includes(source), 'NANSEN_PACKAGE_SOURCE must be packed or published');
 assert.equal(process.platform, 'linux');
 assert.equal(process.arch, 'x64');
 
@@ -45,22 +47,35 @@ function requireSuccess(result, label) {
 }
 
 try {
-  const packed = run(npm, ['pack', '--json', '--pack-destination', temp]);
-  requireSuccess(packed, 'npm pack');
-  const tarball = path.join(temp, JSON.parse(packed.stdout)[0].filename);
-  const installed = run(npm, ['install', '--prefix', install, '--include=optional', '--no-audit', '--no-fund', tarball]);
+  let packageSpec = 'nansen-cli@2.0.0';
+  if (source === 'packed') {
+    const packed = run(npm, ['pack', '--json', '--pack-destination', temp]);
+    requireSuccess(packed, 'npm pack');
+    packageSpec = path.join(temp, JSON.parse(packed.stdout)[0].filename);
+  }
+  const installed = run(npm, ['install', '--prefix', install, '--include=optional', '--no-audit', '--no-fund', packageSpec]);
   requireSuccess(installed, 'npm install');
 
   const requireInstalled = createRequire(path.join(install, 'probe.cjs'));
+  assert.equal(requireInstalled('fs-native-extensions/package.json').version, '1.5.1');
+  const libc = process.report.getReport().header.glibcVersionRuntime ? 'gnu' : 'musl';
+  assert.ok(requireInstalled.resolve(`@napi-rs/keyring-linux-x64-${libc}`));
   assert.equal(typeof requireInstalled('@napi-rs/keyring').Entry, 'function');
+  let native;
   let lockError;
   try {
-    assert.equal(typeof requireInstalled('fs-native-extensions').tryLock, 'function');
+    native = requireInstalled('fs-native-extensions');
   } catch (error) {
     lockError = error;
   }
-  if (expected === 'available') assert.equal(lockError, undefined, lockError?.message);
-  else assert.ok(lockError, 'musl unexpectedly loaded the native lock; update this test and platform guidance');
+  if (expected === 'available') {
+    assert.equal(lockError, undefined, lockError?.message);
+    assert.equal(typeof native.tryLock, 'function');
+  } else {
+    assert.ok(lockError, 'musl unexpectedly loaded the native lock; update this test and platform guidance');
+    assert.match(lockError.message, /Cannot find addon/);
+    assert.match(lockError.message, /linux-x64-musl/);
+  }
 
   const fetchMock = path.join(temp, 'fetch-mock.mjs');
   writeFileSync(fetchMock, `globalThis.fetch = async (input) => {
@@ -92,7 +107,7 @@ try {
     assert.match(logout.stdout + logout.stderr, /AUTH_LOCK_UNAVAILABLE/);
     assert.equal(existsSync(config), false);
   }
-  console.log(`${process.version} ${process.platform}/${process.arch}: keyring loaded, lock ${expected}, login/logout checked`);
+  console.log(`${source} ${process.version} ${process.platform}/${process.arch}: keyring loaded, lock ${expected}, login/logout checked`);
 } finally {
   rmSync(temp, { recursive: true, force: true });
 }

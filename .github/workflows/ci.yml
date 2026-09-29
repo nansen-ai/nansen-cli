@@ -93,16 +93,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check packed CLI on ${{ matrix.image }}
+      - name: Check published and packed CLI on ${{ matrix.image }}
         env:
           NANSEN_EXPECT_NATIVE_LOCK: ${{ matrix.lock }}
         run: |
-          docker run --rm \
-            --env NANSEN_EXPECT_NATIVE_LOCK \
-            --mount "type=bind,src=$PWD,dst=/repo,readonly" \
-            --workdir /repo \
-            "${{ matrix.image }}" \
-            node scripts/check-native-optional-install.js
+          for source in published packed; do
+            docker run --rm \
+              --env NANSEN_EXPECT_NATIVE_LOCK \
+              --env "NANSEN_PACKAGE_SOURCE=$source" \
+              --mount "type=bind,src=$PWD,dst=/repo,readonly" \
+              --workdir /repo \
+              "${{ matrix.image }}" \
+              node scripts/check-native-optional-install.js
+          done
 
   publish:
     needs: [lint, test, native-optional-install]
