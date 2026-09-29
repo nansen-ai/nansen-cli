@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.1
+
+### Patch Changes
+
+- [#723](https://github.com/nansen-ai/nansen-cli/pull/723) [`08f6867`](https://github.com/nansen-ai/nansen-cli/commit/08f68678df3b54f36ed4dbdf5a07bc1f0645aa48) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Clarify the native-lock error and document Alpine's missing musl prebuild for saved authentication.
+
+- [#719](https://github.com/nansen-ai/nansen-cli/pull/719) [`7aeadd6`](https://github.com/nansen-ai/nansen-cli/commit/7aeadd68bfc01b5f9c5a43fab3301e820b9b27d8) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Explain the 2.0.0 `data.data` and descriptive-array row changes for table, CSV, and NDJSON output in the README, with a token screener before/after CSV example. Default JSON output is unchanged.
+
+- [#717](https://github.com/nansen-ai/nansen-cli/pull/717) [`cbf3199`](https://github.com/nansen-ai/nansen-cli/commit/cbf319950569e9ba0cfcf0a15d4b756dc108f9be) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Ignore blank NANSEN_API_KEY values and use saved authentication.
+
+- [#718](https://github.com/nansen-ai/nansen-cli/pull/718) [`f3cbb0f`](https://github.com/nansen-ai/nansen-cli/commit/f3cbb0f35a9cc5699b2bd4fda6f6d0a5d42c0863) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Fail browser login immediately without an interactive terminal and direct headless callers to API-key setup.
+
+- [#720](https://github.com/nansen-ai/nansen-cli/pull/720) [`f9c7c0e`](https://github.com/nansen-ai/nansen-cli/commit/f9c7c0e16bfd71747f37856ede3b99ca09261626) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Keep CSV, table and NDJSON output from treating primitive or empty envelope arrays as rows.
+
 ## 2.0.0
 
 ### Major Changes
