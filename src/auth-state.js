@@ -78,7 +78,7 @@ async function waitTurn(previous, signal) {
 }
 async function loadLocks() {
   try { return (await import('fs-native-extensions')).default; }
-  catch { throw new AuthError('AUTH_LOCK_UNAVAILABLE', 'Native authentication locking is unavailable. Reinstall nansen-cli with optional dependencies to save or remove authentication. Legacy key setup and logout also require this binding. Environment API keys still work. For offline saved-key removal, stop every CLI/auth process, then follow docs/browser-login.md#offline-recovery-without-native-locking. Do not delete auth journals or wallet files.'); }
+  catch { throw new AuthError('AUTH_LOCK_UNAVAILABLE', 'Native authentication locking is unavailable. Reinstall nansen-cli with optional dependencies; if they are installed, this platform may lack a compatible fs-native-extensions prebuild. Legacy key setup and logout require this binding. Environment API keys still work. For offline saved-key removal, stop every CLI/auth process, then follow docs/browser-login.md#offline-recovery-without-native-locking. Do not delete auth journals or wallet files.'); }
 }
 export function createAuthState({ directory = authDirectory(), store = createAuthStore({ directory }), retire = retireSession, refresh = refreshSession, now = Date.now, barrier = async () => {}, locks = loadLocks, waitMs = 15000, operationMs = 60000 } = {}) {
   let operationSignal;

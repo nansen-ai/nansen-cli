@@ -8,7 +8,7 @@ The initial preview is limited to macOS arm64, a local Terminal in a GUI login s
 
 Linux live remote-login qualification is pending. Windows is excluded from the initial preview. The presence of an OS adapter or native prebuilt package does not establish support. Desktop prompt cancellation and OS login/reboot persistence remain unverified.
 
-Browser login requires enabled server access and working native credential storage. If the store is locked, unlock it and retry from the supported Terminal context. Repeating browser approval does not repair Keychain access. Missing native dependencies require reinstalling with optional dependencies enabled. There is no plaintext session-storage fallback.
+Browser login requires enabled server access and working native credential storage. If the store is locked, unlock it and retry from the supported Terminal context. Repeating browser approval does not repair Keychain access. If optional dependencies were omitted, reinstall with them enabled. A platform without a compatible prebuild still cannot use saved authentication. There is no plaintext session-storage fallback.
 
 ## Commands and selection
 
@@ -70,6 +70,10 @@ The CLI coordinates reads and writes across processes with native locking. Only 
 
 Native lock and keyring bindings are optional package dependencies, but are required for saved-auth writes and browser-session storage. Help, offline diagnostics and direct environment/API-key requests do not open the browser-session store. macOS uses Keychain, Linux uses persistent Secret Service, and the Windows adapter uses Credential Manager. These implementations do not widen the preview platform scope above. Windows persistence may roam according to OS policy; device-local-only storage is not promised.
 
+For `nansen-cli@2.0.0`, stock Alpine Linux on x64 cannot load native locking. Its musl install includes `fs-native-extensions@1.5.1`, but that package has no `linux-x64-musl` prebuild. `nansen login --human` and `nansen logout` return `AUTH_LOCK_UNAVAILABLE` even with optional dependencies enabled. The musl keyring binding loads, but this does not establish that a persistent Secret Service is available.
+
+On Alpine, pass `NANSEN_API_KEY` in the environment for ordinary commands and do not rely on saved-auth writes or logout. Follow the offline recovery guidance below if you already have saved authentication to remove. Linux browser-login qualification remains pending regardless of binding availability.
+
 The session format uses chunked secure entries and a manifest. Incomplete, mixed or corrupt entries are rejected. Larger-than-supported sessions fail without replacing the previous credential. Do not manually modify these entries.
 
 Renewal upgrades authentication metadata to v2. Logout retains v2 metadata, so installing an older pre-v2 CLI after logout is not a supported in-place downgrade. Use a tested compatible recovery version. Never force a metadata version, delete journals or restore a superseded key to make an older binary run. Do not run older and newer auth writers concurrently.
@@ -96,7 +100,7 @@ A locked store can allow deselection while preventing physical deletion. Unlock 
 
 ## Offline recovery without native locking
 
-Restore the native optional dependencies before modifying saved authentication. Environment/API-key requests, help and offline diagnostics remain usable without opening the browser-session store. Do not use an incompatible older CLI as a recovery shortcut. Platforms without a verified working native binding are outside the browser-login preview.
+Restore a compatible native locking binding before modifying saved authentication. Reinstalling optional dependencies alone cannot add a missing platform prebuild. Environment/API-key requests, help and offline diagnostics remain usable without opening the browser-session store. Do not use an incompatible older CLI as a recovery shortcut. Platforms without a verified working native binding are outside the browser-login preview.
 
 For emergency removal of a **legacy saved API key only**, first stop every CLI/auth process, including older CLI versions. If any pending, corrupt or unrecognized auth-operations journal exists, stop and use a compatible recovery binary or support-assisted reconciliation instead. Back up config.json securely without displaying its contents. In `~/.nansen/config.json`, remove only `apiKey` and replace `auth` with `{"version":1,"selectionEpoch":"<fresh UUID>","active":{"kind":"none"}}`. If the existing auth version is 2, retain version 2 in this legacy-key-only tombstone; do not downgrade it. Generate the UUID with `node -e 'console.log(require("node:crypto").randomUUID())'`; it is not a secret. Preserve every other config field, file permissions and all wallet files. Do not modify a config whose `auth.active.kind` is `session`: restore native locking instead so its generation remains available for retirement. Do not delete `auth-operations`, lock files or OS credential entries. This offline edit removes saved-key selection only; it does not revoke an API key or remove an environment override. Once native support is restored, rerun `nansen logout` to drain pending cleanup. The packaged copy of this document is available under `docs/browser-login.md` in the installed package.
 

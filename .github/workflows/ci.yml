@@ -68,8 +68,44 @@ jobs:
       - name: Run tests
         run: npm test
 
+  native-optional-install:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: node:20-bookworm-slim
+            lock: available
+          - image: node:22-bookworm-slim
+            lock: available
+          - image: node:24-bookworm-slim
+            lock: available
+          - image: node:20-alpine
+            lock: unavailable
+          - image: node:22-alpine
+            lock: unavailable
+          - image: node:24-alpine
+            lock: unavailable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check packed CLI on ${{ matrix.image }}
+        env:
+          NANSEN_EXPECT_NATIVE_LOCK: ${{ matrix.lock }}
+        run: |
+          docker run --rm \
+            --env NANSEN_EXPECT_NATIVE_LOCK \
+            --mount "type=bind,src=$PWD,dst=/repo,readonly" \
+            --workdir /repo \
+            "${{ matrix.image }}" \
+            node scripts/check-native-optional-install.js
+
   publish:
-    needs: [lint, test]
+    needs: [lint, test, native-optional-install]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     outputs:
