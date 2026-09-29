@@ -22,6 +22,8 @@ nansen logout
 
 Plain `nansen login` always requests fresh browser approval, even when you already have a saved session or API key. Check the displayed code, account, client and requested access before approving. Visiting the link alone grants nothing. Email/password and Google are the documented sign-in methods; Apple device sign-in is not supported by this flow.
 
+Browser login needs both stdin and stdout connected to a terminal. In CI or another headless environment, set `NANSEN_API_KEY` and run `nansen login --human`, or pipe a key to `nansen login --api-key-stdin`. Plain login and `--no-browser` fail immediately without a terminal rather than waiting for device approval.
+
 `--no-browser` runs the same flow without opening a browser automatically. You can approve on another device; the terminal needs no inbound callback and still needs usable native storage.
 
 Ordinary commands prefer an existing supported explicit credential override, then `NANSEN_API_KEY`, then the active saved credential. Plain login does not copy an environment key into config. The candidate browser session is checked independently before it replaces a saved credential. An environment key still takes precedence afterward; unset it to use the saved session.
@@ -51,7 +53,7 @@ Only matching trusted Nansen API origins receive session credentials. Arbitrary 
 
 ## Machine output
 
-`login --json` and non-TTY login emit NDJSON. There is one pending event and one terminal event on a normal approval attempt. Preflight failure emits only the terminal error. Human progress goes to stderr in machine mode.
+`login --json` emits NDJSON when browser login runs in a terminal. There is one pending event and one terminal event on a normal approval attempt. Preflight failure emits only the terminal error. Human progress goes to stderr in machine mode. Without a terminal, browser login fails before pairing starts.
 
 ```json
 {"version":1,"event":"pending","verification_uri":"https://idp.nansen.ai/device?user_code=ABCD-EFGH","user_code":"ABCD-EFGH","expires_at":"2026-09-19T00:10:00.000Z"}

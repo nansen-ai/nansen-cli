@@ -1513,6 +1513,9 @@ export function buildCommands(deps = {}) {
       if (flags['api-key']) throw new CommandError('--api-key requires a value.', 'MISSING_PARAM');
       if ('api-key' in options && typeof options['api-key'] !== 'string') throw new CommandError('--api-key must be a single key string.', 'INVALID_PARAMS');
       if (!fromStdin && !flags.human && options['api-key'] === undefined) {
+        if (!stdinTTY || !stdoutTTY) {
+          throw new CommandError('Browser login requires an interactive terminal. In a headless environment, set NANSEN_API_KEY and run nansen login --human, or pipe a key to nansen login --api-key-stdin.', 'NOT_A_TTY');
+        }
         return browserLoginFn({ flags, env, isTTY: stdoutTTY, log, errorOutput, state: authState });
       }
       if (flags['no-browser']) throw new CommandError('--no-browser cannot be combined with legacy key setup.', 'INVALID_PARAMS');
@@ -2522,8 +2525,8 @@ export async function runCLI(rawArgs, deps = {}) {
   const inputInteractiveDeps = {
     ...deps,
     isTTY: isInputTTY,
-    stdoutTTY: isTTY,
-    stdinTTY: isInputTTY,
+    stdoutTTY: isTTY === true,
+    stdinTTY: isInputTTY === true,
     promptFn: deps.promptFn ?? prompt,
     confirmationPromptFn: deps.confirmationPromptFn ?? promptForConfirmation,
     confirmationLog: deps.confirmationLog ?? errorOutput,

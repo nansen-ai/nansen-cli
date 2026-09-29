@@ -42,8 +42,8 @@ for (const machine of [true, false]) {
       signal.throwIfAborted();
     } });
     let failure;
-    await runCLI(['login', '--no-browser'], {
-      env: { HOME: f.home }, authState: f.state, isTTY: !machine, log, output: log, errorOutput, exit: vi.fn(),
+    await runCLI(['login', '--no-browser', ...(machine ? ['--json'] : [])], {
+      env: { HOME: f.home }, authState: f.state, isTTY: true, log, output: log, errorOutput, exit: vi.fn(),
       browserLoginFn: async options => {
         try { return await browserLogin({ ...options, retire: f.retire, clientFactory: opts => createDeviceClient({ ...opts, fetchFn }), pair, signals }); }
         catch (error) { failure = error; throw error; }
@@ -112,7 +112,7 @@ it('public corruption error is fixed and cleanup authority survives until a vali
   await f.store.write(id, bundle);
   fs.writeFileSync(file, '{"SYNTHETIC-PRIVATE-PARSE-CONTENT');
   const output = vi.fn();
-  await runCLI(['login', '--no-browser'], { env: { HOME: f.home }, authState: f.state, isTTY: false, log: output, output, errorOutput: vi.fn(), exit: vi.fn() });
+  await runCLI(['login', '--no-browser', '--json'], { env: { HOME: f.home }, authState: f.state, isTTY: true, log: output, output, errorOutput: vi.fn(), exit: vi.fn() });
   expect(JSON.parse(output.mock.calls[0][0])).toMatchObject({ event: 'error', code: 'AUTH_JOURNAL_INVALID' });
   expect(JSON.stringify(output.mock.calls)).not.toContain('SYNTHETIC-PRIVATE-PARSE-CONTENT');
   expect((await f.store.read(id)).refreshToken).toBe(bundle.refreshToken);

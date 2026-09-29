@@ -37,8 +37,8 @@ describe('browser login public command integration', () => {
       options.onIssued(bundle); return bundle;
     });
     const openBrowser = vi.fn();
-    const commands = buildCommands({ authState: f.state, env: f.env, log, errorOutput, isTTY: false, browserLoginFn: options => browserLogin({ ...options, pair, openBrowser, signals: new EventEmitter() }) });
-    await commands.login([], null, { 'no-browser': true }, {});
+    const commands = buildCommands({ authState: f.state, env: f.env, log, errorOutput, isTTY: true, browserLoginFn: options => browserLogin({ ...options, pair, openBrowser, signals: new EventEmitter() }) });
+    await commands.login([], null, { 'no-browser': true, json: true }, {});
     expect(pair).toHaveBeenCalledOnce(); expect(openBrowser).not.toHaveBeenCalled();
     const events = log.mock.calls.map(([line]) => JSON.parse(line));
     expect(events.map(e => e.event)).toEqual(['pending', 'saved']);
@@ -219,15 +219,15 @@ it.each(['env', 'config'])('identifies the actual unsupported origin source: %s'
   await expect(browserLogin({ env: f.env, state: f.state, pair, isTTY: true, log: vi.fn(), signals: new EventEmitter() })).rejects.toThrow(source === 'env' ? 'Correct NANSEN_BASE_URL' : 'Correct baseUrl in config.json');
   expect(pair).not.toHaveBeenCalled();
 });
-it('legacy prompting depends on stdin while redirected browser output stays machine-readable', async () => {
+it('legacy prompting depends on stdin while redirected browser output fails before pairing', async () => {
   const f = fixture(); const promptFn = vi.fn().mockResolvedValue('synthetic-key');
   const browserLoginFn = vi.fn();
   class API { async getAccount() { return { user_id: 'synthetic-account' }; } }
   const commands = buildCommands({ env: f.env, authState: f.state, isTTY: false, stdinTTY: true, promptFn, browserLoginFn, NansenAPIClass: API, log: vi.fn() });
   await commands.login([], null, { human: true }, {});
   expect(promptFn).toHaveBeenCalledOnce(); expect(JSON.parse(fs.readFileSync(f.file)).apiKey).toBe('synthetic-key');
-  await commands.login([], null, {}, {});
-  expect(browserLoginFn.mock.calls[0][0].isTTY).toBe(false);
+  await expect(commands.login([], null, {}, {})).rejects.toMatchObject({ code: 'NOT_A_TTY' });
+  expect(browserLoginFn).not.toHaveBeenCalled();
 });
 
 it.each(['response', 'jwt'])('fresh pairing rejects over-ceiling %s lifetime with operator guidance and candidate retirement', async kind => {
@@ -250,11 +250,30 @@ it('state disagreement guidance preserves the code and directs unconfirmed revoc
   expect(messages).not.toContain('Unlock'); expect(messages).not.toContain('account security settings');
 });
 
-it.each([[false, true], [true, false]])('runCLI uses output TTY %s independently of input TTY %s', async (isTTY, isInputTTY) => {
+it.each([[false, true], [true, false], [false, false]])('runCLI rejects browser login with output TTY %s and input TTY %s', async (isTTY, isInputTTY) => {
   const f = fixture(); const browserLoginFn = vi.fn();
-  await runCLI(['login'], { env: f.env, authState: f.state, isTTY, isInputTTY, browserLoginFn, output: vi.fn(), errorOutput: vi.fn(), exit: vi.fn() });
-  expect(browserLoginFn).toHaveBeenCalledOnce();
-  expect(browserLoginFn.mock.calls[0][0].isTTY).toBe(isTTY);
+  const output = vi.fn();
+  for (const args of [['login'], ['login', '--no-browser']]) {
+    const result = await runCLI(args, { env: f.env, authState: f.state, isTTY, isInputTTY, browserLoginFn, output, errorOutput: vi.fn(), exit: vi.fn() });
+    expect(result).toMatchObject({ type: 'error', data: { code: 'NOT_A_TTY' } });
+    expect(output.mock.calls.at(-1)[0]).toContain('nansen login --human');
+    expect(output.mock.calls.at(-1)[0]).toContain('nansen login --api-key-stdin');
+  }
+  expect(browserLoginFn).not.toHaveBeenCalled();
+});
+it('treats redirected stdout with undefined isTTY as non-interactive', async () => {
+  const f = fixture(); const browserLoginFn = vi.fn(); const output = vi.fn();
+  const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: undefined });
+  try {
+    const result = await runCLI(['login'], { env: f.env, authState: f.state, isInputTTY: true, browserLoginFn, output, errorOutput: vi.fn(), exit: vi.fn() });
+    expect(result).toMatchObject({ type: 'error', data: { code: 'NOT_A_TTY' } });
+    expect(browserLoginFn).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(f.home, '.nansen', 'auth-operations'))).toBe(false);
+  } finally {
+    if (descriptor) Object.defineProperty(process.stdout, 'isTTY', descriptor);
+    else delete process.stdout.isTTY;
+  }
 });
 it.each(['', '   '])('legacy --human prompts when the environment key is blank (%j)', async value => {
   const f = fixture(); const promptFn = vi.fn().mockResolvedValue('synthetic-key');
