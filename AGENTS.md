@@ -24,7 +24,7 @@ Entry point is `src/index.js`.
 - **ESM only** — `import`/`export`, no TypeScript, no transpilation
 - **BigInt for token amounts** — never floating point
 - **Research commands** — return data objects, CLI layer formats via `formatOutput()` to stdout
-- **Operational commands** (trade, wallet, login) — print human-readable text via `log()` to stdout, return `undefined`
+- **Operational commands** (trade, wallet, login) — print human-readable text via `log()` to stdout, return `undefined`. Exception: read-only wallet commands that report data (`wallet list`) return it, so stdout carries the standard JSON envelope in a terminal and a pipe alike. Do not add a readable summary on stderr or switch output on `isTTY`: agents capture both streams or run under a pseudo-terminal.
 - **No interactive prompts in core** — use env vars (`NANSEN_WALLET_PASSWORD`, `NANSEN_API_KEY`)
 - **Actionable errors** — `"Not logged in. Run: nansen login"` not `"Authentication failed"`
 

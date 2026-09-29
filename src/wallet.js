@@ -830,20 +830,11 @@ export function buildWalletCommands(deps = {}) {
         },
 
         'list': async () => {
-          const result = listWallets();
-          if (result.wallets.length === 0) {
-            log('No wallets found. Create one with: nansen wallet create');
-            return;
-          }
-          log('');
-          for (const w of result.wallets) {
-            const star = w.isDefault ? ' ★' : '';
-            const providerTag = w.provider === 'privy' ? ' (privy)' : '';
-            log(`  ${w.name}${star}${providerTag}`);
-            log(`    EVM:    ${w.evm}`);
-            log(`    Solana: ${w.solana}`);
-            log('');
-          }
+          // Read-only data: return it so the CLI prints the standard JSON
+          // envelope on stdout, in a terminal or a pipe alike. A readable
+          // summary here would break agents that capture stderr alongside
+          // stdout or run under a pseudo-terminal.
+          return listWallets();
         },
 
         'show': async () => {

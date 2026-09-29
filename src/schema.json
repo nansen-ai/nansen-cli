@@ -2364,6 +2364,15 @@
         },
         "list": {
           "description": "List all wallets",
+          "returns": [
+            "wallets[].name",
+            "wallets[].provider",
+            "wallets[].evm",
+            "wallets[].solana",
+            "wallets[].createdAt",
+            "wallets[].isDefault",
+            "defaultWallet"
+          ],
           "examples": [
             "nansen wallet list",
             "nansen wallet list --pretty"

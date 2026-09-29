@@ -810,12 +810,79 @@ describe('Wallet list/show CLI output for provider', () => {
       }));
 
     const { buildWalletCommands } = await import('../wallet.js');
-    const output = [];
-    const cmds = buildWalletCommands({ log: (m) => output.push(m), exit: () => {} });
-    await cmds.wallet(['list'], null, {}, {});
+    const cmds = buildWalletCommands({ log: () => {}, exit: () => {} });
+    const result = await cmds.wallet(['list'], null, {}, {});
 
-    const joined = output.join('\n');
-    expect(joined).toContain('privy');
+    expect(result.wallets[0].provider).toBe('privy');
+  });
+});
+
+describe('wallet list emits the JSON envelope on stdout (issue #154)', () => {
+  function writeWallet(name, defaultWallet = name) {
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.mkdirSync(walletsDir, { recursive: true });
+    fs.writeFileSync(path.join(walletsDir, 'config.json'),
+      JSON.stringify({ defaultWallet, passwordHash: null }), { mode: 0o600 });
+    fs.writeFileSync(path.join(walletsDir, `${name}.json`),
+      JSON.stringify({
+        name, provider: 'local',
+        evm: { address: '0xAddr' },
+        solana: { address: 'SolAddr' },
+        createdAt: '2026-01-01T00:00:00Z',
+      }), { mode: 0o600 });
+  }
+
+  async function runList(extraArgs, { isTTY }) {
+    const { runCLI } = await import('../cli.js');
+    const stdout = [];
+    const stderr = [];
+    await runCLI(['wallet', 'list', ...extraArgs], {
+      output: (m) => stdout.push(m),
+      errorOutput: (m) => stderr.push(m),
+      exit: () => {},
+      isTTY,
+    });
+    return { stdout: stdout.join('\n'), stderr: stderr.join('\n') };
+  }
+
+  // Output must not depend on whether stdout is a terminal: agents can run
+  // under a pseudo-terminal and would otherwise get unparseable text.
+  for (const isTTY of [false, true]) {
+    it(`prints one parseable envelope and nothing on stderr (isTTY=${isTTY})`, async () => {
+      writeWallet('w1');
+
+      const { stdout, stderr } = await runList([], { isTTY });
+
+      expect(JSON.parse(stdout)).toEqual({
+        success: true,
+        data: {
+          wallets: [{
+            name: 'w1', provider: 'local', evm: '0xAddr', solana: 'SolAddr',
+            createdAt: '2026-01-01T00:00:00Z', isDefault: true,
+          }],
+          defaultWallet: 'w1',
+        },
+      });
+      expect(stderr).toBe('');
+    });
+  }
+
+  it('returns an empty list rather than a hint when there are no wallets', async () => {
+    const { stdout, stderr } = await runList([], { isTTY: true });
+
+    expect(JSON.parse(stdout)).toEqual({
+      success: true,
+      data: { wallets: [], defaultWallet: null },
+    });
+    expect(stderr).toBe('');
+  });
+
+  it('honours --fields', async () => {
+    writeWallet('w1');
+
+    const { stdout } = await runList(['--fields', 'name,evm'], { isTTY: false });
+
+    expect(JSON.parse(stdout).data).toEqual({ wallets: [{ name: 'w1', evm: '0xAddr' }] });
   });
 });
 
