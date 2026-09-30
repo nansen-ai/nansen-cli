@@ -842,15 +842,9 @@ export function buildWalletCommands(deps = {}) {
           if (!name) {
             throw new CommandError('Usage: nansen wallet show <name>', 'MISSING_ARGS');
           }
+          // Read-only data, returned for the JSON envelope like `wallet list`.
           try {
-            const result = showWallet(name);
-            const star = result.isDefault ? ' ★' : '';
-            const providerTag = result.provider === 'privy' ? ' (privy)' : '';
-            log(`\n  ${result.name}${star}${providerTag}`);
-            log(`    EVM:    ${result.evm}`);
-            log(`    Solana: ${result.solana}`);
-            log(`    Created: ${result.createdAt}\n`);
-            return;
+            return showWallet(name);
           } catch (err) {
             throw new CommandError(`❌ ${err.message}`, 'SHOW_FAILED');
           }
@@ -882,19 +876,15 @@ export function buildWalletCommands(deps = {}) {
               if (result.provider !== 'local') {
                 throw new Error(`${result.provider} wallets don't support key export. Keys are managed by the provider.`);
               }
-              log(`\n  Wallet "${result.name}" — private keys are NOT shown by default.\n`);
-              log(`  EVM:`);
-              log(`    Address:     ${result.evm}`);
-              log(`    Private Key: [REDACTED]`);
-              log(`  Solana:`);
-              log(`    Address:     ${result.solana}`);
-              log(`    Private Key: [REDACTED]`);
-              log('');
-              log('  To export the private keys:');
-              log(`    nansen wallet export ${result.name} --file <path>   safer: writes a file only you can read (0600)`);
-              log(`    nansen wallet export ${result.name} --reveal        prints them in plaintext to stdout`);
-              log('');
-              return;
+              // Same envelope rule as `wallet show`. The shape follows
+              // exportWallet() minus the privateKey fields, which are left out
+              // rather than filled with a placeholder a caller could mistake for a key.
+              return {
+                name: result.name,
+                redacted: true,
+                evm: { address: result.evm },
+                solana: { address: result.solana },
+              };
             } catch (err) {
               throw new CommandError(`❌ ${err.message}`, 'EXPORT_FAILED');
             }

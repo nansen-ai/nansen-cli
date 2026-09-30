@@ -817,7 +817,7 @@ describe('Wallet list/show CLI output for provider', () => {
   });
 });
 
-describe('wallet list emits the JSON envelope on stdout (issue #154)', () => {
+describe('wallet list and show emit the JSON envelope on stdout (issue #154, API-686)', () => {
   function writeWallet(name, defaultWallet = name) {
     const walletsDir = path.join(tempDir, '.nansen', 'wallets');
     fs.mkdirSync(walletsDir, { recursive: true });
@@ -832,11 +832,11 @@ describe('wallet list emits the JSON envelope on stdout (issue #154)', () => {
       }), { mode: 0o600 });
   }
 
-  async function runList(extraArgs, { isTTY }) {
+  async function runWallet(subArgs, { isTTY }) {
     const { runCLI } = await import('../cli.js');
     const stdout = [];
     const stderr = [];
-    await runCLI(['wallet', 'list', ...extraArgs], {
+    await runCLI(['wallet', ...subArgs], {
       output: (m) => stdout.push(m),
       errorOutput: (m) => stderr.push(m),
       exit: () => {},
@@ -851,7 +851,7 @@ describe('wallet list emits the JSON envelope on stdout (issue #154)', () => {
     it(`prints one parseable envelope and nothing on stderr (isTTY=${isTTY})`, async () => {
       writeWallet('w1');
 
-      const { stdout, stderr } = await runList([], { isTTY });
+      const { stdout, stderr } = await runWallet(['list'], { isTTY });
 
       expect(JSON.parse(stdout)).toEqual({
         success: true,
@@ -868,7 +868,7 @@ describe('wallet list emits the JSON envelope on stdout (issue #154)', () => {
   }
 
   it('returns an empty list rather than a hint when there are no wallets', async () => {
-    const { stdout, stderr } = await runList([], { isTTY: true });
+    const { stdout, stderr } = await runWallet(['list'], { isTTY: true });
 
     expect(JSON.parse(stdout)).toEqual({
       success: true,
@@ -880,9 +880,56 @@ describe('wallet list emits the JSON envelope on stdout (issue #154)', () => {
   it('honours --fields', async () => {
     writeWallet('w1');
 
-    const { stdout } = await runList(['--fields', 'name,evm'], { isTTY: false });
+    const { stdout } = await runWallet(['list', '--fields', 'name,evm'], { isTTY: false });
 
     expect(JSON.parse(stdout).data).toEqual({ wallets: [{ name: 'w1', evm: '0xAddr' }] });
+  });
+
+  for (const isTTY of [false, true]) {
+    it(`wallet show prints one parseable envelope and nothing on stderr (isTTY=${isTTY})`, async () => {
+      writeWallet('w1');
+
+      const { stdout, stderr } = await runWallet(['show', 'w1'], { isTTY });
+
+      expect(JSON.parse(stdout)).toEqual({
+        success: true,
+        data: {
+          name: 'w1', provider: 'local', evm: '0xAddr', solana: 'SolAddr',
+          createdAt: '2026-01-01T00:00:00Z', isDefault: true,
+        },
+      });
+      expect(stderr).toBe('');
+    });
+  }
+
+  it('wallet show includes privyWalletIds for Privy wallets', async () => {
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.mkdirSync(walletsDir, { recursive: true });
+    fs.writeFileSync(path.join(walletsDir, 'config.json'),
+      JSON.stringify({ defaultWallet: 'other', passwordHash: null }), { mode: 0o600 });
+    fs.writeFileSync(path.join(walletsDir, 'pv.json'),
+      JSON.stringify({
+        name: 'pv', provider: 'privy',
+        evm: { privyWalletId: 'wl_1', address: '0xAddr' },
+        solana: { privyWalletId: 'wl_2', address: 'SolAddr' },
+        createdAt: '2026-01-01T00:00:00Z',
+      }), { mode: 0o600 });
+
+    const { stdout } = await runWallet(['show', 'pv'], { isTTY: true });
+
+    expect(JSON.parse(stdout).data).toEqual({
+      name: 'pv', provider: 'privy', evm: '0xAddr', solana: 'SolAddr',
+      createdAt: '2026-01-01T00:00:00Z', isDefault: false,
+      privyWalletIds: { evm: 'wl_1', solana: 'wl_2' },
+    });
+  });
+
+  it('wallet show honours --fields', async () => {
+    writeWallet('w1');
+
+    const { stdout } = await runWallet(['show', 'w1', '--fields', 'evm,solana'], { isTTY: false });
+
+    expect(JSON.parse(stdout).data).toEqual({ evm: '0xAddr', solana: 'SolAddr' });
   });
 });
 
