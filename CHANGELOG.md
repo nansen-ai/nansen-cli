@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.0
+
+### Minor Changes
+
+- [#584](https://github.com/nansen-ai/nansen-cli/pull/584) [`435ae1a`](https://github.com/nansen-ai/nansen-cli/commit/435ae1a717f7f3771ccce4dd3026851bbccd8166) Thanks [@ygd58](https://github.com/ygd58)! - `nansen wallet list` now prints the standard JSON envelope on stdout, `{"success":true,"data":{"wallets":[...],"defaultWallet":...}}`, so `nansen wallet list | jq .` works and `--pretty`, `--table`, `--format csv` and `--fields` apply to it like any other command. It previously printed a readable summary with no data envelope, which agents could not parse. The output is the same in a terminal and in a pipe; use `--pretty` for readable JSON or `--table` for a table. With no wallets it returns an empty `wallets` list instead of a hint.
+
+- [#727](https://github.com/nansen-ai/nansen-cli/pull/727) [`9404c13`](https://github.com/nansen-ai/nansen-cli/commit/9404c13ec32a063cbc54aba697e6297374993591) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - `nansen wallet show <name>` now prints the standard JSON envelope on stdout, `{"success":true,"data":{"name":...,"provider":...,"evm":...,"solana":...,"createdAt":...,"isDefault":...}}`, so `nansen wallet show main | jq .` works and `--pretty`, `--table`, `--format csv` and `--fields` apply to it. Privy wallets also include `privyWalletIds`. The redacted default of `nansen wallet export <name>` does the same, returning `{"name":...,"redacted":true,"evm":{"address":...},"solana":{"address":...}}` with no key fields. Both previously printed a readable summary that agents could not parse. `wallet export --reveal` and `--file` are unchanged.
+
+### Patch Changes
+
+- [#724](https://github.com/nansen-ai/nansen-cli/pull/724) [`1f2fc6e`](https://github.com/nansen-ai/nansen-cli/commit/1f2fc6e3b76ae9faa66202ba295c1d668ae33a73) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Use the resolved gas limit when signing local EVM swaps, including quotes with both gas and gasLimit fields.
+
 ## 2.0.1
 
 ### Patch Changes
