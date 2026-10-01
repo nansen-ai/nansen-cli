@@ -166,6 +166,8 @@ function ensureLedgerDir() {
   fs.mkdirSync(getLedgerDir(), { mode: 0o700, recursive: true });
 }
 
+// Node.js main thread only — Atomics.wait blocks here, but returns 'not-equal'
+// without sleeping in Worker threads or non-Node runtimes.
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -340,8 +342,15 @@ function incrementDailySpend(amountUsd, now = new Date()) {
     }
 
     const updated = { totalUsdMicros: (current + amountMicros).toString(), updatedAt: new Date().toISOString() };
-    fs.writeFileSync(tmpPath, JSON.stringify(updated), { mode: 0o600 });
-    fs.renameSync(tmpPath, filePath);
+    try {
+      fs.writeFileSync(tmpPath, JSON.stringify(updated), { mode: 0o600 });
+      fs.renameSync(tmpPath, filePath);
+    } catch (err) {
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch { /* best-effort temp cleanup */ }
+      throw err;
+    }
   });
 }
 
