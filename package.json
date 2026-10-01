@@ -1,6 +1,6 @@
 {
   "name": "nansen-cli",
-  "version": "1.46.0",
+  "version": "2.0.1",
   "description": "AI-agent CLI for Nansen API analytics, DEX swaps, and cross-chain trading",
   "main": "src/index.js",
   "type": "module",
@@ -13,7 +13,8 @@
     "!src/__tests__/**",
     "skills/**",
     "scripts/postinstall.js",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs/browser-login.md"
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
@@ -27,6 +28,10 @@
     "test:send": "vitest run --config vitest.e2e.config.js src/__tests__/send.e2e.test.js",
     "test:privy": "vitest run --config vitest.e2e.config.js src/__tests__/privy.e2e.test.js",
     "lint": "eslint .",
+    "mcp:generate": "node scripts/generate-mcp-docs.js",
+    "mcp:check": "node scripts/generate-mcp-docs.js --check",
+    "mcp:check-pin": "node scripts/check-mcp-remote-pin.js",
+    "mcp:check-consumers": "node scripts/check-mcp-consumers.js",
     "lint:fix": "eslint . --fix",
     "changeset": "changeset",
     "changeset:version": "changeset version && npm install --package-lock-only",
@@ -76,5 +81,9 @@
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
     "@scure/base": "^2.0.0"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring": "2.1.0",
+    "fs-native-extensions": "1.5.1"
   }
 }

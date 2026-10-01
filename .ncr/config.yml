@@ -1,0 +1,46 @@
+auto_approve: true
+auto_approve_risk_threshold: 2
+additional_instructions: |
+  ## nansen-cli Review Rules
+
+  Node.js ESM CLI for the Nansen API — analytics, wallet management, and DEX
+  trading for AI agents. Conventions live in `AGENTS.md` — follow those.
+
+  Stack: Node.js ESM (no TypeScript, no transpilation), Vitest for unit tests.
+  Entry point: `src/index.js`.
+
+  ### What matters most
+
+  **BigInt for token amounts** — never floating-point for on-chain amounts.
+  Flag any arithmetic that uses `Number()` / `parseFloat()` on token amounts.
+
+  **No interactive prompts in core** — use env vars (`NANSEN_WALLET_PASSWORD`,
+  `NANSEN_API_KEY`). Flag any `readline` / `inquirer` / `prompt` usage in
+  non-CLI-layer code.
+
+  **Trading safety (HIGH)**
+  - `nansen trade execute` and limit orders touch real funds. Flag missing
+    input validation, missing error handling on RPC/API calls, or any path
+    that could silently succeed with wrong amounts.
+
+  **schema.json sync**
+  - If the PR adds/changes commands or options but does not update
+    `src/schema.json`, flag as a reminder (not a blocker).
+
+  **Changeset required**
+  - User-facing changes (new feature, bug fix, changed output) must include
+    a changeset file. Flag if absent.
+
+  **Test coverage**
+  - Unit tests mock all RPC/API calls — flag any test that hits a real
+    network endpoint (no `NANSEN_API_KEY` in CI).
+
+  ### What to skip
+  - Style/formatting — ESLint (`npm run lint`) covers these.
+  - Type-hint nitpicks (no TypeScript in this repo).
+
+  ### Always REQUEST CHANGES for
+  - Any change to `.github/workflows/` files — end your assessment with
+    "I recommend requesting changes", never include "I recommend approving this PR".
+  - Hard-coded API keys, tokens, or private keys committed to the repo.
+  - Changes to `CODEOWNERS`.

@@ -17,6 +17,14 @@ const CACHE_FILE = path.join(CONFIG_DIR, 'update-check.json');
 const STALE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const PACKAGE_NAME = 'nansen-cli';
 
+/** How long a recorded update check stays fresh. */
+export const UPDATE_CHECK_TTL_MS = STALE_MS;
+
+/** Absolute path of the update check cache file, for `nansen cache stats` and `clear`. */
+export function getUpdateCheckFile() {
+  return CACHE_FILE;
+}
+
 /**
  * Compare two semver strings. Returns true if latest > current.
  * Exported so `nansen doctor` reports upgrade state with identical semantics.
@@ -150,7 +158,7 @@ export function scheduleUpdateCheck() {
     // Check staleness
     if (fs.existsSync(CACHE_FILE)) {
       const { checkedAt } = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-      if (checkedAt && Date.now() - checkedAt < STALE_MS) return;
+      if (Number.isFinite(checkedAt) && checkedAt !== 0 && Date.now() - checkedAt < STALE_MS) return;
     }
 
     const child = childProcess.spawn(process.execPath, ['-e', buildCheckScript(CONFIG_DIR, CACHE_FILE)], {

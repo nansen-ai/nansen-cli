@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildAgentCommands, consumeSSEStream } from '../commands/agent.js';
-import { NansenError, ErrorCode } from '../api.js';
+import { NansenAPI, NansenError, ErrorCode } from '../api.js';
 
 // ── Helpers ──
 
@@ -37,6 +37,8 @@ function mockApi(overrides = {}) {
     apiKey: 'test-key',
     baseUrl: 'https://api.nansen.ai',
     defaultHeaders: {},
+    selection: { kind: overrides.apiKey === null ? 'anonymous' : 'api-key' },
+    requestCredentials: async () => overrides.apiKey === null ? {} : { apikey: overrides.apiKey || 'test-key' },
     ...overrides,
   };
 }
@@ -87,16 +89,11 @@ describe('agent command', () => {
         .rejects.toThrow('Not logged in. Run: nansen login');
     });
 
-    it('throws with correct error code', async () => {
-      const api = mockApi({ apiKey: '' });
-      try {
-        await cmd(['test question'], api, {}, {});
-        expect.unreachable('should have thrown');
-      } catch (err) {
-        expect(err).toBeInstanceOf(NansenError);
-        expect(err.code).toBe(ErrorCode.UNAUTHORIZED);
-        expect(err.status).toBe(401);
-      }
+    it('rejects an explicitly empty selected key before any network', async () => {
+      const api = new NansenAPI('', 'https://api.nansen.ai');
+      const fetch = vi.spyOn(globalThis, 'fetch');
+      await expect(cmd(['test question'], api, {}, {})).rejects.toMatchObject({ code: 'INVALID_API_KEY' });
+      expect(fetch).not.toHaveBeenCalled();
     });
   });
 

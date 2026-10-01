@@ -170,7 +170,23 @@ export function encodeMsgpack(v) {
 // precision, then strip trailing zeros (Decimal.normalize + `:f`). Produces the
 // canonical decimal string HL expects in order wires (e.g. 1924.7 -> "1924.7",
 // 0.006 -> "0.006", 2000 -> "2000"). No scientific notation.
-export function floatToWire(x) {
+export function floatToWire(x, field = 'order value') {
+  // toFixed() switches to exponential notation from 1e21 up ("1e+21"), which
+  // is not a decimal string HL's parser accepts. The precision check below
+  // does not catch it (parseFloat("1e+21") === 1e21) and the trailing-zero
+  // strip is skipped for a string with no ".", so the malformed value would
+  // reach the signed action and be rejected opaquely after signing.
+  // buildUsdClassTransferAction refuses the same boundary for transfer
+  // amounts; order price/size and trigger prices go through here.
+  //
+  // Rounding happens before this call, so the reported value can differ from
+  // what the user typed: roundPrice(9.99999e20) lands on exactly 1e21.
+  if (!Number.isFinite(x) || Math.abs(x) >= 1e21) {
+    throw new CommandError(
+      `Invalid ${field}: ${x}. Must be a finite number below 1e21.`,
+      'INVALID_INPUT',
+    );
+  }
   const rounded = x.toFixed(8);
   if (Math.abs(parseFloat(rounded) - x) >= 1e-12) {
     throw new Error(`floatToWire causes rounding: ${x}`);
@@ -240,14 +256,14 @@ export function roundPrice(price, szDecimals) {
 
 // ── Order wire assembly (ports of signing.py) ────────────────────────
 
-function orderTypeToWire(orderType) {
+function orderTypeToWire(orderType, priceField = 'trigger price') {
   if ('limit' in orderType) return { limit: orderType.limit };
   if ('trigger' in orderType) {
     // Key order matches the SDK: isMarket, triggerPx, tpsl.
     return {
       trigger: {
         isMarket: orderType.trigger.isMarket,
-        triggerPx: floatToWire(orderType.trigger.triggerPx),
+        triggerPx: floatToWire(orderType.trigger.triggerPx, priceField),
         tpsl: orderType.trigger.tpsl,
       },
     };
@@ -258,14 +274,16 @@ function orderTypeToWire(orderType) {
 // Port of `order_request_to_order_wire`. Key order (a,b,p,s,r,t) is load-bearing
 // — it's the msgpack map insertion order the hash depends on. No cloid ("c"):
 // the CLI never sets one.
-function orderRequestToOrderWire(order, asset) {
+// priceField names the CLI flag this leg's price came from, so a rejected value
+// points at --take-profit / --stop-loss rather than at a generic "order price".
+function orderRequestToOrderWire(order, asset, priceField = 'order price') {
   return {
     a: asset,
     b: order.isBuy,
-    p: floatToWire(order.limitPx),
-    s: floatToWire(order.sz),
+    p: floatToWire(order.limitPx, priceField),
+    s: floatToWire(order.sz, 'order size'),
     r: order.reduceOnly,
-    t: orderTypeToWire(order.orderType),
+    t: orderTypeToWire(order.orderType, priceField),
   };
 }
 
@@ -366,6 +384,7 @@ export function buildOrderAction(
         orderRequestToOrderWire(
           { isBuy: !isBuy, sz: roundedSize, limitPx: rtp, orderType: { trigger: { triggerPx: rtp, isMarket: true, tpsl: 'tp' } }, reduceOnly: true },
           assetId,
+          'take-profit price',
         ),
       );
     }
@@ -378,6 +397,7 @@ export function buildOrderAction(
         orderRequestToOrderWire(
           { isBuy: !isBuy, sz: roundedSize, limitPx: rsl, orderType: { trigger: { triggerPx: rsl, isMarket: true, tpsl: 'sl' } }, reduceOnly: true },
           assetId,
+          'stop-loss price',
         ),
       );
     }

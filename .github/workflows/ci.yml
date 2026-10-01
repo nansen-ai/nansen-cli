@@ -8,7 +8,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, hulk/api-506-browser-login, hulk/api-507-session-refresh]
 
 permissions: {}
 
@@ -68,8 +68,57 @@ jobs:
       - name: Run tests
         run: npm test
 
+  native-optional-install:
+    name: "Native auth on ${{ matrix.image }}: ${{ matrix.outcome }}"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: node:20-bookworm-slim
+            lock: available
+            outcome: saved API-key login/logout works
+          - image: node:22-bookworm-slim
+            lock: available
+            outcome: saved API-key login/logout works
+          - image: node:24-bookworm-slim
+            lock: available
+            outcome: saved API-key login/logout works
+          - image: node:20-alpine
+            lock: unavailable
+            outcome: saved API-key login/logout unavailable (known gap)
+          - image: node:22-alpine
+            lock: unavailable
+            outcome: saved API-key login/logout unavailable (known gap)
+          - image: node:24-alpine
+            lock: unavailable
+            outcome: saved API-key login/logout unavailable (known gap)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check published and packed CLI on ${{ matrix.image }}
+        env:
+          NANSEN_EXPECT_NATIVE_LOCK: ${{ matrix.lock }}
+          NANSEN_IMAGE: ${{ matrix.image }}
+          NANSEN_AUTH_OUTCOME: ${{ matrix.outcome }}
+        run: |
+          for source in published packed; do
+            docker run --rm \
+              --env NANSEN_EXPECT_NATIVE_LOCK \
+              --env "NANSEN_PACKAGE_SOURCE=$source" \
+              --mount "type=bind,src=$PWD,dst=/repo,readonly" \
+              --workdir /repo \
+              "$NANSEN_IMAGE" \
+              node scripts/check-native-optional-install.js
+          done
+          printf '%s\n' "- $NANSEN_IMAGE: $NANSEN_AUTH_OUTCOME. Confirmed with published 2.0.0 and the PR tarball." >> "$GITHUB_STEP_SUMMARY"
+
   publish:
-    needs: [lint, test]
+    needs: [lint, test, native-optional-install]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     outputs:

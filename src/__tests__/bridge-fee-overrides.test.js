@@ -190,7 +190,7 @@ describe('bridge execute overrides', () => {
     writeQuote('bridge-1');
     await cmds.execute([], api, {}, { quote: 'bridge-1', wallet: 'w' });
     expect(getEvmNonce).toHaveBeenCalled();
-    expect(signEvmTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'base', 7);
+    expect(signEvmTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'base', 7, expect.objectContaining({ label: expect.stringContaining('bridge step') }));
   });
 
   it('refuses a step whose txData.from is not the signing wallet', async () => {
@@ -248,7 +248,7 @@ describe('bridge execute overrides', () => {
     });
     await cmds.execute([], api, {}, { quote: 'bridge-nofrom', wallet: 'w' });
     expect(getEvmNonce).toHaveBeenCalledWith('base', ADDR);
-    expect(signEvmTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'base', 7);
+    expect(signEvmTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'base', 7, expect.objectContaining({ label: expect.stringContaining('bridge step') }));
   });
 
   it('signs at --nonce, bypassing the pending reconciliation', async () => {
@@ -258,7 +258,7 @@ describe('bridge execute overrides', () => {
     writeQuote('bridge-2');
     await cmds.execute([], api, {}, { quote: 'bridge-2', wallet: 'w', nonce: '20' });
     expect(getEvmNonce).not.toHaveBeenCalled();
-    expect(signEvmTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'base', 20);
+    expect(signEvmTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'base', 20, expect.objectContaining({ label: expect.stringContaining('bridge step') }));
   });
 
   it('passes --priority-fee through to the signed transaction', async () => {
@@ -299,6 +299,107 @@ describe('bridge execute overrides', () => {
     await expect(
       cmds.execute([], api, {}, { quote: 'bridge-6', wallet: 'w', 'priority-fee': '0.05' }),
     ).rejects.toThrow(/apply only to EVM deposit legs/);
+  });
+
+  function writeFeeCapQuote({ fees = { maxFeePerGas: '10000000000' }, depositGas = { gas: '210000' }, approvalStatus = 'incomplete' } = {}) {
+    writeQuote('bridge-fee-cap', {
+      response: {
+        execution_type: 'evm_transaction',
+        request_id: 'r1',
+        steps: [
+          { id: 'approve', items: [{ status: approvalStatus, data: {
+            from: ADDR, to: USDC, data: approveCalldata(ROUTER), value: '0', gas: '50000', ...fees,
+          } }] },
+          { id: 'deposit', items: [{ status: 'incomplete', data: {
+            from: ADDR, to: ROUTER, data: depositCalldata(ADDR), value: '0', ...depositGas, ...fees,
+          } }] },
+        ],
+      },
+    });
+  }
+
+  it.each([
+    ['quoted EIP-1559 fees', {}, {}],
+    ['gasLimit alias', { depositGas: { gasLimit: '0x33450' } }, {}],
+    ['uppercase gas prefix', { depositGas: { gas: '0X33450' } }, {}],
+    ['uppercase gasLimit prefix', { depositGas: { gasLimit: '0X33450' } }, {}],
+    ['signer gas fallback', { depositGas: {} }, {}],
+    ['explicit max fee', { fees: { maxFeePerGas: '1000000' } }, { 'max-fee': '10' }],
+    ['explicit priority fee', { fees: { maxFeePerGas: '1000000' } }, { 'priority-fee': '10' }],
+    ['live base fee headroom', { fees: { maxFeePerGas: '1000000' } }, {}],
+    ['legacy RPC gas price', { fees: { gasPrice: '1' } }, {}],
+  ])('refuses the later deposit before any signing or broadcast with %s', async (scenario, fixture, options) => {
+    evmRpcCall.mockImplementation(async (_chain, method) => {
+      if (method === 'eth_getBlockByNumber') {
+        return { baseFeePerGas: scenario === 'live base fee headroom' ? '0xc6aea155' : '0x1' };
+      }
+      if (method === 'eth_gasPrice') return '0x2540be400'; // 10 gwei
+      if (method === 'eth_sendRawTransaction') return '0x' + 'cd'.repeat(32);
+      throw new Error(`Unexpected RPC: ${method}`);
+    });
+    writeFeeCapQuote(fixture);
+    const cmds = buildBridgeCommands({ log: () => {} });
+    // Approval costs 0.0005 ETH, deposit 0.0021 ETH at 10 gwei.
+    await expect(cmds.execute([], api, {}, {
+      quote: 'bridge-fee-cap', wallet: 'w', 'max-tx-fee': '0.001', ...options,
+    })).rejects.toThrow(/bridge step "deposit".*fee cap/);
+    expect(signEvmTransaction).not.toHaveBeenCalled();
+    expect(getEvmNonce).not.toHaveBeenCalled();
+    expect(evmRpcCall.mock.calls.some(([, method]) => method === 'eth_sendRawTransaction')).toBe(false);
+    const saved = JSON.parse(fs.readFileSync(path.join(quotesDir, 'bridge-fee-cap.json'), 'utf8'));
+    expect(saved.executedAt).toBeUndefined();
+  });
+
+  it('checks the default cap before broadcasting a smaller approval', async () => {
+    writeFeeCapQuote({ fees: { maxFeePerGas: '10000000000000' } });
+    const cmds = buildBridgeCommands({ log: () => {} });
+    await expect(cmds.execute([], api, {}, { quote: 'bridge-fee-cap', wallet: 'w' }))
+      .rejects.toThrow(/bridge step "deposit".*fee cap/);
+    expect(signEvmTransaction).not.toHaveBeenCalled();
+    expect(evmRpcCall.mock.calls.some(([, method]) => method === 'eth_sendRawTransaction')).toBe(false);
+  });
+
+  it.each(['0.0021', '0'])('executes both steps with a sufficient or disabled cap of %s ETH', async (cap) => {
+    writeFeeCapQuote();
+    const cmds = buildBridgeCommands({ log: () => {} });
+    await cmds.execute([], api, {}, { quote: 'bridge-fee-cap', wallet: 'w', 'max-tx-fee': cap });
+    expect(signEvmTransaction).toHaveBeenCalledTimes(2);
+    expect(evmRpcCall.mock.calls.filter(([, method]) => method === 'eth_sendRawTransaction')).toHaveLength(2);
+  });
+
+  it.each(['gas', 'gasLimit'])('accepts uppercase hex in %s at the exact cap with the real signer', async (field) => {
+    const actual = await vi.importActual('../trading.js');
+    signEvmTransaction
+      .mockImplementationOnce(actual.signEvmTransaction)
+      .mockImplementationOnce(actual.signEvmTransaction);
+    writeFeeCapQuote({ depositGas: { [field]: '0X33450' } });
+    const cmds = buildBridgeCommands({ log: () => {} });
+    await cmds.execute([], api, {}, { quote: 'bridge-fee-cap', wallet: 'w', 'max-tx-fee': '0.0021' });
+    const broadcasts = evmRpcCall.mock.calls.filter(([, method]) => method === 'eth_sendRawTransaction');
+    expect(broadcasts).toHaveLength(2);
+    for (const [, , [signedTx]] of broadcasts) expect(signedTx).toMatch(/^0x02[0-9a-f]+$/);
+  });
+
+  it('does not price or sign completed items', async () => {
+    writeFeeCapQuote({ approvalStatus: 'complete' });
+    const file = path.join(quotesDir, 'bridge-fee-cap.json');
+    const quote = JSON.parse(fs.readFileSync(file, 'utf8'));
+    quote.response.steps[0].items[0].data.maxFeePerGas = 'invalid completed fee';
+    fs.writeFileSync(file, JSON.stringify(quote));
+    const cmds = buildBridgeCommands({ log: () => {} });
+    await cmds.execute([], api, {}, { quote: 'bridge-fee-cap', wallet: 'w', 'max-tx-fee': '0.0021' });
+    expect(signEvmTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an over-cap dry run before loading signing credentials', async () => {
+    writeFeeCapQuote();
+    const cmds = buildBridgeCommands({ log: () => {} });
+    await expect(cmds.execute([], api, { 'dry-run': true }, {
+      quote: 'bridge-fee-cap', wallet: 'w', 'max-tx-fee': '0.001',
+    })).rejects.toThrow(/bridge step "deposit".*fee cap/);
+    expect(exportWallet).not.toHaveBeenCalled();
+    expect(signEvmTransaction).not.toHaveBeenCalled();
+    expect(evmRpcCall.mock.calls.some(([, method]) => method === 'eth_sendRawTransaction')).toBe(false);
   });
 
   it('numbers a multi-step quote consecutively from --nonce', async () => {

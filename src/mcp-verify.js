@@ -1,6 +1,7 @@
 import { check, formatChecks, maskKey, resolveAuthConfig } from './doctor.js';
+import { MCP_CLIENT_CONFIG } from './mcp-client-config.js';
 
-export const DEFAULT_MCP_URL = 'https://mcp.nansen.ai/ra/mcp';
+export const DEFAULT_MCP_URL = MCP_CLIENT_CONFIG.endpoint;
 export const CANARY_TOOL = 'nansen_score_top_tokens';
 
 class McpRequestError extends Error {
@@ -98,7 +99,7 @@ export async function mcpRequest(url, method, params, {
     'Content-Type': 'application/json',
     Accept: 'application/json, text/event-stream',
   };
-  if (apiKey) headers['NANSEN-API-KEY'] = apiKey;
+  if (apiKey) headers[MCP_CLIENT_CONFIG.apiKeyHeader] = apiKey;
 
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response;
@@ -179,7 +180,7 @@ function authFailureCheck(message, httpStatus = null) {
       'mcp-auth',
       'error',
       `MCP server rejected the API key${text ? `: ${text}` : ''}`,
-      'Check the exact key in your MCP client\'s NANSEN-API-KEY header, or create/rotate it at https://app.nansen.ai/api?tab=api',
+      `Check the exact key in your MCP client's ${MCP_CLIENT_CONFIG.apiKeyHeader} header, or create/rotate it at ${MCP_CLIENT_CONFIG.apiKeyManageUrl}`,
     );
   }
   return check(
@@ -233,7 +234,7 @@ export async function runMcpVerifyChecks({
       'mcp-api-key',
       'error',
       'No API key available for the authenticated MCP data-path check',
-      'Create an API key at https://app.nansen.ai/api?tab=api, then set NANSEN_API_KEY or save it with `nansen login --human`',
+      `Create an API key at ${MCP_CLIENT_CONFIG.apiKeyManageUrl}, then set NANSEN_API_KEY or save it with \`nansen login --human\``,
     ));
   }
 
@@ -347,7 +348,7 @@ export async function runMcpVerifyChecks({
 export function formatMcpVerifyReport(checks, url, verified) {
   const lines = [`Nansen MCP verify — ${url}`, '', formatChecks(checks), ''];
   if (verified) {
-    lines.push('Verified: the supplied API key works against the MCP server\'s paid data path (~1 credit consumed). Ensure this same key is in your client\'s NANSEN-API-KEY header.');
+    lines.push(`Verified: the supplied API key works against the MCP server's paid data path (~1 credit consumed). Ensure this same key is in your client's ${MCP_CLIENT_CONFIG.apiKeyHeader} header.`);
   } else {
     const errors = checks.filter(item => item.status === 'error').length;
     const warnings = checks.filter(item => item.status === 'warn').length;

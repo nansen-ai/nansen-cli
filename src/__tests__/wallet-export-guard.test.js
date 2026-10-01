@@ -78,20 +78,40 @@ async function runExport(args, flags = {}, options = {}, deps = {}) {
 }
 
 describe('wallet export — redacted default', () => {
-  it('prints addresses but never key material, without needing a password', async () => {
-    const keys = createWalletWithKeys('guard');
-    delete process.env.NANSEN_WALLET_PASSWORD; // proves the default path never decrypts
+  // Same rule as `wallet list` / `wallet show`: one JSON envelope on stdout,
+  // whether or not stdout is a terminal (API-686).
+  for (const isTTY of [false, true]) {
+    it(`prints addresses as one JSON envelope, never key material, without a password (isTTY=${isTTY})`, async () => {
+      const keys = createWalletWithKeys('guard');
+      const exported = exportWallet('guard', PASSWORD);
+      delete process.env.NANSEN_WALLET_PASSWORD; // proves the default path never decrypts
 
-    const { logs, error } = await runExport(['guard']);
-    expect(error).toBeNull();
-    const out = logs.join('\n');
-    expect(out).toContain('[REDACTED]');
-    expect(out).toContain('--reveal');
-    expect(out).toContain('--file');
-    assertNoKeyMaterial(out, keys);
-    // No key-shaped blob of any kind (EVM keys are 64 hex, Solana keypairs 128 hex)
-    expect(out).not.toMatch(/[0-9a-fA-F]{64}/);
-  });
+      const stdout = [];
+      const stderr = [];
+      await runCLI(['wallet', 'export', 'guard'], {
+        output: (m) => stdout.push(String(m)),
+        log: (m) => stdout.push(String(m)),
+        errorOutput: (m) => stderr.push(String(m)),
+        exit: () => {},
+        isTTY,
+      });
+
+      const out = stdout.join('\n');
+      expect(JSON.parse(out)).toEqual({
+        success: true,
+        data: {
+          name: 'guard',
+          redacted: true,
+          evm: { address: exported.evm.address },
+          solana: { address: exported.solana.address },
+        },
+      });
+      expect(stderr.join('\n')).toBe('');
+      assertNoKeyMaterial(out, keys);
+      // No key-shaped blob of any kind (EVM keys are 64 hex, Solana keypairs 128 hex)
+      expect(out).not.toMatch(/[0-9a-fA-F]{64}/);
+    });
+  }
 
   it('still rejects non-local wallets', async () => {
     fs.mkdirSync(path.join(tempDir, '.nansen', 'wallets'), { recursive: true });

@@ -8,6 +8,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import crypto from 'crypto';
+import { RLP } from '@ethereumjs/rlp';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -16,6 +17,8 @@ import {
   getWalletChainType,
   saveQuote,
   loadQuote,
+  claimQuoteForExecution,
+  markQuoteExecuted,
   cleanupQuotes,
   readCompactU16,
   toBuffer,
@@ -80,6 +83,9 @@ const RELAY_ROUTER = '0xf5042e6ffac5a625d4e7848e0b01373d8eb9e222';
 // is covered in trading-sanctions-screening.test.js). Tests here exercise other
 // behaviour, so they get an API instance whose screen always reports clean.
 const screenApi = {
+  baseUrl: 'https://api.nansen.ai',
+  selection: { kind: 'anonymous' },
+  requestCredentials: async () => ({}),
   request: async (endpoint, body) => {
     if (endpoint.startsWith('/api/v1/sanctions/screen')) {
       return { results: (body?.addresses || []).map(address => ({ address, sanctioned: false })) };
@@ -318,6 +324,107 @@ describe('quote storage', () => {
     const loaded = loadQuote(quoteId);
     expect(loaded.chain).toBe('base');
     expect(loaded.toChain).toBeUndefined();
+  });
+
+  // loadQuote's executedAt check only rejects a quote that has already been
+  // broadcast, and markQuoteExecuted writes that marker after the broadcast.
+  // Two concurrent `trade execute --quote <id>` runs (an agent retrying a
+  // call it believes timed out) therefore both passed the check and could
+  // each sign and broadcast; on Solana no shared nonce stops the second one.
+  describe('execution claim', () => {
+    const quotesDir = () => path.join(tempDir, '.nansen', 'quotes');
+    const quoteFile = id => path.join(quotesDir(), `${id}.json`);
+    const claimedFile = id => path.join(quotesDir(), `${id}.executing.json`);
+
+    it('claims by renaming the quote away, so a second claim fails', () => {
+      const quoteId = saveQuote(solanaQuoteResponse, 'solana');
+      const claim = claimQuoteForExecution(quoteId);
+      try {
+        expect(claim.quote.quoteId).toBe(quoteId);
+        expect(fs.existsSync(quoteFile(quoteId))).toBe(false);
+        expect(fs.existsSync(claimedFile(quoteId))).toBe(true);
+        expect(() => claimQuoteForExecution(quoteId))
+          .toThrow(/claimed by another execution.*executing\.json.*check the wallet on the explorer/s);
+        expect(() => loadQuote(quoteId)).toThrow(/claimed by another execution/);
+      } finally {
+        claim.release();
+      }
+    });
+
+    it('hands the quote back when no swap left the process', () => {
+      const quoteId = saveQuote(solanaQuoteResponse, 'solana');
+      claimQuoteForExecution(quoteId).release();
+      expect(fs.existsSync(quoteFile(quoteId))).toBe(true);
+      expect(fs.existsSync(claimedFile(quoteId))).toBe(false);
+      claimQuoteForExecution(quoteId).release();
+    });
+
+    it('hands back a broadcast quote only once its marker is recorded', () => {
+      const quoteId = saveQuote(solanaQuoteResponse, 'solana');
+      const claim = claimQuoteForExecution(quoteId);
+      markQuoteExecuted(quoteId, { broadcast: { txHash: 'sig-1' } });
+      claim.release({ handedOff: true });
+      expect(() => loadQuote(quoteId)).toThrow(/already executed.*sig-1/s);
+    });
+
+    // markQuoteExecuted is best-effort, and a failed /execute may still have
+    // broadcast. With no marker, the quote stays claimed: a retry is refused
+    // rather than risk a second swap.
+    it('keeps the quote claimed when a swap left the process with no marker', () => {
+      const quoteId = saveQuote(solanaQuoteResponse, 'solana');
+      claimQuoteForExecution(quoteId).release({ handedOff: true });
+      expect(fs.existsSync(claimedFile(quoteId))).toBe(true);
+      expect(() => loadQuote(quoteId)).toThrow(/claimed by another execution/);
+      expect(() => claimQuoteForExecution(quoteId)).toThrow(/claimed by another execution/);
+    });
+
+    it('re-reads the quote under the claim and refuses one that was executed meanwhile', () => {
+      const quoteId = saveQuote(solanaQuoteResponse, 'solana');
+      loadQuote(quoteId); // this run's earlier read
+      markQuoteExecuted(quoteId, { broadcast: { txHash: 'sig-other' } }); // another run
+      expect(() => claimQuoteForExecution(quoteId)).toThrow(/already executed.*sig-other/s);
+      // Nothing was signed, so the quote is not left claimed.
+      expect(fs.existsSync(claimedFile(quoteId))).toBe(false);
+      expect(fs.existsSync(quoteFile(quoteId))).toBe(true);
+    });
+
+    it('does not block a different quote', () => {
+      const a = saveQuote(solanaQuoteResponse, 'solana');
+      const b = saveQuote(solanaQuoteResponse, 'solana');
+      const claimA = claimQuoteForExecution(a);
+      const claimB = claimQuoteForExecution(b);
+      claimA.release();
+      claimB.release();
+    });
+
+    it('records the broadcast in the claimed file', () => {
+      const quoteId = saveQuote(solanaQuoteResponse, 'solana');
+      const claim = claimQuoteForExecution(quoteId);
+      markQuoteExecuted(quoteId, { broadcast: { txHash: 'sig-2' } });
+      const data = JSON.parse(fs.readFileSync(claimedFile(quoteId), 'utf8'));
+      expect(data.executedAt).toEqual(expect.any(Number));
+      expect(data.broadcasts.map(b => b.txHash)).toEqual(['sig-2']);
+      claim.release({ handedOff: true });
+    });
+
+    // The claim lives exactly as long as the quote: a quote left claimed
+    // after an interrupted run is removed with the other expired quotes,
+    // which also keeps a `trade quote` in another terminal from touching a
+    // live claim.
+    it('cleanupQuotes removes an expired claimed quote but keeps a live one', () => {
+      const expired = saveQuote(solanaQuoteResponse, 'solana');
+      const live = saveQuote(solanaQuoteResponse, 'solana');
+      const liveClaim = claimQuoteForExecution(live);
+      claimQuoteForExecution(expired).release({ handedOff: true });
+      const data = JSON.parse(fs.readFileSync(claimedFile(expired), 'utf8'));
+      data.timestamp = Date.now() - 2 * 3600000;
+      fs.writeFileSync(claimedFile(expired), JSON.stringify(data));
+
+      saveQuote(solanaQuoteResponse, 'solana'); // runs cleanupQuotes
+      expect(fs.existsSync(claimedFile(expired))).toBe(false);
+      expect(fs.existsSync(claimedFile(live))).toBe(true);
+      liveClaim.release();
+    });
   });
 
   it('tags saved quotes as swap and loads them', () => {
@@ -825,6 +932,20 @@ describe('buildApprovalTransaction', () => {
     const wallet = generateEvmWallet();
     expect(() => buildApprovalTransaction('0xabc', '0xdef', wallet.privateKey, 'polygon', 0))
       .toThrow('Unsupported chain');
+  });
+
+  it('should refuse an approval whose gas price is anomalous', () => {
+    const wallet = generateEvmWallet();
+    // 20,000 gwei x the fixed 100k approval gas = 2 ETH for one approval.
+    expect(() => buildApprovalTransaction(
+      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      '0x57df6092665eb6058de53939612413ff4b09114e',
+      wallet.privateKey,
+      'base',
+      0,
+      '20000000000000',
+      1000000n,
+    )).toThrow(/for this approval.*fee cap.*Refusing to sign/s);
   });
 
   // An approval used to default to 1,000,000 wei (0.001 gwei) when the quote
@@ -1959,6 +2080,58 @@ describe('EVM swap gas zero fallback (execute)', () => {
     expect(rpcMethods.filter(m => m === 'eth_estimateGas').length).toBeGreaterThan(0);
   });
 
+  describe.each([
+    ['legacy', { gasPrice: '1000000' }, 2],
+    ['EIP-1559', { maxFeePerGas: '1000000', maxPriorityFeePerGas: '1000000' }, 4],
+  ])('local wallet %s resolved gas', (_type, fees, gasIndex) => {
+    it.each([
+      ['both fields', '300000', { gas: '21000', gasLimit: '50000' }, false, 300000],
+      ['gas only', '300000', { gas: '21000' }, false, 300000],
+      ['gasLimit only', undefined, { gasLimit: '50000' }, false, 50000],
+      ['estimated gas', undefined, { gas: '0', gasLimit: '0' }, false, 31500],
+      ['fallback gas', undefined, { gas: '0', gasLimit: '0' }, true, 210000],
+    ])('signs the resolved limit with %s', async (_name, gas, txGas, estimateGasError, expectedGas) => {
+      createWallet('default', 'testpass');
+      process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+      const { executeBodies } = stubGasFallbackFetch({ estimateGasError });
+      const quoteId = saveQuote({
+        success: true,
+        quotes: [{
+          aggregator: 'lifi',
+          inputMint: BASE_ETH,
+          outputMint: BASE_USDC,
+          inAmount: '1000000000000000000',
+          outAmount: '3000000000',
+          gas,
+          transaction: {
+            to: LIFI_ROUTER,
+            data: '0x12345678',
+            value: '1000000000000000000',
+            ...txGas,
+            ...fees,
+          },
+        }],
+      }, 'base', 'local', null, null, {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: showWallet('default').evm,
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+        }),
+      });
+
+      const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+      await cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId });
+
+      expect(executeBodies).toHaveLength(1);
+      const raw = Buffer.from(executeBodies[0].signedTransaction.slice(2), 'hex');
+      const fields = RLP.decode(gasIndex === 4 ? raw.subarray(1) : raw);
+      expect(BigInt('0x' + Buffer.from(fields[gasIndex]).toString('hex'))).toBe(BigInt(expectedGas));
+    });
+  });
+
   it('WalletConnect ERC-20: skips approval and sends swap with estimated gas when quote has no gas', async () => {
     const wcAddress = '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4';
     vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
@@ -2074,9 +2247,10 @@ describe('EVM swap gas zero fallback (execute)', () => {
     expect(logs.some(l => l.includes('Sufficient allowance exists for #1, skipping approval'))).toBe(true);
     expect(logs.some(l => l.includes('Using estimated gas 31500 (quote had no gas)'))).toBe(true);
 
+    // The quote's zero gas limit can't be signed at all, so the broadcast tx
+    // necessarily carries the resolved one.
     const exported = exportWallet('default', 'testpass');
-    const zeroGasSigned = signEvmTransaction(zeroGasErc20Tx(), exported.evm.privateKey, 'base', 5);
-    expect(executeBodies[0].signedTransaction).not.toBe(zeroGasSigned);
+    expect(() => signEvmTransaction(zeroGasErc20Tx(), exported.evm.privateKey, 'base', 5)).toThrow(/invalid gas limit/);
     expect(executeBodies[0].signedTransaction.startsWith('0x02')).toBe(true);
   });
 
@@ -2333,6 +2507,97 @@ describe('EVM swap gas zero fallback (execute)', () => {
 
     expect(rpcMethods).not.toContain('eth_estimateGas');
     expect(logs.some(l => l.includes('quote had no gas'))).toBe(false);
+  });
+
+  // The swap's fee is checked before the approval. An approval is capped
+  // against its own 100k gas, so 5,000 gwei passes for it (0.5 ETH) while the
+  // 300k-gas swap (1.5 ETH) is over the 1 ETH cap: checking only at signing
+  // time would pay for the approval and grant the allowance first.
+  function highFeeErc20Quote(walletAddress, walletType, extraArgs = [null]) {
+    return saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'lifi',
+        inputMint: BASE_USDC,
+        outputMint: BASE_ETH,
+        inAmount: '100000',
+        inputAmount: '100000',
+        outAmount: '44000000000000',
+        approvalAddress: LIFI_ROUTER,
+        transaction: zeroGasErc20Tx({ gas: '300000', maxFeePerGas: '5000000000000', maxPriorityFeePerGas: '1000000' }),
+      }],
+    }, 'base', walletType, ...extraArgs, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({
+        walletAddress,
+        fromToken: BASE_USDC,
+        toToken: BASE_ETH,
+        amount: '100000',
+        maxInputAmount: '100000',
+      }),
+    });
+  }
+
+  it('local wallet: refuses the swap fee before sending the approval', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    __setAllowanceTimingForTests({ verifyDelayMs: 0, propagationDelayMs: 0 });
+    const { executeBodies } = stubGasFallbackFetch({ allowance: 0n });
+    const quoteId = highFeeErc20Quote(showWallet('default').evm, 'local');
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toThrow();
+
+    expect(executeBodies).toHaveLength(0);
+    expect(logs.some(l => l.includes('Sending approval tx'))).toBe(false);
+    expect(logs.some(l => /1500000000000000000 wei of gas for this swap.*fee cap/.test(l))).toBe(true);
+  });
+
+  it('Privy: refuses the swap fee before sending the approval', async () => {
+    process.env.PRIVY_APP_ID = 'test-app-id';
+    process.env.PRIVY_APP_SECRET = 'test-secret';
+    __setAllowanceTimingForTests({ verifyDelayMs: 0, propagationDelayMs: 0 });
+    const { executeBodies, privyTransactions } = stubGasFallbackFetch({ allowance: 0n });
+    const quoteId = highFeeErc20Quote('0xPrivyAddr', 'privy', [{ evm: 'wl_evm_1', solana: 'wl_sol_1' }]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toThrow();
+
+    expect(privyTransactions).toHaveLength(0);
+    expect(executeBodies).toHaveLength(0);
+    expect(logs.some(l => /1500000000000000000 wei of gas for this swap.*fee cap/.test(l))).toBe(true);
+  });
+
+  it('local wallet: --max-tx-fee raises the cap', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    __setAllowanceTimingForTests({ verifyDelayMs: 0, propagationDelayMs: 0 });
+    const { executeBodies } = stubGasFallbackFetch({ allowance: 300000n });
+    const quoteId = highFeeErc20Quote(showWallet('default').evm, 'local');
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId, 'max-tx-fee': '2' });
+
+    expect(executeBodies).toHaveLength(1);
+  });
+
+  it('rejects an invalid --max-tx-fee before touching the quote', async () => {
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: 'whatever', 'max-tx-fee': '-1' }))
+      .rejects.toThrow(/Invalid --max-tx-fee/);
+  });
+
+  // parseArgs puts a value-less option in flags, not options, so without this
+  // `--max-tx-fee` on its own would read as "not given" and quietly apply the
+  // default cap while the user believes they set one.
+  it('rejects a bare --max-tx-fee rather than silently defaulting', async () => {
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, { 'max-tx-fee': true }, { quote: 'whatever' }))
+      .rejects.toThrow(/--max-tx-fee requires a value/);
   });
 });
 

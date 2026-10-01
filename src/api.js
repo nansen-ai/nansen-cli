@@ -4,6 +4,9 @@
  */
 
 import fs from 'fs';
+import { authConfigView, resolveCredential, assertUsableSelection, AuthError } from './auth-credentials.js';
+import { createAuthState } from './auth-state.js';
+import { validateSession } from './auth-device.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { EVM_CHAINS } from './chain-ids.js';
@@ -187,6 +190,25 @@ export const SERVER_CODE_MAP = {
   invalid_params: ErrorCode.INVALID_PARAMS,
 };
 
+export function browserSessionError(status, data = {}) {
+  const raw = data?.error_code ?? data?.code ?? data?.detail?.error_code ?? data?.detail?.code;
+  const category = status === 403 ? (raw === 'insufficient_credits' ? ErrorCode.CREDITS_EXHAUSTED : raw === 'plan_upgrade_required' ? ErrorCode.PLAN_UPGRADE_REQUIRED : undefined) : undefined;
+  const code = category || statusToErrorCode(status);
+  const message = code === ErrorCode.CREDITS_EXHAUSTED
+    ? 'Insufficient API credits for the selected account. Top up at https://app.nansen.ai/api?tab=api. No payment was attempted.'
+    : code === ErrorCode.PLAN_UPGRADE_REQUIRED ? 'The selected account plan does not include this endpoint. Check upgrade options at https://app.nansen.ai/api?tab=api.'
+      : status === 401 ? 'The selected browser session was rejected. Run: nansen login.'
+        : status === 503 ? 'API authentication is temporarily unavailable. Retry later.'
+          : `API request failed (${status}). The selected account was not changed and no payment was attempted.`;
+  return { code, message };
+}
+
+export function browserSessionResponseMeta(response) {
+  const meta = readResponseMeta(response);
+  // Only bounded numeric quota metadata is safe to echo from an auth error.
+  return { ...(meta?.credits && { credits: meta.credits }), ...(meta?.rateLimit && { rateLimit: meta.rateLimit }) };
+}
+
 /**
  * Map an error response to an error code.
  *
@@ -273,31 +295,11 @@ export function getConfigFile() {
   return CONFIG_FILE;
 }
 
-/**
- * Save config to ~/.nansen/config.json
- */
-export function saveConfig(config) {
-  if (!fs.existsSync(CONFIG_DIR)) {
-    fs.mkdirSync(CONFIG_DIR, { mode: 0o700, recursive: true });
-  }
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
-}
-
-/**
- * Delete config file (logout)
- */
-export function deleteConfig() {
-  if (fs.existsSync(CONFIG_FILE)) {
-    fs.unlinkSync(CONFIG_FILE);
-    return true;
-  }
-  return false;
-}
-
 // ============= Response Cache =============
 
 const CACHE_DIR = path.join(CONFIG_DIR, 'cache');
-const DEFAULT_CACHE_TTL = 300; // 5 minutes
+// Exported so the cache inspector reports the same default TTL the client applies.
+export const DEFAULT_CACHE_TTL = 300; // 5 minutes
 
 import crypto from 'crypto';
 
@@ -358,8 +360,8 @@ export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL
     const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
     const age = (Date.now() - cached.timestamp) / 1000;
     
-    if (ttlSeconds <= 0 || age > ttlSeconds) {
-      // Cache expired or TTL is 0, delete it
+    if (!Number.isFinite(cached.timestamp) || ttlSeconds <= 0 || age > ttlSeconds) {
+      // Delete entries with invalid timestamps, expired entries, or disabled entries.
       fs.unlinkSync(cacheFile);
       return null;
     }
@@ -596,43 +598,9 @@ function classifyAutoDetectedAddress(address) {
 }
 
 export function loadConfig() {
-  // Base config from files, then env vars override individual fields
-  let config = null;
-
-  // ~/.nansen/config.json (from `nansen login`)
-  if (fs.existsSync(CONFIG_FILE)) {
-    try { config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (_e) { /* ignore */ }
-  }
-
-  // Local config.json (for development)
-  if (!config) {
-    const localConfig = path.join(__dirname, '..', 'config.json');
-    if (fs.existsSync(localConfig)) {
-      config = JSON.parse(fs.readFileSync(localConfig, 'utf8'));
-    }
-  }
-
-  if (!config) {
-    config = { apiKey: null, baseUrl: 'https://api.nansen.ai' };
-  }
-
-  // Ensure baseUrl default (config file from older versions may omit it)
-  if (!config.baseUrl) {
-    config.baseUrl = 'https://api.nansen.ai';
-  }
-
-  // Env vars override individual fields
-  if (process.env.NANSEN_API_KEY) {
-    config.apiKey = process.env.NANSEN_API_KEY;
-  }
-  if (process.env.NANSEN_BASE_URL) {
-    config.baseUrl = process.env.NANSEN_BASE_URL;
-  }
-
-  return config;
+  const view = authConfigView();
+  return { ...view.config, apiKey: view.apiKey, baseUrl: view.baseUrl };
 }
-
-const config = loadConfig();
 
 // ============= Retry Configuration =============
 
@@ -741,9 +709,14 @@ export function buildDateRange(days) {
 }
 
 export class NansenAPI {
-  constructor(apiKey = config.apiKey, baseUrl = config.baseUrl, options = {}) {
-    this.apiKey = apiKey || null;
-    this.baseUrl = baseUrl;
+  constructor(apiKey = undefined, baseUrl = undefined, options = {}) {
+    const view = authConfigView();
+    this.selection = options.credential || resolveCredential({ explicitKey: apiKey, snapshot: view });
+    this.apiKey = this.selection.kind === 'api-key' ? this.selection.apiKey : null;
+    this.baseUrl = baseUrl ?? view.baseUrl;
+    this.authState = options.authState;
+    this.allowPayment = options.allowPayment !== false;
+    this.redactAuthDiagnostics = options.redactAuthDiagnostics === true;
     this.retryOptions = { ...DEFAULT_RETRY_OPTIONS, ...options.retry };
     this.cacheOptions = {
       enabled: options.cache?.enabled ?? false,
@@ -784,6 +757,19 @@ export class NansenAPI {
     this.servedFromCache = false;
   }
 
+  async requestCredentials(extraHeaders = this.defaultHeaders) {
+    assertUsableSelection(this.selection);
+    if (this.selection.kind === 'session') {
+      if (Object.keys(extraHeaders || {}).some(k => ['apikey', 'authorization', 'payment-signature'].includes(k.toLowerCase()))) throw new AuthError('MIXED_CREDENTIALS', 'Send the selected browser session alone.');
+      const bundle = await (this.authState || (this.authState = createAuthState())).acquireSession(this.selection, { audience: this.baseUrl });
+      validateSession(bundle);
+      if (bundle.audience !== this.baseUrl || bundle.accountId !== this.selection.accountId || bundle.issuer !== this.selection.issuer) throw new AuthError('AUTH_ORIGIN_MISMATCH', 'The saved session does not match the selected API origin/account. Check NANSEN_BASE_URL or run nansen login.');
+      this.selection = { ...this.selection, generation: bundle.generation, expiresAt: bundle.expiresAt };
+      return { Authorization: `Bearer ${bundle.accessToken}` };
+    }
+    return this.apiKey ? { apikey: this.apiKey } : {};
+  }
+
   static cleanBody(body) {
     return Object.fromEntries(
       Object.entries(body).filter(([_, v]) =>
@@ -799,7 +785,7 @@ export class NansenAPI {
    * sentinel if the server cleanly, legibly rejected it without settling.
    * Throws a NansenError(PAYMENT_AMBIGUOUS) — instead of returning the sentinel —
    * for any outcome that doesn't prove the payment was rejected: a transport
-   * failure after transmission, an HTTP 5xx, or a response body that can't be
+   * failure after transmission, an admission denial, an HTTP 5xx, or a response body that can't be
    * parsed. In all of those cases the server may already have received and
    * settled the payment, so the caller must not treat it as safe to retry with
    * a different option — that would risk paying twice for the same request.
@@ -825,6 +811,9 @@ export class NansenAPI {
     let paidResponse;
     const startedAt = Date.now();
     // The signature itself is never traced — only that a paid retry went out.
+    // As in the legacy key flow, payment authenticates this retry on its own.
+    // Do not attach requestCredentials(): Bearer plus payment is rejected by API
+    // admission, and neither this retry nor its result changes saved selection.
     traceRequest({ method, url, attempt: 1, payment: 'x402' });
     try {
       paidResponse = await fetch(url, {
@@ -873,6 +862,14 @@ export class NansenAPI {
       payment: 'x402',
     });
     if (!paidResponse.ok) {
+      // An admission denial does not prove that a transmitted payment cannot
+      // settle. Stop here instead of authorizing another rail or wallet.
+      if ([401, 403, 429, 451].includes(paidResponse.status)) {
+        throw new NansenError(
+          `x402 payment outcome unknown: paid request was denied (${paidResponse.status}). Not attempting another payment for the same request.`,
+          ErrorCode.PAYMENT_AMBIGUOUS,
+        );
+      }
       // A 5xx doesn't prove the payment was rejected — the server could have
       // processed it before failing to respond. Only a readable non-5xx
       // rejection body is safe to treat as "try the next option".
@@ -964,6 +961,13 @@ export class NansenAPI {
 
   async request(endpoint, body = {}, options = {}) {
     this.lastEndpoint = endpoint;
+    const extraHeaders = { ...this.defaultHeaders, ...options.headers };
+    let credentialHeaders = await this.requestCredentials(extraHeaders);
+    // Keys and browser sessions share the same payment policy. Explicit raw
+    // authentication headers still cannot be forwarded into a payment retry.
+    // Either the instance or this request can disable automatic payment;
+    // a request cannot re-enable it when the instance has disabled it.
+    const mayAutoPay = this.allowPayment && options.allowPayment !== false && !Object.keys(extraHeaders).some(k => ['apikey', 'authorization'].includes(k.toLowerCase()));
     const url = `${this.baseUrl}${endpoint}`;
     const { maxRetries, baseDelayMs, maxDelayMs, maxRetryAfterMs, retryOnStatus } = this.retryOptions;
     const shouldRetry = options.retry !== false; // Allow disabling retry per-request
@@ -976,14 +980,15 @@ export class NansenAPI {
     // cacheContext is therefore null unless caching is on; the `&& cacheContext`
     // guards below ensure that null never reaches getCacheKey, where a missing
     // identity would silently produce a credential-agnostic (shared) cache key.
-    const cacheContext = useCache
+    const credentialContext = () => useCache
       ? {
-          baseUrl: this.baseUrl,
+          baseUrl: `${this.baseUrl}#${this.selection.generation || ""}`,
           method,
-          identity: computeIdentityDigest(this.apiKey, this.defaultHeaders, options.headers),
+          identity: computeIdentityDigest(this.apiKey, credentialHeaders, this.defaultHeaders, options.headers),
         }
       : null;
 
+    let cacheContext = credentialContext();
     if (useCache && cacheContext) {
       const cached = getCachedResponse(endpoint, body, cacheTtl, cacheContext);
       if (cached) {
@@ -1001,6 +1006,12 @@ export class NansenAPI {
     // Bound the loop by the displayed attempt count so retry:false can never
     // produce a trace such as attempt=2/1, even if a future branch continues.
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Backoff may cross expiry or a competing rotation/logout. Reacquire
+      // before dispatch, outside the resource network-error retry handler.
+      if (this.selection.kind === 'session' && (attempt > 0 || this.selection.expiresAt <= Date.now())) {
+        credentialHeaders = await this.requestCredentials(extraHeaders);
+        cacheContext = credentialContext();
+      }
       let response;
       const startedAt = Date.now();
       traceRequest({ method, url, attempt: attempt + 1, maxAttempts });
@@ -1014,7 +1025,7 @@ export class NansenAPI {
             'X-Client-Type': 'nansen-cli',
             'X-Client-Version': packageVersion,
             ...telemetryHeaders(),
-            ...(this.apiKey ? { 'apikey': this.apiKey } : {}),
+            ...credentialHeaders,
             ...this.defaultHeaders,
             ...options.headers
           },
@@ -1022,12 +1033,12 @@ export class NansenAPI {
         });
       } catch (err) {
         // Network-level errors - retry these too
-        traceError({ method, url, durationMs: Date.now() - startedAt, attempt: attempt + 1, error: err.message });
+        traceError({ method, url, durationMs: Date.now() - startedAt, attempt: attempt + 1, error: this.redactAuthDiagnostics ? 'API request failed' : err.message });
         lastError = new NansenError(
-          `Network error: ${err.message}`,
+          this.selection.kind === 'session' ? 'API request failed. Check your connection and retry.' : `Network error: ${err.message}`,
           ErrorCode.NETWORK_ERROR,
           null,
-          { originalError: err.message, attempt: attempt + 1 }
+          { ...(this.selection.kind !== 'session' && { originalError: err.message }), attempt: attempt + 1 }
         );
 
         if (shouldRetry && attempt < maxRetries) {
@@ -1046,7 +1057,7 @@ export class NansenAPI {
         url,
         status: response.status,
         durationMs: Date.now() - startedAt,
-        requestId: requestIdOf(response),
+        requestId: this.redactAuthDiagnostics ? undefined : requestIdOf(response),
         attempt: attempt + 1,
       });
 
@@ -1055,7 +1066,7 @@ export class NansenAPI {
         data = await readBody(response);
       } catch (err) {
         // Non-JSON response (rare, usually server errors)
-        const meta = readResponseMeta(response);
+        const meta = this.selection.kind === 'session' ? browserSessionResponseMeta(response) : readResponseMeta(response);
         this.lastResponseMeta = meta;
         // readBody already holds the text when the server declared a non-JSON
         // body; otherwise try to read it now (null once json() consumed it).
@@ -1066,7 +1077,7 @@ export class NansenAPI {
           statusToErrorCode(response.status, {}),
           response.status,
           {
-            body: rawBody,
+            ...(this.selection.kind !== 'session' && { body: rawBody }),
             attempt: attempt + 1,
             retryAfterMs,
             ...(meta?.requestId && { requestId: meta.requestId })
@@ -1095,21 +1106,43 @@ export class NansenAPI {
         // an apostrophe inside the message (e.g. "can't") doesn't truncate it.
         const nestedMatch = typeof message === 'string' && message.match(/['"]message['"]\s*:\s*['"](.*?)['"]\s*[,}]/s);
         if (nestedMatch) message = nestedMatch[1];
-        const code = statusToErrorCode(response.status, data);
+        const safeSessionError = this.selection.kind === 'session' ? browserSessionError(response.status, data) : null;
+        const code = safeSessionError?.code || statusToErrorCode(response.status, data);
+        // Keep a body-only challenge available to the signer without exposing
+        // the authenticated error body through browser-session diagnostics.
+        const bodyPaymentRequirements = response.status === 402 ? data.paymentRequirements : undefined;
         const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'));
+        if (this.selection.kind === 'session') {
+          message = safeSessionError.message;
+          data = {}; // Authenticated errors must not echo access tokens into output.
+        }
 
         // Enhance messages for specific error codes
         if (code === ErrorCode.UNAUTHORIZED) {
-          message = this.apiKey ? message : 'Not logged in. Run: nansen login';
+          message = this.apiKey || safeSessionError ? message : 'Not logged in. Run: nansen login';
         } else if (code === ErrorCode.UNSUPPORTED_FILTER) {
           message = message.replace(/\.+$/, '') + '. This filter is not supported for this token/chain combination. Do not retry.';
         } else if (code === ErrorCode.CREDITS_EXHAUSTED) {
           message = message.replace(/\.+$/, '') + '. No retry will help. Check your Nansen dashboard for credit balance.';
-        } else if (code === ErrorCode.PAYMENT_REQUIRED) {
+        } else if (code === ErrorCode.PAYMENT_REQUIRED && response.status === 402) {
           // Try x402 auto-payment: local wallet (with network fallback), then WalletConnect
-          const hasManualSignature = !!(this.defaultHeaders['Payment-Signature'] || options.headers?.['Payment-Signature']);
+          const hasManualSignature = Object.keys(extraHeaders).some(k => k.toLowerCase() === 'payment-signature');
+          // Session and API-key clients receive credential-specific guidance.
+          if (safeSessionError && mayAutoPay) {
+            message = 'Payment required (x402). Configure and fund a supported wallet, or top up the selected account.';
+          } else if (this.selection.kind === 'api-key' && !hasManualSignature) {
+            message = 'Payment required (x402). Configure and fund a supported wallet, top up the selected account, or explicitly provide --x402-payment-signature.';
+          }
 
-          if (!hasManualSignature) {
+          if (this.selection.kind === 'api-key' && !hasManualSignature) {
+            const paymentHeader = response.headers.get('payment-required');
+            if (paymentHeader) {
+              try { data.paymentRequirements = JSON.parse(Buffer.from(paymentHeader, 'base64').toString('utf8')); }
+              catch { /* An invalid challenge must not trigger signing or retry. */ }
+            }
+          }
+
+          if (mayAutoPay && !hasManualSignature) {
             // Determine payment method from default wallet's provider
             let defaultWalletProvider = 'local';
             let defaultWalletName = 'unknown';
@@ -1142,7 +1175,7 @@ export class NansenAPI {
                 if (privyErr?.failClosedX402) {
                   throw new NansenError(privyErr.message, ErrorCode.PAYMENT_REQUIRED, 402);
                 }
-                message = `x402 Privy payment failed: ${privyErr.message}`;
+                message = safeSessionError ? 'x402 Privy payment failed. Check the wallet configuration and balance.' : `x402 Privy payment failed: ${privyErr.message}`;
               }
             } else {
               // Local wallet or no wallet: existing local wallet + WalletConnect flow
@@ -1174,11 +1207,11 @@ export class NansenAPI {
                   try {
                     paymentRequirements = JSON.parse(Buffer.from(paymentHeader, 'base64').toString('utf8'));
                   } catch {
-                    data.paymentRequiredRaw = paymentHeader;
+                    if (!safeSessionError) data.paymentRequiredRaw = paymentHeader;
                   }
                 }
-                if (!paymentRequirements && data.paymentRequirements) {
-                  paymentRequirements = data.paymentRequirements;
+                if (!paymentRequirements && bodyPaymentRequirements) {
+                  paymentRequirements = bodyPaymentRequirements;
                 }
 
                 if (paymentRequirements) {
@@ -1199,24 +1232,19 @@ export class NansenAPI {
                     if (x402Err?.failClosedX402) {
                       throw new NansenError(x402Err.message, ErrorCode.PAYMENT_REQUIRED, 402);
                     }
-                    if (!this.apiKey) {
-                      message = 'No API key configured. Three ways to authenticate:\n' +
-                        '  1. API key: run `nansen login --human` or set NANSEN_API_KEY (get key at https://app.nansen.ai/auth/agent-setup)\n' +
-                        '  2. x402 micropayment: nansen wallet create + fund with USDC on Base/Solana or USDT0 on X Layer (no API key needed)\n' +
-                        '  3. MPP via tempo: install tempo CLI, run `tempo wallet login`, then call the API with `tempo request` (see skills/nansen-mpp-payment)';
-                    } else {
-                      message = `x402 auto-payment failed: ${x402Err.message}`;
-                    }
-                  }
-                  if (this.apiKey) {
-                    data.paymentRequirements = paymentRequirements;
+                    message = this.selection.kind !== 'anonymous'
+                      ? 'x402 wallet payment failed. Check the wallet configuration and balance, or top up the selected account.'
+                      : 'No API key configured. Three ways to authenticate:\n' +
+                      '  1. API key: run `nansen login --human` or set NANSEN_API_KEY (get key at https://app.nansen.ai/auth/agent-setup)\n' +
+                      '  2. x402 micropayment: nansen wallet create + fund with USDC on Base/Solana or USDT0 on X Layer (no API key needed)\n' +
+                      '  3. MPP via tempo: install tempo CLI, run `tempo wallet login`, then call the API with `tempo request` (see skills/nansen-mpp-payment)';
                   }
                 }
               }
             }
           }
 
-          if (!message || message === data.message) {
+          if ((mayAutoPay || hasManualSignature) && (!message || message === data.message)) {
             message = 'Payment required (x402). Sign the paymentRequirements below per https://docs.x402.org and pass the result with --x402-payment-signature <value>.';
           }
         }
@@ -1229,7 +1257,7 @@ export class NansenAPI {
         // On a retried call this is the LAST attempt's id — each attempt gets
         // its own server-side id, and the last one is the failure worth
         // reporting.
-        const meta = readResponseMeta(response);
+        const meta = this.selection.kind === 'session' ? browserSessionResponseMeta(response) : readResponseMeta(response);
         this.lastResponseMeta = meta;
         lastError = new NansenError(message, code, response.status, {
           ...data,
@@ -1297,7 +1325,7 @@ export class NansenAPI {
   // ============= Account Endpoint =============
 
   async getAccount() {
-    return this.request('/api/v1/account', {}, { method: 'GET', cache: false });
+    return this.request('/api/v1/account', {}, { method: 'GET', cache: false, allowPayment: false });
   }
 
   // ============= Chain Endpoints =============

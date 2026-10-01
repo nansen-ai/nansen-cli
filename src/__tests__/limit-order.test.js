@@ -220,6 +220,20 @@ describe('parseExpiry', () => {
 // ============= API Client Functions =============
 
 describe('API client', () => {
+  it.each(['', '   ', 'env-key'])('uses only nonblank environment API keys (%j)', async value => {
+    const previous = process.env.NANSEN_API_KEY;
+    try {
+      process.env.NANSEN_API_KEY = value;
+      mockFetchResponse({ vaultPubkey: 'vault', userPubkey: 'pub1' });
+      await getVault('jwt-token', 'pub1');
+      const headers = global.fetch.mock.calls[0][1].headers;
+      expect(headers.Authorization).toBe('Bearer jwt-token');
+      expect(headers['X-API-Key']).toBe(value.trim() ? value : undefined);
+    } finally {
+      if (previous === undefined) delete process.env.NANSEN_API_KEY;
+      else process.env.NANSEN_API_KEY = previous;
+    }
+  });
   it('getChallenge sends correct request', async () => {
     mockFetchResponse({ challenge: 'sign this message' });
     const result = await getChallenge('myPubkey');

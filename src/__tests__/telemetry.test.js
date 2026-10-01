@@ -211,7 +211,7 @@ describe('telemetry', () => {
       const writeCalls = [];
       const origRead = fs.readFileSync;
       vi.spyOn(fs, 'readFileSync').mockImplementation((p, ...args) => {
-        if (typeof p === 'string' && p.includes('session')) throw new Error('ENOENT');
+        if (typeof p === 'string' && path.basename(p) === 'session') throw new Error('ENOENT');
         return origRead(p, ...args);
       });
       vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
@@ -222,7 +222,7 @@ describe('telemetry', () => {
       ({ getSessionId } = await freshImport());
       const id = getSessionId();
       expect(id).toMatch(/^[0-9a-f-]{36}$/);
-      const sessionWrite = writeCalls.find(c => c.path.includes('session'));
+      const sessionWrite = writeCalls.find(c => path.basename(c.path) === 'session');
       expect(sessionWrite).toBeTruthy();
       const persisted = JSON.parse(sessionWrite.data);
       expect(persisted.id).toBe(id);
@@ -235,7 +235,7 @@ describe('telemetry', () => {
       const existingSession = { id: 'existing-session-id', ts: Date.now() - 1000 };
       const origRead = fs.readFileSync;
       vi.spyOn(fs, 'readFileSync').mockImplementation((p, ...args) => {
-        if (typeof p === 'string' && p.includes('session')) return JSON.stringify(existingSession);
+        if (typeof p === 'string' && path.basename(p) === 'session') return JSON.stringify(existingSession);
         return origRead(p, ...args);
       });
       vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
@@ -250,7 +250,7 @@ describe('telemetry', () => {
       const expiredSession = { id: 'old-session', ts: Date.now() - 31 * 60 * 1000 };
       const origRead = fs.readFileSync;
       vi.spyOn(fs, 'readFileSync').mockImplementation((p, ...args) => {
-        if (typeof p === 'string' && p.includes('session')) return JSON.stringify(expiredSession);
+        if (typeof p === 'string' && path.basename(p) === 'session') return JSON.stringify(expiredSession);
         return origRead(p, ...args);
       });
       vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
@@ -426,7 +426,7 @@ describe('telemetry', () => {
       const writeCalls = [];
       const origRead = fs.readFileSync;
       vi.spyOn(fs, 'readFileSync').mockImplementation((p, ...args) => {
-        if (typeof p === 'string' && (p.includes('telemetry-id') || p.includes('session'))) {
+        if (typeof p === 'string' && (p.includes('telemetry-id') || path.basename(p) === 'session')) {
           throw new Error('ENOENT');
         }
         return origRead(p, ...args);

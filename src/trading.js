@@ -22,7 +22,7 @@ export { readCompactU16 };
 import { CHAIN_RPCS } from './rpc-urls.js';
 import { simulateAssetChanges, SwapSimulationError, hasSimulationRpc } from './swap-simulation.js';
 import { simulateSolanaAssetChanges, SolanaSimulationError, hasSolanaSimulationRpc } from './solana-simulation.js';
-import { packageVersion, CommandError, telemetryHeaders, loadConfig } from './api.js';
+import { packageVersion, CommandError, telemetryHeaders } from './api.js';
 import { screenOrThrow } from './perp.js';
 
 // ============= Constants =============
@@ -508,8 +508,14 @@ export function saveQuote(quoteResponse, chain, signerType = 'local', privyWalle
 export function loadQuote(quoteId) {
   const filePath = safeQuotesPath(`${quoteId}.json`);
   if (!filePath || !fs.existsSync(filePath)) {
+    const claimedPath = safeQuotesPath(`${quoteId}.executing.json`);
+    if (claimedPath && fs.existsSync(claimedPath)) throw quoteClaimedError(quoteId, claimedPath);
     throw new Error(`Quote "${quoteId}" not found. Quotes expire after 1 hour.`);
   }
+  return readQuoteFile(filePath, quoteId);
+}
+
+function readQuoteFile(filePath, quoteId) {
   const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
   if (Date.now() - data.timestamp > 3600000) {
     fs.unlinkSync(filePath);
@@ -535,13 +541,87 @@ export function loadQuote(quoteId) {
   return data;
 }
 
+function quoteClaimedError(quoteId, claimedPath) {
+  return new Error(
+    `Quote "${quoteId}" is claimed by another execution (${claimedPath}). If that run is still going, wait for it to finish. If it was interrupted, a swap may or may not have been broadcast: check the wallet on the explorer, then request a new quote with "nansen trade quote". The claimed quote is removed when it expires.`,
+  );
+}
+
+/**
+ * Claim a quote for execution, so two concurrent `trade execute --quote <id>`
+ * runs cannot both sign and broadcast it.
+ *
+ * loadQuote's `executedAt` check only rejects a quote that has already been
+ * broadcast, and `markQuoteExecuted` writes that marker after the broadcast.
+ * Everything in between — sanctions screening, preflight, an approval with up
+ * to a 180s receipt wait — is a window in which a second invocation passes the
+ * same check. An agent retrying a tool call it believes timed out therefore
+ * gets two independently valid swaps; on Solana there is no shared nonce to
+ * make the second one fail.
+ *
+ * The quote file itself is the claim: it is renamed from `<id>.json` to
+ * `<id>.executing.json`. rename(2) moves the one inode, so of two runs only one
+ * can do it and the other gets ENOENT; no liveness is guessed and nothing is
+ * ever taken over. The quote is re-read from the claimed file, so a run that
+ * loaded it before another run executed it (for instance while waiting at the
+ * confirmation prompt) sees that run's `executedAt` here, before signing.
+ *
+ * `release({ handedOff })` puts the quote back under its own name when no swap
+ * transaction left this process, or when one did and `executedAt` was recorded
+ * (loadQuote then refuses it with the broadcast hashes). A swap that was handed
+ * off with no recorded marker leaves the quote claimed: a retry is refused
+ * rather than risk a second broadcast, and the claim goes away with the quote
+ * after its 1-hour lifetime.
+ *
+ * @param {string} quoteId
+ * @returns {{ quote: object, release: (opts?: { handedOff?: boolean }) => void }}
+ */
+export function claimQuoteForExecution(quoteId) {
+  const quotePath = safeQuotesPath(`${quoteId}.json`);
+  const claimedPath = safeQuotesPath(`${quoteId}.executing.json`);
+  if (!quotePath || !claimedPath) throw new Error(`Invalid quote id "${quoteId}".`);
+
+  try {
+    fs.renameSync(quotePath, claimedPath);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+    // Lost the claim, or the quote is gone: loadQuote reports which. If the
+    // other run released it in the meantime, still refuse rather than loop.
+    loadQuote(quoteId);
+    throw quoteClaimedError(quoteId, claimedPath);
+  }
+
+  let released = false;
+  const release = ({ handedOff = false } = {}) => {
+    if (released) return;
+    released = true;
+    try {
+      if (handedOff && !JSON.parse(fs.readFileSync(claimedPath, 'utf8')).executedAt) return;
+      fs.renameSync(claimedPath, quotePath);
+    } catch { /* gone (expired and cleaned up): nothing to release */ }
+  };
+
+  try {
+    return { quote: readQuoteFile(claimedPath, quoteId), release };
+  } catch (err) {
+    // Already executed, expired or not a swap quote: nothing is signed, so
+    // put back whatever is still there.
+    release();
+    throw err;
+  }
+}
+
 // Records that a broadcast has happened. `executedAt` is set on the first call
 // and never moved, so the quote is consumed the instant the swap goes out — a
 // later receipt-wait timeout or a REVERTED/failed outcome must not leave the
 // quote reusable, since retrying would sign and broadcast a second,
 // independently valid swap. Mirrors markBridgeQuoteExecuted (bridge.js).
 export function markQuoteExecuted(quoteId, progress = {}) {
-  const filePath = safeQuotesPath(`${quoteId}.json`);
+  // During an execute the quote lives under its claimed name.
+  const claimedPath = safeQuotesPath(`${quoteId}.executing.json`);
+  const filePath = claimedPath && fs.existsSync(claimedPath)
+    ? claimedPath
+    : safeQuotesPath(`${quoteId}.json`);
   if (!filePath || !fs.existsSync(filePath)) return;
   try {
     const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -766,11 +846,15 @@ export async function normalizeSolanaTransaction(transaction, rpcUrl, getExpecte
  * @param {string} privateKeyHex - 64-char hex (32-byte secp256k1 private key)
  * @param {string} chain - Chain name
  * @param {number} nonce - Account nonce
+ * @param {object} [opts]
+ * @param {string|number|bigint} [opts.gasLimit] - Resolved gas limit, overriding quote transaction fields
+ * @param {string} [opts.label='swap'] - What is being signed, for the fee-cap error
+ * @param {bigint} [opts.maxTxFeeWei] - Fee cap in wei (--max-tx-fee); 0n disables it
  * @returns {string} 0x-prefixed signed transaction hex
  */
 // Pure EVM encode/sign primitive. Quote authorization and request-intent binding
 // happen upstream before this function receives transaction calldata.
-export function signEvmTransaction(txData, privateKeyHex, chain, nonce) {
+export function signEvmTransaction(txData, privateKeyHex, chain, nonce, { gasLimit, label = 'swap', maxTxFeeWei = MAX_EVM_TX_FEE_WEI } = {}) {
   const chainConfig = CHAIN_MAP[chain];
   if (!chainConfig || chainConfig.type !== 'evm') {
     throw new Error(`Unsupported EVM chain: ${chain}`);
@@ -778,7 +862,7 @@ export function signEvmTransaction(txData, privateKeyHex, chain, nonce) {
 
   const common = {
     nonce,
-    gasLimit: toHex(txData.gas || txData.gasLimit || '210000'),
+    gasLimit: toHex(gasLimit ?? (txData.gas || txData.gasLimit || '210000')),
     to: txData.to,
     value: toHex(txData.value || '0'),
     data: txData.data || '0x',
@@ -786,6 +870,7 @@ export function signEvmTransaction(txData, privateKeyHex, chain, nonce) {
   };
 
   if (txData.maxFeePerGas) {
+    assertEvmFeeWithinCap(txData.maxFeePerGas, common.gasLimit, label, maxTxFeeWei);
     return signEip1559Transaction({
       ...common,
       maxFeePerGas: toHex(txData.maxFeePerGas),
@@ -799,6 +884,7 @@ export function signEvmTransaction(txData, privateKeyHex, chain, nonce) {
   // information at all is refused (see NO_QUOTE_FEE_MESSAGE).
   if (!txData.gasPrice) throw new Error(NO_QUOTE_FEE_MESSAGE);
 
+  assertEvmFeeWithinCap(txData.gasPrice, common.gasLimit, label, maxTxFeeWei);
   return signLegacyTransaction({ ...common, gasPrice: toHex(txData.gasPrice) }, privateKeyHex);
 }
 
@@ -812,6 +898,110 @@ export function signEvmTransaction(txData, privateKeyHex, chain, nonce) {
 // refusal is uniform.
 const NO_QUOTE_FEE_MESSAGE =
   'Quote supplied no gas price (expected gasPrice or maxFeePerGas), so any signed transaction would be unmineable. Refusing to sign.';
+
+// A quote's fee fields are signed verbatim, so a compromised or buggy
+// aggregator response can make the wallet pay an arbitrary tip to the block
+// producer with no revert and no warning. The Solana signer already bounds
+// this (MAX_PRIORITY_FEE_LAMPORTS in trade-validation.js); this is the EVM
+// sibling. It works like geth's --rpc.txfeecap and reth's
+// DEFAULT_TX_FEE_CAP_WEI: maxFeePerGas x gasLimit against an absolute cap of
+// 1 ETH. That product overstates what a transaction actually pays (bridge.js
+// deliberately inflates maxFeePerGas because a generous cap costs nothing), so
+// the cap is a backstop against an anomalous quote, not a price check.
+// --max-tx-fee overrides it, and 0 disables it.
+export const MAX_EVM_TX_FEE_WEI = 1_000_000_000_000_000_000n; // 1 ETH
+
+// Gas limit used for every approval/revoke transaction this file signs.
+const APPROVAL_GAS_LIMIT = 100000;
+
+// Gas limit resolveEvmSwapGasLimit falls back to when neither the quote nor
+// eth_estimateGas gives one.
+const FALLBACK_SWAP_GAS_LIMIT = 210000;
+
+/**
+ * Parse a --max-tx-fee value, in ETH, into wei. Converted digit-wise, like
+ * parseGweiToWei, so no float rounding is involved. 0 disables the cap.
+ *
+ * @param {string|undefined} raw - The option value, or undefined when not given
+ * @returns {bigint} cap in wei (MAX_EVM_TX_FEE_WEI when not given, 0n = no cap)
+ * @throws {CommandError} on anything but a non-negative decimal with at most 18 decimals
+ */
+export function parseMaxTxFeeOption(raw) {
+  if (raw === undefined || raw === null) return MAX_EVM_TX_FEE_WEI;
+  // String() would coerce a repeated or JSON-shaped option into something that
+  // parses: `--max-tx-fee '[0]'` becomes "0" and silently disables the cap.
+  if (typeof raw !== 'string' && typeof raw !== 'number') {
+    throw new CommandError(
+      `--max-tx-fee takes a single value in ETH (e.g. 0.5), or 0 for no cap.`,
+      'INVALID_INPUT',
+    );
+  }
+  const s = String(raw).trim();
+  const match = /^(\d*)(?:\.(\d{1,18}))?$/.exec(s);
+  if (!match || (match[1] === '' && match[2] === undefined)) {
+    throw new CommandError(
+      `Invalid --max-tx-fee "${raw}". Give the most one transaction may pay for gas, in ETH (e.g. 0.5), or 0 for no cap.`,
+      'INVALID_INPUT',
+    );
+  }
+  const [, int, frac = ''] = match;
+  return BigInt(int || '0') * 10n ** 18n + BigInt(frac.padEnd(18, '0'));
+}
+
+// Parse a quote quantity (decimal string, 0x-hex string, number or bigint)
+// without letting a malformed value surface as a raw BigInt SyntaxError.
+function parseQuoteQuantity(value, what, label) {
+  let parsed = null;
+  if (typeof value === 'bigint') parsed = value;
+  else if (typeof value === 'number' && Number.isSafeInteger(value)) parsed = BigInt(value);
+  else if (typeof value === 'string' && /^(0x[0-9a-fA-F]+|\d+)$/.test(value.trim())) parsed = BigInt(value.trim());
+  if (parsed === null || parsed <= 0n) {
+    throw new Error(`Quote has an invalid ${what} for this ${label} (${value}); expected a positive integer. Refusing to sign.`);
+  }
+  return parsed;
+}
+
+/**
+ * Refuse a transaction whose worst-case gas cost exceeds the fee cap, or whose
+ * fee or gas limit is not a positive integer.
+ *
+ * @param {string|number|bigint} maxFeePerGas - Fee cap per gas, wei (decimal or 0x-hex)
+ * @param {string|number|bigint} gasLimit - Gas limit for the transaction
+ * @param {string} label - What is being signed, for the error message
+ * @param {bigint} [capWei] - Cap in wei (--max-tx-fee); 0n skips the cap
+ * @throws {Error} when maxFeePerGas * gasLimit is above the cap
+ */
+export function assertEvmFeeWithinCap(maxFeePerGas, gasLimit, label = 'transaction', capWei = MAX_EVM_TX_FEE_WEI) {
+  const feePerGas = parseQuoteQuantity(maxFeePerGas, 'fee per gas', label);
+  const gas = parseQuoteQuantity(gasLimit, 'gas limit', label);
+  if (capWei === 0n) return;
+  const worstCase = feePerGas * gas;
+  if (worstCase > capWei) {
+    throw new Error(
+      `Would pay up to ${worstCase} wei of gas for this ${label} (${feePerGas} wei per gas x ${gas} gas), above the ${capWei} wei fee cap. Refusing to sign. Use --max-tx-fee <eth> to raise the cap, or --max-tx-fee 0 to disable it.`,
+    );
+  }
+}
+
+/**
+ * Check the swap's fee before any approval is sent for it. The approval is
+ * capped against its own 100k gas limit, so without this a quote whose fee
+ * passes for the approval but not for the swap would pay for the approval and
+ * grant the allowance, and only then be refused. eth_estimateGas can't run yet
+ * (without the allowance it reverts), so a quote with no gas fields is checked
+ * against the fallback limit; the swap is checked again with the resolved
+ * limit when it is signed.
+ *
+ * @param {object} currentQuote - The quote about to be executed
+ * @param {bigint} capWei - Cap in wei (--max-tx-fee)
+ */
+export function assertQuotedSwapFeeWithinCap(currentQuote, capWei) {
+  const { maxFeePerGas } = resolveQuoteEip1559Fees(currentQuote.transaction);
+  const apiGas = parseGasField(currentQuote.gas);
+  const txGas = parseGasField(currentQuote.transaction.gas || currentQuote.transaction.gasLimit);
+  const gas = apiGas > 0 ? apiGas : txGas > 0 ? txGas : FALLBACK_SWAP_GAS_LIMIT;
+  assertEvmFeeWithinCap(maxFeePerGas, gas, 'swap', capWei);
+}
 
 /**
  * Resolve the fee fields for an EIP-1559 (type 2) signer from a quote's
@@ -1156,10 +1346,10 @@ function toRpcHexValue(value) {
  * @param {string} args.from - the wallet that will sign (the sender simulated)
  * @param {object} args.quote - the quote about to be executed (currentQuote)
  * @param {object} args.quoteData - the loaded quote record (.request, .slippage)
- * @param {string|null} [args.apiKey] - Nansen API key for the hosted endpoint
+ * @param {object} [args.api] - Selected Nansen API client for hosted simulation
  * @param {function} [args.log]
  */
-export async function verifySwapOutcome({ chain, from, quote, quoteData, apiKey = null, log = () => {} }) {
+export async function verifySwapOutcome({ chain, from, quote, quoteData, api, log = () => {} }) {
   if (CHAIN_MAP[chain?.toLowerCase()]?.type !== 'evm') return { proceed: true }; // EVM-only
   // Cross-chain (bridge): the output token settles on the destination chain,
   // so the source-chain simulation still runs but assertSwapOutcome skips
@@ -1187,7 +1377,7 @@ export async function verifySwapOutcome({ chain, from, quote, quoteData, apiKey 
     const sim = await simulateAssetChanges(
       chain,
       { to: tx.to, data: tx.data, value: toRpcHexValue(tx.value) },
-      { from, apiKey },
+      { from, api },
     );
     // A cross-chain bridge may pay a fee in native ETH via msg.value on a
     // token-input route; that surfaces as a native sibling outflow which the
@@ -1305,7 +1495,7 @@ export async function resolveEvmSwapGasLimit(currentQuote, { chain, from }) {
       value: txData.value ? '0x' + BigInt(txData.value).toString(16) : '0x0',
     });
     if (estimated) finalGas = Math.ceil(estimated * 1.5);
-    if (finalGas === 0) finalGas = 210000;
+    if (finalGas === 0) finalGas = FALLBACK_SWAP_GAS_LIMIT;
   }
   return finalGas;
 }
@@ -1645,19 +1835,21 @@ export function assertUsableSpender(spenderAddress) {
  * @param {bigint|string|number} [maxAllowance] - Hard cap from persisted request intent
  * @param {object} [opts]
  * @param {boolean} [opts.allowZero=false] - Allow a zero-amount revoke approval
+ * @param {bigint} [opts.maxTxFeeWei] - Fee cap in wei (--max-tx-fee); 0n disables it
  * @returns {string} 0x-prefixed signed approval tx hex
  */
 // Approval signing is intentionally narrow: callers pass either the scoped swap
 // amount from approvalAmountForSwap or, for excessive-allowance cleanup, an
 // explicit allowZero revoke. encodeApproveCalldata validates the spender,
 // amount, optional request cap, and final ABI width before signing.
-export function buildApprovalTransaction(tokenAddress, spenderAddress, privateKeyHex, chain, nonce, gasPrice, amount, maxAllowance, { allowZero = false } = {}) {
+export function buildApprovalTransaction(tokenAddress, spenderAddress, privateKeyHex, chain, nonce, gasPrice, amount, maxAllowance, { allowZero = false, maxTxFeeWei = MAX_EVM_TX_FEE_WEI } = {}) {
   const chainConfig = CHAIN_MAP[chain];
   if (!chainConfig) throw new Error(`Unsupported chain: ${chain}`);
 
   // An approval broadcast at a placeholder fee never mines and blocks the swap
   // behind it, so require a real gas price the same way signEvmTransaction does.
   if (!gasPrice) throw new Error(NO_QUOTE_FEE_MESSAGE);
+  assertEvmFeeWithinCap(gasPrice, APPROVAL_GAS_LIMIT, allowZero ? 'allowance revoke' : 'approval', maxTxFeeWei);
 
   // Scope the approval to the swap's input amount so a malicious or buggy quote
   // can drain at most this one trade, never the wallet's full token balance.
@@ -1668,7 +1860,7 @@ export function buildApprovalTransaction(tokenAddress, spenderAddress, privateKe
   const tx = {
     nonce,
     gasPrice: toHex(gasPrice),
-    gasLimit: '0x186a0', // 100000
+    gasLimit: toHex(APPROVAL_GAS_LIMIT),
     to: tokenAddress,
     value: '0x0',
     data,
@@ -2191,7 +2383,7 @@ async function preflightTradeExecutionCandidate({
   gasless,
   noSimulate,
   noVerifyOutcome,
-  apiKey,
+  api,
   verifiedTargets,
   log,
 }) {
@@ -2327,7 +2519,7 @@ async function preflightTradeExecutionCandidate({
         from: walletAddress,
         quote,
         quoteData,
-        apiKey,
+        api,
         log,
       });
       if (!outcome.proceed) {
@@ -2882,17 +3074,14 @@ CROSS-CHAIN NOTES (when using --to-chain):
       const noRevokeExcessiveAllowance = flags['no-revoke-excessive-allowance'];
       const noVerifyOutcome = flags['no-verify-outcome'];
       const gasless = Boolean(flags.gasless);
+      // Parsed before the quote is touched so a typo can't consume it. A bare
+      // --max-tx-fee lands in flags, not options, so it would otherwise read as
+      // "not given" and silently apply the default cap.
+      if (flags['max-tx-fee']) {
+        throw new CommandError('--max-tx-fee requires a value in ETH (e.g. 0.5), or 0 for no cap.', 'INVALID_INPUT');
+      }
+      const maxTxFeeWei = parseMaxTxFeeOption(options['max-tx-fee']);
       const guard = resolveExecuteGuard(flags, { env, isTTY });
-      // Read the API key for the swap-outcome sim endpoint. It's optional (the
-      // check degrades to a warning if the endpoint can't authenticate), so a
-      // malformed config must not crash an in-progress trade — fall back to null.
-      const apiKey = (() => {
-        try {
-          return loadConfig().apiKey;
-        } catch {
-          return null;
-        }
-      })();
 
       if (!quoteId) {
         throw new CommandError(`Usage: nansen trade execute --quote <quoteId> [options]
@@ -2909,6 +3098,8 @@ OPTIONS:
   --no-revoke-excessive-allowance
                             Skip auto-revoking an oversized/legacy allowance before re-approving
   --gasless                 Relay-only: have Relay's solver pay gas (no WalletConnect)
+  --max-tx-fee <eth>        Most one transaction may pay for gas (fee cap x gas limit).
+                            Default 1 ETH; 0 disables the check.
   --dry-run                 Validate and print what would be sent, then stop.
                             Nothing is signed or broadcast and the quote stays usable.
   --yes, -y                 Skip the confirmation prompt (same as NANSEN_YES=1).
@@ -2925,6 +3116,11 @@ EXAMPLES:
   nansen trade execute --quote 1708900000000-abc123 --yes`, 'MISSING_ARGS');
       }
 
+      let quoteClaim = null;
+      // Set just before the swap transaction leaves this process (the Trading
+      // API broadcast, or a WalletConnect wallet that may broadcast it), so the
+      // claim is only handed back when no swap can be in flight.
+      let swapHandedOff = false;
       try {
         const quoteData = loadQuote(quoteId);
         const chain = quoteData.chain;
@@ -3010,7 +3206,7 @@ EXAMPLES:
                 gasless,
                 noSimulate,
                 noVerifyOutcome,
-                apiKey,
+                api: apiInstance,
                 verifiedTargets: verifiedPlanTargets,
                 log,
               });
@@ -3072,6 +3268,13 @@ EXAMPLES:
           confirmationLog,
         });
         if (!proceed) return undefined;
+
+        // Past this point the run signs and broadcasts. Claim the quote so a
+        // second concurrent execute cannot pass loadQuote's already-executed
+        // check during the window before the first broadcast is recorded. The
+        // claim re-reads the quote, so if another run executed it while this
+        // one waited at the prompt above, this throws before anything is signed.
+        quoteClaim = claimQuoteForExecution(quoteId);
 
         // Determine if this is a WalletConnect or Privy-signed quote
         const isWalletConnect = quoteData.signerType === 'walletconnect'
@@ -3328,6 +3531,9 @@ EXAMPLES:
                 }
               }
 
+              // Refuse the swap's fee before any approval is paid for it.
+              assertQuotedSwapFeeWithinCap(currentQuote, maxTxFeeWei);
+
               // Handle approval if needed
               // Empty-string approvalAddress is Relay's "no approval needed" sentinel — skip.
               if (currentQuote.approvalAddress && currentQuote.approvalAddress !== '' && !isNative) {
@@ -3355,6 +3561,9 @@ EXAMPLES:
                 } else {
                   const { maxFeePerGas: approvalMaxFee, maxPriorityFeePerGas: approvalPriorityFee } =
                     resolveQuoteEip1559Fees(currentQuote.transaction);
+                  // One check covers the revoke and the approval (same fee, same
+                  // gas limit); name whichever is sent first.
+                  assertEvmFeeWithinCap(approvalMaxFee, APPROVAL_GAS_LIMIT, shouldRevoke ? 'allowance revoke' : 'approval', maxTxFeeWei);
 
                   if (shouldRevoke) {
                     log(`  ⚠ Existing allowance (${existingAllowance}) for ${quoteName} is excessive (>${OVERSIZED_ALLOWANCE_MULTIPLIER}x this trade) — revoking before re-approving`);
@@ -3366,7 +3575,7 @@ EXAMPLES:
                       value: '0x0',
                       chain_id: chainConfig.chainId,
                       nonce: toHex(revokeNonce),
-                      gas_limit: toHex(100000),
+                      gas_limit: toHex(APPROVAL_GAS_LIMIT),
                       max_fee_per_gas: toHex(approvalMaxFee),
                       max_priority_fee_per_gas: toHex(approvalPriorityFee),
                     });
@@ -3419,7 +3628,7 @@ EXAMPLES:
                     value: '0x0',
                     chain_id: chainConfig.chainId,
                     nonce: toHex(approvalNonce),
-                    gas_limit: toHex(100000),
+                    gas_limit: toHex(APPROVAL_GAS_LIMIT),
                     max_fee_per_gas: toHex(approvalMaxFee),
                     max_priority_fee_per_gas: toHex(approvalPriorityFee),
                   });
@@ -3487,7 +3696,7 @@ EXAMPLES:
               // cheap revert check above); degrades with a warning if no
               // simulation endpoint is available.
               if (!noVerifyOutcome) {
-                const outcome = await verifySwapOutcome({ chain, from: walletAddress, quote: currentQuote, quoteData, apiKey, log });
+                const outcome = await verifySwapOutcome({ chain, from: walletAddress, quote: currentQuote, quoteData, api: apiInstance, log });
                 if (!outcome.proceed) {
                   log(`  ❌ ${quoteName} failed swap-outcome verification: ${outcome.reason}`);
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
@@ -3505,6 +3714,8 @@ EXAMPLES:
 
               // Privy signs EIP-1559 (type 2) transactions, so convert gasPrice to EIP-1559 fields
               const { maxFeePerGas: maxFee, maxPriorityFeePerGas: priorityFee } = resolveQuoteEip1559Fees(txData);
+
+              assertEvmFeeWithinCap(maxFee, finalGas, 'swap', maxTxFeeWei);
 
               log('  Signing EVM transaction via Privy...');
               const signResult = await privyClient.signEvmTransaction(evmWalletId, {
@@ -3585,6 +3796,7 @@ EXAMPLES:
                 } catch (err) {
                   throw new Error(`Failed to encode transaction for WalletConnect: ${err.message}`, { cause: err });
                 }
+                swapHandedOff = true;
                 const wcResult = await sendSolanaTransactionViaWalletConnect(txBase58);
 
                 if (wcResult.signedTransaction) {
@@ -3869,7 +4081,7 @@ EXAMPLES:
               // eth_call revert check above; degrades with a warning when no
               // simulation endpoint is set.
               if (!noVerifyOutcome) {
-                const outcome = await verifySwapOutcome({ chain, from: wcAddress, quote: currentQuote, quoteData, apiKey, log });
+                const outcome = await verifySwapOutcome({ chain, from: wcAddress, quote: currentQuote, quoteData, api: apiInstance, log });
                 if (!outcome.proceed) {
                   log(`  ❌ ${quoteName} failed swap-outcome verification: ${outcome.reason}`);
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
@@ -3885,6 +4097,7 @@ EXAMPLES:
               // Send transaction via WalletConnect
               log('  Sending transaction via WalletConnect...');
               let wcResult;
+              swapHandedOff = true;
               try {
                 wcResult = await sendTransactionViaWalletConnect({
                   to: txData.to,
@@ -4033,6 +4246,9 @@ EXAMPLES:
                 }
               }
 
+              // Refuse the swap's fee before any approval is paid for it.
+              assertQuotedSwapFeeWithinCap(currentQuote, maxTxFeeWei);
+
               // Empty-string approvalAddress is Relay's "no approval needed" sentinel — skip.
               if (currentQuote.approvalAddress && currentQuote.approvalAddress !== '' && !isNative) {
                 assertUsableSpender(currentQuote.approvalAddress);
@@ -4073,7 +4289,7 @@ EXAMPLES:
                       approvalGasPrice,
                       0n,
                       undefined,
-                      { allowZero: true },
+                      { allowZero: true, maxTxFeeWei },
                     );
 
                     const revokeResult = await executeTransaction({
@@ -4123,6 +4339,7 @@ EXAMPLES:
                     approvalGasPrice,
                     approveAmt,
                     approvalCapForQuote(quoteData),
+                    { maxTxFeeWei },
                   );
 
                   const approvalResult = await executeTransaction({
@@ -4189,7 +4406,7 @@ EXAMPLES:
               // eth_call revert check above; degrades with a warning when no
               // simulation endpoint is set.
               if (!noVerifyOutcome) {
-                const outcome = await verifySwapOutcome({ chain, from: walletAddress, quote: currentQuote, quoteData, apiKey, log });
+                const outcome = await verifySwapOutcome({ chain, from: walletAddress, quote: currentQuote, quoteData, api: apiInstance, log });
                 if (!outcome.proceed) {
                   log(`  ❌ ${quoteName} failed swap-outcome verification: ${outcome.reason}`);
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
@@ -4201,8 +4418,6 @@ EXAMPLES:
               const txData = currentQuote.transaction;
               const finalGas = await resolveEvmSwapGasLimit(currentQuote, { chain, from: walletAddress });
               logEvmSwapGasResolution(log, currentQuote, txData, finalGas);
-              if (txData.gasLimit) txData.gasLimit = String(finalGas);
-              else txData.gas = String(finalGas);
 
               log('  Fetching nonce...');
               await new Promise(r => setTimeout(r, 1000));
@@ -4214,7 +4429,8 @@ EXAMPLES:
                 currentQuote.transaction,
                 exported.evm.privateKey,
                 chain,
-                nonce
+                nonce,
+                { gasLimit: finalGas, maxTxFeeWei },
               );
             }
 
@@ -4265,6 +4481,7 @@ EXAMPLES:
             // can't be deduped at the node level and risks a second solve. For
             // gasless we therefore don't retry: a single POST either succeeds or
             // fails closed (BROADCAST_FAILED marks the quote spent and aborts).
+            swapHandedOff = true;
             const result = await executeTransaction(execParams, { retries: gasless ? 0 : undefined });
 
             if (result.status === 'Success') {
@@ -4437,6 +4654,10 @@ EXAMPLES:
         let msg = `Error: ${err.message}`;
         if (err.details) msg += `\n  Details: ${JSON.stringify(err.details)}`;
         throw new CommandError(msg, err.code || 'EXECUTE_ERROR');
+      } finally {
+        // Hands the quote back only if no swap left this process, or if one
+        // did and its executedAt marker was recorded (see claimQuoteForExecution).
+        if (quoteClaim) quoteClaim.release({ handedOff: swapHandedOff });
       }
     },
 

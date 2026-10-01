@@ -50,6 +50,12 @@ describe('offline commands: --help does not touch the network', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('cache stats is fully offline', async () => {
+    await runCLI(['cache', 'stats'], baseDeps());
+    expect(refreshCostMapIfStale).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('doctor --help (online) still refreshes the cost map', async () => {
     await runCLI(['doctor', '--help'], baseDeps());
     expect(refreshCostMapIfStale).toHaveBeenCalledOnce();

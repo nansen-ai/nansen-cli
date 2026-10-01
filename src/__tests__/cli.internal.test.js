@@ -1815,6 +1815,22 @@ describe('parseArgs negative numbers', () => {
 });
 
 describe('formatOutput', () => {
+  it.each([
+    [{ data: { data: [{ a: 1 }, { a: 2 }] } }, 'a\n1\n2', '1'],
+    [{ data: ['smart money', 'fund'] }, 'data\n"[""smart money"",""fund""]"', 'data'],
+    [{ labels: ['smart money', 'fund'] }, 'labels\n"[""smart money"",""fund""]"', 'labels'],
+    [{ summary: { total: 5 }, warnings: [] }, 'summary,warnings\n"{""total"":5}",[]', 'summary'],
+    [{ trades: [{ a: 1 }], alerts: [] }, 'a\n1', 'a'],
+  ])('formats row selection consistently in CSV and table output', (payload, csvText, tableText) => {
+    expect(formatOutput(payload, { csv: true }).text).toBe(csvText);
+    expect(formatOutput(payload, { table: true }).text).toContain(tableText);
+  });
+
+  it('streams the envelope when its only array contains primitive values', () => {
+    const payload = { labels: ['smart money', 'fund'] };
+    expect(formatStream(payload)).toBe(JSON.stringify(payload));
+  });
+
   it('should return compact JSON by default', () => {
     const result = formatOutput({ a: 1 });
     expect(result.type).toBe('json');
@@ -2147,8 +2163,8 @@ describe('buildCommands', () => {
       log: (msg) => logs.push(msg),
       exit: vi.fn(),
       promptFn: vi.fn(),
-      saveConfigFn: vi.fn(),
-      deleteConfigFn: vi.fn(),
+      authState: { begin: vi.fn().mockResolvedValue({}), install: vi.fn().mockResolvedValue({ cleanup: [] }), finish: vi.fn().mockResolvedValue([]), logout: vi.fn().mockResolvedValue({ removed: false, cleanup: [] }) },
+      browserLoginFn: vi.fn(),
       getConfigFileFn: vi.fn(() => '/home/user/.nansen/config.json'),
       NansenAPIClass: vi.fn(),
       isTTY: true,
@@ -2166,25 +2182,25 @@ describe('buildCommands', () => {
 
   describe('logout command', () => {
     it('should report success when config deleted', async () => {
-      mockDeps.deleteConfigFn.mockReturnValue(true);
+      mockDeps.authState.logout.mockResolvedValue({ removed: true, cleanup: [] });
       await commands.logout([], null, {}, {});
-      expect(logs).toEqual(['✓ Removed /home/user/.nansen/config.json']);
+      expect(logs).toEqual(['Local credentials removed.']);
     });
 
     it('should report when no config found', async () => {
-      mockDeps.deleteConfigFn.mockReturnValue(false);
+      mockDeps.authState.logout.mockResolvedValue({ removed: false, cleanup: [] });
       await commands.logout([], null, {}, {});
-      expect(logs).toEqual(['No saved credentials found']);
+      expect(logs).toEqual(['No saved credentials found.']);
     });
 
     it('should warn when NANSEN_API_KEY remains active', async () => {
       mockDeps.env.NANSEN_API_KEY = 'test-key';
-      mockDeps.deleteConfigFn.mockReturnValue(true);
+      mockDeps.authState.logout.mockResolvedValue({ removed: true, cleanup: [] });
 
       await commands.logout([], null, {}, {});
 
       expect(logs).toEqual([
-        '✓ Removed /home/user/.nansen/config.json',
+        'Local credentials removed.',
         'Warning: NANSEN_API_KEY remains active. Run: unset NANSEN_API_KEY'
       ]);
       expect(mockDeps.NansenAPIClass).not.toHaveBeenCalled();
@@ -2196,7 +2212,7 @@ describe('buildCommands', () => {
       const savedEnv = process.env.NANSEN_API_KEY;
       delete process.env.NANSEN_API_KEY;
       try {
-        await expect(commands.login([], null, {}, {})).rejects.toThrow(/API key/);
+        await expect(commands.login([], null, {}, { 'api-key': '' })).rejects.toThrow(/API key/);
       } finally {
         if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
       }
@@ -2262,15 +2278,14 @@ describe('buildCommands', () => {
 
     it('login help warns that literal keys land in shell history', async () => {
       const logs = [];
-      const localCommands = buildCommands({ ...mockDeps, log: (m) => logs.push(m) });
-      await localCommands.login([], null, { help: true }, {});
+      await runCLI(['login', '--help'], { ...mockDeps, output: m => logs.push(m) });
       const out = logs.join('\n');
       expect(out).toContain('--human');
-      expect(out).toContain('uses NANSEN_API_KEY when already set');
+      expect(out).toContain('Plain login never persists NANSEN_API_KEY');
       expect(out).not.toContain('security find-generic-password');
       expect(out).toMatch(/recorded in shell history/i);
       // the safe path is listed before the history-recording one
-      expect(out.indexOf('--human')).toBeLessThan(out.indexOf('--api-key <key>'));
+      expect(out.indexOf('\n  --human')).toBeLessThan(out.indexOf('\n  --api-key —'));
     });
 
     it('should save config with --api-key option after verification', async () => {
@@ -2280,7 +2295,7 @@ describe('buildCommands', () => {
       await commands.login([], null, {}, { 'api-key': 'valid-api-key' });
 
       expect(mockApi.getAccount).toHaveBeenCalledOnce();
-      expect(mockDeps.saveConfigFn).toHaveBeenCalledWith({
+      expect(mockDeps.authState.install).toHaveBeenCalledWith({}, {
         apiKey: 'valid-api-key',
         baseUrl: 'https://api.nansen.ai'
       });
@@ -2290,7 +2305,7 @@ describe('buildCommands', () => {
       const savedEnv = process.env.NANSEN_API_KEY;
       delete process.env.NANSEN_API_KEY;
       try {
-        const err = await commands.login([], null, {}, {}).catch(e => e);
+        const err = await commands.login([], null, {}, { 'api-key': '' }).catch(e => e);
         expect(err.code).toBe('API_KEY_REQUIRED');
       } finally {
         if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
@@ -2304,7 +2319,7 @@ describe('buildCommands', () => {
       const err = await commands.login([], null, {}, { 'api-key': 'invalid-key' }).catch(e => e);
 
       expect(err.code).toBe('INVALID_API_KEY');
-      expect(mockDeps.saveConfigFn).not.toHaveBeenCalled();
+      expect(mockDeps.authState.install).not.toHaveBeenCalled();
     });
 
     it('should handle network errors during verification', async () => {
@@ -2314,7 +2329,7 @@ describe('buildCommands', () => {
       const err = await commands.login([], null, {}, { 'api-key': 'some-key' }).catch(e => e);
 
       expect(err.code).toBe('VERIFICATION_FAILED');
-      expect(mockDeps.saveConfigFn).not.toHaveBeenCalled();
+      expect(mockDeps.authState.install).not.toHaveBeenCalled();
     });
 
     it('should display account info on successful login', async () => {
@@ -2953,6 +2968,122 @@ describe('buildCommands', () => {
       );
     });
 
+    describe('screener --search window marker', () => {
+      const rows = (n, prefix = 'PEPE') => Array.from({ length: n }, (_, i) => ({ token_symbol: `${prefix}${i}`, price_usd: i }));
+      let errorOutput;
+      let cmds;
+      beforeEach(() => {
+        errorOutput = vi.fn();
+        cmds = buildCommands({ ...mockDeps, errorOutput });
+      });
+      const search = (mockApi, options, flags = {}) =>
+        cmds['token'](['screener'], mockApi, flags, { chain: 'ethereum', search: 'pepe', ...options });
+
+      it('reports an incomplete search when the candidate window came back full', async () => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [...rows(3), ...rows(497, 'OTHER')] }) };
+        const result = await search(mockApi, {});
+        expect(result.data).toHaveLength(3);
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 500, matched: 3, complete: false });
+        expect(errorOutput).toHaveBeenCalledTimes(1);
+        const note = errorOutput.mock.calls[0][0];
+        expect(note).toContain('only the first 500 screener rows');
+        expect(note).toContain('_meta.search.complete: false');
+        expect(note).toContain('--limit');
+        expect(note).toContain('--paginate');
+      });
+
+      it('reports a complete search when the window covered every candidate', async () => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [...rows(3), ...rows(47, 'OTHER')] }) };
+        const result = await search(mockApi, {});
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 50, matched: 3, complete: true });
+        expect(errorOutput).not.toHaveBeenCalled();
+      });
+
+      it('keeps an empty match set distinguishable from "not in the window"', async () => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: rows(500, 'OTHER') }) };
+        const result = await search(mockApi, {});
+        expect(result.data).toEqual([]);
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 500, matched: 0, complete: false });
+        expect(errorOutput).toHaveBeenCalledTimes(1);
+      });
+
+      it('trusts server pagination metadata over the row count', async () => {
+        const full = { data: rows(500), pagination: { page: 1, per_page: 500, is_last_page: true } };
+        const fullResult = await search({ tokenScreener: vi.fn().mockResolvedValue(full) }, {});
+        expect(fullResult._meta.search.complete).toBe(true);
+        expect(errorOutput).not.toHaveBeenCalled();
+
+        const short = { data: rows(20), pagination: { page: 1, per_page: 500, is_last_page: false } };
+        const shortResult = await search({ tokenScreener: vi.fn().mockResolvedValue(short) }, {});
+        expect(shortResult._meta.search).toEqual({ query: 'pepe', searched: 20, matched: 20, complete: false });
+        expect(errorOutput).toHaveBeenCalledTimes(1);
+      });
+
+      it('measures the window against the widened candidate fetch, not the default 500', async () => {
+        // --limit 100 --page 7 fetches 700 candidates; 600 rows back means the API ran out.
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: rows(600) }) };
+        const result = await search(mockApi, { limit: '100', page: '7' });
+        expect(mockApi.tokenScreener).toHaveBeenCalledWith(expect.objectContaining({ pagination: { page: 1, per_page: 700 } }));
+        expect(result.data).toEqual([]);
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 600, matched: 600, complete: true });
+        expect(errorOutput).not.toHaveBeenCalled();
+      });
+
+      it('counts every match before --page/--limit slicing', async () => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: rows(30) }) };
+        const result = await search(mockApi, { limit: '10', page: '2' });
+        expect(result.data).toHaveLength(10);
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 30, matched: 30, complete: true });
+      });
+
+      it('attaches the marker to nested responses and keeps the nested pagination', async () => {
+        const pagination = { page: 1, per_page: 500, is_last_page: false };
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: { data: rows(500), pagination } }) };
+        const result = await search(mockApi, {});
+        expect(result.data.data).toHaveLength(100);
+        expect(result.data.pagination).toBe(pagination);
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 500, matched: 500, complete: false });
+        expect(errorOutput).toHaveBeenCalledTimes(1);
+      });
+
+      it('follows the --paginate traversal summary and points at the resume page', async () => {
+        // collectPages spreads the first page's stale is_last_page into the summary; `complete` must win.
+        const pagination = { page: 1, per_page: 100, is_last_page: true, pages_fetched: 10, next_page: 11, complete: false };
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: rows(1000), pagination }) };
+        const result = await search(mockApi, { limit: '100' }, { paginate: true });
+        expect(result.data).toHaveLength(1000);
+        expect(result.pagination).toBe(pagination);
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 1000, matched: 1000, complete: false });
+        expect(errorOutput).toHaveBeenCalledTimes(1);
+        const note = errorOutput.mock.calls[0][0];
+        expect(note).toContain('after 10 candidate pages (--max-pages)');
+        expect(note).toContain('1000 screener rows');
+        expect(note).toContain('--page 11');
+      });
+
+      it('stays quiet when a --paginate traversal completed', async () => {
+        const pagination = { page: 1, pages_fetched: 3, next_page: null, complete: true };
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: rows(250), pagination }) };
+        const result = await search(mockApi, { limit: '100' }, { all: true });
+        expect(result._meta.search).toEqual({ query: 'pepe', searched: 250, matched: 250, complete: true });
+        expect(errorOutput).not.toHaveBeenCalled();
+      });
+
+      it('merges into _meta the request layer already attached', async () => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: rows(10), _meta: { retriedAttempts: 1 } }) };
+        const result = await search(mockApi, {});
+        expect(result._meta).toEqual({ retriedAttempts: 1, search: { query: 'pepe', searched: 10, matched: 10, complete: true } });
+      });
+
+      it('adds no marker and no note without --search', async () => {
+        const response = { data: rows(500) };
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue(response) };
+        const result = await cmds['token'](['screener'], mockApi, {}, { chain: 'ethereum' });
+        expect(result).toBe(response);
+        expect(errorOutput).not.toHaveBeenCalled();
+      });
+    });
+
     it('should call holders with token address', async () => {
       const mockApi = {
         tokenHolders: vi.fn().mockResolvedValue({ data: [] })
@@ -3226,6 +3357,41 @@ describe('runCLI', () => {
     
     await runCLI(['smart-money', 'netflow', '--table'], deps);
     expect(outputs[0]).toContain('│'); // table has column separators
+  });
+
+  it('marks a screener search that ran out of candidate window on stdout and stderr', async () => {
+    const data = Array.from({ length: 500 }, (_, i) => ({ token_symbol: i === 7 ? 'PEPE' : `TOKEN${i}` }));
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI() {
+        this.tokenScreener = vi.fn().mockResolvedValue({ data, pagination: { page: 1, per_page: 500, is_last_page: false } });
+      }
+    };
+
+    await runCLI(['research', 'token', 'screener', '--chain', 'ethereum', '--search', 'pepe'], deps);
+
+    const { success, data: payload } = JSON.parse(outputs[0]);
+    expect(success).toBe(true);
+    expect(payload.data).toEqual([{ token_symbol: 'PEPE' }]);
+    expect(payload.pagination).toEqual({ page: 1, per_page: 500, is_last_page: false });
+    expect(payload._meta.search).toEqual({ query: 'pepe', searched: 500, matched: 1, complete: false });
+    expect(errors.some(line => line.includes('--search matched against only the first 500 screener rows'))).toBe(true);
+  });
+
+  it('keeps the screener search note off stdout under --fields', async () => {
+    const data = Array.from({ length: 500 }, (_, i) => ({ token_symbol: i === 7 ? 'PEPE' : `TOKEN${i}`, price_usd: i }));
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI() {
+        this.tokenScreener = vi.fn().mockResolvedValue({ data });
+      }
+    };
+
+    await runCLI(['research', 'token', 'screener', '--chain', 'ethereum', '--search', 'pepe', '--fields', 'token_symbol'], deps);
+
+    // --fields drops _meta from stdout like every other unrequested key; the note is the remaining signal.
+    expect(JSON.parse(outputs[0])).toEqual({ success: true, data: { data: [{ token_symbol: 'PEPE' }] } });
+    expect(errors.some(line => line.includes('_meta.search.complete: false'))).toBe(true);
   });
 
   it('should handle API errors', async () => {
@@ -3711,8 +3877,8 @@ describe('login/logout flow', () => {
       log: (msg) => logs.push(msg),
       exit: vi.fn(),
       promptFn: vi.fn(),
-      saveConfigFn: vi.fn(),
-      deleteConfigFn: vi.fn(),
+      authState: { begin: vi.fn().mockResolvedValue({}), install: vi.fn().mockResolvedValue({ cleanup: [] }), finish: vi.fn().mockResolvedValue([]), logout: vi.fn().mockResolvedValue({ removed: false, cleanup: [] }) },
+      browserLoginFn: vi.fn(),
       getConfigFileFn: vi.fn(() => '/home/user/.nansen/config.json'),
       NansenAPIClass: vi.fn(),
       isTTY: true
@@ -3740,7 +3906,7 @@ describe('login/logout flow', () => {
 
       await commands.login([], null, {}, { 'api-key': '  api-key-with-spaces  ' });
 
-      expect(mockDeps.saveConfigFn).toHaveBeenCalledWith({
+      expect(mockDeps.authState.install).toHaveBeenCalledWith({}, {
         apiKey: 'api-key-with-spaces',
         baseUrl: 'https://api.nansen.ai'
       });
@@ -3766,7 +3932,7 @@ describe('login/logout flow', () => {
 
       await commands.login([], null, {}, { 'api-key': 'test-key' });
 
-      expect(mockDeps.saveConfigFn).toHaveBeenCalledWith({
+      expect(mockDeps.authState.install).toHaveBeenCalledWith({}, {
         apiKey: 'test-key',
         baseUrl: 'https://api.nansen.ai'
       });
@@ -3777,7 +3943,7 @@ describe('login/logout flow', () => {
       const savedEnv = process.env.NANSEN_API_KEY;
       delete process.env.NANSEN_API_KEY;
       try {
-        const err = await commands.login([], null, {}, {}).catch(e => e);
+        const err = await commands.login([], null, {}, { 'api-key': '' }).catch(e => e);
         expect(err.code).toBe('API_KEY_REQUIRED');
       } finally {
         if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
@@ -3787,22 +3953,21 @@ describe('login/logout flow', () => {
 
   describe('logout command', () => {
     it('should call deleteConfig', async () => {
-      mockDeps.deleteConfigFn.mockReturnValue(true);
+      mockDeps.authState.logout.mockResolvedValue({ removed: true, cleanup: [] });
       await commands.logout([], null, {}, {});
       
-      expect(mockDeps.deleteConfigFn).toHaveBeenCalled();
+      expect(mockDeps.authState.logout).toHaveBeenCalled();
     });
 
     it('should show success message when config deleted', async () => {
-      mockDeps.deleteConfigFn.mockReturnValue(true);
+      mockDeps.authState.logout.mockResolvedValue({ removed: true, cleanup: [] });
       await commands.logout([], null, {}, {});
       
-      expect(logs.some(l => l.includes('Removed'))).toBe(true);
-      expect(logs.some(l => l.includes('/home/user/.nansen/config.json'))).toBe(true);
+      expect(logs).toContain('Local credentials removed.');
     });
 
     it('should show message when no config exists', async () => {
-      mockDeps.deleteConfigFn.mockReturnValue(false);
+      mockDeps.authState.logout.mockResolvedValue({ removed: false, cleanup: [] });
       await commands.logout([], null, {}, {});
       
       expect(logs.some(l => l.includes('No saved credentials'))).toBe(true);
@@ -4522,17 +4687,12 @@ describe('cache command', () => {
     expect(logs.some(l => l.includes('Cleared 2'))).toBe(true);
   });
 
-  it('should show help for unknown subcommand', async () => {
-    const logs = [];
-    const mockDeps = {
-      log: (msg) => logs.push(msg),
-      exit: vi.fn()
-    };
-    const commands = buildCommands(mockDeps);
-    
-    await commands.cache(['unknown'], null, {}, {});
-    
-    expect(logs.some(l => l.includes('Unknown cache subcommand'))).toBe(true);
+  it('should reject an unknown subcommand', async () => {
+    const commands = buildCommands({ log: vi.fn(), exit: vi.fn() });
+
+    await expect(commands.cache(['unknown'], null, {}, {})).rejects.toThrow(
+      /Unknown cache subcommand: unknown\. Use one of: stats, clear/,
+    );
   });
 });
 

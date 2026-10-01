@@ -8,6 +8,7 @@ import { base58Encode, base58DecodePubkey } from './wallet.js';
 import { encodeCompactU16, deriveATA as _deriveATA } from './transfer.js';
 import { resolvePaymentAmount, resolvePayTo } from './x402-policy.js';
 import { SOLANA_MAINNET_NETWORK } from './x402-tokens.js';
+import { CHAIN_RPCS } from './rpc-urls.js';
 
 // ============= Constants =============
 
@@ -19,6 +20,16 @@ const _SYSTEM_PROGRAM = '11111111111111111111111111111111';
 
 const DEFAULT_COMPUTE_UNIT_LIMIT = 20000;
 const DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 1;
+
+// Upper bound on a single blockhash RPC round-trip. A NANSEN_SOLANA_RPC
+// endpoint that accepts the connection but never answers would otherwise
+// stall the x402 payment fallback loop for Node's default header timeout.
+const SOLANA_RPC_TIMEOUT_MS = 15_000;
+
+// An x402 Solana payment is signed by exactly two accounts: the facilitator
+// (feePayer, slot 0) and the paying wallet (slot 1).
+const X402_SVM_SIGNER_COUNT = 2;
+const SIGNATURE_BYTES = 64;
 
 // ============= PDA Derivation =============
 
@@ -36,9 +47,9 @@ export function deriveATA(ownerBase58, mintBase58, tokenProgramBase58 = TOKEN_PR
  * Build a Solana MessageV0 from accounts and instructions.
  * feePayer is always placed at account index 0, forced signer+writable,
  * regardless of whether an instruction references it directly.
- * Returns numRequiredSignatures alongside the bytes since it's read back out
- * of the header to size the signature-placeholder slots of the wrapping
- * unsigned transaction (see callers).
+ * Returns numRequiredSignatures alongside the bytes. Each caller writes a
+ * fixed number of signature slots and asserts this value against it, since a
+ * header that disagrees with the slot count is rejected at broadcast.
  */
 export function buildMessageV0({ feePayer, instructions, recentBlockhash, accounts: _accounts }) {
   // All unique accounts in order: feePayer first, then signers, then rest
@@ -237,20 +248,30 @@ export function buildUnsignedSvmTransaction(
     },
   ];
 
-  const { messageBytes } = buildMessageV0({
+  const { messageBytes, numRequiredSignatures } = buildMessageV0({
     feePayer: feePayerStr,
     instructions,
     recentBlockhash,
     accounts: null,
   });
+  // The header must agree with the signature slots written below. A
+  // server-supplied feePayer equal to the paying wallet collapses the two
+  // signers into one, and the transaction would fail sanitization at broadcast.
+  if (numRequiredSignatures !== X402_SVM_SIGNER_COUNT) {
+    const cause = feePayerStr === walletAddress
+      ? `its feePayer is the paying wallet (${walletAddress}) instead of a facilitator account`
+      : `its transaction requires ${numRequiredSignatures} signatures instead of ${X402_SVM_SIGNER_COUNT}`;
+    throw new Error(
+      `Cannot pay this x402 Solana option: ${cause}. ` +
+      'Another payment option will be tried; if none succeeds, pay on another network or report this payment option to Nansen.',
+    );
+  }
 
   // Build transaction: compact-u16(numSignatures) + signatures + message
-  // 2 signatures: [facilitator placeholder (64 zero bytes), client placeholder (64 zero bytes)]
-  const numSigs = encodeCompactU16(2);
+  // [facilitator placeholder, client placeholder], 64 zero bytes each
   const txBytes = Buffer.concat([
-    numSigs,
-    Buffer.alloc(64), // facilitator placeholder
-    Buffer.alloc(64), // client placeholder
+    encodeCompactU16(X402_SVM_SIGNER_COUNT),
+    Buffer.alloc(X402_SVM_SIGNER_COUNT * SIGNATURE_BYTES),
     messageBytes,
   ]);
 
@@ -272,7 +293,7 @@ export function createSvmPaymentPayload(
   decimals = 6,
   tokenProgram = TOKEN_PROGRAM,
 ) {
-  const { messageBytes } = buildUnsignedSvmTransaction(
+  const { messageBytes, txBase64: unsignedTxBase64 } = buildUnsignedSvmTransaction(
     requirements,
     walletAddress,
     recentBlockhash,
@@ -283,14 +304,11 @@ export function createSvmPaymentPayload(
   // Sign: client signs the full message (with 0x80 version prefix already included)
   const clientSignature = signEd25519(messageBytes, keypairHex);
 
-  // Rebuild transaction with the real client signature at slot 1
-  const numSigs = encodeCompactU16(2);
-  const txBytes = Buffer.concat([
-    numSigs,
-    Buffer.alloc(64), // facilitator placeholder
-    clientSignature,
-    messageBytes,
-  ]);
+  // Write the client signature into slot 1 of the unsigned transaction, so
+  // the wire layout is built in one place.
+  const txBytes = Buffer.from(unsignedTxBase64, 'base64');
+  const clientSlotOffset = encodeCompactU16(X402_SVM_SIGNER_COUNT).length + SIGNATURE_BYTES;
+  clientSignature.copy(txBytes, clientSlotOffset);
 
   const txBase64 = txBytes.toString('base64');
 
@@ -308,70 +326,111 @@ export function createSvmPaymentPayload(
   return Buffer.from(JSON.stringify(payload)).toString('base64');
 }
 
+function isHttpUrl(value) {
+  if (typeof value !== 'string') return false;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Fetch recent blockhash from Solana RPC.
+ *
+ * Defaults to the shared RPC registry so NANSEN_SOLANA_RPC is honoured even
+ * for an argless call; every production caller passes the URL explicitly.
  */
-export async function fetchRecentBlockhash(rpcUrl = 'https://api.mainnet-beta.solana.com') {
-  let response;
+export async function fetchRecentBlockhash(rpcUrl = CHAIN_RPCS.solana) {
+  // Validate up front and never echo the raw value. A private RPC URL usually
+  // carries an API key in its query string, and Node's own parse failure
+  // ("Failed to parse URL from <value>") would otherwise copy it into the
+  // error message that the Privy and local-wallet fallback loops print.
+  if (!isHttpUrl(rpcUrl)) {
+    throw new Error(
+      'Invalid Solana RPC URL: expected a full http:// or https:// URL. Check NANSEN_SOLANA_RPC.'
+    );
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SOLANA_RPC_TIMEOUT_MS);
+  const timeoutError = (cause) => new Error(
+    `Solana RPC did not respond within ${SOLANA_RPC_TIMEOUT_MS / 1000}s while fetching a recent blockhash. Retry or configure a different RPC endpoint.`,
+    { cause }
+  );
+
   try {
-    response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'getLatestBlockhash',
-        params: [{ commitment: 'finalized' }],
-      }),
-    });
-  } catch (err) {
-    throw new Error(
-      `Solana RPC unavailable while fetching a recent blockhash. Retry or configure a different RPC endpoint. ${String(err.message ?? err)}`,
-      { cause: err }
-    );
-  }
+    let response;
+    try {
+      response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getLatestBlockhash',
+          params: [{ commitment: 'finalized' }],
+        }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (controller.signal.aborted) throw timeoutError(err);
+      throw new Error(
+        `Solana RPC unavailable while fetching a recent blockhash. Retry or configure a different RPC endpoint. ${String(err.message ?? err)}`,
+        { cause: err }
+      );
+    }
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(
-      `Solana RPC returned HTTP ${response.status} while fetching a recent blockhash. Retry or configure a different RPC endpoint. ${text.slice(0, 100)}`
-    );
-  }
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(
+        `Solana RPC returned HTTP ${response.status} while fetching a recent blockhash. Retry or configure a different RPC endpoint. ${text.slice(0, 100)}`
+      );
+    }
 
-  let data;
-  try {
-    data = await response.json();
-  } catch {
-    throw new Error(
-      'Solana RPC returned an invalid response while fetching a recent blockhash. Retry or configure a different RPC endpoint.'
-    );
-  }
+    let data;
+    try {
+      data = await response.json();
+    } catch (err) {
+      if (controller.signal.aborted) throw timeoutError(err);
+      throw new Error(
+        'Solana RPC returned an invalid response while fetching a recent blockhash. Retry or configure a different RPC endpoint.',
+        { cause: err }
+      );
+    }
 
-  if (data?.error) {
-    const detail =
-      data.error.message != null ? String(data.error.message)
-      : data.error.code  != null ? String(data.error.code)
-      : 'unknown RPC error';
-    throw new Error(
-      `Solana RPC failed while fetching a recent blockhash: ${detail}. Retry or configure a different RPC endpoint.`
-    );
-  }
+    if (data?.error) {
+      const detail =
+        data.error.message != null ? String(data.error.message)
+        : data.error.code  != null ? String(data.error.code)
+        : 'unknown RPC error';
+      throw new Error(
+        `Solana RPC failed while fetching a recent blockhash: ${detail}. Retry or configure a different RPC endpoint.`
+      );
+    }
 
-  const blockhash = data?.result?.value?.blockhash;
-  if (typeof blockhash !== 'string' || blockhash.length === 0) {
-    throw new Error(
-      'Solana RPC returned no recent blockhash. Retry or configure a different RPC endpoint.'
-    );
-  }
+    const blockhash = data?.result?.value?.blockhash;
+    if (typeof blockhash !== 'string' || blockhash.length === 0) {
+      throw new Error(
+        'Solana RPC returned no recent blockhash. Retry or configure a different RPC endpoint.'
+      );
+    }
 
-  return blockhash;
+    return blockhash;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
  * Get RPC URL for a Solana network identifier.
  */
 export function getSolanaRpcUrl(network) {
-  if (network === SOLANA_MAINNET_NETWORK) return 'https://api.mainnet-beta.solana.com';
+  // Mainnet goes through the shared registry so NANSEN_SOLANA_RPC applies to
+  // x402 blockhash and balance calls the same way it does to every other
+  // Solana path (transfer, trading, limit orders). The default is unchanged.
+  if (network === SOLANA_MAINNET_NETWORK) return CHAIN_RPCS.solana;
   // Devnet/testnet resolve for tooling (e.g. balance checks), but the x402 pay
   // path never reaches them: SVM_X402_TOKENS is mainnet-only, so the policy layer
   // refuses a devnet/testnet requirement before signing. Adding a non-mainnet

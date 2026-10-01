@@ -13,10 +13,12 @@ import * as path from 'node:path';
 import { CommandError, validateAddress } from './api.js';
 import { signSecp256k1 } from './crypto.js';
 import {
+  assertEvmFeeWithinCap,
   convertToBaseUnits,
   evmRpcCall,
   getEvmNonce,
   getQuotesDir,
+  parseMaxTxFeeOption,
   resolveUsdPrice,
   safeQuotesPath,
   signEvmTransaction,
@@ -1229,6 +1231,7 @@ async function processEvmStep(step, { chain, privateKeyHex, signerAddress, log, 
       privateKeyHex,
       chain,
       nonce,
+      { label: `bridge step "${step.id}"`, maxTxFeeWei: feeOverrides?.maxTxFeeWei },
     );
 
     log(`  Broadcasting ${step.id} on ${chain}...`);
@@ -1819,6 +1822,8 @@ RECOVERY OPTIONS (EVM deposit legs only):
   --priority-fee  Priority fee in gwei, overriding the quoted one
   --max-fee       Fee cap in gwei, overriding the computed one
   --nonce         Sign at this nonce instead of the next one
+  --max-tx-fee    Most one transaction may pay for gas (fee cap x gas limit),
+                  in ETH. Default 1; 0 disables the check.
 
 Use these to replace a transaction that is stuck in the mempool: a replacement
 must reuse the stuck nonce and outbid it (roughly +10%), and the fees computed
@@ -1833,6 +1838,11 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
       // Fee/nonce overrides. Parsed before the quote is touched so a typo can't
       // consume it, and only applied to EVM legs — an HL withdrawal signs an
       // action with no fee fields at all.
+      // A bare --max-tx-fee lands in flags, not options, so it would otherwise
+      // read as "not given" and silently apply the default cap.
+      if (flags['max-tx-fee']) {
+        throw new CommandError('--max-tx-fee requires a value in ETH (e.g. 0.5), or 0 for no cap.', 'INVALID_INPUT');
+      }
       const feeOverrides = {
         priorityFeeWei: options['priority-fee'] !== undefined
           ? parseGweiToWei(options['priority-fee'], 'priority-fee')
@@ -1840,6 +1850,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         maxFeeWei: options['max-fee'] !== undefined
           ? parseGweiToWei(options['max-fee'], 'max-fee')
           : null,
+        maxTxFeeWei: parseMaxTxFeeOption(options['max-tx-fee']),
       };
       let nonceSequence = null;
       if (options.nonce !== undefined) {
@@ -1931,12 +1942,12 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         : [signerAddress];
       await screenOrThrow(apiInstance, screenAddresses);
 
-      // These checks need only the cached quote and public signer address. A
+      // These checks use the quote, public signer address, and current EVM fees. A
       // dry run must execute them before returning at the gate; a real run
       // preserves the established password/error ordering by executing them
       // after credentials resolve. Cache the result so each invocation can run
       // the preflight at most once even if the guard's control flow changes.
-      const preflightPlan = () => {
+      const preflightPlan = async () => {
         let evmIntent = null;
         let hlIntent = null;
         if (execution_type === 'evm_transaction') {
@@ -1946,6 +1957,22 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
             requestedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
           };
           preflightEvmBridgeSteps(steps, evmIntent);
+          // Check the whole plan before an approval can spend gas or grant an
+          // allowance. Match signing's fee resolution and numeric gas normalization;
+          // the signer checks again if network fees change during execution.
+          for (const step of steps) {
+            for (const item of step.items || []) {
+              if (item.status === 'complete') continue;
+              const txData = item.data;
+              const fees = await resolveEvmStepFees(evmIntent.chain, txData, feeOverrides);
+              assertEvmFeeWithinCap(
+                fees.maxFeePerGas || fees.gasPrice,
+                BigInt(txData.gas || txData.gasLimit || '210000').toString(),
+                `bridge step "${step.id}"`,
+                feeOverrides.maxTxFeeWei,
+              );
+            }
+          }
         } else if (execution_type === 'hyperliquid_signature') {
           const currencyIn = quoteData.response.details?.currencyIn;
           if (quoteData.requestedAmountBaseUnits != null && currencyIn?.amount != null) {
@@ -1987,7 +2014,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
       // --yes/non-TTY retain the established ordering (credentials first,
       // preflight immediately before signing).
       const shouldPreflightPlan = guard.dryRun || (guard.isTTY && !guard.assumeYes);
-      let preflightResult = shouldPreflightPlan ? preflightPlan() : null;
+      let preflightResult = shouldPreflightPlan ? await preflightPlan() : null;
 
       // ── Acknowledgement gate: --dry-run / --yes ──────────────────────
       // Placed before the signing credentials are loaded and well before the
@@ -2013,7 +2040,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
       // different wallet than the one just screened if the default changed in
       // between.
       const creds = resolveSigningCredentials(signer);
-      preflightResult ??= preflightPlan();
+      preflightResult ??= await preflightPlan();
       const { evmIntent, hlIntent } = preflightResult;
 
       // Consume the quote at each INDIVIDUAL broadcast, before any receipt wait.

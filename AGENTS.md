@@ -24,7 +24,7 @@ Entry point is `src/index.js`.
 - **ESM only** — `import`/`export`, no TypeScript, no transpilation
 - **BigInt for token amounts** — never floating point
 - **Research commands** — return data objects, CLI layer formats via `formatOutput()` to stdout
-- **Operational commands** (trade, wallet, login) — print human-readable text via `log()` to stdout, return `undefined`
+- **Operational commands** (trade, wallet, login) — print human-readable text via `log()` to stdout, return `undefined`. Exception: read-only wallet commands that report data (`wallet list`, `wallet show`, redacted `wallet export`) return it, so stdout carries the standard JSON envelope in a terminal and a pipe alike. Do not add a readable summary on stderr or switch output on `isTTY`: agents capture both streams or run under a pseudo-terminal.
 - **No interactive prompts in core** — use env vars (`NANSEN_WALLET_PASSWORD`, `NANSEN_API_KEY`)
 - **Actionable errors** — `"Not logged in. Run: nansen login"` not `"Authentication failed"`
 
@@ -71,11 +71,36 @@ Short description (appears in CHANGELOG)
 
 `patch` = bug fix, `minor` = new feature, `major` = breaking change.
 
+## Browser authentication
+
+Plain `nansen login` requests first-party `nansen:api` account permissions equivalent to an API key, including smart-alert CRUD and trade API calls under existing account/plan/endpoint checks. Wallet signing remains separately authorized. Existing OAuth/MCP `nansen:read` grants are not broadened.
+
+## MCP client config
+
+`src/mcp-client-config.json` is the one maintained source for the values that MCP client setup uses: the endpoint, the OAuth endpoint, the `NANSEN-API-KEY` header, the `nansen` server key, the API-key URLs and the exact `mcp-remote` pin (API-322). It lives here because this repo is public (every consumer can read it without a token) and because `nansen mcp install` / `verify` execute these values, so a bad value fails real tests.
+
+| Artifact | Repo | How it follows the source | Drift check |
+|---|---|---|---|
+| `buildServerEntry()`, `NANSEN_MCP_URL`, `MCP_REMOTE_PIN`, `mcp verify` URLs | nansen-cli | Imports `src/mcp-client-config.js` at runtime | `src/__tests__/mcp-client-config.test.js` |
+| README `## MCP` section | nansen-cli | Generated from `scripts/templates/readme-mcp.md` by `npm run mcp:generate` | Same test (`npm test`), or `npm run mcp:check` |
+| Public docs page ([docs.nansen.ai/mcp/connecting](https://docs.nansen.ai/mcp/connecting)) | Docs source | Vendored copy, pinned to a commit of this file | Drift check in the docs source CI |
+| `.dxt` `manifest.json` / `package.json` | nansen-mcp-dxt | Vendored copy, pinned to a commit of this file | nansen-mcp-dxt `npm run check` in CI |
+
+Never edit the generated README region by hand. `src/schema.json` stays manual; the test asserts its MCP URL. Other CLI messages (login, API errors, postinstall) still hard-code the API-key URLs; they are outside this config.
+
+**Change a value:**
+
+1. Edit `src/mcp-client-config.json`. The loader rejects non-HTTPS URLs, other hosts, trailing slashes, ranges and dist-tags.
+2. Run `npm run mcp:generate`, then `npm test`.
+3. After merge, re-sync the vendored copies to the merge commit on `main`: `npm run sync -- --ref <sha>` in nansen-mcp-dxt (this also rebuilds `nansen.dxt`), and the matching sync step in the docs source. A new endpoint also needs the literal endpoint checks in the API-321 contract tests and the hand-written docs pages to change.
+
+**Bump the `mcp-remote` pin (owner: MCP maintainers of this repo).** `.github/workflows/mcp-remote-pin.yml` runs `npm run mcp:check-pin` every Monday and opens the issue "mcp-remote pin is behind the latest release" (it comments again only when the report changes). The same workflow runs `npm run mcp:check-consumers`, which opens "MCP client config consumers are out of sync" when nansen-mcp-dxt pins an older copy of the config. The pin is never bumped automatically, because the bridge carries the API key on every request. To bump: pick a version that was published at least 7 days ago (the report names the newest one), then read the release notes and the source diff since the current pin. The report shows the npm provenance source (the repository that built each tarball), the declared repository and the current maintainers, so a change of owner is visible. Confirm that `${VAR}` header substitution still works, set `mcpRemote.version`, run steps 2–3 above, and connect with the new pin before you merge. First confirm with `curl` that your key works (a tool call, not only `initialize`): when the key header does not work, `mcp-remote` can start the interactive OAuth flow and open browser windows.
+
 ## Paid Access Rails
 
 The Nansen API supports three auth paths. Pick the right one when answering setup questions:
 
-- **API key** (subscription) — `nansen login` / `NANSEN_API_KEY`. Default for subscribed users.
+- **Account credits** — browser sessions from `nansen login` or conventional API keys via `NANSEN_API_KEY` / explicit `nansen login --human`. Both use the account's existing permissions and credits. Browser storage is limited to the [documented preview scope](docs/browser-login.md#preview-platform-scope).
 - **x402** (micropayment, native to this CLI) — `nansen wallet create` + fund with USDC on Base or Solana, or USDT0 on X Layer. The CLI signs the `Payment-Signature` header from the API's 402 `accepts` list (EIP-712 name+version are read from the server response), but only after a client-side policy guard passes: the scheme must be supported, the `(network, asset)` pair must be a known Nansen payment token, Solana/SVM tokens must match the exact CAIP-2 network binding, and the amount must not exceed the per-payment USD cap (default `$1.00`, override with `NANSEN_X402_MAX_AMOUNT=<usd>` or `unlimited`; optional recipient allowlist via `NANSEN_X402_ALLOWED_PAYTO`). Beyond the per-payment cap, cumulative spend caps apply: `NANSEN_X402_DAILY_MAX_AMOUNT` (max USD per UTC day, default `$10.00`, `unlimited` to disable) and `NANSEN_X402_SESSION_MAX_AMOUNT` (optional per-process cap). A corrupt or unreadable spend ledger fails closed (no signing). Every signed, accepted, rejected, or ambiguous attempt is recorded to the local audit log at `~/.nansen/x402/payments.jsonl`. Unsupported schemes, unknown pairs, network mismatches, or over-cap amounts are refused without signing. See `src/x402-policy.js`, `src/x402.js`, `src/x402-ledger.js`, and the `--x402-payment-signature` flag.
 - **MPP via tempo** (micropayment, separate CLI) — handled by the [tempo CLI](https://docs.tempo.xyz), not by `nansen-cli`. Triggered when the client sends `Authorization: Payment ...`; the Nansen API responds with `WWW-Authenticate: Payment ...` and a `Payment-Receipt` header on success. Direct users to install tempo separately and call the API via `tempo request`. See `skills/nansen-mpp-payment/SKILL.md`.
 
@@ -87,7 +112,7 @@ Behaviors that are not bugs — don't "fix" them:
 
 - `token holders --smart-money` → API returns `UNSUPPORTED_FILTER` for tokens without SM tracking
 - `token flow-intelligence` → may return all-zero flows for illiquid tokens
-- `token screener --search` → client-side filtering (fetches 500, filters locally)
+- `token screener --search` → client-side filtering (fetches 500, filters locally). `_meta.search.complete: false` in the response (plus a stderr note) means the window was full and lower-ranked tokens were never searched — an empty result is not proof the token is absent
 - `token ohlcv` → no pagination/limit support; returns all candles for the timeframe
 - `profiler perp-positions` → no pagination support; API ignores the parameter
 - `smart-money netflow --timeframe` → silently accepted but has no effect; response always includes all timeframes

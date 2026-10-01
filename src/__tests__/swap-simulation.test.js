@@ -159,7 +159,7 @@ describe('swap-simulation', () => {
     it('sends the Nansen apikey header only to a Nansen-hosted endpoint', async () => {
       SIMULATION_RPCS.base = 'https://api.nansen.ai/api/v1/trade/simulate-swap';
       mockFetchOnce(simV1([]));
-      await simulateAssetChanges('base', { to: ROUTER, data: '0x' }, { from: WALLET, apiKey: 'secret-key' });
+      await simulateAssetChanges('base', { to: ROUTER, data: '0x' }, { from: WALLET, api: { baseUrl: 'https://api.nansen.ai', selection: { kind: 'api-key' }, requestCredentials: async () => ({ apikey: 'secret-key' }) } });
       const [, opts] = global.fetch.mock.calls[0];
       expect(opts.headers.apikey).toBe('secret-key');
       // The credentialed sim call must refuse redirects so the apikey can't be
@@ -172,7 +172,7 @@ describe('swap-simulation', () => {
       // Nansen credential must never be forwarded there.
       SIMULATION_RPCS.base = 'http://sim.test/rpc';
       mockFetchOnce(simV1([]));
-      await simulateAssetChanges('base', { to: ROUTER, data: '0x' }, { from: WALLET, apiKey: 'secret-key' });
+      await simulateAssetChanges('base', { to: ROUTER, data: '0x' }, { from: WALLET, api: { baseUrl: 'https://api.nansen.ai', selection: { kind: 'api-key' }, requestCredentials: async () => ({ apikey: 'secret-key' }) } });
       const [, opts] = global.fetch.mock.calls[0];
       expect('apikey' in opts.headers).toBe(false);
       // Anonymous call to a third-party RPC carries no credential, so the

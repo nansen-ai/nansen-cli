@@ -16,20 +16,32 @@ npx skills add nansen-ai/nansen-cli  # load agent skill files
 
 ## Auth
 
-Three options — pick whichever fits your setup:
+Plain `nansen login` requests fresh browser approval and saves a session automatically. No API-key copying or PEM setup is needed. Selected sessions renew automatically; rejected or uncertain renewal requires fresh login.
 
-1. **API key** (subscription):
-   ```bash
-   nansen login --human   # interactive prompt; saves to ~/.nansen/config.json
-   nansen login           # uses NANSEN_API_KEY when already set
-   nansen logout          # remove saved key
-   ```
-   For automation, inject `NANSEN_API_KEY` through your environment or secret manager.
-   Get your API key at [app.nansen.ai/auth/agent-setup](https://app.nansen.ai/auth/agent-setup).
+```bash
+nansen login                 # approve the displayed code, account and CLI
+nansen login --no-browser    # approve on another device; same storage requirements
+nansen auth status           # offline, cached/unverified credential selection
+nansen account               # free live check, including with zero research credits
+nansen logout                # clear saved API auth; preserve wallets and environment keys
+```
 
-2. **x402 micropayment** (no key needed): `nansen wallet create`, fund with USDC on Base or Solana, or USDT0 on X Layer, then call any endpoint — the CLI signs `Payment-Signature` headers automatically on 402 responses. See [Wallet](#wallet).
+Browser login is available in Nansen CLI 2.0.0 and enabled in production. Saved browser sessions are currently qualified on macOS arm64 in a local GUI Terminal with an unlocked login Keychain and local home directory. Other platforms and terminal environments still need qualification. See [storage, supported scope and recovery](docs/browser-login.md). Email/password and Google sign-in are supported by the device-flow contract. Apple device sign-in remains deferred.
 
-3. **MPP via tempo** (no key needed): install the [tempo CLI](https://docs.tempo.xyz) separately, run `tempo wallet login` to set up, then call the Nansen API through `tempo request`. The Nansen API selects the MPP rail when it sees `Authorization: Payment ...`. See [MPP / Tempo](#mpp--tempo) below.
+Existing API-key users can run commands directly with `NANSEN_API_KEY`. It overrides the saved session, even after successful browser login. To deliberately save an injected key, use explicit `nansen login --human`; without an environment key this prompts in a human terminal. `nansen login --api-key <key>` remains available but puts the key in shell history. Saved-auth mutations require the native lock binding. Get a conventional key at [agent setup](https://app.nansen.ai/auth/agent-setup); MCP installation exports a separate persistent API key; it does not export browser sessions.
+
+For automation, pipe a key from your secret manager into `nansen login --api-key-stdin`, or redirect a protected key file:
+
+```bash
+nansen login --api-key-stdin --json < /path/to/protected-api-key
+```
+
+This reads one key (up to 4096 bytes, with an optional trailing newline), verifies it, and saves it without printing it. Input must close within 30 seconds. `--json` prints one `saved` event with the effective credential source; errors exit nonzero. As with existing API-key login, the key is stored in `~/.nansen/config.json` using an atomic write with owner-only file permissions (`0600` on POSIX), not in the OS keychain. The native lock binding is required for saving credentials. It does not create an account or issue a key. Avoid commands containing literal secrets, which may enter shell history. Do not combine it with `--api-key`, `--human`, or `--no-browser`. An existing `NANSEN_API_KEY` still overrides the saved credential until you unset it.
+
+Wallet and micropayment options:
+
+- **x402:** create and fund a wallet with USDC on Base/Solana or USDT0 on X Layer. API keys, browser sessions and anonymous requests can all pay a supported HTTP 402 challenge under the same wallet policy and spending limits. The paid retry sends `Payment-Signature` without the account credential. Authentication or authorization failures never trigger payment. Explicit manual API-key payment signatures remain supported.
+- **MPP:** install the separate tempo CLI and use `tempo request`. Browser login does not configure a wallet, sign MPP credentials or purchase credits. See [MPP / Tempo](#mpp--tempo).
 
 ## Verify your MCP setup
 
@@ -53,6 +65,7 @@ nansen wallet <subcommand> [options]
 nansen mcp install <client>           # add the Nansen MCP server to Claude Code/Desktop or Cursor
 nansen completion <bash|zsh|fish>     # shell completions (no API key needed)
 nansen schema [command] [--pretty]    # full command reference (no API key needed)
+nansen cache stats                    # what the local caches hold (no API key needed)
 ```
 
 **Research categories:** `smart-money` (`sm`), `token` (`tgm`), `profiler` (`prof`), `portfolio` (`port`), `prediction-market` (`pm`), `search`, `perp`
@@ -76,7 +89,21 @@ Plus the `historical-*` point-in-time commands — run `nansen research help` fo
 
 Run `nansen schema --pretty` for the full subcommand and field reference.
 
+## Browser login compatibility and scope
+
+Browser login requests `nansen:api` for the same account/API permissions as a pasted API key, including smart-alert CRUD, public agent, portfolio, web, beta and existing trading API operations. The same endpoint ownership, plan, credit, quota, sanctions and geographic checks apply. Existing OAuth/MCP `nansen:read` grants keep their existing semantics. Wallet signing remains separate.
+
+Plain `nansen login` always starts fresh browser approval, whether no credential, an environment key, a saved key or a saved session exists. It preflights secure storage, shows a link/code, verifies the approved account through the free account endpoint, then replaces the single saved API credential. `nansen login --no-browser` lets you approve on another device without opening a browser on the CLI machine. It does not remove the native-storage or supported-platform requirements. Browser login requires both stdin and stdout to be terminals; without either, it exits immediately with `NOT_A_TTY` and points to `nansen login --human` with `NANSEN_API_KEY` or `nansen login --api-key-stdin`. In a terminal, `--json` emits NDJSON pending and terminal events; the private device code and tokens are never printed.
+
+`NANSEN_API_KEY` still overrides the saved session. Login verifies the new account independently and explains this override. Failed approval or installation preserves the previous selection. `nansen auth status` is offline and labels saved metadata as cached/unverified; `nansen account` checks the effective credential live. `nansen logout` removes saved API authentication and attempts family retirement, preserving wallets and environment keys. Remote revocation and physical deletion failures are reported separately.
+
+This is a breaking change for scripts that used plain login to persist an environment key. Use explicit `nansen login --human` with that environment key, or `--api-key <key>` with its existing shell-history risk. Direct key-authenticated commands need no migration. Existing API-key x402 payment behavior is preserved and also applies to browser sessions: a supported HTTP 402 challenge can trigger wallet payment under the existing policy and spending limits. A paid retry does not change the saved credential or top up account credits. Invalid credentials never cause an account switch or payment; login verification remains free and never pays.
+
+Browser login is enabled in production. Saved browser-session storage is [qualified on macOS arm64](docs/browser-login.md#preview-platform-scope); Linux qualification is pending, and Windows and SSH/background sessions are not qualified. Selected sessions renew automatically near expiry. If a refresh response is lost before a complete replacement is stored, follow the fresh-login guidance; the CLI never retries a consumed refresh credential. Browser sessions have the same account API permissions as API keys, subject to existing endpoint checks. They add no wallet-signing or internal-service authority and cannot be exported as MCP API keys. See [storage and recovery](docs/browser-login.md).
+
 ## MCP
+
+<!-- BEGIN GENERATED: mcp. Do not edit by hand. Edit src/mcp-client-config.json (values) or scripts/templates/readme-mcp.md (prose), not README.md, then run: npm run mcp:generate. -->
 
 Connect any MCP client to Nansen's streamable HTTP server:
 
@@ -94,7 +121,7 @@ nansen mcp install cursor --dry-run  # print what would be written (key redacted
 nansen mcp uninstall <client>        # remove the entry (add --dry-run to preview)
 ```
 
-Uses the API key from `nansen login` / `NANSEN_API_KEY`; re-run `install` after rotating your key. Writes are merge-only and atomic: existing servers and settings are preserved, a `.bak` copy is written before every install or uninstall, and the CLI refuses to touch a config it can't parse. Note the client config stores the API key in plaintext — new files are created with `0600` permissions. Restart the client after installing.
+Uses the API key from `nansen login --human` / `NANSEN_API_KEY`; re-run `install` after rotating your key. Writes are merge-only and atomic: existing servers and settings are preserved, a `.bak` copy is written before every install or uninstall, and the CLI refuses to touch a config it can't parse. Note the client config stores the API key in plaintext — new files are created with `0600` permissions. Restart the client after installing.
 
 **Manual setup**, for other clients or if you would rather not use the CLI — the paths below, and the connection docs at [docs.nansen.ai/mcp/connecting](https://docs.nansen.ai/mcp/connecting).
 
@@ -141,9 +168,11 @@ claude mcp add --transport http nansen https://mcp.nansen.ai/ra/mcp --header "NA
 }
 ```
 
-`mcp-remote` is pinned to an exact version rather than `@latest` because the bridge handles your API key on every request, and `npx` would otherwise pull a new release automatically. `0.2.1` is the current release and the version this config is tested against; bumping it is safe — review the release and update the pin.
+`mcp-remote` is pinned to an exact version rather than `@latest` because the bridge handles your API key on every request, and `npx` would otherwise pull a new release automatically. `0.2.1` is the version this config is tested against. A weekly check reports when a newer release exists; to bump the pin, review the release and follow [MCP client config](AGENTS.md#mcp-client-config).
 
 **Claude Tag (Claude in Slack):** an admin must attach a plugin whose `.mcp.json` points at `https://mcp.nansen.ai/ra/mcp` and add a custom credential allowing the host `mcp.nansen.ai`. See the [Claude Tag custom-connections documentation](https://claude.com/docs/claude-tag/admins/connections/custom). Per-user fallback: use Claude Code or Claude Desktop.
+
+<!-- END GENERATED: mcp -->
 
 ## Trading
 
@@ -173,6 +202,8 @@ nansen trade execute --quote <quoteId> --yes       # skip the confirmation promp
 ```
 
 `--dry-run` runs every sign-free preflight available from the cached quote, its public signer address, and read-only RPC calls; prints what *would* be sent (chain, tokens, amounts, recipient, approvals, fees); and stops before wallet credentials, signing, or broadcast — no wallet password needed, the quote stays usable, exit code 0. Real execution still resolves and revalidates the live signer before signing.
+
+On EVM, both commands refuse a transaction whose worst-case gas cost (fee cap × gas limit) is above 1 ETH, before anything is signed, approvals included. That is a backstop against an anomalous quote, the same kind of cap geth and reth apply to `eth_sendTransaction`. `--max-tx-fee <eth>` changes it, and `--max-tx-fee 0` turns it off. WalletConnect transactions are not checked, since the wallet shows the fee before signing.
 
 When stdin is an interactive terminal, execute prints that plan and asks `Broadcast this transaction? [y/N]` first; anything but `y`/`yes` aborts with exit code 1 and nothing signed. `--yes`, or `NANSEN_YES=1`, skips the question. **When stdin is not a terminal — agents, CI, pipes — nothing changes: the command proceeds without prompting**, and `--yes` is accepted as a no-op so it is always safe to pass.
 
@@ -325,7 +356,46 @@ after upgrading the CLI to pick up new commands.
 | `--paginate` | Fetch every page of a list command (alias `--all`); bound with `--max-pages <n>` (default 10; ignored without pagination) |
 | `--labels <label>` | Smart Money label filter |
 | `--smart-money` | Filter for Smart Money addresses only |
+| `--cache` | Serve this invocation from the local cache (see [Caching](#caching)) |
+| `--no-cache` | Bypass the cache for this invocation |
 | `--debug` | Trace every HTTP request on stderr (see [Debugging](#debugging)) |
+
+## Caching
+
+Response caching is **off by default** and opt-in per invocation:
+
+```bash
+nansen research token screener --chain solana --cache              # cache this result
+nansen research token screener --chain solana --cache --cache-ttl 60
+nansen research token screener --chain solana --cache --no-cache   # veto: always live
+```
+
+`NANSEN_NO_CACHE=1` does the same as `--no-cache` without a flag, for wrappers
+that cannot change the command line.
+
+With `--cache` on, every read the CLI makes through the Nansen API client is
+cached — all of `nansen research ...`, plus `alerts list` and `alerts get`.
+Never cached: `account`, `web search`, `web fetch`, the `alerts`
+create/update/toggle/delete commands, `agent`, every `trade`, `bridge`, `wallet`
+and `mcp` command, and `perp` trading. The analytics commands `perp screener`
+and `perp leaderboard` are cached.
+
+Inspect and clear what is on disk:
+
+```bash
+nansen cache stats                 # entries, size, age, effective TTL per cache
+nansen cache stats --json          # the same numbers as an object
+nansen cache clear                 # delete cached API responses
+nansen cache clear cost-map        # or update-check, or all
+```
+
+`nansen cache stats` reports totals and ages. It reads timestamp metadata but does not print cached payloads, request parameters, or cache keys. `nansen cache clear` deletes only files in the selected cache. Credentials, wallets, saved quotes, and config are never changed. CLI startup loads the saved config as usual.
+
+| Cache | Location | TTL |
+|-------|----------|-----|
+| `responses` | `~/.nansen/cache` | `--cache-ttl`, default 300s |
+| `cost-map` | `~/.nansen/cost-map.json` | 24h |
+| `update-check` | `~/.nansen/update-check.json` | 24h |
 
 ## Debugging
 
@@ -383,11 +453,39 @@ inconsistent totals while pages are being fetched, later rows can be omitted. Co
 
 ## Output Format
 
-> **Compatibility note:** `--table`, `--format csv`, and `--stream` now render an
-> unambiguous descriptive top-level array (for example, `trades` or `holdings`)
-> as one row per item, even without `--paginate`. Older versions rendered the
-> enclosing response object as a single row. Envelopes with multiple candidate
-> data arrays remain unexpanded.
+### Migrating row output from 1.46.0 to 2.0.0
+
+`--table`, `--format csv`, and `--stream` now render each item in a nested
+`data.data` array as a separate row or NDJSON line, even without `--paginate`.
+For example, if `nansen token screener --format csv` receives this response body:
+
+```json
+{"data":{"data":[{"a":1},{"a":2}]}}
+```
+
+The CSV output changes from one row containing the nested object as a JSON string:
+
+```csv
+data
+"{""data"":[{""a"":1},{""a"":2}]}"
+```
+
+to two rows with the item field as the header:
+
+```csv
+a
+1
+2
+```
+
+`--table` makes the same one-to-two-row change. `--stream` changes from one
+NDJSON line for the enclosing object to one line per item. A single unambiguous
+descriptive top-level array, such as `trades` or `holdings`, also expands into
+individual rows or lines. Older versions rendered its enclosing object as one
+row or line. Envelopes with multiple candidate data arrays remain unexpanded.
+Default JSON output still contains the complete response body.
+
+### Response envelope
 
 ```json
 { "success": true,  "data": <api_response> }
@@ -425,7 +523,7 @@ Any field may be absent or `null`, meaning unknown — never assume zero. A low-
 |---------|-----|
 | `command not found` | `npm install -g nansen-cli` |
 | Global install reports an older version | `npm i -g nansen-cli@latest --registry=https://registry.npmjs.org/ --prefer-online`, then check `which -a nansen` for stale binaries |
-| `UNAUTHORIZED` after login | `nansen auth status` shows which key is active and where it comes from; re-run `nansen login` or set `NANSEN_API_KEY` |
+| `UNAUTHORIZED` after login | `nansen auth status` shows the effective credential and cached/unverified session metadata. Correct an invalid environment key first; browser login does not override it. Use fresh `nansen login` for a rejected session, or explicit legacy key setup for integration credentials |
 | MCP client lists tools but paid calls fail | Run `npx -y nansen-cli mcp verify` with the saved key or `NANSEN_API_KEY`, and ensure that same key is in the client's `NANSEN-API-KEY` header |
 | Anything else misbehaving | `nansen doctor` checks your whole setup (auth, wallets, caches, connectivity) with a fix per finding |
 | Empty perp _research_ results | Use `--symbol BTC`, not `--token`. Perps are Hyperliquid-only. |

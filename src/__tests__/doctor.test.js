@@ -279,6 +279,13 @@ describe('doctor', () => {
       expect(check.fix).toContain('nansen login');
     });
 
+    it.each([{ version: 2, active: { kind: 'session' } }, { version: 1, active: { kind: 'unknown' } }])('explains unsupported auth format without exposing config contents: %j', auth => {
+      writeConfig({ auth, apiKey: 'private-saved-key' });
+      const checks = runDoctorChecks(deps());
+      expect(findCheck(checks, 'config-file')).toMatchObject({ status: 'error', message: expect.stringContaining('unrecognized auth format'), fix: expect.stringContaining('Restore or repair config.json') });
+      expect(JSON.stringify(checks)).not.toContain('private-saved-key');
+    });
+
     it('distinguishes an unreadable config file from a corrupt one', () => {
       writeConfig({ apiKey: 'nk_1234567890abcdef' });
       fs.chmodSync(path.join(nansenDir(), 'config.json'), 0o000);

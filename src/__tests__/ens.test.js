@@ -70,7 +70,12 @@ describe('ENS Resolution', () => {
     });
 
     it('fails with descriptive error for unresolvable names', async () => {
-      await expect(resolveAddress('zzznonexistent999999.eth')).rejects.toThrow('Could not resolve ENS name');
+      const get = vi.spyOn(https, 'get').mockImplementation(() => { throw new Error('synthetic unresolved lookup'); });
+      const post = vi.spyOn(https, 'request').mockImplementation(() => { throw new Error('synthetic unresolved RPC'); });
+      try {
+        await expect(resolveAddress('zzznonexistent999999.eth')).rejects.toThrow('Could not resolve ENS name');
+        expect(get).toHaveBeenCalledOnce(); expect(post).toHaveBeenCalledOnce();
+      } finally { get.mockRestore(); post.mockRestore(); }
     }, 15000);
   });
 

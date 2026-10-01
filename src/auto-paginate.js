@@ -16,14 +16,23 @@ export const DEFAULT_MAX_PAGES = 10;
 // unbounded memory and billed API work from a long-running agent.
 export const MAX_PAGES_LIMIT = 1000;
 
+function hasObjectRows(rows) {
+  return rows.every(row => row !== null && typeof row === 'object' && !Array.isArray(row));
+}
+
 // Shared by collectPages and cli.js's formatTable/formatCsv/formatStream so
 // pagination and output formatting recognise the same row shapes.
-export function locateRows(page, { descriptive = false } = {}) {
+export function locateRows(page, { descriptive = false, descriptiveKey, allowEmptyDescriptive = false } = {}) {
   if (page?.success === false) return null;
-  if (Array.isArray(page)) return { rows: page, rebuild: rows => ({ data: rows }) };
-  if (Array.isArray(page?.data)) return { rows: page.data, rebuild: rows => ({ ...page, data: rows }) };
-  if (Array.isArray(page?.results)) return { rows: page.results, rebuild: rows => ({ ...page, results: rows }) };
-  if (Array.isArray(page?.data?.data)) {
+  if (descriptiveKey) {
+    const rows = page?.[descriptiveKey];
+    if (!Array.isArray(rows) || !hasObjectRows(rows)) return null;
+    return { rows, key: descriptiveKey, rebuild: mergedRows => ({ ...page, [descriptiveKey]: mergedRows }) };
+  }
+  if (Array.isArray(page) && hasObjectRows(page)) return { rows: page, rebuild: rows => ({ data: rows }) };
+  if (Array.isArray(page?.data) && hasObjectRows(page.data)) return { rows: page.data, rebuild: rows => ({ ...page, data: rows }) };
+  if (Array.isArray(page?.results) && hasObjectRows(page.results)) return { rows: page.results, rebuild: rows => ({ ...page, results: rows }) };
+  if (Array.isArray(page?.data?.data) && hasObjectRows(page.data.data)) {
     return {
       rows: page.data.data,
       rebuild: rows => {
@@ -35,7 +44,7 @@ export function locateRows(page, { descriptive = false } = {}) {
       },
     };
   }
-  if (Array.isArray(page?.data?.results)) {
+  if (Array.isArray(page?.data?.results) && hasObjectRows(page.data.results)) {
     return {
       rows: page.data.results,
       rebuild: rows => {
@@ -47,15 +56,18 @@ export function locateRows(page, { descriptive = false } = {}) {
   }
 
   // Older endpoints use a descriptive top-level key (`trades`, `holdings`,
-  // `balances`, etc.) rather than `data`. A single array is unambiguous; do
-  // not count pagination metadata as rows or guess when an envelope contains
-  // several independent data arrays.
+  // `balances`, etc.) rather than `data`. Only a populated array of objects
+  // can identify rows here. Empty or primitive arrays may be envelope fields.
   if (descriptive && page && typeof page === 'object') {
-    const arrays = Object.entries(page)
-      .filter(([key, value]) => key !== 'pagination' && Array.isArray(value));
-    if (arrays.length === 1) {
-      const [key, rows] = arrays[0];
-      return { rows, rebuild: mergedRows => ({ ...page, [key]: mergedRows }) };
+    const fields = Object.entries(page).filter(([key]) => key !== 'pagination' && key !== 'success');
+    const arrays = fields.filter(([, value]) => Array.isArray(value) && value.length > 0 && hasObjectRows(value));
+    // Pagination can recognize an empty first page only when the array is
+    // the entire payload apart from status and pagination metadata.
+    const emptyOnly = allowEmptyDescriptive && fields.length === 1
+      && Array.isArray(fields[0][1]) && fields[0][1].length === 0;
+    if (arrays.length === 1 || (arrays.length === 0 && emptyOnly)) {
+      const [key, rows] = arrays[0] || fields[0];
+      return { rows, key, rebuild: mergedRows => ({ ...page, [key]: mergedRows }) };
     }
   }
   return null;
@@ -139,7 +151,11 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
     const res = await fetchPage({ ...pagination, page });
     pagesFetched++;
     if (res?.success === false) throw failedPageError(res, page);
-    const located = locateRows(res, { descriptive: true });
+    const located = locateRows(res, {
+      descriptive: true,
+      descriptiveKey: first?.key,
+      allowEmptyDescriptive: first === undefined,
+    });
     if (first === undefined) {
       if (!located) return res;
       first = located;
