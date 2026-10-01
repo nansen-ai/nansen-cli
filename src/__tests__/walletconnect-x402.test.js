@@ -21,13 +21,14 @@ vi.mock('../walletconnect-exec.js', () => ({
 }));
 
 vi.mock('../x402-ledger.js', () => ({
-  assertCumulativeSpendAllowed: vi.fn(() => ({ ok: true })),
+  assertCumulativeSpendAllowed: vi.fn(() => ({ ok: true, reservationId: 'mock-reservation-id' })),
   recordPaymentAttempt: vi.fn(() => 'mock-payment-id'),
+  releasePaymentReservation: vi.fn(),
 }));
 
 import { evaluatePaymentRequirement } from '../x402-policy.js';
 import { wcExec } from '../walletconnect-exec.js';
-import { assertCumulativeSpendAllowed, recordPaymentAttempt } from '../x402-ledger.js';
+import { assertCumulativeSpendAllowed, recordPaymentAttempt, releasePaymentReservation } from '../x402-ledger.js';
 import { handleX402Payment, buildEIP712TypedData } from '../walletconnect-x402.js';
 import { ErrorCode } from '../api.js';
 
@@ -330,6 +331,42 @@ describe('handleX402Payment — cumulative cap enforcement', () => {
     await handleX402Payment(PAYMENT_REQUIREMENTS);
 
     expect(recordPaymentAttempt).toHaveBeenCalledWith(expect.objectContaining({ authorizedAt }));
+  });
+
+  it('threads the reservation into the recorded payment so finalization can settle it', async () => {
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC', network: 'eip155:8453', asset: '0xtoken', payTo: '0xrec', amountRaw: '10000' });
+
+    await handleX402Payment(PAYMENT_REQUIREMENTS);
+
+    expect(recordPaymentAttempt).toHaveBeenCalledWith(expect.objectContaining({ reservationId: 'mock-reservation-id' }));
+  });
+
+  it('releases the reservation when signing is abandoned', async () => {
+    // Budget is held from the cap check, and signing here waits on a human in
+    // a wallet app. A rejected approval must hand that budget straight back
+    // rather than park it for the reservation's full TTL.
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC', network: 'eip155:8453', asset: '0xtoken', payTo: '0xrec', amountRaw: '10000' });
+    wcExec.mockImplementation((_cmd, args) => {
+      if (args[0] === 'whoami') return Promise.resolve(JSON.stringify(CONNECTED_WALLET));
+      return Promise.reject(new Error('user rejected request'));
+    });
+
+    await expect(handleX402Payment(PAYMENT_REQUIREMENTS)).rejects.toMatchObject({ code: ErrorCode.PAYMENT_REQUIRED });
+    expect(releasePaymentReservation).toHaveBeenCalledWith('mock-reservation-id');
+    expect(recordPaymentAttempt).not.toHaveBeenCalled();
+  });
+
+  it('releases the reservation when no session is approved for the target chain', async () => {
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC', network: 'eip155:8453', asset: '0xtoken', payTo: '0xrec', amountRaw: '10000' });
+    wcExec.mockImplementation((_cmd, args) => {
+      if (args[0] === 'whoami') {
+        return Promise.resolve(JSON.stringify({ connected: true, accounts: [{ chain: 'eip155:56', address: '0xWalletAddress' }] }));
+      }
+      return Promise.resolve('{}');
+    });
+
+    await expect(handleX402Payment(PAYMENT_REQUIREMENTS)).rejects.toThrow(/no WalletConnect session is active/);
+    expect(releasePaymentReservation).toHaveBeenCalledWith('mock-reservation-id');
   });
 
   it('logs an [x402] line and re-throws when the cap check throws (corrupt/unreadable ledger)', async () => {

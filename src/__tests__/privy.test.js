@@ -19,9 +19,10 @@ vi.mock("../wallet.js", async (importOriginal) => {
 
 // Intercept x402-ledger dynamic imports so cap checks are controllable in tests.
 vi.mock("../x402-ledger.js", () => ({
-  assertCumulativeSpendAllowed: vi.fn(() => ({ ok: true })),
+  assertCumulativeSpendAllowed: vi.fn(() => ({ ok: true, reservationId: "mock-reservation-id" })),
   finalizePaymentAttempt: vi.fn(),
   recordPaymentAttempt: vi.fn(() => "mock-payment-id"),
+  releasePaymentReservation: vi.fn(),
 }));
 
 // ============= PrivyClient =============
@@ -487,6 +488,13 @@ describe("createPrivyPaymentSignatures", () => {
     // First failed, second succeeded
     expect(results).toHaveLength(1);
     expect(results[0].network).toBe("eip155:196");
+
+    // The abandoned first attempt must not keep holding budget: without the
+    // release, each failed option would park its amount for the full TTL and
+    // the later options could be refused for lack of headroom.
+    const { releasePaymentReservation, recordPaymentAttempt } = await import("../x402-ledger.js");
+    expect(releasePaymentReservation).toHaveBeenCalledWith("mock-reservation-id");
+    expect(recordPaymentAttempt).toHaveBeenLastCalledWith(expect.objectContaining({ reservationId: "mock-reservation-id" }));
   });
 });
 

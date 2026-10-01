@@ -12,6 +12,13 @@ const MICRO_USD_SCALE = 1_000_000;
 const LEDGER_LOCK_RETRY_MS = 25;
 const LEDGER_LOCK_TIMEOUT_MS = 5_000;
 const LEDGER_LOCK_STALE_MS = 30_000;
+// How long a reservation holds budget before other processes may reclaim it.
+// It must comfortably exceed the slowest path from cap check to finalization —
+// WalletConnect allows 120s of wallet approval before the request even goes out
+// — because an early expiry would hand the same budget to a second process.
+// It only matters when a process dies mid-payment: every ordinary outcome
+// commits or releases the reservation explicitly.
+const RESERVATION_TTL_MS = 15 * 60 * 1000;
 
 // Session accumulator — lives in process memory only
 let sessionSpendMicros = 0n;
@@ -83,16 +90,17 @@ function getDailyFileName(now) {
 }
 
 /**
- * Returns { totalUsd } for the current UTC day, or { totalUsd: 0 } if no ledger exists yet.
+ * Returns { totalUsd, reservedUsd } for the current UTC day — settled spend and budget held by
+ * in-flight payments — or zeros if no ledger exists yet.
  * @throws {X402LedgerError} if the ledger file exists but cannot be read/parsed (fail-closed,
  *   consistent with assertCumulativeSpendAllowed — a corrupt ledger is never read as $0).
  */
 export function getDailySpendState(now = new Date()) {
   const dir = getLedgerDir();
   const filePath = path.join(dir, getDailyFileName(now));
-  if (!fs.existsSync(filePath)) return { totalUsd: 0 };
   try {
-    return { totalUsd: microsToUsd(readDailySpendMicros(filePath)) };
+    const { committedMicros, reservations } = readDailyLedger(filePath, now);
+    return { totalUsd: microsToUsd(committedMicros), reservedUsd: microsToUsd(sumReservations(reservations)) };
   } catch {
     throw new X402LedgerError(
       `x402 daily spend ledger is corrupt and cannot be read safely. ` +
@@ -127,9 +135,83 @@ function readSpendMicrosFromData(data) {
   return 0n;
 }
 
-function readDailySpendMicros(filePath) {
+/**
+ * Read a daily ledger file as { committedMicros, reservations }.
+ * Reservations past their expiry are dropped here: a process that died between
+ * reserving and finalizing must not hold budget for the rest of the day.
+ * Throws (caller converts to X402LedgerError) on anything malformed.
+ */
+function readDailyLedger(filePath, now = new Date()) {
+  if (!fs.existsSync(filePath)) return { committedMicros: 0n, reservations: new Map() };
+
   const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  return readSpendMicrosFromData(data);
+  const committedMicros = readSpendMicrosFromData(data);
+
+  const reservations = new Map();
+  const raw = data && typeof data.reservations === 'object' && data.reservations !== null
+    ? data.reservations
+    : {};
+  for (const [reservationId, entry] of Object.entries(raw)) {
+    if (!entry || typeof entry !== 'object') throw new Error('Invalid reservation');
+    const micros = String(entry.micros);
+    if (!/^\d+$/.test(micros)) throw new Error('Invalid reservation micros');
+    const expiresAtMs = Date.parse(entry.expiresAt);
+    if (!Number.isFinite(expiresAtMs)) throw new Error('Invalid reservation expiry');
+    if (expiresAtMs <= now.getTime()) continue;
+    reservations.set(reservationId, { micros: BigInt(micros), expiresAt: entry.expiresAt });
+  }
+  return { committedMicros, reservations };
+}
+
+function sumReservations(reservations) {
+  let total = 0n;
+  for (const reservation of reservations.values()) total += reservation.micros;
+  return total;
+}
+
+function writeDailyLedger(filePath, { committedMicros, reservations }) {
+  const tmpPath = filePath + '.' + process.pid + '.tmp';
+  const data = { totalUsdMicros: committedMicros.toString(), updatedAt: new Date().toISOString() };
+  // Omitted when empty so a settled day's file keeps its original shape.
+  if (reservations.size > 0) {
+    data.reservations = Object.fromEntries(
+      [...reservations].map(([reservationId, r]) => [reservationId, { micros: r.micros.toString(), expiresAt: r.expiresAt }]),
+    );
+  }
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(data), { mode: 0o600 });
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch { /* best-effort temp cleanup */ }
+    throw err;
+  }
+}
+
+/**
+ * Read-modify-write the day's ledger under the lock. `mutate` receives the
+ * parsed state and returns { value, write }; `write: false` leaves the file
+ * untouched (used when a cap check refuses and nothing was reserved).
+ */
+function mutateDailyLedger({ now, failClosedNote, mutate }) {
+  const filePath = path.join(getLedgerDir(), getDailyFileName(now));
+  const lockPath = filePath + '.lock';
+  ensureLedgerDir();
+  return withLedgerLock(lockPath, () => {
+    let state;
+    try {
+      state = readDailyLedger(filePath, now);
+    } catch {
+      throw new X402LedgerError(
+        `x402 daily spend ledger is corrupt and cannot be read safely. ` +
+        `To reset: remove ${filePath}. (fail-closed: ${failClosedNote})`,
+      );
+    }
+    const { value, write } = mutate(state);
+    if (write !== false) writeDailyLedger(filePath, state);
+    return value;
+  }, failClosedNote);
 }
 
 /**
@@ -166,31 +248,37 @@ export function assertCumulativeSpendAllowed({ amountUsd, now = new Date() }) {
   // payment is finally recorded is not reliably the day that authorized it.
   if (!Number.isFinite(dailyCap)) return { ok: true, authorizedAt: now };
 
-  const dir = getLedgerDir();
-  const filePath = path.join(dir, getDailyFileName(now));
-  let dailyTotal = 0n;
-  if (fs.existsSync(filePath)) {
-    try {
-      dailyTotal = readDailySpendMicros(filePath);
-    } catch {
-      throw new X402LedgerError(
-        `x402 daily spend ledger is corrupt and cannot be read safely. ` +
-        `To reset: remove ${filePath}. (fail-closed: not signing this payment)`,
-      );
-    }
-  }
+  // Check and reserve in one locked read-modify-write. Checking without
+  // reserving is a time-of-check/time-of-use race: two processes read the same
+  // total, both clear the cap, both sign, and the serialized increments land
+  // above the limit the user set. Holding budget from this moment is what makes
+  // the cap hold across concurrent CLI invocations.
+  return mutateDailyLedger({
+    now,
+    failClosedNote: 'not signing this payment',
+    mutate: (state) => {
+      const committedAndHeld = state.committedMicros + sumReservations(state.reservations);
+      if (committedAndHeld + amountMicros > usdToMicros(dailyCap)) {
+        const capStr = `$${dailyCap.toFixed(2)}`;
+        return {
+          write: false,
+          value: {
+            ok: false,
+            reason:
+              `Refusing to auto-pay: this payment would exceed the ${capStr} daily x402 spend cap. ` +
+              `To authorize, raise it with NANSEN_X402_DAILY_MAX_AMOUNT=<usd> or set NANSEN_X402_DAILY_MAX_AMOUNT=unlimited.`,
+          },
+        };
+      }
 
-  if (dailyTotal + amountMicros > usdToMicros(dailyCap)) {
-    const capStr = `$${dailyCap.toFixed(2)}`;
-    return {
-      ok: false,
-      reason:
-        `Refusing to auto-pay: this payment would exceed the ${capStr} daily x402 spend cap. ` +
-        `To authorize, raise it with NANSEN_X402_DAILY_MAX_AMOUNT=<usd> or set NANSEN_X402_DAILY_MAX_AMOUNT=unlimited.`,
-    };
-  }
-
-  return { ok: true, authorizedAt: now };
+      const reservationId = crypto.randomBytes(16).toString('hex');
+      state.reservations.set(reservationId, {
+        micros: amountMicros,
+        expiresAt: new Date(now.getTime() + RESERVATION_TTL_MS).toISOString(),
+      });
+      return { value: { ok: true, authorizedAt: now, reservationId } };
+    },
+  });
 }
 
 function ensureLedgerDir() {
@@ -203,7 +291,7 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function withLedgerLock(lockPath, fn) {
+function withLedgerLock(lockPath, fn, failClosedNote = 'preserving existing ledger') {
   const startedAt = Date.now();
 
   while (true) {
@@ -244,7 +332,7 @@ function withLedgerLock(lockPath, fn) {
       if (Date.now() - startedAt > LEDGER_LOCK_TIMEOUT_MS) {
         throw new X402LedgerError(
           `x402 daily spend ledger is locked and cannot be updated safely. ` +
-          `(fail-closed: preserving existing ledger)`,
+          `(fail-closed: ${failClosedNote})`,
         );
       }
       sleepSync(LEDGER_LOCK_RETRY_MS);
@@ -300,6 +388,7 @@ export function recordPaymentAttempt(entry) {
     status: 'signed',
     provider: entry.provider || null,
     walletLabel: entry.walletLabel || null,
+    reservationId: entry.reservationId || null,
     network: entry.network || null,
     asset: entry.asset || null,
     symbol: entry.symbol || null,
@@ -322,7 +411,13 @@ export function recordPaymentAttempt(entry) {
   // response can both land on the next day — with WalletConnect, minutes of user
   // approval sit between the cap check and this line — and neither may silently
   // move the charge onto a day that never authorized it.
-  if (entry.amountUsd !== undefined) pendingAmounts.set(id, { amountUsd: entry.amountUsd, recordedAt: authorizedAt });
+  if (entry.amountUsd !== undefined || entry.reservationId) {
+    pendingAmounts.set(id, {
+      amountUsd: entry.amountUsd,
+      recordedAt: authorizedAt,
+      reservationId: entry.reservationId || null,
+    });
+  }
   return id;
 }
 
@@ -336,12 +431,14 @@ export function finalizePaymentAttempt(id, patch) {
     appendAuditLine({ id, timestamp: new Date().toISOString(), ...patch });
   } catch { /* best-effort audit */ }
 
-  if (patch.status === 'accepted' || patch.status === 'ambiguous') {
-    const pending = pendingAmounts.get(id);
-    if (pending !== undefined) {
-      const { amountUsd, recordedAt } = pending;
+  const pending = pendingAmounts.get(id);
+  if (pending !== undefined) {
+    const { amountUsd, recordedAt, reservationId } = pending;
+    const settled = patch.status === 'accepted' || patch.status === 'ambiguous';
+
+    if (settled && amountUsd !== undefined) {
       try {
-        incrementDailySpend(amountUsd, recordedAt);
+        commitDailySpend(amountUsd, recordedAt, reservationId);
         // Only advance the in-memory session total once the durable daily file
         // has actually been written. If the write failed (ENOSPC, permissions,
         // corrupt ledger), the daily total is unchanged; advancing session spend
@@ -351,7 +448,9 @@ export function finalizePaymentAttempt(id, patch) {
       } catch (err) {
         // The payment is already transmitted — it cannot be unsent, so this
         // attempt cannot fail closed. The next one can, and must: the daily
-        // total now under-counts real spend by this amount.
+        // total now under-counts real spend by this amount. The reservation is
+        // left in place deliberately; until it expires it holds roughly the
+        // right amount of budget against other processes.
         ledgerWriteFailure =
           `a $${Number(amountUsd).toFixed(2)} payment was transmitted but could not be written ` +
           `to the daily spend ledger (${err.message}).`;
@@ -360,43 +459,63 @@ export function finalizePaymentAttempt(id, patch) {
           `Further x402 payments are blocked this session because the daily cap can no longer be enforced.`,
         );
       }
+    } else if (reservationId) {
+      // Rejected, or settled with no amount to charge: nothing was spent, so
+      // the held budget goes back rather than waiting out its TTL.
+      try {
+        releaseDailyReservation(reservationId, recordedAt);
+      } catch (err) {
+        console.error(
+          `[x402] Warning: could not release the daily spend reservation: ${err.message} ` +
+          `It expires on its own; until then this budget stays held.`,
+        );
+      }
     }
   }
   pendingAmounts.delete(id);
 }
 
-function incrementDailySpend(amountUsd, now = new Date()) {
-  const dir = getLedgerDir();
-  const filePath = path.join(dir, getDailyFileName(now));
-  const lockPath = filePath + '.lock';
-  const tmpPath = filePath + '.' + process.pid + '.tmp';
-
+// Turn the reservation this payment holds into settled spend. Dropping the
+// reservation in the same locked write keeps the budget from being counted
+// twice — once as held, once as spent.
+function commitDailySpend(amountUsd, now = new Date(), reservationId = null) {
   const amountMicros = usdToMicros(amountUsd);
-  ensureLedgerDir();
-  withLedgerLock(lockPath, () => {
-    let current = 0n;
-    if (fs.existsSync(filePath)) {
-      try {
-        current = readDailySpendMicros(filePath);
-      } catch {
-        throw new X402LedgerError(
-          `x402 daily spend ledger is corrupt and cannot be updated safely. ` +
-          `To reset: remove ${filePath}. (fail-closed: preserving existing ledger)`,
-        );
-      }
-    }
-
-    const updated = { totalUsdMicros: (current + amountMicros).toString(), updatedAt: new Date().toISOString() };
-    try {
-      fs.writeFileSync(tmpPath, JSON.stringify(updated), { mode: 0o600 });
-      fs.renameSync(tmpPath, filePath);
-    } catch (err) {
-      try {
-        fs.unlinkSync(tmpPath);
-      } catch { /* best-effort temp cleanup */ }
-      throw err;
-    }
+  mutateDailyLedger({
+    now,
+    failClosedNote: 'preserving existing ledger',
+    mutate: (state) => {
+      if (reservationId) state.reservations.delete(reservationId);
+      state.committedMicros += amountMicros;
+      return { value: undefined };
+    },
   });
+}
+
+// Hand budget back when a payment ends without settling (a clean rejection, or
+// a provider that abandoned the attempt before signing).
+function releaseDailyReservation(reservationId, now = new Date()) {
+  if (!reservationId) return;
+  mutateDailyLedger({
+    now,
+    failClosedNote: 'preserving existing ledger',
+    mutate: (state) => {
+      if (!state.reservations.delete(reservationId)) return { value: false, write: false };
+      return { value: true };
+    },
+  });
+}
+
+/**
+ * Release budget held by a cap check whose payment was never attempted — a
+ * provider that skipped the option or failed before signing. Without this the
+ * reservation would hold budget until RESERVATION_TTL_MS elapses.
+ * Best-effort: the TTL is the backstop, so a failure here is never fatal.
+ */
+export function releasePaymentReservation(reservationId, now = new Date()) {
+  if (!reservationId) return;
+  try {
+    releaseDailyReservation(reservationId, now);
+  } catch { /* best-effort: the reservation expires on its own */ }
 }
 
 // Exported for tests only

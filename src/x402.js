@@ -132,7 +132,7 @@ async function buildPaymentForRequirement(requirement, exported, url, walletLabe
     return null;
   }
 
-  const { assertCumulativeSpendAllowed, recordPaymentAttempt } = await import('./x402-ledger.js');
+  const { assertCumulativeSpendAllowed, recordPaymentAttempt, releasePaymentReservation } = await import('./x402-ledger.js');
   let capCheck;
   try {
     capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
@@ -145,51 +145,65 @@ async function buildPaymentForRequirement(requirement, exported, url, walletLabe
     return null;
   }
 
+  // Budget is held from the cap check onward, so every path that gives up
+  // before the payment is recorded has to release it — otherwise a wallet
+  // missing a Permit2 allowance would park the amount until its TTL expires.
+  const { reservationId } = capCheck;
   let sig = null;
 
-  if (isEvmNetwork(requirement.network)) {
-    if ((requirement.extra || {}).assetTransferMethod === 'permit2-exact') {
-      const resolvedAmount = resolvePaymentAmount(requirement);
-      const approved = await hasPermit2Allowance(
-        requirement.network,
-        requirement.asset,
-        exported.evm.address,
-        resolvedAmount,
-      );
-      if (!approved) {
-        console.error(
-          `[x402] Skipping ${requirement.network} permit2 option: Permit2 ` +
-          `(${PERMIT2_ADDRESS}) allowance for token ${requirement.asset} is ` +
-          `missing or below the payment amount (${resolvedAmount}). ` +
-          `Send approve(${PERMIT2_ADDRESS}, <amount>) from the wallet to enable it.`,
+  try {
+    if (isEvmNetwork(requirement.network)) {
+      if ((requirement.extra || {}).assetTransferMethod === 'permit2-exact') {
+        const resolvedAmount = resolvePaymentAmount(requirement);
+        const approved = await hasPermit2Allowance(
+          requirement.network,
+          requirement.asset,
+          exported.evm.address,
+          resolvedAmount,
         );
-        return null;
+        if (!approved) {
+          console.error(
+            `[x402] Skipping ${requirement.network} permit2 option: Permit2 ` +
+            `(${PERMIT2_ADDRESS}) allowance for token ${requirement.asset} is ` +
+            `missing or below the payment amount (${resolvedAmount}). ` +
+            `Send approve(${PERMIT2_ADDRESS}, <amount>) from the wallet to enable it.`,
+          );
+          releasePaymentReservation(reservationId);
+          return null;
+        }
       }
+      sig = await createEvmPaymentPayload(
+        requirement,
+        exported.evm.privateKey,
+        exported.evm.address,
+        url,
+      );
+    } else if (isSvmNetwork(requirement.network)) {
+      const rpcUrl = getSolanaRpcUrl(requirement.network);
+      const blockhash = await fetchRecentBlockhash(rpcUrl);
+      sig = await createSvmPaymentPayload(
+        requirement,
+        exported.solana.privateKey,
+        exported.solana.address,
+        url,
+        blockhash,
+      );
     }
-    sig = await createEvmPaymentPayload(
-      requirement,
-      exported.evm.privateKey,
-      exported.evm.address,
-      url,
-    );
-  } else if (isSvmNetwork(requirement.network)) {
-    const rpcUrl = getSolanaRpcUrl(requirement.network);
-    const blockhash = await fetchRecentBlockhash(rpcUrl);
-    sig = await createSvmPaymentPayload(
-      requirement,
-      exported.solana.privateKey,
-      exported.solana.address,
-      url,
-      blockhash,
-    );
+  } catch (err) {
+    releasePaymentReservation(reservationId);
+    throw err;
   }
 
-  if (!sig) return null;
+  if (!sig) {
+    releasePaymentReservation(reservationId);
+    return null;
+  }
 
   const paymentId = recordPaymentAttempt({
     provider: 'local',
     walletLabel: walletLabel || 'local wallet',
     authorizedAt: capCheck.authorizedAt,
+    reservationId,
     network: decision.network,
     asset: decision.asset,
     symbol: decision.symbol,
