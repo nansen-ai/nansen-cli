@@ -16,6 +16,12 @@ const LEDGER_LOCK_STALE_MS = 30_000;
 // Session accumulator — lives in process memory only
 let sessionSpendMicros = 0n;
 
+// Set when a transmitted payment could not be written to the daily ledger. The
+// amount is already on the wire but uncounted, so the daily total under-reports
+// real spend and the cap can no longer be enforced. Every later cap check in
+// this process fails closed until the operator resolves it.
+let ledgerWriteFailure = null;
+
 export class X402LedgerError extends Error {
   constructor(message) {
     super(message);
@@ -57,6 +63,16 @@ function getLedgerDir() {
     );
   }
   return path.join(home, '.nansen', 'x402');
+}
+
+// Error-message helper only: getLedgerDir() throws without a home directory,
+// and a cap-check failure message must never be masked by that.
+function describeLedgerDirForMessage() {
+  try {
+    return getLedgerDir();
+  } catch {
+    return '~/.nansen/x402';
+  }
 }
 
 function getDailyFileName(now) {
@@ -117,10 +133,22 @@ function readDailySpendMicros(filePath) {
 }
 
 /**
- * Returns { ok: true } if cumulative caps are satisfied, { ok: false, reason } otherwise.
- * Throws on corrupt ledger (fail-closed: a corrupt ledger must not silently disable the cap).
+ * Returns { ok: true, authorizedAt } if cumulative caps are satisfied, { ok: false, reason }
+ * otherwise. Pass authorizedAt to recordPaymentAttempt so the spend is charged to the UTC day
+ * this check cleared, not the day signing finished.
+ * Throws on a corrupt ledger, an unresolvable home directory, or after a failed daily ledger
+ * write (fail-closed: none of those may silently disable the cap).
  */
 export function assertCumulativeSpendAllowed({ amountUsd, now = new Date() }) {
+  if (ledgerWriteFailure) {
+    throw new X402LedgerError(
+      `x402 spend accounting is incomplete: ${ledgerWriteFailure} ` +
+      `The daily total under-counts that payment, so the daily cap cannot be enforced. ` +
+      `To resume: check ${describeLedgerDirForMessage()} is writable, reconcile the daily total ` +
+      `against payments.jsonl, then re-run. (fail-closed: not signing this payment)`,
+    );
+  }
+
   const amountMicros = usdToMicros(amountUsd);
   const sessionCap = resolveSessionSpendCapUsd();
   if (Number.isFinite(sessionCap) && sessionSpendMicros + amountMicros > usdToMicros(sessionCap)) {
@@ -133,7 +161,10 @@ export function assertCumulativeSpendAllowed({ amountUsd, now = new Date() }) {
   }
 
   const dailyCap = resolveDailySpendCapUsd();
-  if (!Number.isFinite(dailyCap)) return { ok: true };
+  // authorizedAt pins the UTC day whose cap this check cleared. Signing can take
+  // seconds (local), or minutes of user approval (WalletConnect), so the day the
+  // payment is finally recorded is not reliably the day that authorized it.
+  if (!Number.isFinite(dailyCap)) return { ok: true, authorizedAt: now };
 
   const dir = getLedgerDir();
   const filePath = path.join(dir, getDailyFileName(now));
@@ -159,7 +190,7 @@ export function assertCumulativeSpendAllowed({ amountUsd, now = new Date() }) {
     };
   }
 
-  return { ok: true };
+  return { ok: true, authorizedAt: now };
 }
 
 function ensureLedgerDir() {
@@ -244,8 +275,8 @@ const pendingAmounts = new Map();
 
 /**
  * Record a signed payment attempt. Returns the generated paymentId.
- * Fields logged: id, timestamp, status, provider, walletLabel, network, asset, symbol,
- * amountUsd, amountRaw, payTo, requestUrl, httpStatus, requestId, reason.
+ * Fields logged: id, timestamp, authorizedAt, status, provider, walletLabel, network, asset,
+ * symbol, amountUsd, amountRaw, payTo, requestUrl, httpStatus, requestId, reason.
  * Never logs signatures, API keys, or request bodies.
  */
 export function recordPaymentAttempt(entry) {
@@ -259,9 +290,13 @@ export function recordPaymentAttempt(entry) {
     } catch { requestUrl = null; }
   }
 
+  // The day the cap check cleared, not the day signing happened to finish.
+  const authorizedAt = entry.authorizedAt instanceof Date ? entry.authorizedAt : new Date();
+
   const record = {
     id,
     timestamp: new Date().toISOString(),
+    authorizedAt: authorizedAt.toISOString(),
     status: 'signed',
     provider: entry.provider || null,
     walletLabel: entry.walletLabel || null,
@@ -282,11 +317,12 @@ export function recordPaymentAttempt(entry) {
     appendAuditLine(record);
   } catch { /* best-effort audit */ }
 
-  // Capture the day the payment was recorded (right after the cap check) so the
-  // eventual ledger increment is attributed to that UTC day, not the day the
-  // response happens to land on. Finalization can arrive seconds later, across a
-  // midnight boundary, and must count against the day the guard authorized.
-  if (entry.amountUsd !== undefined) pendingAmounts.set(id, { amountUsd: entry.amountUsd, recordedAt: new Date() });
+  // Carry the authorization day through to the ledger increment so the spend is
+  // attributed to the UTC day whose cap allowed it. Signing and the server
+  // response can both land on the next day — with WalletConnect, minutes of user
+  // approval sit between the cap check and this line — and neither may silently
+  // move the charge onto a day that never authorized it.
+  if (entry.amountUsd !== undefined) pendingAmounts.set(id, { amountUsd: entry.amountUsd, recordedAt: authorizedAt });
   return id;
 }
 
@@ -313,7 +349,16 @@ export function finalizePaymentAttempt(id, patch) {
         // under-count the day's spend against the cap.
         sessionSpendMicros += usdToMicros(amountUsd);
       } catch (err) {
-        console.error(`[x402] Warning: could not update daily spend ledger: ${err.message}`);
+        // The payment is already transmitted — it cannot be unsent, so this
+        // attempt cannot fail closed. The next one can, and must: the daily
+        // total now under-counts real spend by this amount.
+        ledgerWriteFailure =
+          `a $${Number(amountUsd).toFixed(2)} payment was transmitted but could not be written ` +
+          `to the daily spend ledger (${err.message}).`;
+        console.error(
+          `[x402] Warning: could not update daily spend ledger: ${err.message} ` +
+          `Further x402 payments are blocked this session because the daily cap can no longer be enforced.`,
+        );
       }
     }
   }
@@ -357,4 +402,11 @@ function incrementDailySpend(amountUsd, now = new Date()) {
 // Exported for tests only
 export function _resetSessionSpend() {
   sessionSpendMicros = 0n;
+}
+
+// Exported for tests only — clears the fail-closed latch set by a failed daily
+// ledger write. There is deliberately no runtime path that clears it: the
+// operator resolves the underlying write failure and re-runs.
+export function _clearLedgerWriteFailure() {
+  ledgerWriteFailure = null;
 }
