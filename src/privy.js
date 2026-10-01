@@ -353,6 +353,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
           paymentId = recordPaymentAttempt({
             provider: 'privy',
             walletLabel: `Privy wallet ${evmWallet.id}`,
+            authorizedAt: capCheck.authorizedAt,
             network: decision.network,
             asset: decision.asset,
             symbol: decision.symbol,
@@ -431,6 +432,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
           paymentId = recordPaymentAttempt({
             provider: 'privy',
             walletLabel: `Privy wallet ${solWallet.id}`,
+            authorizedAt: svmCapCheck.authorizedAt,
             network: svmDecision.network,
             asset: svmDecision.asset,
             symbol: svmDecision.symbol,

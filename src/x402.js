@@ -189,6 +189,7 @@ async function buildPaymentForRequirement(requirement, exported, url, walletLabe
   const paymentId = recordPaymentAttempt({
     provider: 'local',
     walletLabel: walletLabel || 'local wallet',
+    authorizedAt: capCheck.authorizedAt,
     network: decision.network,
     asset: decision.asset,
     symbol: decision.symbol,

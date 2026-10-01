@@ -27,7 +27,7 @@ vi.mock('../x402-ledger.js', () => ({
 
 import { evaluatePaymentRequirement } from '../x402-policy.js';
 import { wcExec } from '../walletconnect-exec.js';
-import { assertCumulativeSpendAllowed } from '../x402-ledger.js';
+import { assertCumulativeSpendAllowed, recordPaymentAttempt } from '../x402-ledger.js';
 import { handleX402Payment, buildEIP712TypedData } from '../walletconnect-x402.js';
 import { ErrorCode } from '../api.js';
 
@@ -316,6 +316,20 @@ describe('handleX402Payment — cumulative cap enforcement', () => {
 
     const signCalls = wcExec.mock.calls.filter(c => c[1]?.[0] === 'sign-typed-data');
     expect(signCalls).toHaveLength(0);
+  });
+
+  it('records the payment against the day the cap check cleared, not the day signing finished', async () => {
+    // Up to 120s of wallet approval sits between the cap check and the record.
+    // Without the authorization time, a payment cleared at 23:59 is charged to
+    // the next UTC day — overspending the day that authorized it and eating
+    // into the next day's budget.
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC', network: 'eip155:8453', asset: '0xtoken', payTo: '0xrec', amountRaw: '10000' });
+    const authorizedAt = new Date('2026-03-01T23:59:55Z');
+    vi.mocked(assertCumulativeSpendAllowed).mockReturnValueOnce({ ok: true, authorizedAt });
+
+    await handleX402Payment(PAYMENT_REQUIREMENTS);
+
+    expect(recordPaymentAttempt).toHaveBeenCalledWith(expect.objectContaining({ authorizedAt }));
   });
 
   it('logs an [x402] line and re-throws when the cap check throws (corrupt/unreadable ledger)', async () => {

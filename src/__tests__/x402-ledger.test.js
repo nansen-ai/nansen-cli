@@ -259,12 +259,12 @@ describe('recordPaymentAttempt and audit log', () => {
     expect(assertCumulativeSpendAllowed({ amountUsd: 0.700001 }).ok).toBe(false);
   });
 
-  it('does not advance session spend when the daily ledger write fails', async () => {
+  it('fails closed on later payments after a daily ledger write failure, without advancing session spend', async () => {
     // Unlimited daily cap so the cap check itself skips the (corrupt) daily
     // file read and only the session accumulator is exercised.
     process.env.NANSEN_X402_DAILY_MAX_AMOUNT = 'unlimited';
     process.env.NANSEN_X402_SESSION_MAX_AMOUNT = '1.00';
-    const { recordPaymentAttempt, finalizePaymentAttempt, assertCumulativeSpendAllowed, _resetSessionSpend } = await import('../x402-ledger.js');
+    const { recordPaymentAttempt, finalizePaymentAttempt, assertCumulativeSpendAllowed, _resetSessionSpend, _clearLedgerWriteFailure } = await import('../x402-ledger.js');
     _resetSessionSpend();
 
     // Corrupt daily file makes incrementDailySpend throw during finalize.
@@ -281,9 +281,19 @@ describe('recordPaymentAttempt and audit log', () => {
     finalizePaymentAttempt(id, { status: 'accepted' });
     warn.mockRestore();
 
-    // The $0.90 never durably recorded, so the session total must still be $0 —
-    // a fresh $0.90 payment still fits under the $1.00 session cap. If session
-    // spend had advanced, $0.90 + $0.90 would exceed the cap.
+    // The $0.90 is on the wire but uncounted, so the daily cap can no longer be
+    // enforced: every later payment this process attempts must fail closed.
+    expect(() => assertCumulativeSpendAllowed({ amountUsd: 0.9 })).toThrow(/spend accounting is incomplete/i);
+    try {
+      assertCumulativeSpendAllowed({ amountUsd: 0.9 });
+    } catch (err) {
+      expect(err.failClosedX402).toBe(true);
+    }
+
+    // Behind that latch, the session total must still be $0 — the $0.90 never
+    // durably recorded. If session spend had advanced, a fresh $0.90 payment
+    // would exceed the $1.00 session cap instead of fitting under it.
+    _clearLedgerWriteFailure();
     expect(assertCumulativeSpendAllowed({ amountUsd: 0.9 }).ok).toBe(true);
   });
 
@@ -357,6 +367,56 @@ describe('fail-closed edge cases', () => {
     expect(files).toEqual(['spend-2026-03-01.json']);
     const stored = JSON.parse(fs.readFileSync(path.join(ledgerDir, files[0]), 'utf8'));
     expect(stored.totalUsdMicros).toBe('500000');
+  });
+
+  it('returns the authorization time so the caller can pin the day it cleared', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '10.00';
+    const { assertCumulativeSpendAllowed } = await import('../x402-ledger.js');
+    const now = new Date('2026-03-01T23:59:55Z');
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.5, now })).toEqual({ ok: true, authorizedAt: now });
+
+    // Also on the short-circuit path, or an unlimited daily cap would drop the
+    // day and send the spend to whatever day finalization happens to land on.
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = 'unlimited';
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.5, now })).toEqual({ ok: true, authorizedAt: now });
+  });
+
+  it('charges spend to the day the cap check cleared, even when signing crosses midnight', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '10.00';
+    const { assertCumulativeSpendAllowed, recordPaymentAttempt, finalizePaymentAttempt, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    vi.useFakeTimers();
+    try {
+      // Cap check clears against day 1, seconds before UTC midnight.
+      vi.setSystemTime(new Date('2026-03-01T23:59:55Z'));
+      const capCheck = assertCumulativeSpendAllowed({ amountUsd: 0.5 });
+      expect(capCheck.ok).toBe(true);
+
+      // Signing takes long enough to cross midnight — minutes of wallet
+      // approval is routine on the WalletConnect path — so both the record and
+      // the finalize land on day 2.
+      vi.setSystemTime(new Date('2026-03-02T00:00:30Z'));
+      const id = recordPaymentAttempt({
+        provider: 'walletconnect', amountUsd: 0.5, authorizedAt: capCheck.authorizedAt,
+        network: 'eip155:8453', asset: '0xt', symbol: 'USDC', amountRaw: '500000', payTo: '0xr',
+        requestUrl: 'https://api.nansen.ai/test',
+      });
+      finalizePaymentAttempt(id, { status: 'accepted' });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
+    const files = fs.readdirSync(ledgerDir).filter((n) => n.startsWith('spend-'));
+    // Day 1 authorized it, so day 1 pays for it — day 2's budget is untouched.
+    expect(files).toEqual(['spend-2026-03-01.json']);
+    expect(JSON.parse(fs.readFileSync(path.join(ledgerDir, files[0]), 'utf8')).totalUsdMicros).toBe('500000');
+
+    // The audit record carries both times so the attribution is checkable.
+    const audit = JSON.parse(fs.readFileSync(path.join(ledgerDir, 'payments.jsonl'), 'utf8').trim().split('\n')[0]);
+    expect(audit.authorizedAt).toBe('2026-03-01T23:59:55.000Z');
+    expect(audit.timestamp).toBe('2026-03-02T00:00:30.000Z');
   });
 
   it('getDailySpendState throws a typed X402LedgerError on a corrupt ledger', async () => {

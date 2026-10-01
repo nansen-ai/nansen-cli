@@ -35,6 +35,22 @@ export const X402_PAYMENT_REJECTED = Symbol('x402PaymentRejected');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * Finalize a transmitted x402 payment in the local spend ledger and audit log.
+ *
+ * Every terminal branch of _x402Retry must call this exactly once. An attempt
+ * that is never finalized stays `signed` in the audit log, leaks its pending
+ * entry, and — for accepted or ambiguous outcomes — is never counted against
+ * the daily cap, so a later run can overspend by that amount.
+ */
+async function finalizeX402Attempt(paymentMeta, patch) {
+  if (!paymentMeta || !paymentMeta.paymentId) return;
+  try {
+    const { finalizePaymentAttempt } = await import('./x402-ledger.js');
+    finalizePaymentAttempt(paymentMeta.paymentId, patch);
+  } catch { /* best-effort audit */ }
+}
+
 function classifyX402Rejection(data) {
   const text = JSON.stringify(data).toLowerCase();
   if ((text.includes('insufficient') && text.includes('balance')) || text.includes('insufficient_funds')) {
@@ -836,12 +852,7 @@ export class NansenAPI {
       // the server may have received and settled it before we lost the
       // response. Fail closed rather than let the caller sign and send a
       // second payment for the same logical request.
-      if (paymentMeta.paymentId) {
-        try {
-          const { finalizePaymentAttempt } = await import('./x402-ledger.js');
-          finalizePaymentAttempt(paymentMeta.paymentId, { status: 'ambiguous' });
-        } catch { /* best-effort */ }
-      }
+      await finalizeX402Attempt(paymentMeta, { status: 'ambiguous' });
       throw new NansenError(
         `x402 payment outcome unknown: request failed after the signed payment was transmitted (${err.message}). Not attempting another payment for the same request.`,
         ErrorCode.PAYMENT_AMBIGUOUS,
@@ -865,6 +876,9 @@ export class NansenAPI {
       // An admission denial does not prove that a transmitted payment cannot
       // settle. Stop here instead of authorizing another rail or wallet.
       if ([401, 403, 429, 451].includes(paidResponse.status)) {
+        // Denied admission is not proof the payment did not settle — same
+        // reasoning as the 5xx branch below, so it counts against the cap too.
+        await finalizeX402Attempt(paymentMeta, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
         throw new NansenError(
           `x402 payment outcome unknown: paid request was denied (${paidResponse.status}). Not attempting another payment for the same request.`,
           ErrorCode.PAYMENT_AMBIGUOUS,
@@ -874,12 +888,7 @@ export class NansenAPI {
       // processed it before failing to respond. Only a readable non-5xx
       // rejection body is safe to treat as "try the next option".
       if (paidResponse.status >= 500) {
-        if (paymentMeta.paymentId) {
-          try {
-            const { finalizePaymentAttempt } = await import('./x402-ledger.js');
-            finalizePaymentAttempt(paymentMeta.paymentId, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
-          } catch { /* best-effort */ }
-        }
+        await finalizeX402Attempt(paymentMeta, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
         throw new NansenError(
           `x402 payment outcome unknown: server returned ${paidResponse.status} after the signed payment was transmitted. Not attempting another payment for the same request.`,
           ErrorCode.PAYMENT_AMBIGUOUS,
@@ -889,12 +898,7 @@ export class NansenAPI {
       try {
         rejectionData = await paidResponse.json();
       } catch (err) {
-        if (paymentMeta.paymentId) {
-          try {
-            const { finalizePaymentAttempt } = await import('./x402-ledger.js');
-            finalizePaymentAttempt(paymentMeta.paymentId, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
-          } catch { /* best-effort */ }
-        }
+        await finalizeX402Attempt(paymentMeta, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
         throw new NansenError(
           `x402 payment outcome unknown: rejection response body was unreadable (${err.message}). Not attempting another payment for the same request.`,
           ErrorCode.PAYMENT_AMBIGUOUS,
@@ -904,17 +908,12 @@ export class NansenAPI {
       if (rejClass === 'INSUFFICIENT_BALANCE') {
         console.error(`[x402] Payment rejected for insufficient balance on ${network || 'unknown'}. Fund the x402 wallet or lower the request amount.`);
       }
-      if (paymentMeta.paymentId) {
-        try {
-          const { finalizePaymentAttempt } = await import('./x402-ledger.js');
-          finalizePaymentAttempt(paymentMeta.paymentId, {
-            status: 'rejected',
-            httpStatus: paidResponse.status,
-            reason: rejClass || null,
-            requestId: responseRequestId,
-          });
-        } catch { /* best-effort */ }
-      }
+      await finalizeX402Attempt(paymentMeta, {
+        status: 'rejected',
+        httpStatus: paidResponse.status,
+        reason: rejClass || null,
+        requestId: responseRequestId,
+      });
       return X402_PAYMENT_REJECTED;
     }
     if (walletLabel) {
@@ -933,12 +932,7 @@ export class NansenAPI {
     try {
       data = await paidResponse.json();
     } catch (err) {
-      if (paymentMeta.paymentId) {
-        try {
-          const { finalizePaymentAttempt } = await import('./x402-ledger.js');
-          finalizePaymentAttempt(paymentMeta.paymentId, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
-        } catch { /* best-effort */ }
-      }
+      await finalizeX402Attempt(paymentMeta, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
       // The payment was accepted (2xx) — it settled. We just can't read the
       // response body, so surface that plainly rather than silently treating
       // it as a rejection and paying again.
@@ -947,12 +941,7 @@ export class NansenAPI {
         ErrorCode.PAYMENT_AMBIGUOUS,
       );
     }
-    if (paymentMeta.paymentId) {
-      try {
-        const { finalizePaymentAttempt } = await import('./x402-ledger.js');
-        finalizePaymentAttempt(paymentMeta.paymentId, { status: 'accepted', httpStatus: paidResponse.status, requestId: responseRequestId });
-      } catch { /* best-effort */ }
-    }
+    await finalizeX402Attempt(paymentMeta, { status: 'accepted', httpStatus: paidResponse.status, requestId: responseRequestId });
     const meta = readResponseMeta(paidResponse);
     this.lastResponseMeta = meta;
     if (meta && data !== null && typeof data === 'object') data[RESPONSE_META] = meta;

@@ -354,6 +354,31 @@ describe('NansenAPI._x402Retry — payment finalization', () => {
     expect(finalizePaymentAttempt).toHaveBeenCalledWith('pid-req', expect.objectContaining({ status: 'accepted', requestId: 'req-xyz' }));
   });
 
+  it.each([401, 403, 429, 451])(
+    'finalizes as ambiguous when admission denies the paid request (%i)',
+    async (status) => {
+      // This branch used to throw without finalizing at all: the attempt stayed
+      // `signed` in the audit log, its pending entry leaked, and its amount
+      // never counted against the daily cap — even though the branch's own
+      // reasoning is that the payment may still have settled. A later run then
+      // budgeted as if the payment had never happened.
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status,
+        json: async () => ({ error: 'denied' }),
+        headers: new Map([['x-request-id', 'req-denied']]),
+      });
+      const api = makeApi();
+      await expect(
+        api._x402Retry('sig', null, null, 'https://api.nansen.ai/test', {}, {}, null, { paymentId: `pid-${status}` }),
+      ).rejects.toMatchObject({ code: ErrorCode.PAYMENT_AMBIGUOUS });
+      expect(finalizePaymentAttempt).toHaveBeenCalledWith(
+        `pid-${status}`,
+        expect.objectContaining({ status: 'ambiguous', httpStatus: status, requestId: 'req-denied' }),
+      );
+    },
+  );
+
   it('leaves requestId unset when the transport fails before any response', async () => {
     mockFetch.mockRejectedValue(new TypeError('network down'));
     const api = makeApi();

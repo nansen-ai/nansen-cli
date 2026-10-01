@@ -255,6 +255,8 @@ export async function handleX402Payment(paymentRequirements) {
   const paymentId = recordPaymentAttempt({
     provider: 'walletconnect',
     walletLabel: 'WalletConnect',
+    // Up to 120s of wallet approval sits between the cap check and this line.
+    authorizedAt: capCheck.authorizedAt,
     network: decision.network,
     asset: decision.asset,
     symbol: decision.symbol,
