@@ -319,6 +319,152 @@ describe('recordPaymentAttempt and audit log', () => {
   });
 });
 
+describe('reservations — concurrent cap enforcement', () => {
+  const ledgerPath = () => {
+    const today = new Date();
+    const yyyy = today.getUTCFullYear();
+    const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(today.getUTCDate()).padStart(2, '0');
+    return path.join(tmpDir, '.nansen', 'x402', `spend-${yyyy}-${mm}-${dd}.json`);
+  };
+
+  it('holds budget at the cap check, so a second check cannot clear the same headroom', async () => {
+    // The race this closes: both checks read the same total, both clear the
+    // cap, both sign, and the serialized increments land above the limit.
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    const first = assertCumulativeSpendAllowed({ amountUsd: 0.6 });
+    expect(first.ok).toBe(true);
+    expect(first.reservationId).toMatch(/^[0-9a-f]{32}$/);
+
+    // Nothing has settled yet — the daily total is still $0 — but $0.60 of the
+    // $1.00 is spoken for, so a second $0.60 payment must be refused.
+    const second = assertCumulativeSpendAllowed({ amountUsd: 0.6 });
+    expect(second.ok).toBe(false);
+    expect(second.reason).toMatch(/daily x402 spend cap/);
+    expect(second.reservationId).toBeUndefined();
+
+    // What still fits does clear.
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.4 }).ok).toBe(true);
+  });
+
+  it('counts budget another process is holding', async () => {
+    // Stand in for a concurrent CLI run: its reservation is already in the
+    // file when this process reads it.
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    fs.mkdirSync(path.dirname(ledgerPath()), { recursive: true });
+    fs.writeFileSync(ledgerPath(), JSON.stringify({
+      totalUsdMicros: '200000',
+      reservations: { 'other-process': { micros: '700000', expiresAt: new Date(Date.now() + 60_000).toISOString() } },
+    }));
+
+    // $0.20 settled + $0.70 held = $0.90 of $1.00.
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.2 }).ok).toBe(false);
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.1 }).ok).toBe(true);
+  });
+
+  it('reclaims budget from a reservation whose process died', async () => {
+    // The TTL backstop: without it a crash between signing and finalizing
+    // would hold that budget for the rest of the UTC day.
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, getDailySpendState, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    fs.mkdirSync(path.dirname(ledgerPath()), { recursive: true });
+    fs.writeFileSync(ledgerPath(), JSON.stringify({
+      totalUsdMicros: '0',
+      reservations: { stale: { micros: '900000', expiresAt: new Date(Date.now() - 1_000).toISOString() } },
+    }));
+
+    expect(getDailySpendState().reservedUsd).toBe(0);
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.9 }).ok).toBe(true);
+  });
+
+  it('converts the reservation to settled spend exactly once when the payment is accepted', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, recordPaymentAttempt, finalizePaymentAttempt, getDailySpendState, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    const capCheck = assertCumulativeSpendAllowed({ amountUsd: 0.6 });
+    const id = recordPaymentAttempt({
+      provider: 'local', amountUsd: 0.6, authorizedAt: capCheck.authorizedAt, reservationId: capCheck.reservationId,
+      network: 'eip155:8453', asset: '0xt', symbol: 'USDC', amountRaw: '600000', payTo: '0xr', requestUrl: 'https://api.nansen.ai/test',
+    });
+    finalizePaymentAttempt(id, { status: 'accepted' });
+
+    // Settled once, not counted twice as held + spent.
+    const state = getDailySpendState();
+    expect(state.totalUsd).toBe(0.6);
+    expect(state.reservedUsd).toBe(0);
+    expect(JSON.parse(fs.readFileSync(ledgerPath(), 'utf8')).reservations).toBeUndefined();
+  });
+
+  it('hands budget back when the payment is rejected', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, recordPaymentAttempt, finalizePaymentAttempt, getDailySpendState, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    const capCheck = assertCumulativeSpendAllowed({ amountUsd: 0.9 });
+    const id = recordPaymentAttempt({
+      provider: 'local', amountUsd: 0.9, authorizedAt: capCheck.authorizedAt, reservationId: capCheck.reservationId,
+      network: 'eip155:8453', asset: '0xt', symbol: 'USDC', amountRaw: '900000', payTo: '0xr', requestUrl: 'https://api.nansen.ai/test',
+    });
+    finalizePaymentAttempt(id, { status: 'rejected' });
+
+    // A rejected payment spent nothing, so the whole cap is available again
+    // rather than staying held until the reservation expires.
+    expect(getDailySpendState()).toEqual({ totalUsd: 0, reservedUsd: 0 });
+    expect(assertCumulativeSpendAllowed({ amountUsd: 1.0 }).ok).toBe(true);
+  });
+
+  it('releases budget for an attempt that was abandoned before signing', async () => {
+    // Providers call this when they give up after the cap check — a wallet
+    // without the right key, a missing Permit2 allowance, a signing failure.
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, releasePaymentReservation, getDailySpendState, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    const capCheck = assertCumulativeSpendAllowed({ amountUsd: 0.9 });
+    expect(getDailySpendState().reservedUsd).toBe(0.9);
+
+    releasePaymentReservation(capCheck.reservationId);
+    expect(getDailySpendState().reservedUsd).toBe(0);
+    expect(assertCumulativeSpendAllowed({ amountUsd: 1.0 }).ok).toBe(true);
+  });
+
+  it('reserves against the day the check cleared, not the day it runs', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    const now = new Date('2026-03-01T23:59:55Z');
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.6, now }).ok).toBe(true);
+
+    const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
+    expect(fs.readdirSync(ledgerDir).filter((n) => n.startsWith('spend-'))).toEqual(['spend-2026-03-01.json']);
+    // Day 2 is untouched, so its own cap is whole.
+    expect(assertCumulativeSpendAllowed({ amountUsd: 1.0, now: new Date('2026-03-02T00:00:05Z') }).ok).toBe(true);
+  });
+
+  it('refuses to sign rather than guess when a reservation entry is malformed', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed } = await import('../x402-ledger.js');
+
+    fs.mkdirSync(path.dirname(ledgerPath()), { recursive: true });
+    fs.writeFileSync(ledgerPath(), JSON.stringify({
+      totalUsdMicros: '0',
+      reservations: { bad: { micros: 'not-a-number', expiresAt: new Date(Date.now() + 60_000).toISOString() } },
+    }));
+
+    expect(() => assertCumulativeSpendAllowed({ amountUsd: 0.1 })).toThrow(/corrupt/i);
+  });
+});
+
 describe('fail-closed edge cases', () => {
   it('fails closed when no home directory can be resolved', async () => {
     process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '10.00';
@@ -373,10 +519,11 @@ describe('fail-closed edge cases', () => {
     process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '10.00';
     const { assertCumulativeSpendAllowed } = await import('../x402-ledger.js');
     const now = new Date('2026-03-01T23:59:55Z');
-    expect(assertCumulativeSpendAllowed({ amountUsd: 0.5, now })).toEqual({ ok: true, authorizedAt: now });
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.5, now })).toMatchObject({ ok: true, authorizedAt: now });
 
     // Also on the short-circuit path, or an unlimited daily cap would drop the
     // day and send the spend to whatever day finalization happens to land on.
+    // No reservation there: with no daily cap there is no budget to hold.
     process.env.NANSEN_X402_DAILY_MAX_AMOUNT = 'unlimited';
     expect(assertCumulativeSpendAllowed({ amountUsd: 0.5, now })).toEqual({ ok: true, authorizedAt: now });
   });

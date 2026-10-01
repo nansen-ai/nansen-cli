@@ -291,7 +291,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
   const requirements = parsePaymentRequirements(response);
   if (!requirements || requirements.length === 0) return;
 
-  const { assertCumulativeSpendAllowed, finalizePaymentAttempt, recordPaymentAttempt } = await import('./x402-ledger.js');
+  const { assertCumulativeSpendAllowed, finalizePaymentAttempt, recordPaymentAttempt, releasePaymentReservation } = await import('./x402-ledger.js');
 
   const client = getClient();
 
@@ -356,6 +356,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
             provider: 'privy',
             walletLabel: `Privy wallet ${evmWallet.id}`,
             authorizedAt: capCheck.authorizedAt,
+            reservationId: capCheck.reservationId,
             network: decision.network,
             asset: decision.asset,
             symbol: decision.symbol,
@@ -371,6 +372,9 @@ export async function* createPrivyPaymentSignatures(response, url) {
             finalizePaymentAttempt(paymentId, { status: 'ambiguous', reason: err.message });
             throw err;
           }
+          // Nothing was signed, so the budget this cap check reserved goes back
+          // instead of sitting held until its TTL.
+          releasePaymentReservation(capCheck.reservationId);
           console.error(`[x402] Privy EVM signing failed for ${requirement.network}: ${err.message}`);
           continue;
         }
@@ -436,6 +440,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
             provider: 'privy',
             walletLabel: `Privy wallet ${solWallet.id}`,
             authorizedAt: svmCapCheck.authorizedAt,
+            reservationId: svmCapCheck.reservationId,
             network: svmDecision.network,
             asset: svmDecision.asset,
             symbol: svmDecision.symbol,
@@ -451,6 +456,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
             finalizePaymentAttempt(paymentId, { status: 'ambiguous', reason: err.message });
             throw err;
           }
+          releasePaymentReservation(svmCapCheck.reservationId);
           console.error(`[x402] Privy Solana signing failed for ${requirement.network}: ${err.message}`);
           continue;
         }

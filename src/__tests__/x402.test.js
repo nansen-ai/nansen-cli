@@ -565,6 +565,7 @@ describe('createPaymentSignatures — cumulative cap enforcement', () => {
     vi.doMock('../x402-ledger.js', () => ({
       assertCumulativeSpendAllowed: () => ({ ok: false, reason: 'Refusing to auto-pay: daily cap exceeded' }),
       recordPaymentAttempt: vi.fn().mockReturnValue('mock-id'),
+      releasePaymentReservation: vi.fn(),
     }));
 
     const paymentHeader = Buffer.from(JSON.stringify({
@@ -598,6 +599,7 @@ describe('createPaymentSignatures — cumulative cap enforcement', () => {
     vi.doMock('../x402-ledger.js', () => ({
       assertCumulativeSpendAllowed: () => { throw ledgerError; },
       recordPaymentAttempt,
+      releasePaymentReservation: vi.fn(),
     }));
 
     const paymentHeader = Buffer.from(JSON.stringify({
