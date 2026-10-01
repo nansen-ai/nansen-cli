@@ -345,6 +345,11 @@ export async function* createPrivyPaymentSignatures(response, url) {
             accepted: requirement,
           });
 
+          // decision.usd is always set here — evaluatePaymentRequirement rejects
+          // any requirement without a resolvable USD amount before we reach this
+          // point — so recordPaymentAttempt always returns an id and the yielded
+          // payment is guaranteed to carry a paymentId that the catch/consumer
+          // can finalize. Keep that invariant if this record call is refactored.
           paymentId = recordPaymentAttempt({
             provider: 'privy',
             walletLabel: `Privy wallet ${evmWallet.id}`,
@@ -418,6 +423,11 @@ export async function* createPrivyPaymentSignatures(response, url) {
           }
 
           const header = Buffer.from(JSON.stringify(payload)).toString("base64");
+          // svmDecision.usd is always set here — evaluatePaymentRequirement rejects
+          // any requirement without a resolvable USD amount before we reach this
+          // point — so recordPaymentAttempt always returns an id and the yielded
+          // payment is guaranteed to carry a paymentId that the catch/consumer
+          // can finalize. Keep that invariant if this record call is refactored.
           paymentId = recordPaymentAttempt({
             provider: 'privy',
             walletLabel: `Privy wallet ${solWallet.id}`,
