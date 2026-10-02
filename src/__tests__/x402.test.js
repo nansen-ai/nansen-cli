@@ -637,11 +637,11 @@ describe('createPaymentSignatures — cumulative cap enforcement', () => {
       exportWallet: () => ({ evm: { address: '0xAddr', privateKey: '0xkey' }, solana: { address: 'SolAddr', privateKey: new Uint8Array(32) } }),
       getWalletConfig: () => ({ passwordHash: null }),
     }));
-    const finalizePaymentAttempt = vi.fn();
+    const finalizeIfPending = vi.fn();
     vi.doMock('../x402-ledger.js', () => ({
       assertCumulativeSpendAllowed: () => ({ ok: true, authorizedAt: new Date(), reservationId: 'resv-1' }),
       recordPaymentAttempt: vi.fn().mockReturnValue('pid-interrupt'),
-      finalizePaymentAttempt,
+      finalizeIfPending,
       releasePaymentReservation: vi.fn(),
     }));
     vi.doMock('../x402-evm.js', () => ({
@@ -669,9 +669,61 @@ describe('createPaymentSignatures — cumulative cap enforcement', () => {
     expect(first.value.paymentId).toBe('pid-interrupt');
 
     await expect(iterator.throw(new Error('consumer interrupted'))).rejects.toThrow('consumer interrupted');
-    expect(finalizePaymentAttempt).toHaveBeenCalledWith(
+    expect(finalizeIfPending).toHaveBeenCalledWith(
       'pid-interrupt',
       expect.objectContaining({ status: 'ambiguous', reason: 'consumer interrupted' }),
+    );
+
+    vi.doUnmock('../x402-evm.js');
+  });
+
+  it('finalizes a recorded payment as ambiguous when the consumer cancels with return()', async () => {
+    // A consumer that breaks out of its `for await` — or returns from inside it,
+    // as createPaymentSignature() does — cancels the generator via
+    // iterator.return(). That resumes the yield with a return completion, which
+    // skips `catch` entirely; only a `finally` sees it. Without one, a signed
+    // payment stays recorded as `signed` forever and its budget stays reserved
+    // until the TTL, in a process that never learned the payment's outcome.
+    vi.doMock('../wallet.js', () => ({
+      listWallets: () => ({ defaultWallet: 'test', wallets: [{ name: 'test', evm: '0xAddr', solana: 'SolAddr' }] }),
+      exportWallet: () => ({ evm: { address: '0xAddr', privateKey: '0xkey' }, solana: { address: 'SolAddr', privateKey: new Uint8Array(32) } }),
+      getWalletConfig: () => ({ passwordHash: null }),
+    }));
+    const finalizeIfPending = vi.fn();
+    vi.doMock('../x402-ledger.js', () => ({
+      assertCumulativeSpendAllowed: () => ({ ok: true, authorizedAt: new Date(), reservationId: 'resv-2' }),
+      recordPaymentAttempt: vi.fn().mockReturnValue('pid-cancelled'),
+      finalizeIfPending,
+      releasePaymentReservation: vi.fn(),
+    }));
+    vi.doMock('../x402-evm.js', () => ({
+      createEvmPaymentPayload: vi.fn().mockResolvedValue('fake-sig'),
+      isEvmNetwork: (n) => n.startsWith('eip155:'),
+      PERMIT2_ADDRESS: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
+    }));
+
+    const paymentHeader = Buffer.from(JSON.stringify({
+      accepts: [{
+        scheme: 'exact',
+        network: 'eip155:8453',
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        amount: '10000',
+        pay_to: '0xRecipient',
+      }],
+    })).toString('base64');
+    const mockResponse = { headers: { get: (h) => h === 'payment-required' ? paymentHeader : null } };
+
+    const { createPaymentSignatures } = await import('../x402.js');
+
+    // Exactly what `for await (…) { break }` compiles to.
+    const iterator = createPaymentSignatures(mockResponse, 'https://api.nansen.ai/test');
+    const first = await iterator.next();
+    expect(first.value.paymentId).toBe('pid-cancelled');
+    await iterator.return();
+
+    expect(finalizeIfPending).toHaveBeenCalledWith(
+      'pid-cancelled',
+      expect.objectContaining({ status: 'ambiguous' }),
     );
 
     vi.doUnmock('../x402-evm.js');

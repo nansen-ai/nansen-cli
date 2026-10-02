@@ -264,19 +264,18 @@ export async function* createPaymentSignatures(response, url, options = {}) {
   const walletLabel = `local wallet ${walletName}`;
   for (const req of ranked) {
     let result = null;
+    let interruptedBy = null;
     try {
       result = await buildPaymentForRequirement(req, exported, url, walletLabel);
       if (result) yield { signature: result.sig, network: req.network, asset: req.asset, paymentId: result.paymentId };
     } catch (err) {
       // An exception surfacing here with a payment already recorded means the
       // consumer was interrupted (e.g. cancellation injected via the generator's
-      // throw()) after we signed and recorded this option. Its outcome is
-      // genuinely unknown — it may be in flight — so finalize it as ambiguous and
-      // propagate, mirroring the Privy generator. Swallowing it would leave the
-      // audit entry stuck at `signed` and hold the reserved budget until its TTL.
+      // throw()) after we signed and recorded this option. The finally block
+      // below finalizes it; propagate so the caller never falls through to a
+      // second payment for the same request.
       if (result?.paymentId) {
-        const { finalizePaymentAttempt } = await import('./x402-ledger.js');
-        finalizePaymentAttempt(result.paymentId, { status: 'ambiguous', reason: err?.message || String(err) });
+        interruptedBy = err?.message || String(err);
         throw err;
       }
       if (err?.failClosedX402) throw err;
@@ -285,6 +284,21 @@ export async function* createPaymentSignatures(response, url, options = {}) {
       // payment failure once every option is exhausted).
       console.error(`[x402] Skipping ${req.network} option: ${err?.message || err}`);
       continue;
+    } finally {
+      // Runs on every way out of this option, which `catch` alone does not cover:
+      // the consumer cancelling with break/return (iterator.return() resumes the
+      // yield with a return completion and skips `catch`) would otherwise leave
+      // the payment recorded as `signed` and its budget held until the TTL.
+      // After an ordinary outcome _x402Retry has already finalized the payment,
+      // so finalizeIfPending is a no-op and adds no spurious audit line; it only
+      // acts when the signed payment was abandoned with its outcome unknown.
+      if (result?.paymentId) {
+        const { finalizeIfPending } = await import('./x402-ledger.js');
+        finalizeIfPending(result.paymentId, {
+          status: 'ambiguous',
+          reason: interruptedBy || 'consumer abandoned the payment after signing; outcome unknown',
+        });
+      }
     }
   }
 }

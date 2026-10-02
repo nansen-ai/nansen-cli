@@ -20,7 +20,7 @@ vi.mock("../wallet.js", async (importOriginal) => {
 // Intercept x402-ledger dynamic imports so cap checks are controllable in tests.
 vi.mock("../x402-ledger.js", () => ({
   assertCumulativeSpendAllowed: vi.fn(() => ({ ok: true, reservationId: "mock-reservation-id" })),
-  finalizePaymentAttempt: vi.fn(),
+  finalizeIfPending: vi.fn(),
   recordPaymentAttempt: vi.fn(() => "mock-payment-id"),
   releasePaymentReservation: vi.fn(),
 }));
@@ -344,8 +344,8 @@ describe("createPrivyPaymentSignatures", () => {
   });
 
   it("finalizes a recorded EVM payment as ambiguous if the generator is interrupted after yielding", async () => {
-    const { finalizePaymentAttempt } = await import("../x402-ledger.js");
-    vi.mocked(finalizePaymentAttempt).mockClear();
+    const { finalizeIfPending } = await import("../x402-ledger.js");
+    vi.mocked(finalizeIfPending).mockClear();
 
     let callCount = 0;
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => {
@@ -372,9 +372,47 @@ describe("createPrivyPaymentSignatures", () => {
     expect(first.value.paymentId).toBe("mock-payment-id");
 
     await expect(iterator.throw(new Error("consumer interrupted"))).rejects.toThrow("consumer interrupted");
-    expect(finalizePaymentAttempt).toHaveBeenCalledWith(
+    expect(finalizeIfPending).toHaveBeenCalledWith(
       "mock-payment-id",
       expect.objectContaining({ status: "ambiguous", reason: "consumer interrupted" }),
+    );
+  });
+
+  it("finalizes a recorded EVM payment as ambiguous when the consumer cancels with return()", async () => {
+    // iterator.return() — what `break` out of a `for await` does — resumes the
+    // yield with a return completion, which never enters `catch`. Only the
+    // generator's `finally` sees it, and without one the signed payment stays
+    // recorded as `signed` with its budget reserved until the TTL.
+    const { finalizeIfPending } = await import("../x402-ledger.js");
+    vi.mocked(finalizeIfPending).mockClear();
+
+    let callCount = 0;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            data: [{ id: "w-1", address: "0x1234567890abcdef1234567890abcdef12345678", chain_type: "ethereum" }],
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: { signature: "0xfakesignature" } }),
+      });
+    }));
+
+    const response = make402Response([evmRequirement]);
+    const iterator = createPrivyPaymentSignatures(response, "https://api.nansen.ai/test");
+
+    const first = await iterator.next();
+    expect(first.value.paymentId).toBe("mock-payment-id");
+    await iterator.return();
+
+    expect(finalizeIfPending).toHaveBeenCalledWith(
+      "mock-payment-id",
+      expect.objectContaining({ status: "ambiguous" }),
     );
   });
 

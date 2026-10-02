@@ -290,7 +290,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
   const requirements = parsePaymentRequirements(response);
   if (!requirements || requirements.length === 0) return;
 
-  const { assertCumulativeSpendAllowed, finalizePaymentAttempt, recordPaymentAttempt, releasePaymentReservation } = await import('./x402-ledger.js');
+  const { assertCumulativeSpendAllowed, finalizeIfPending, recordPaymentAttempt, releasePaymentReservation } = await import('./x402-ledger.js');
 
   const client = getClient();
 
@@ -307,6 +307,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
         }
         let capCheck;
         let paymentId = null;
+        let evmInterruptedBy = null;
         try {
           capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
         } catch (err) {
@@ -367,7 +368,9 @@ export async function* createPrivyPaymentSignatures(response, url) {
           yield { signature: header, network: requirement.network, asset: requirement.asset, paymentId };
         } catch (err) {
           if (paymentId) {
-            finalizePaymentAttempt(paymentId, { status: 'ambiguous', reason: err.message });
+            // The finally block finalizes it; propagate so the caller never
+            // falls through to a second payment for the same request.
+            evmInterruptedBy = err.message;
             throw err;
           }
           // Nothing was signed, so the budget this cap check reserved goes back
@@ -375,6 +378,19 @@ export async function* createPrivyPaymentSignatures(response, url) {
           releasePaymentReservation(capCheck.reservationId);
           console.error(`[x402] Privy EVM signing failed for ${requirement.network}: ${err.message}`);
           continue;
+        } finally {
+      // Runs on every way out of this option, which `catch` alone does not
+      // cover: a consumer cancelling with break/return (iterator.return()
+      // resumes the yield with a return completion and skips `catch`) would
+      // otherwise leave the payment recorded as `signed` and its budget held
+      // until the TTL. After an ordinary outcome _x402Retry has already
+      // finalized it, so this is a no-op and adds no spurious audit line.
+          if (paymentId) {
+            finalizeIfPending(paymentId, {
+              status: 'ambiguous',
+              reason: evmInterruptedBy || 'consumer abandoned the payment after signing; outcome unknown',
+            });
+          }
         }
       }
     } else {
@@ -395,6 +411,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
         }
         let svmCapCheck;
         let paymentId = null;
+        let svmInterruptedBy = null;
         try {
           svmCapCheck = assertCumulativeSpendAllowed({ amountUsd: svmDecision.usd });
         } catch (err) {
@@ -450,12 +467,27 @@ export async function* createPrivyPaymentSignatures(response, url) {
           yield { signature: header, network: requirement.network, asset: requirement.asset, paymentId };
         } catch (err) {
           if (paymentId) {
-            finalizePaymentAttempt(paymentId, { status: 'ambiguous', reason: err.message });
+            // The finally block finalizes it; propagate so the caller never
+            // falls through to a second payment for the same request.
+            svmInterruptedBy = err.message;
             throw err;
           }
           releasePaymentReservation(svmCapCheck.reservationId);
           console.error(`[x402] Privy Solana signing failed for ${requirement.network}: ${err.message}`);
           continue;
+        } finally {
+      // Runs on every way out of this option, which `catch` alone does not
+      // cover: a consumer cancelling with break/return (iterator.return()
+      // resumes the yield with a return completion and skips `catch`) would
+      // otherwise leave the payment recorded as `signed` and its budget held
+      // until the TTL. After an ordinary outcome _x402Retry has already
+      // finalized it, so this is a no-op and adds no spurious audit line.
+          if (paymentId) {
+            finalizeIfPending(paymentId, {
+              status: 'ambiguous',
+              reason: svmInterruptedBy || 'consumer abandoned the payment after signing; outcome unknown',
+            });
+          }
         }
       }
     } else {

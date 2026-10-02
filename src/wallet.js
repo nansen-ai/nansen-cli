@@ -1257,6 +1257,9 @@ ENVIRONMENT:
   NANSEN_X402_SESSION_MAX_AMOUNT Max USD cumulative x402 auto-payments per process session (optional; "unlimited" to disable)
   NANSEN_X402_ALLOWED_PAYTO      Comma-separated recipient allowlist for x402 auto-payment (optional)
   Audit log: ~/.nansen/x402/payments.jsonl
+  If a transmitted payment cannot be written to the daily spend ledger, the failure is
+  recorded at ~/.nansen/x402/accounting-failure.jsonl and x402 auto-payment stops until
+  you reconcile the daily total against the audit log and delete that file.
 
 EXAMPLES:
   NANSEN_WALLET_PASSWORD=mypass nansen wallet create --name trading
