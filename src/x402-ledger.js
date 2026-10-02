@@ -44,6 +44,8 @@ function releaseSessionReservation(reservationId) {
 // amount is already on the wire but uncounted, so the daily total under-reports
 // real spend and the cap can no longer be enforced. Every later cap check in
 // this process fails closed until the operator resolves it.
+// This latch only covers the current process; ACCOUNTING_FAILURE_FILE is its
+// durable, cross-process twin.
 let ledgerWriteFailure = null;
 
 export class X402LedgerError extends Error {
@@ -104,6 +106,86 @@ function getDailyFileName(now) {
   const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(now.getUTCDate()).padStart(2, '0');
   return `spend-${yyyy}-${mm}-${dd}.json`;
+}
+
+// Durable record of spend that was transmitted but could never be counted.
+// The in-memory latch above only blocks this process, and the daily reservation
+// that keeps holding the budget meanwhile expires after RESERVATION_TTL_MS —
+// after which another CLI process would reclaim budget for a payment that was
+// really spent and exceed the cap. A line in this file outlives both, so every
+// process fails closed until an operator reconciles and removes it.
+const ACCOUNTING_FAILURE_FILE = 'accounting-failure.jsonl';
+
+function getAccountingFailurePath() {
+  return path.join(getLedgerDir(), ACCOUNTING_FAILURE_FILE);
+}
+
+function getAccountingFailurePathForMessage() {
+  return path.join(describeLedgerDirForMessage(), ACCOUNTING_FAILURE_FILE);
+}
+
+/**
+ * Append an accounting-failure line. Returns false if even this could not be
+ * written. Best-effort by necessity — the write that just failed may have been
+ * the disk itself — but the likelier causes (a lock timeout, a corrupt daily
+ * file) leave this append perfectly possible, and then the cap survives.
+ */
+function recordAccountingFailure(detail) {
+  try {
+    ensureLedgerDir();
+    fs.appendFileSync(getAccountingFailurePath(), JSON.stringify(detail) + '\n', { mode: 0o600 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns { filePath, count, uncountedUsd } if any accounting failure is on
+ * record, else null. A malformed or unreadable file still counts as a failure:
+ * its existence alone means spend accounting cannot be trusted.
+ */
+function readAccountingFailure() {
+  const filePath = getAccountingFailurePath();
+  if (!fs.existsSync(filePath)) return null;
+  let count = 0;
+  let uncountedUsd = 0;
+  try {
+    for (const line of fs.readFileSync(filePath, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      count += 1;
+      const amount = Number(JSON.parse(line).amountUsd);
+      if (Number.isFinite(amount)) uncountedUsd += amount;
+    }
+  } catch { /* unreadable or malformed: the file being there is enough */ }
+  return { filePath, count, uncountedUsd };
+}
+
+/**
+ * Throws unless this machine's x402 spend accounting is known to be complete.
+ * Checked before every cap decision: a cap computed from a total that is known
+ * to under-count real spend is not a cap.
+ */
+function assertSpendAccountingIntact() {
+  if (ledgerWriteFailure) {
+    throw new X402LedgerError(
+      `x402 spend accounting is incomplete: ${ledgerWriteFailure} ` +
+      `The daily total under-counts that payment, so the daily cap cannot be enforced. ` +
+      `To resume: check ${describeLedgerDirForMessage()} is writable, reconcile the daily total ` +
+      `against payments.jsonl, then re-run. (fail-closed: not signing this payment)`,
+    );
+  }
+
+  const failure = readAccountingFailure();
+  if (failure) {
+    const amount = failure.uncountedUsd > 0 ? ` totalling ~$${failure.uncountedUsd.toFixed(2)}` : '';
+    throw new X402LedgerError(
+      `x402 spend accounting is incomplete: ${failure.count} transmitted payment(s)${amount} could not be ` +
+      `written to the daily spend ledger, so the daily total under-counts real spend and the cap cannot ` +
+      `be enforced. To resume: reconcile the daily total in ${describeLedgerDirForMessage()} against ` +
+      `payments.jsonl, then delete ${failure.filePath}. (fail-closed: not signing this payment)`,
+    );
+  }
 }
 
 /**
@@ -239,14 +321,7 @@ function mutateDailyLedger({ now, failClosedNote, mutate }) {
  * write (fail-closed: none of those may silently disable the cap).
  */
 export function assertCumulativeSpendAllowed({ amountUsd, now = new Date() }) {
-  if (ledgerWriteFailure) {
-    throw new X402LedgerError(
-      `x402 spend accounting is incomplete: ${ledgerWriteFailure} ` +
-      `The daily total under-counts that payment, so the daily cap cannot be enforced. ` +
-      `To resume: check ${describeLedgerDirForMessage()} is writable, reconcile the daily total ` +
-      `against payments.jsonl, then re-run. (fail-closed: not signing this payment)`,
-    );
-  }
+  assertSpendAccountingIntact();
 
   const amountMicros = usdToMicros(amountUsd);
   const sessionCap = resolveSessionSpendCapUsd();
@@ -486,9 +561,25 @@ export function finalizePaymentAttempt(id, patch) {
         ledgerWriteFailure =
           `a $${Number(amountUsd).toFixed(2)} payment was transmitted but could not be written ` +
           `to the daily spend ledger (${err.message}).`;
+        // The latch above dies with this process and the reservation that stands
+        // in for it expires, so persist the failure too: without it the next CLI
+        // run reclaims budget that was genuinely spent.
+        const durable = recordAccountingFailure({
+          at: new Date().toISOString(),
+          pid: process.pid,
+          amountUsd: Number(amountUsd),
+          day: getDailyFileName(recordedAt instanceof Date ? recordedAt : new Date()),
+          reservationId: reservationId || null,
+          paymentId: id,
+          reason: err.message,
+        });
         console.error(
           `[x402] Warning: could not update daily spend ledger: ${err.message} ` +
-          `Further x402 payments are blocked this session because the daily cap can no longer be enforced.`,
+          (durable
+            ? `Further x402 payments are blocked on this machine until ${getAccountingFailurePathForMessage()} ` +
+              `is reconciled and removed, because the daily cap can no longer be enforced.`
+            : `The failure could not be persisted either, so only this process is blocked; ` +
+              `other x402 processes may still exceed the daily cap until the ledger is writable again.`),
         );
       } finally {
         // Resolve the per-process session hold either way: on success the spend
@@ -512,6 +603,23 @@ export function finalizePaymentAttempt(id, patch) {
     }
   }
   pendingAmounts.delete(id);
+}
+
+/**
+ * Finalize `id` only if it has not been finalized already; returns whether it did.
+ *
+ * The payment generators hand a signed payment to their consumer and cannot see
+ * what the consumer did with it: on every ordinary path the consumer settles it
+ * (_x402Retry finalizes at each of its terminal branches), but a consumer that
+ * walks away — `break`/`return` out of the `for await`, which cancels the
+ * generator via iterator.return() — settles nothing. The generators call this on
+ * the way out: a no-op after an ordinary outcome, and the ambiguous finalization
+ * that releases the held budget when the payment was abandoned mid-flight.
+ */
+export function finalizeIfPending(id, patch) {
+  if (!id || !pendingAmounts.has(id)) return false;
+  finalizePaymentAttempt(id, patch);
+  return true;
 }
 
 // Turn the reservation this payment holds into settled spend. Dropping the
@@ -571,4 +679,7 @@ export function _resetSessionSpend() {
 // operator resolves the underlying write failure and re-runs.
 export function _clearLedgerWriteFailure() {
   ledgerWriteFailure = null;
+  try {
+    fs.rmSync(getAccountingFailurePath(), { force: true });
+  } catch { /* nothing to clear */ }
 }

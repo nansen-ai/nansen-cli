@@ -647,6 +647,92 @@ describe('fail-closed edge cases', () => {
     expect(audit.timestamp).toBe('2026-03-02T00:00:30.000Z');
   });
 
+  it('keeps failing closed in a new process after a daily ledger write failure', async () => {
+    // The in-memory latch dies with the process, and the daily reservation that
+    // stands in for the uncounted payment expires after its TTL. Without a
+    // durable marker the next CLI run reads the under-counted total, reclaims
+    // that budget and spends past the cap — which is the whole failure this
+    // guards against.
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+    const first = await import('../x402-ledger.js');
+    first._resetSessionSpend();
+    first._clearLedgerWriteFailure();
+
+    const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
+    fs.mkdirSync(ledgerDir, { recursive: true });
+    const today = new Date();
+    const yyyy = today.getUTCFullYear();
+    const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(today.getUTCDate()).padStart(2, '0');
+    const spendPath = path.join(ledgerDir, `spend-${yyyy}-${mm}-${dd}.json`);
+
+    const capCheck = first.assertCumulativeSpendAllowed({ amountUsd: 0.9 });
+    expect(capCheck.ok).toBe(true);
+
+    // The daily file turns unreadable between the reservation and the commit,
+    // so the $0.90 goes out but is never counted.
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fs.writeFileSync(spendPath, 'NOT VALID JSON');
+    const id = first.recordPaymentAttempt({
+      provider: 'local', amountUsd: 0.9, authorizedAt: capCheck.authorizedAt,
+      reservationId: capCheck.reservationId, network: 'eip155:8453', asset: '0xt',
+      symbol: 'USDC', amountRaw: '900000', payTo: '0xr', requestUrl: 'https://api.nansen.ai/test',
+    });
+    first.finalizePaymentAttempt(id, { status: 'accepted' });
+    warn.mockRestore();
+
+    const markerPath = path.join(ledgerDir, 'accounting-failure.jsonl');
+    expect(fs.existsSync(markerPath)).toBe(true);
+    const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8').trim().split('\n')[0]);
+    expect(marker.amountUsd).toBe(0.9);
+    expect(marker.paymentId).toBe(id);
+
+    // A second CLI process: fresh module state, so no in-memory latch and no
+    // session spend. Clear the corrupt daily file and drop the reservation too,
+    // standing in for its TTL expiring — the marker alone must hold the line.
+    fs.rmSync(spendPath, { force: true });
+    vi.resetModules();
+    const second = await import('../x402-ledger.js');
+    second._resetSessionSpend();
+    expect(() => second.assertCumulativeSpendAllowed({ amountUsd: 0.9 }))
+      .toThrow(/spend accounting is incomplete/i);
+    expect(() => second.assertCumulativeSpendAllowed({ amountUsd: 0.9 }))
+      .toThrow(new RegExp(markerPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+
+    // Reconciling (deleting the marker) is what lets payments resume.
+    fs.rmSync(markerPath, { force: true });
+    expect(second.assertCumulativeSpendAllowed({ amountUsd: 0.9 }).ok).toBe(true);
+  });
+
+  it('finalizeIfPending settles an unfinalized payment once and no-ops afterwards', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = 'unlimited';
+    const { recordPaymentAttempt, finalizePaymentAttempt, finalizeIfPending, getDailySpendState, _resetSessionSpend } =
+      await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    const abandoned = recordPaymentAttempt({
+      provider: 'local', amountUsd: 0.4, network: 'eip155:8453', asset: '0xt',
+      symbol: 'USDC', amountRaw: '400000', payTo: '0xr', requestUrl: 'https://api.nansen.ai/test',
+    });
+    expect(finalizeIfPending(abandoned, { status: 'ambiguous', reason: 'abandoned' })).toBe(true);
+    expect(getDailySpendState().totalUsd).toBeCloseTo(0.4, 6);
+
+    // The ordinary path: the consumer already settled it, so the generator's
+    // cleanup must neither double-count the spend nor append a second,
+    // contradictory audit line.
+    const settled = recordPaymentAttempt({
+      provider: 'local', amountUsd: 0.4, network: 'eip155:8453', asset: '0xt',
+      symbol: 'USDC', amountRaw: '400000', payTo: '0xr', requestUrl: 'https://api.nansen.ai/test',
+    });
+    finalizePaymentAttempt(settled, { status: 'accepted' });
+    const auditLines = () => fs.readFileSync(path.join(tmpDir, '.nansen', 'x402', 'payments.jsonl'), 'utf8')
+      .trim().split('\n').length;
+    const before = auditLines();
+    expect(finalizeIfPending(settled, { status: 'ambiguous', reason: 'abandoned' })).toBe(false);
+    expect(auditLines()).toBe(before);
+    expect(getDailySpendState().totalUsd).toBeCloseTo(0.8, 6);
+  });
+
   it('getDailySpendState throws a typed X402LedgerError on a corrupt ledger', async () => {
     const { getDailySpendState, X402LedgerError } = await import('../x402-ledger.js');
     const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
