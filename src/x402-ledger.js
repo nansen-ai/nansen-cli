@@ -101,11 +101,39 @@ function describeLedgerDirForMessage() {
   }
 }
 
-function getDailyFileName(now) {
+function getUtcDayKey(now) {
   const yyyy = now.getUTCFullYear();
   const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(now.getUTCDate()).padStart(2, '0');
-  return `spend-${yyyy}-${mm}-${dd}.json`;
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getDailyFileName(now) {
+  return `spend-${getUtcDayKey(now)}.json`;
+}
+
+/**
+ * A reservation id carries the UTC day of the cap check that created it:
+ * `YYYY-MM-DD-<32 hex>`. A reservation lives in that day's ledger file, and
+ * releasing or committing it must open that same file — a payment authorized
+ * at 23:59:59 that is abandoned a second later would otherwise be looked up in
+ * the next day's file, leaving the real reservation to hold budget until its
+ * TTL and refusing valid payments on the day that actually authorized it.
+ * Carrying the day in the id keeps every caller from having to pass it.
+ */
+function makeReservationId(now) {
+  return `${getUtcDayKey(now)}-${crypto.randomBytes(16).toString('hex')}`;
+}
+
+/**
+ * The UTC day a reservation id belongs to, or `fallback` for an id without one
+ * (a reservation written by an older build, or a caller-supplied id in a test).
+ */
+function reservationDay(reservationId, fallback = new Date()) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})-[0-9a-f]{32}$/.exec(String(reservationId || ''));
+  if (!match) return fallback;
+  const parsed = new Date(`${match[1]}-${match[2]}-${match[3]}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
 }
 
 // Durable record of spend that was transmitted but could never be counted.
@@ -292,15 +320,20 @@ function writeDailyLedger(filePath, { committedMicros, reservations }) {
  * Read-modify-write the day's ledger under the lock. `mutate` receives the
  * parsed state and returns { value, write }; `write: false` leaves the file
  * untouched (used when a cap check refuses and nothing was reserved).
+ *
+ * `day` selects the file; `at` is the wall clock that decides which reservations
+ * have expired. They are the same instant for a cap check, but not for cleanup
+ * that runs after midnight on the previous day's file — pruning that file by its
+ * own midnight would keep genuinely expired reservations alive.
  */
-function mutateDailyLedger({ now, failClosedNote, mutate }) {
-  const filePath = path.join(getLedgerDir(), getDailyFileName(now));
+function mutateDailyLedger({ day, at = new Date(), failClosedNote, mutate }) {
+  const filePath = path.join(getLedgerDir(), getDailyFileName(day));
   const lockPath = filePath + '.lock';
   ensureLedgerDir();
   return withLedgerLock(lockPath, () => {
     let state;
     try {
-      state = readDailyLedger(filePath, now);
+      state = readDailyLedger(filePath, at);
     } catch {
       throw new X402LedgerError(
         `x402 daily spend ledger is corrupt and cannot be read safely. ` +
@@ -342,8 +375,9 @@ export function assertCumulativeSpendAllowed({ amountUsd, now = new Date() }) {
   const dailyCap = resolveDailySpendCapUsd();
 
   // One id covers both the in-memory session hold and the daily file reservation,
-  // so finalize/release settle them together.
-  const reservationId = crypto.randomBytes(16).toString('hex');
+  // so finalize/release settle them together, and it carries the UTC day of this
+  // check so both land in the ledger file that actually holds the reservation.
+  const reservationId = makeReservationId(now);
 
   // authorizedAt pins the UTC day whose cap this check cleared. Signing can take
   // seconds (local), or minutes of user approval (WalletConnect), so the day the
@@ -357,7 +391,8 @@ export function assertCumulativeSpendAllowed({ amountUsd, now = new Date() }) {
   // same TOCTOU reason as the session cap above — here the race is across
   // concurrent CLI processes, which the file lock plus the reservation close.
   const result = mutateDailyLedger({
-    now,
+    day: now,
+    at: now,
     failClosedNote: 'not signing this payment',
     mutate: (state) => {
       const committedAndHeld = state.committedMicros + sumReservations(state.reservations);
@@ -568,7 +603,9 @@ export function finalizePaymentAttempt(id, patch) {
           at: new Date().toISOString(),
           pid: process.pid,
           amountUsd: Number(amountUsd),
-          day: getDailyFileName(recordedAt instanceof Date ? recordedAt : new Date()),
+          // The file commitDailySpend actually targeted, so the operator
+          // reconciles against the right day's total.
+          day: getDailyFileName(reservationDay(reservationId, recordedAt instanceof Date ? recordedAt : new Date())),
           reservationId: reservationId || null,
           paymentId: id,
           reason: err.message,
@@ -628,7 +665,9 @@ export function finalizeIfPending(id, patch) {
 function commitDailySpend(amountUsd, now = new Date(), reservationId = null) {
   const amountMicros = usdToMicros(amountUsd);
   mutateDailyLedger({
-    now,
+    // Both are the authorizing day by construction; the id is the stronger of
+    // the two, since it is the day the reservation was actually written under.
+    day: reservationDay(reservationId, now),
     failClosedNote: 'preserving existing ledger',
     mutate: (state) => {
       if (reservationId) state.reservations.delete(reservationId);
@@ -643,7 +682,7 @@ function commitDailySpend(amountUsd, now = new Date(), reservationId = null) {
 function releaseDailyReservation(reservationId, now = new Date()) {
   if (!reservationId) return;
   mutateDailyLedger({
-    now,
+    day: reservationDay(reservationId, now),
     failClosedNote: 'preserving existing ledger',
     mutate: (state) => {
       if (!state.reservations.delete(reservationId)) return { value: false, write: false };
@@ -656,6 +695,8 @@ function releaseDailyReservation(reservationId, now = new Date()) {
  * Release budget held by a cap check whose payment was never attempted — a
  * provider that skipped the option or failed before signing. Without this the
  * reservation would hold budget until RESERVATION_TTL_MS elapses.
+ * The day is read from the reservation id, so callers never pass `now` — it is
+ * only a fallback for an id that does not carry one.
  * Best-effort: the TTL is the backstop, so a failure here is never fatal.
  */
 export function releasePaymentReservation(reservationId, now = new Date()) {

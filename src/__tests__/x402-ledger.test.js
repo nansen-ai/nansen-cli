@@ -337,7 +337,7 @@ describe('reservations — concurrent cap enforcement', () => {
 
     const first = assertCumulativeSpendAllowed({ amountUsd: 0.6 });
     expect(first.ok).toBe(true);
-    expect(first.reservationId).toMatch(/^[0-9a-f]{32}$/);
+    expect(first.reservationId).toMatch(/^\d{4}-\d{2}-\d{2}-[0-9a-f]{32}$/);
 
     // Nothing has settled yet — the daily total is still $0 — but $0.60 of the
     // $1.00 is spoken for, so a second $0.60 payment must be refused.
@@ -478,7 +478,7 @@ describe('session cap — in-flight reservations', () => {
 
     const first = assertCumulativeSpendAllowed({ amountUsd: 0.6 });
     expect(first.ok).toBe(true);
-    expect(first.reservationId).toMatch(/^[0-9a-f]{32}$/);
+    expect(first.reservationId).toMatch(/^\d{4}-\d{2}-\d{2}-[0-9a-f]{32}$/);
 
     // Nothing has settled yet — session spend is still $0 — but $0.60 of the
     // $1.00 session cap is spoken for, so a second $0.60 payment must be refused.
@@ -606,7 +606,7 @@ describe('fail-closed edge cases', () => {
     process.env.NANSEN_X402_DAILY_MAX_AMOUNT = 'unlimited';
     const unlimited = assertCumulativeSpendAllowed({ amountUsd: 0.5, now });
     expect(unlimited).toMatchObject({ ok: true, authorizedAt: now });
-    expect(unlimited.reservationId).toMatch(/^[0-9a-f]{32}$/);
+    expect(unlimited.reservationId).toMatch(/^\d{4}-\d{2}-\d{2}-[0-9a-f]{32}$/);
   });
 
   it('charges spend to the day the cap check cleared, even when signing crosses midnight', async () => {
@@ -731,6 +731,75 @@ describe('fail-closed edge cases', () => {
     expect(finalizeIfPending(settled, { status: 'ambiguous', reason: 'abandoned' })).toBe(false);
     expect(auditLines()).toBe(before);
     expect(getDailySpendState().totalUsd).toBeCloseTo(0.8, 6);
+  });
+
+  it('releases a reservation from the day that authorized it, not the day cleanup runs', async () => {
+    // A cap check at 23:59:55 writes its reservation into day 1's ledger. If the
+    // payment is then abandoned a few seconds later — after midnight — cleanup
+    // must still open day 1's file. Locating it by the current time would leave
+    // the real reservation holding budget until its 15-minute TTL and refuse
+    // otherwise-valid payments on the day that authorized them.
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, releasePaymentReservation, getDailySpendState, _resetSessionSpend } =
+      await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-03-01T23:59:55Z'));
+      const capCheck = assertCumulativeSpendAllowed({ amountUsd: 0.8 });
+      expect(capCheck.ok).toBe(true);
+      expect(capCheck.reservationId.startsWith('2026-03-01-')).toBe(true);
+      expect(getDailySpendState().reservedUsd).toBeCloseTo(0.8, 6);
+
+      // Signing fails just after midnight; the caller releases without knowing
+      // which day's file holds the reservation.
+      vi.setSystemTime(new Date('2026-03-02T00:00:05Z'));
+      releasePaymentReservation(capCheck.reservationId);
+
+      // Day 1's reservation is gone, so day 1's headroom is free again.
+      const dayOne = JSON.parse(fs.readFileSync(path.join(ledgerDir, 'spend-2026-03-01.json'), 'utf8'));
+      expect(dayOne.reservations).toBeUndefined();
+
+      // And cleanup did not invent a day-2 file to delete a reservation from.
+      expect(fs.existsSync(path.join(ledgerDir, 'spend-2026-03-02.json'))).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('commits spend to the authorizing day when the reservation id is the only day left', async () => {
+    // Same crossing, settled instead of abandoned: recordPaymentAttempt is called
+    // without an explicit authorizedAt, so the id is what keeps the charge on the
+    // day whose cap cleared it.
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, recordPaymentAttempt, finalizePaymentAttempt, _resetSessionSpend } =
+      await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-03-01T23:59:55Z'));
+      const capCheck = assertCumulativeSpendAllowed({ amountUsd: 0.5 });
+
+      vi.setSystemTime(new Date('2026-03-02T00:00:30Z'));
+      const id = recordPaymentAttempt({
+        provider: 'local', amountUsd: 0.5, reservationId: capCheck.reservationId,
+        network: 'eip155:8453', asset: '0xt', symbol: 'USDC', amountRaw: '500000',
+        payTo: '0xr', requestUrl: 'https://api.nansen.ai/test',
+      });
+      finalizePaymentAttempt(id, { status: 'accepted' });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const files = fs.readdirSync(ledgerDir).filter((n) => n.startsWith('spend-'));
+    expect(files).toEqual(['spend-2026-03-01.json']);
+    const dayOne = JSON.parse(fs.readFileSync(path.join(ledgerDir, files[0]), 'utf8'));
+    expect(dayOne.totalUsdMicros).toBe('500000');
+    expect(dayOne.reservations).toBeUndefined();
   });
 
   it('getDailySpendState throws a typed X402LedgerError on a corrupt ledger', async () => {
