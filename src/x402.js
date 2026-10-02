@@ -111,9 +111,9 @@ async function hasPermit2Allowance(network, token, owner, amount) {
 
 /**
  * Build a payment signature for a single requirement.
- * @returns {string|null} Base64 payment signature, or null on failure
+ * @returns {{ sig: string, paymentId: string }|null}
  */
-async function buildPaymentForRequirement(requirement, exported, url) {
+async function buildPaymentForRequirement(requirement, exported, url, walletLabel) {
   const decision = evaluatePaymentRequirement(requirement);
   if (!decision.ok) {
     console.error(`[x402] ${decision.reason}`);
@@ -132,46 +132,88 @@ async function buildPaymentForRequirement(requirement, exported, url) {
     return null;
   }
 
-  if (isEvmNetwork(requirement.network)) {
-    if ((requirement.extra || {}).assetTransferMethod === 'permit2-exact') {
-      const resolvedAmount = resolvePaymentAmount(requirement);
-      const approved = await hasPermit2Allowance(
-        requirement.network,
-        requirement.asset,
-        exported.evm.address,
-        resolvedAmount,
-      );
-      if (!approved) {
-        console.error(
-          `[x402] Skipping ${requirement.network} permit2 option: Permit2 ` +
-          `(${PERMIT2_ADDRESS}) allowance for token ${requirement.asset} is ` +
-          `missing or below the payment amount (${resolvedAmount}). ` +
-          `Send approve(${PERMIT2_ADDRESS}, <amount>) from the wallet to enable it.`,
+  const { assertCumulativeSpendAllowed, recordPaymentAttempt, releasePaymentReservation } = await import('./x402-ledger.js');
+  let capCheck;
+  try {
+    capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
+  } catch (err) {
+    console.error(`[x402] ${err.message}`);
+    throw err;
+  }
+  if (!capCheck.ok) {
+    console.error(`[x402] ${capCheck.reason}`);
+    return null;
+  }
+
+  // Budget is held from the cap check onward, so every path that gives up
+  // before the payment is recorded has to release it — otherwise a wallet
+  // missing a Permit2 allowance would park the amount until its TTL expires.
+  const { reservationId } = capCheck;
+  let sig = null;
+
+  try {
+    if (isEvmNetwork(requirement.network)) {
+      if ((requirement.extra || {}).assetTransferMethod === 'permit2-exact') {
+        const resolvedAmount = resolvePaymentAmount(requirement);
+        const approved = await hasPermit2Allowance(
+          requirement.network,
+          requirement.asset,
+          exported.evm.address,
+          resolvedAmount,
         );
-        return null;
+        if (!approved) {
+          console.error(
+            `[x402] Skipping ${requirement.network} permit2 option: Permit2 ` +
+            `(${PERMIT2_ADDRESS}) allowance for token ${requirement.asset} is ` +
+            `missing or below the payment amount (${resolvedAmount}). ` +
+            `Send approve(${PERMIT2_ADDRESS}, <amount>) from the wallet to enable it.`,
+          );
+          releasePaymentReservation(reservationId);
+          return null;
+        }
       }
+      sig = await createEvmPaymentPayload(
+        requirement,
+        exported.evm.privateKey,
+        exported.evm.address,
+        url,
+      );
+    } else if (isSvmNetwork(requirement.network)) {
+      const rpcUrl = getSolanaRpcUrl(requirement.network);
+      const blockhash = await fetchRecentBlockhash(rpcUrl);
+      sig = await createSvmPaymentPayload(
+        requirement,
+        exported.solana.privateKey,
+        exported.solana.address,
+        url,
+        blockhash,
+      );
     }
-    return createEvmPaymentPayload(
-      requirement,
-      exported.evm.privateKey,
-      exported.evm.address,
-      url,
-    );
+  } catch (err) {
+    releasePaymentReservation(reservationId);
+    throw err;
   }
 
-  if (isSvmNetwork(requirement.network)) {
-    const rpcUrl = getSolanaRpcUrl(requirement.network);
-    const blockhash = await fetchRecentBlockhash(rpcUrl);
-    return createSvmPaymentPayload(
-      requirement,
-      exported.solana.privateKey,
-      exported.solana.address,
-      url,
-      blockhash,
-    );
+  if (!sig) {
+    releasePaymentReservation(reservationId);
+    return null;
   }
 
-  return null;
+  const paymentId = recordPaymentAttempt({
+    provider: 'local',
+    walletLabel: walletLabel || 'local wallet',
+    authorizedAt: capCheck.authorizedAt,
+    reservationId,
+    network: decision.network,
+    asset: decision.asset,
+    symbol: decision.symbol,
+    amountUsd: decision.usd,
+    amountRaw: decision.amountRaw,
+    payTo: decision.payTo,
+    requestUrl: url,
+  });
+
+  return { sig, paymentId };
 }
 
 /**
@@ -219,16 +261,44 @@ export async function* createPaymentSignatures(response, url, options = {}) {
     return;
   }
 
+  const walletLabel = `local wallet ${walletName}`;
   for (const req of ranked) {
+    let result = null;
+    let interruptedBy = null;
     try {
-      const sig = await buildPaymentForRequirement(req, exported, url);
-      if (sig) yield { signature: sig, network: req.network, asset: req.asset };
+      result = await buildPaymentForRequirement(req, exported, url, walletLabel);
+      if (result) yield { signature: result.sig, network: req.network, asset: req.asset, paymentId: result.paymentId };
     } catch (err) {
+      // An exception surfacing here with a payment already recorded means the
+      // consumer was interrupted (e.g. cancellation injected via the generator's
+      // throw()) after we signed and recorded this option. The finally block
+      // below finalizes it; propagate so the caller never falls through to a
+      // second payment for the same request.
+      if (result?.paymentId) {
+        interruptedBy = err?.message || String(err);
+        throw err;
+      }
+      if (err?.failClosedX402) throw err;
       // This payment option failed to build; say why and try the next one
       // (otherwise a malformed server option only surfaces as a generic
       // payment failure once every option is exhausted).
       console.error(`[x402] Skipping ${req.network} option: ${err?.message || err}`);
       continue;
+    } finally {
+      // Runs on every way out of this option, which `catch` alone does not cover:
+      // the consumer cancelling with break/return (iterator.return() resumes the
+      // yield with a return completion and skips `catch`) would otherwise leave
+      // the payment recorded as `signed` and its budget held until the TTL.
+      // After an ordinary outcome _x402Retry has already finalized the payment,
+      // so finalizeIfPending is a no-op and adds no spurious audit line; it only
+      // acts when the signed payment was abandoned with its outcome unknown.
+      if (result?.paymentId) {
+        const { finalizeIfPending } = await import('./x402-ledger.js');
+        finalizeIfPending(result.paymentId, {
+          status: 'ambiguous',
+          reason: interruptedBy || 'consumer abandoned the payment after signing; outcome unknown',
+        });
+      }
     }
   }
 }
@@ -292,6 +362,8 @@ export async function checkX402Balance(network, asset = null) {
       });
       const data = await resp.json();
       const accounts = data.result?.value || [];
+      // uiAmountString is an RPC display field; this float is only used for a
+      // low-balance warning and never for signing, transfers, or cap arithmetic.
       const balance = accounts.length === 0
         ? 0
         : parseFloat(accounts[0].account.data.parsed.info.tokenAmount.uiAmountString || '0');

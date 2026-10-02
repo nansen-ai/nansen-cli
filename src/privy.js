@@ -290,6 +290,8 @@ export async function* createPrivyPaymentSignatures(response, url) {
   const requirements = parsePaymentRequirements(response);
   if (!requirements || requirements.length === 0) return;
 
+  const { assertCumulativeSpendAllowed, finalizeIfPending, recordPaymentAttempt, releasePaymentReservation } = await import('./x402-ledger.js');
+
   const client = getClient();
 
   // EVM requirements
@@ -301,6 +303,19 @@ export async function* createPrivyPaymentSignatures(response, url) {
         const decision = evaluatePaymentRequirement(requirement);
         if (!decision.ok) {
           console.error(`[x402] ${decision.reason}`);
+          continue;
+        }
+        let capCheck;
+        let paymentId = null;
+        let evmInterruptedBy = null;
+        try {
+          capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
+        } catch (err) {
+          console.error(`[x402] ${err.message}`);
+          throw err;
+        }
+        if (!capCheck.ok) {
+          console.error(`[x402] ${capCheck.reason}`);
           continue;
         }
         try {
@@ -331,10 +346,51 @@ export async function* createPrivyPaymentSignatures(response, url) {
             accepted: requirement,
           });
 
-          yield { signature: header, network: requirement.network };
+          // decision.usd is always set here — evaluatePaymentRequirement rejects
+          // any requirement without a resolvable USD amount before we reach this
+          // point — so recordPaymentAttempt always returns an id and the yielded
+          // payment is guaranteed to carry a paymentId that the catch/consumer
+          // can finalize. Keep that invariant if this record call is refactored.
+          paymentId = recordPaymentAttempt({
+            provider: 'privy',
+            walletLabel: `Privy wallet ${evmWallet.id}`,
+            authorizedAt: capCheck.authorizedAt,
+            reservationId: capCheck.reservationId,
+            network: decision.network,
+            asset: decision.asset,
+            symbol: decision.symbol,
+            amountUsd: decision.usd,
+            amountRaw: decision.amountRaw,
+            payTo: decision.payTo,
+            requestUrl: url,
+          });
+
+          yield { signature: header, network: requirement.network, asset: requirement.asset, paymentId };
         } catch (err) {
+          if (paymentId) {
+            // The finally block finalizes it; propagate so the caller never
+            // falls through to a second payment for the same request.
+            evmInterruptedBy = err.message;
+            throw err;
+          }
+          // Nothing was signed, so the budget this cap check reserved goes back
+          // instead of sitting held until its TTL.
+          releasePaymentReservation(capCheck.reservationId);
           console.error(`[x402] Privy EVM signing failed for ${requirement.network}: ${err.message}`);
           continue;
+        } finally {
+      // Runs on every way out of this option, which `catch` alone does not
+      // cover: a consumer cancelling with break/return (iterator.return()
+      // resumes the yield with a return completion and skips `catch`) would
+      // otherwise leave the payment recorded as `signed` and its budget held
+      // until the TTL. After an ordinary outcome _x402Retry has already
+      // finalized it, so this is a no-op and adds no spurious audit line.
+          if (paymentId) {
+            finalizeIfPending(paymentId, {
+              status: 'ambiguous',
+              reason: evmInterruptedBy || 'consumer abandoned the payment after signing; outcome unknown',
+            });
+          }
         }
       }
     } else {
@@ -351,6 +407,19 @@ export async function* createPrivyPaymentSignatures(response, url) {
         const svmDecision = evaluatePaymentRequirement(requirement);
         if (!svmDecision.ok) {
           console.error(`[x402] ${svmDecision.reason}`);
+          continue;
+        }
+        let svmCapCheck;
+        let paymentId = null;
+        let svmInterruptedBy = null;
+        try {
+          svmCapCheck = assertCumulativeSpendAllowed({ amountUsd: svmDecision.usd });
+        } catch (err) {
+          console.error(`[x402] ${err.message}`);
+          throw err;
+        }
+        if (!svmCapCheck.ok) {
+          console.error(`[x402] ${svmCapCheck.reason}`);
           continue;
         }
         try {
@@ -376,10 +445,49 @@ export async function* createPrivyPaymentSignatures(response, url) {
           }
 
           const header = Buffer.from(JSON.stringify(payload)).toString("base64");
-          yield { signature: header, network: requirement.network };
+          // svmDecision.usd is always set here — evaluatePaymentRequirement rejects
+          // any requirement without a resolvable USD amount before we reach this
+          // point — so recordPaymentAttempt always returns an id and the yielded
+          // payment is guaranteed to carry a paymentId that the catch/consumer
+          // can finalize. Keep that invariant if this record call is refactored.
+          paymentId = recordPaymentAttempt({
+            provider: 'privy',
+            walletLabel: `Privy wallet ${solWallet.id}`,
+            authorizedAt: svmCapCheck.authorizedAt,
+            reservationId: svmCapCheck.reservationId,
+            network: svmDecision.network,
+            asset: svmDecision.asset,
+            symbol: svmDecision.symbol,
+            amountUsd: svmDecision.usd,
+            amountRaw: svmDecision.amountRaw,
+            payTo: svmDecision.payTo,
+            requestUrl: url,
+          });
+
+          yield { signature: header, network: requirement.network, asset: requirement.asset, paymentId };
         } catch (err) {
+          if (paymentId) {
+            // The finally block finalizes it; propagate so the caller never
+            // falls through to a second payment for the same request.
+            svmInterruptedBy = err.message;
+            throw err;
+          }
+          releasePaymentReservation(svmCapCheck.reservationId);
           console.error(`[x402] Privy Solana signing failed for ${requirement.network}: ${err.message}`);
           continue;
+        } finally {
+      // Runs on every way out of this option, which `catch` alone does not
+      // cover: a consumer cancelling with break/return (iterator.return()
+      // resumes the yield with a return completion and skips `catch`) would
+      // otherwise leave the payment recorded as `signed` and its budget held
+      // until the TTL. After an ordinary outcome _x402Retry has already
+      // finalized it, so this is a no-op and adds no spurious audit line.
+          if (paymentId) {
+            finalizeIfPending(paymentId, {
+              status: 'ambiguous',
+              reason: svmInterruptedBy || 'consumer abandoned the payment after signing; outcome unknown',
+            });
+          }
         }
       }
     } else {
