@@ -802,6 +802,72 @@ describe('fail-closed edge cases', () => {
     expect(dayOne.reservations).toBeUndefined();
   });
 
+  describe('malformed ledger shapes fail closed instead of reading as $0', () => {
+    // writeDailyLedger always emits totalUsdMicros, so none of these is a file
+    // this CLI produced. Reading one as zero spend would silently hand back a
+    // full day's cap — the exact opposite of the documented fail-closed
+    // contract for a corrupt ledger.
+    const REJECTED = {
+      'empty object': '{}',
+      'array': '[]',
+      'bare number': '123',
+      'bare string': '"not a ledger"',
+      'JSON null': 'null',
+      'boolean': 'true',
+      'object with no total': '{"foo":1}',
+      'null total': '{"totalUsd":null}',
+      'string total': '{"totalUsd":"0.3"}',
+      'negative total': '{"totalUsd":-5}',
+      'null reservations': '{"totalUsdMicros":"500000","reservations":null}',
+      'string reservations': '{"totalUsdMicros":"500000","reservations":"x"}',
+      'array reservations': '{"totalUsdMicros":"500000","reservations":[]}',
+    };
+
+    function todaysLedgerPath() {
+      const ledgerDir = path.join(tmpDir, '.nansen', 'x402');
+      fs.mkdirSync(ledgerDir, { recursive: true });
+      const today = new Date();
+      const yyyy = today.getUTCFullYear();
+      const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(today.getUTCDate()).padStart(2, '0');
+      return path.join(ledgerDir, `spend-${yyyy}-${mm}-${dd}.json`);
+    }
+
+    for (const [label, contents] of Object.entries(REJECTED)) {
+      it(`refuses to sign against a ledger that is ${label}`, async () => {
+        process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+        const { assertCumulativeSpendAllowed, getDailySpendState, X402LedgerError, _resetSessionSpend } =
+          await import('../x402-ledger.js');
+        _resetSessionSpend();
+        fs.writeFileSync(todaysLedgerPath(), contents);
+
+        expect(() => assertCumulativeSpendAllowed({ amountUsd: 0.5 })).toThrow(X402LedgerError);
+        expect(() => assertCumulativeSpendAllowed({ amountUsd: 0.5 })).toThrow(/corrupt/i);
+        expect(() => getDailySpendState()).toThrow(X402LedgerError);
+      });
+    }
+
+    const ACCEPTED = {
+      'the current shape': ['{"totalUsdMicros":"300000"}', 0.3],
+      'the current shape with empty reservations': ['{"totalUsdMicros":"300000","reservations":{}}', 0.3],
+      'a legacy totalUsd ledger': ['{"totalUsd":0.3}', 0.3],
+      'a legitimately zero day': ['{"totalUsdMicros":"0"}', 0],
+    };
+
+    for (const [label, [contents, expectedTotal]] of Object.entries(ACCEPTED)) {
+      it(`still reads ${label}`, async () => {
+        process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '1.00';
+        const { assertCumulativeSpendAllowed, getDailySpendState, _resetSessionSpend } =
+          await import('../x402-ledger.js');
+        _resetSessionSpend();
+        fs.writeFileSync(todaysLedgerPath(), contents);
+
+        expect(getDailySpendState().totalUsd).toBeCloseTo(expectedTotal, 6);
+        expect(assertCumulativeSpendAllowed({ amountUsd: 1 - expectedTotal }).ok).toBe(true);
+      });
+    }
+  });
+
   it('getDailySpendState throws a typed X402LedgerError on a corrupt ledger', async () => {
     const { getDailySpendState, X402LedgerError } = await import('../x402-ledger.js');
     const ledgerDir = path.join(tmpDir, '.nansen', 'x402');

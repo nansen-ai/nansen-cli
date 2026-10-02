@@ -250,16 +250,38 @@ function microsToUsd(micros) {
   return Number(micros) / MICRO_USD_SCALE;
 }
 
+// A ledger we wrote is always a JSON object; an array, a bare number or a
+// string is not a ledger at all.
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The day's settled spend, or throw. Every shape this does not recognise is a
+ * corrupt ledger, never $0: writeDailyLedger always emits `totalUsdMicros`, so
+ * a file without a usable total is one we did not write, and reading it as zero
+ * would silently hand back a full day's cap. `totalUsd` stays accepted for
+ * ledgers written before the micro-USD field.
+ */
 function readSpendMicrosFromData(data) {
-  if (data && data.totalUsdMicros !== undefined) {
+  if (!isPlainObject(data)) throw new Error('Ledger is not a JSON object');
+
+  if (data.totalUsdMicros !== undefined) {
     const raw = String(data.totalUsdMicros);
     if (/^\d+$/.test(raw)) return BigInt(raw);
     throw new Error('Invalid totalUsdMicros');
   }
-  if (data && data.totalUsd !== undefined) {
-    return usdToMicros(Number(data.totalUsd));
+
+  if (data.totalUsd !== undefined) {
+    // Not `Number(...)`: it maps null, '' and booleans onto real numbers, so a
+    // `"totalUsd": null` would read as a legitimate $0.
+    if (typeof data.totalUsd !== 'number' || !Number.isFinite(data.totalUsd) || data.totalUsd < 0) {
+      throw new Error('Invalid totalUsd');
+    }
+    return usdToMicros(data.totalUsd);
   }
-  return 0n;
+
+  throw new Error('Ledger has no spend total');
 }
 
 /**
@@ -275,9 +297,14 @@ function readDailyLedger(filePath, now = new Date()) {
   const committedMicros = readSpendMicrosFromData(data);
 
   const reservations = new Map();
-  const raw = data && typeof data.reservations === 'object' && data.reservations !== null
-    ? data.reservations
-    : {};
+  // Absent is normal — writeDailyLedger omits the key once a day has no holds
+  // left — but any other non-object value is corruption. Coercing it to "no
+  // reservations" would drop every in-flight hold and hand the same headroom to
+  // a concurrent process.
+  if (data.reservations !== undefined && !isPlainObject(data.reservations)) {
+    throw new Error('Invalid reservations');
+  }
+  const raw = data.reservations || {};
   for (const [reservationId, entry] of Object.entries(raw)) {
     if (!entry || typeof entry !== 'object') throw new Error('Invalid reservation');
     const micros = String(entry.micros);
