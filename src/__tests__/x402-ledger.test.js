@@ -465,6 +465,84 @@ describe('reservations — concurrent cap enforcement', () => {
   });
 });
 
+describe('session cap — in-flight reservations', () => {
+  it('holds session budget at the cap check, so a second concurrent check cannot clear the same headroom', async () => {
+    // The race this closes: both checks read the same session total (incremented
+    // only at finalize), both clear the per-process cap, both sign, and the sum
+    // exceeds NANSEN_X402_SESSION_MAX_AMOUNT. Daily unlimited so only the session
+    // accumulator is exercised.
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = 'unlimited';
+    process.env.NANSEN_X402_SESSION_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    const first = assertCumulativeSpendAllowed({ amountUsd: 0.6 });
+    expect(first.ok).toBe(true);
+    expect(first.reservationId).toMatch(/^[0-9a-f]{32}$/);
+
+    // Nothing has settled yet — session spend is still $0 — but $0.60 of the
+    // $1.00 session cap is spoken for, so a second $0.60 payment must be refused.
+    const second = assertCumulativeSpendAllowed({ amountUsd: 0.6 });
+    expect(second.ok).toBe(false);
+    expect(second.reason).toMatch(/session x402 spend cap/);
+    expect(second.reservationId).toBeUndefined();
+
+    // What still fits under the held budget does clear.
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.4 }).ok).toBe(true);
+  });
+
+  it('frees the session hold when the payment is rejected', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = 'unlimited';
+    process.env.NANSEN_X402_SESSION_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, recordPaymentAttempt, finalizePaymentAttempt, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    const capCheck = assertCumulativeSpendAllowed({ amountUsd: 0.9 });
+    const id = recordPaymentAttempt({
+      provider: 'local', amountUsd: 0.9, authorizedAt: capCheck.authorizedAt, reservationId: capCheck.reservationId,
+      network: 'eip155:8453', asset: '0xt', symbol: 'USDC', amountRaw: '900000', payTo: '0xr', requestUrl: 'https://api.nansen.ai/test',
+    });
+    finalizePaymentAttempt(id, { status: 'rejected' });
+
+    // Rejected spent nothing, so the whole session cap is available again rather
+    // than staying held behind the in-flight reservation.
+    expect(assertCumulativeSpendAllowed({ amountUsd: 1.0 }).ok).toBe(true);
+  });
+
+  it('frees the session hold for an attempt abandoned before signing', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = 'unlimited';
+    process.env.NANSEN_X402_SESSION_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, releasePaymentReservation, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    const capCheck = assertCumulativeSpendAllowed({ amountUsd: 0.9 });
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.2 }).ok).toBe(false);
+
+    releasePaymentReservation(capCheck.reservationId);
+    expect(assertCumulativeSpendAllowed({ amountUsd: 1.0 }).ok).toBe(true);
+  });
+
+  it('converts the session hold to settled spend exactly once when accepted', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = 'unlimited';
+    process.env.NANSEN_X402_SESSION_MAX_AMOUNT = '1.00';
+    const { assertCumulativeSpendAllowed, recordPaymentAttempt, finalizePaymentAttempt, _resetSessionSpend } = await import('../x402-ledger.js');
+    _resetSessionSpend();
+
+    const capCheck = assertCumulativeSpendAllowed({ amountUsd: 0.6 });
+    const id = recordPaymentAttempt({
+      provider: 'local', amountUsd: 0.6, authorizedAt: capCheck.authorizedAt, reservationId: capCheck.reservationId,
+      network: 'eip155:8453', asset: '0xt', symbol: 'USDC', amountRaw: '600000', payTo: '0xr', requestUrl: 'https://api.nansen.ai/test',
+    });
+    finalizePaymentAttempt(id, { status: 'accepted' });
+
+    // $0.60 is now settled session spend, counted once (not held + spent). A
+    // refused check reserves nothing, so both directions prove single-counting:
+    // $0.41 exceeds the $0.40 remaining, $0.40 fits exactly.
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.41 }).ok).toBe(false);
+    expect(assertCumulativeSpendAllowed({ amountUsd: 0.4 }).ok).toBe(true);
+  });
+});
+
 describe('fail-closed edge cases', () => {
   it('fails closed when no home directory can be resolved', async () => {
     process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '10.00';
@@ -523,9 +601,12 @@ describe('fail-closed edge cases', () => {
 
     // Also on the short-circuit path, or an unlimited daily cap would drop the
     // day and send the spend to whatever day finalization happens to land on.
-    // No reservation there: with no daily cap there is no budget to hold.
+    // A reservationId still comes back there: with no daily budget to hold it
+    // carries the per-process session hold, which finalize/release settle by id.
     process.env.NANSEN_X402_DAILY_MAX_AMOUNT = 'unlimited';
-    expect(assertCumulativeSpendAllowed({ amountUsd: 0.5, now })).toEqual({ ok: true, authorizedAt: now });
+    const unlimited = assertCumulativeSpendAllowed({ amountUsd: 0.5, now });
+    expect(unlimited).toMatchObject({ ok: true, authorizedAt: now });
+    expect(unlimited.reservationId).toMatch(/^[0-9a-f]{32}$/);
   });
 
   it('charges spend to the day the cap check cleared, even when signing crosses midnight', async () => {
