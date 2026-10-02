@@ -625,4 +625,55 @@ describe('createPaymentSignatures — cumulative cap enforcement', () => {
     }).rejects.toThrow(/ledger is corrupt/);
     expect(recordPaymentAttempt).not.toHaveBeenCalled();
   });
+
+  it('finalizes a recorded payment as ambiguous if the generator is interrupted after yielding', async () => {
+    // Mirrors the Privy generator: a consumer interruption injected at the yield
+    // (cancellation, an interrupted retry loop) must not be swallowed — the
+    // already-signed payment's outcome is unknown, so it is finalized as
+    // ambiguous and the error propagates, rather than leaving the audit entry
+    // stuck at `signed` with its reserved budget held until the TTL.
+    vi.doMock('../wallet.js', () => ({
+      listWallets: () => ({ defaultWallet: 'test', wallets: [{ name: 'test', evm: '0xAddr', solana: 'SolAddr' }] }),
+      exportWallet: () => ({ evm: { address: '0xAddr', privateKey: '0xkey' }, solana: { address: 'SolAddr', privateKey: new Uint8Array(32) } }),
+      getWalletConfig: () => ({ passwordHash: null }),
+    }));
+    const finalizePaymentAttempt = vi.fn();
+    vi.doMock('../x402-ledger.js', () => ({
+      assertCumulativeSpendAllowed: () => ({ ok: true, authorizedAt: new Date(), reservationId: 'resv-1' }),
+      recordPaymentAttempt: vi.fn().mockReturnValue('pid-interrupt'),
+      finalizePaymentAttempt,
+      releasePaymentReservation: vi.fn(),
+    }));
+    vi.doMock('../x402-evm.js', () => ({
+      createEvmPaymentPayload: vi.fn().mockResolvedValue('fake-sig'),
+      isEvmNetwork: (n) => n.startsWith('eip155:'),
+      PERMIT2_ADDRESS: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
+    }));
+
+    const paymentHeader = Buffer.from(JSON.stringify({
+      accepts: [{
+        scheme: 'exact',
+        network: 'eip155:8453',
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        amount: '10000',
+        pay_to: '0xRecipient',
+      }],
+    })).toString('base64');
+    const mockResponse = { headers: { get: (h) => h === 'payment-required' ? paymentHeader : null } };
+
+    const { createPaymentSignatures } = await import('../x402.js');
+    const iterator = createPaymentSignatures(mockResponse, 'https://api.nansen.ai/test');
+
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(first.value.paymentId).toBe('pid-interrupt');
+
+    await expect(iterator.throw(new Error('consumer interrupted'))).rejects.toThrow('consumer interrupted');
+    expect(finalizePaymentAttempt).toHaveBeenCalledWith(
+      'pid-interrupt',
+      expect.objectContaining({ status: 'ambiguous', reason: 'consumer interrupted' }),
+    );
+
+    vi.doUnmock('../x402-evm.js');
+  });
 });

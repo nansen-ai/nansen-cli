@@ -20,8 +20,25 @@ const LEDGER_LOCK_STALE_MS = 30_000;
 // commits or releases the reservation explicitly.
 const RESERVATION_TTL_MS = 15 * 60 * 1000;
 
-// Session accumulator — lives in process memory only
+// Session accumulators — live in process memory only.
+// sessionSpendMicros is settled session spend; sessionReservations holds budget
+// for in-flight payments (reservationId → micros), mirroring the daily file
+// reservations but per-process. Without the reservation, two concurrent payments
+// in the same process both read the same session total, both clear the cap, and
+// their combined amount exceeds NANSEN_X402_SESSION_MAX_AMOUNT — the daily cap's
+// reservation closes exactly this race, and the session cap needs its own.
 let sessionSpendMicros = 0n;
+const sessionReservations = new Map();
+
+function sumSessionReservations() {
+  let total = 0n;
+  for (const micros of sessionReservations.values()) total += micros;
+  return total;
+}
+
+function releaseSessionReservation(reservationId) {
+  if (reservationId) sessionReservations.delete(reservationId);
+}
 
 // Set when a transmitted payment could not be written to the daily ledger. The
 // amount is already on the wire but uncounted, so the daily total under-reports
@@ -233,7 +250,12 @@ export function assertCumulativeSpendAllowed({ amountUsd, now = new Date() }) {
 
   const amountMicros = usdToMicros(amountUsd);
   const sessionCap = resolveSessionSpendCapUsd();
-  if (Number.isFinite(sessionCap) && sessionSpendMicros + amountMicros > usdToMicros(sessionCap)) {
+  // Count in-flight session reservations, not just settled spend: like the daily
+  // cap, checking settled spend alone is a time-of-check/time-of-use race — two
+  // concurrent payments in this process both read the same total, both clear the
+  // cap, and the serialized increments land above the limit the user set.
+  if (Number.isFinite(sessionCap) &&
+      sessionSpendMicros + sumSessionReservations() + amountMicros > usdToMicros(sessionCap)) {
     return {
       ok: false,
       reason:
@@ -243,17 +265,23 @@ export function assertCumulativeSpendAllowed({ amountUsd, now = new Date() }) {
   }
 
   const dailyCap = resolveDailySpendCapUsd();
+
+  // One id covers both the in-memory session hold and the daily file reservation,
+  // so finalize/release settle them together.
+  const reservationId = crypto.randomBytes(16).toString('hex');
+
   // authorizedAt pins the UTC day whose cap this check cleared. Signing can take
   // seconds (local), or minutes of user approval (WalletConnect), so the day the
   // payment is finally recorded is not reliably the day that authorized it.
-  if (!Number.isFinite(dailyCap)) return { ok: true, authorizedAt: now };
+  if (!Number.isFinite(dailyCap)) {
+    sessionReservations.set(reservationId, amountMicros);
+    return { ok: true, authorizedAt: now, reservationId };
+  }
 
-  // Check and reserve in one locked read-modify-write. Checking without
-  // reserving is a time-of-check/time-of-use race: two processes read the same
-  // total, both clear the cap, both sign, and the serialized increments land
-  // above the limit the user set. Holding budget from this moment is what makes
-  // the cap hold across concurrent CLI invocations.
-  return mutateDailyLedger({
+  // Check and reserve the daily budget in one locked read-modify-write, for the
+  // same TOCTOU reason as the session cap above — here the race is across
+  // concurrent CLI processes, which the file lock plus the reservation close.
+  const result = mutateDailyLedger({
     now,
     failClosedNote: 'not signing this payment',
     mutate: (state) => {
@@ -271,7 +299,6 @@ export function assertCumulativeSpendAllowed({ amountUsd, now = new Date() }) {
         };
       }
 
-      const reservationId = crypto.randomBytes(16).toString('hex');
       state.reservations.set(reservationId, {
         micros: amountMicros,
         expiresAt: new Date(now.getTime() + RESERVATION_TTL_MS).toISOString(),
@@ -279,6 +306,11 @@ export function assertCumulativeSpendAllowed({ amountUsd, now = new Date() }) {
       return { value: { ok: true, authorizedAt: now, reservationId } };
     },
   });
+
+  // Take the session hold only once the daily reservation is committed, under the
+  // same id. A refused or throwing daily check leaves no session hold behind.
+  if (result.ok) sessionReservations.set(reservationId, amountMicros);
+  return result;
 }
 
 function ensureLedgerDir() {
@@ -448,9 +480,9 @@ export function finalizePaymentAttempt(id, patch) {
       } catch (err) {
         // The payment is already transmitted — it cannot be unsent, so this
         // attempt cannot fail closed. The next one can, and must: the daily
-        // total now under-counts real spend by this amount. The reservation is
-        // left in place deliberately; until it expires it holds roughly the
-        // right amount of budget against other processes.
+        // total now under-counts real spend by this amount. The daily
+        // reservation is left in place deliberately; until it expires it holds
+        // roughly the right amount of budget against other processes.
         ledgerWriteFailure =
           `a $${Number(amountUsd).toFixed(2)} payment was transmitted but could not be written ` +
           `to the daily spend ledger (${err.message}).`;
@@ -458,10 +490,17 @@ export function finalizePaymentAttempt(id, patch) {
           `[x402] Warning: could not update daily spend ledger: ${err.message} ` +
           `Further x402 payments are blocked this session because the daily cap can no longer be enforced.`,
         );
+      } finally {
+        // Resolve the per-process session hold either way: on success the spend
+        // above replaces it; on failure the fail-closed latch — not this hold —
+        // is what blocks further payments, so keeping it would only pin session
+        // budget for the life of the process.
+        releaseSessionReservation(reservationId);
       }
     } else if (reservationId) {
-      // Rejected, or settled with no amount to charge: nothing was spent, so
-      // the held budget goes back rather than waiting out its TTL.
+      // Rejected, or settled with no amount to charge: nothing was spent, so the
+      // held budget — session and daily — goes back rather than waiting out its TTL.
+      releaseSessionReservation(reservationId);
       try {
         releaseDailyReservation(reservationId, recordedAt);
       } catch (err) {
@@ -513,6 +552,9 @@ function releaseDailyReservation(reservationId, now = new Date()) {
  */
 export function releasePaymentReservation(reservationId, now = new Date()) {
   if (!reservationId) return;
+  // Hand back both holds the cap check took: the in-memory session reservation
+  // and the daily file reservation.
+  releaseSessionReservation(reservationId);
   try {
     releaseDailyReservation(reservationId, now);
   } catch { /* best-effort: the reservation expires on its own */ }
@@ -521,6 +563,7 @@ export function releasePaymentReservation(reservationId, now = new Date()) {
 // Exported for tests only
 export function _resetSessionSpend() {
   sessionSpendMicros = 0n;
+  sessionReservations.clear();
 }
 
 // Exported for tests only — clears the fail-closed latch set by a failed daily
