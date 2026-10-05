@@ -206,6 +206,16 @@ describe('doctor', () => {
       expect(check.fix).toContain('nodejs.org');
     });
 
+    it('rejects Node 20 (EOL) under the published engines requirement', () => {
+      const { engines } = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+      expect(findCheck(runDoctorChecks(deps({ nodeVersion: 'v20.19.0', engines })), 'node-version').status).toBe('error');
+      expect(findCheck(runDoctorChecks(deps({ nodeVersion: 'v22.0.0', engines })), 'node-version').status).toBe('ok');
+    });
+
+    it('falls back to a Node 22 minimum when engines cannot be read', () => {
+      expect(findCheck(runDoctorChecks(deps({ nodeVersion: 'v20.19.0', engines: null })), 'node-version').status).toBe('error');
+    });
+
     it('warns when NANSEN_BASE_URL override is active', () => {
       env.NANSEN_BASE_URL = 'https://api.example.dev';
       const checks = runDoctorChecks(deps());
