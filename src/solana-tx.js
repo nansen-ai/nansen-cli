@@ -157,6 +157,7 @@ export const ADDRESS_LOOKUP_TABLE_PROGRAM = 'AddressLookupTab1e11111111111111111
 // LookupTableMeta: typeIndex u32, deactivationSlot u64, lastExtendedSlot u64,
 // lastExtendedSlotStartIndex u8, authority Option<Pubkey>, padding. The
 // 32-byte addresses start right after it.
+// The program always reserves all 56 bytes, even when authority is None.
 const LOOKUP_TABLE_META_SIZE = 56;
 const LOOKUP_TABLE_TYPE_INDEX = 1;
 // Lookups index a table with a single byte.
