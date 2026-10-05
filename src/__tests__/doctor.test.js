@@ -195,15 +195,25 @@ describe('doctor', () => {
 
   describe('runDoctorChecks', () => {
     it('passes the node version check when at or above the engine requirement', () => {
-      const checks = runDoctorChecks(deps({ nodeVersion: 'v20.0.0', engines: { node: '>=20.0.0' } }));
+      const checks = runDoctorChecks(deps({ nodeVersion: 'v22.0.0', engines: { node: '>=22.0.0' } }));
       expect(findCheck(checks, 'node-version').status).toBe('ok');
     });
 
     it('fails the node version check below the engine requirement', () => {
-      const checks = runDoctorChecks(deps({ nodeVersion: 'v18.19.0', engines: { node: '>=20.0.0' } }));
+      const checks = runDoctorChecks(deps({ nodeVersion: 'v20.19.0', engines: { node: '>=22.0.0' } }));
       const check = findCheck(checks, 'node-version');
       expect(check.status).toBe('error');
       expect(check.fix).toContain('nodejs.org');
+    });
+
+    it('rejects Node 20 (EOL) under the published engines requirement', () => {
+      const { engines } = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+      expect(findCheck(runDoctorChecks(deps({ nodeVersion: 'v20.19.0', engines })), 'node-version').status).toBe('error');
+      expect(findCheck(runDoctorChecks(deps({ nodeVersion: 'v22.0.0', engines })), 'node-version').status).toBe('ok');
+    });
+
+    it('falls back to a Node 22 minimum when engines cannot be read', () => {
+      expect(findCheck(runDoctorChecks(deps({ nodeVersion: 'v20.19.0', engines: null })), 'node-version').status).toBe('error');
     });
 
     it('warns when NANSEN_BASE_URL override is active', () => {
