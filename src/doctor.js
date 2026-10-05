@@ -251,7 +251,7 @@ export function runDoctorChecks(deps = {}) {
   const auth = resolveAuthConfig(env, devConfigPath);
 
   // --- environment ---
-  const requiredMajor = parseEngineMajor(engines?.node) ?? 20;
+  const requiredMajor = parseEngineMajor(engines?.node) ?? 22;
   const currentMajor = parseInt(nodeVersion.replace(/^v/, ''), 10);
   checks.push(currentMajor >= requiredMajor
     ? check('node-version', 'ok', `Node ${nodeVersion} (>= ${requiredMajor} required)`)

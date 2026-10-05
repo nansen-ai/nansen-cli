@@ -195,12 +195,12 @@ describe('doctor', () => {
 
   describe('runDoctorChecks', () => {
     it('passes the node version check when at or above the engine requirement', () => {
-      const checks = runDoctorChecks(deps({ nodeVersion: 'v20.0.0', engines: { node: '>=20.0.0' } }));
+      const checks = runDoctorChecks(deps({ nodeVersion: 'v22.0.0', engines: { node: '>=22.0.0' } }));
       expect(findCheck(checks, 'node-version').status).toBe('ok');
     });
 
     it('fails the node version check below the engine requirement', () => {
-      const checks = runDoctorChecks(deps({ nodeVersion: 'v18.19.0', engines: { node: '>=20.0.0' } }));
+      const checks = runDoctorChecks(deps({ nodeVersion: 'v20.19.0', engines: { node: '>=22.0.0' } }));
       const check = findCheck(checks, 'node-version');
       expect(check.status).toBe('error');
       expect(check.fix).toContain('nodejs.org');

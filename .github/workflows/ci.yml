@@ -36,7 +36,7 @@ jobs:
       contents: read
     strategy:
       matrix:
-        node-version: [20, 22, 24]
+        node-version: [22, 24]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -77,18 +77,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: node:20-bookworm-slim
-            lock: available
-            outcome: saved API-key login/logout works
           - image: node:22-bookworm-slim
             lock: available
             outcome: saved API-key login/logout works
           - image: node:24-bookworm-slim
             lock: available
             outcome: saved API-key login/logout works
-          - image: node:20-alpine
-            lock: unavailable
-            outcome: saved API-key login/logout unavailable (known gap)
           - image: node:22-alpine
             lock: unavailable
             outcome: saved API-key login/logout unavailable (known gap)
