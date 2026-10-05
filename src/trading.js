@@ -29,6 +29,14 @@ import { screenOrThrow } from './perp.js';
 
 const TRADING_API_URL = process.env.NANSEN_TRADING_API_URL || 'https://trading-api.nansen.ai';
 const CLIENT_USER_AGENT = `nansen-cli/${packageVersion}`;
+// Swap broadcast route. 'standard' posts the signed swap to the receipt-watching
+// execution endpoint (server-side outcome tracking); 'legacy' keeps the original
+// broadcast-only endpoint. Defaults to 'legacy' until the standard route is
+// verified end to end on live funds; flip via env var rather than a code change.
+// Read at call time (not frozen at import) so the route can be selected per run.
+function executionRoute() {
+  return process.env.NANSEN_TRADING_EXECUTION_ROUTE || 'legacy';
+}
 // Solana's max transaction wire size (IPv6 MTU minus headers).
 const SOLANA_MAX_TX_SIZE = 1232;
 
@@ -184,6 +192,60 @@ export async function getQuote(params) {
 }
 
 /**
+ * Translate the CLI's legacy broadcast params into the standard-route request body.
+ *
+ * The standard route keys the chain on VM type ('evm' | 'solana') plus an explicit
+ * chain id, and reads the client source and wallet from the body rather than
+ * inferring them. Only the whitelisted fields are forwarded — the server-side
+ * pre-broadcast simulation toggle no longer exists on this route, so `simulate`
+ * is intentionally dropped rather than sent and ignored.
+ *
+ * @param {object} params - legacy executeTransaction params
+ * @returns {object} standard-route request body
+ */
+function toStandardBody(params) {
+  const cfg = CHAIN_MAP[params.chain];
+  const body = {
+    chain: cfg.type,                 // VM type, not the chain name
+    signedTransaction: params.signedTransaction,
+    source: 'cli',                   // no longer inferred from the client header
+  };
+  if (cfg.type === 'evm') body.chainId = String(cfg.chainId);
+  if (params.quoteId) body.quoteId = params.quoteId;
+  if (params.requestId) body.requestId = params.requestId;
+  if (params.aggregator) body.aggregator = params.aggregator;
+  if (params.walletAddress) body.walletAddress = params.walletAddress;
+  if (params.isCrossChain) {
+    body.isCrossChain = true;
+    const toCfg = params.toChain && CHAIN_MAP[params.toChain];
+    if (toCfg) body.toChainId = toCfg.index;
+  }
+  return body;
+}
+
+/**
+ * Normalise a standard-route response into the legacy result shape the call sites
+ * and output block already understand. Keeps `signature` populated for Solana so
+ * the existing success output and its matchers keep working, and synthesises
+ * `chainType` since the standard route does not echo it. Fields the legacy route
+ * added but this route does not (`broadcaster`, `swapEvents`) are left undefined
+ * and handled by the output block rather than invented here.
+ *
+ * @param {object} body - standard-route response body
+ * @param {string} chainType - 'evm' | 'solana'
+ * @returns {object} legacy-shaped result
+ */
+function fromStandardResponse(body, chainType) {
+  return {
+    ...body,
+    status: body.success ? 'Success' : 'Failed',
+    txHash: body.txHash,
+    signature: chainType === 'solana' ? body.txHash : undefined,
+    chainType,
+  };
+}
+
+/**
  * Broadcast a signed transaction via the Nansen Trading API.
  *
  * @param {object} params
@@ -191,15 +253,30 @@ export async function getQuote(params) {
  * @param {string} [params.chain] - Target chain name
  * @param {string} [params.quoteId] - Backend quote ID for BI correlation
  * @param {string} [params.requestId] - Optional Jupiter request ID (Solana only)
- * @param {boolean} [params.simulate] - Run pre-broadcast simulation
- * @returns {Promise<object>} Execution result
+ * @param {boolean} [params.simulate] - Run pre-broadcast simulation (legacy route only)
+ * @param {string} [params.walletAddress] - Signer address (standard route attribution)
+ * @param {boolean} [params.isCrossChain] - Mark a bridge source leg (standard route)
+ * @param {string} [params.toChain] - Destination chain name for a bridge (standard route)
+ * @param {string} [params.aggregator] - Aggregator used for the quote (standard route)
+ * @param {object} [opts]
+ * @param {number} [opts.retries=2]
+ * @param {number} [opts.retryDelayMs=1500]
+ * @param {string} [opts.attemptId] - Correlation id sent on every POST incl. retries
+ * @param {string} [opts.route='legacy'] - 'legacy' or 'standard'. Defaults to legacy
+ *   so approval/revoke broadcasts (which carry no swap payload) stay on the route
+ *   that accepts them; only the swap broadcast opts into 'standard'.
+ * @returns {Promise<object>} Execution result (always in the legacy shape)
  */
-export async function executeTransaction(params, { retries = 2, retryDelayMs = 1500 } = {}) {
+export async function executeTransaction(params, { retries = 2, retryDelayMs = 1500, attemptId, route = 'legacy' } = {}) {
+  const isStandard = route === 'standard';
+  const requestPath = isStandard ? '/execution/standard' : '/execute';
+  const requestBody = isStandard ? toStandardBody(params) : params;
   const headers = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
     'User-Agent': CLIENT_USER_AGENT,
     'X-Client-Type': 'nansen-cli',
+    ...(attemptId ? { 'x-trade-attempt-id': attemptId } : {}),
     ...telemetryHeaders(),
   };
   let lastError;
@@ -210,10 +287,10 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
 
     let res;
     try {
-      res = await fetch(`${TRADING_API_URL}/execute`, {
+      res = await fetch(`${TRADING_API_URL}${requestPath}`, {
         method: 'POST',
         headers,
-        body: JSON.stringify(params),
+        body: JSON.stringify(requestBody),
       });
     } catch (netErr) {
       // The POST left this process but no response came back (a reset/timeout).
@@ -224,7 +301,7 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       // retry here can't itself double-broadcast; only exhausting them fails
       // closed at the caller (isFatalBroadcastError → mark the quote spent).
       lastError = Object.assign(
-        new Error(`Execute POST to /execute failed: ${netErr.message}`),
+        new Error(`Execute POST to ${requestPath} failed: ${netErr.message}`),
         { code: 'BROADCAST_FAILED' }
       );
       if (attempt < retries) continue;
@@ -300,13 +377,28 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       throw lastError;
     }
 
+    // The standard route holds a single-flight lock on the quote id, so a 409
+    // means the first attempt is in flight or already produced a hash — never
+    // "safe to try again". Classify it as BROADCAST_FAILED (fatal, fail-closed)
+    // so the caller marks the quote spent and aborts instead of signing the next
+    // candidate on top of a possibly-live swap. This also makes an internal retry
+    // safe: if the first POST landed and the retry races back a 409, it aborts.
+    if (isStandard && res.status === 409 && body.code === 'DUPLICATE_EXECUTION') {
+      throw Object.assign(
+        new Error('This quote was already submitted for execution; the first transaction may be live. Request a new quote with "nansen trade quote".'),
+        { code: 'BROADCAST_FAILED', status: 409 }
+      );
+    }
+
     if (!res.ok) {
       const code = body.code || 'EXECUTE_ERROR';
       const msg = body.message || `Execute request failed with status ${res.status}`;
       throw Object.assign(new Error(msg), { code, status: res.status, details: body.details });
     }
 
-    return body;
+    return isStandard
+      ? fromStandardResponse(body, params.chain && CHAIN_MAP[params.chain]?.type)
+      : body;
   }
   throw lastError;
 }
@@ -3127,6 +3219,11 @@ EXAMPLES:
         const chainConfig = resolveChain(chain);
         const chainType = chainConfig.type;
 
+        // One correlation id per execute invocation, reused across the swap POST
+        // and its internal retries so the backend can tie an execution to a single
+        // user attempt rather than counting each retry as a new one.
+        const attemptId = crypto.randomUUID();
+
         const allQuotes = quoteData.response.quotes || [];
         if (!allQuotes.length) {
           throw new CommandError('❌ No quote data found', 'NO_QUOTES');
@@ -3423,6 +3520,10 @@ EXAMPLES:
           try {
             let signedTransaction;
             let requestId;
+            // The signer address, hoisted out of the per-signer branches below so
+            // the shared broadcast can send it as the standard-route attribution
+            // field (the branch-local address vars are out of scope there).
+            let swapWalletAddress;
 
             if (chainType === 'solana' && isPrivy) {
               // Solana via Privy: sign the serialized transaction
@@ -3430,6 +3531,7 @@ EXAMPLES:
               if (!solWalletId) throw new Error('No Solana Privy wallet ID in quote');
               const walletResult = await privyClient.getWallet(solWalletId);
               const walletAddress = walletResult.address;
+              swapWalletAddress = walletAddress;
               // Fail closed if the signer address doesn't resolve: without it the
               // wallet-binding comparison below would silently skip, leaving the
               // quote unbound to the wallet that will sign it. This is resolved
@@ -3481,6 +3583,7 @@ EXAMPLES:
 
               const walletResult = await privyClient.getWallet(evmWalletId);
               const walletAddress = walletResult.address;
+              swapWalletAddress = walletAddress;
 
               // Guard the swap target before any RPC call, approval, or signing —
               // whatever `to`/`data` the quote supplied gets signed verbatim.
@@ -3759,6 +3862,7 @@ EXAMPLES:
                   throw new Error("Could not resolve the local wallet's Solana address; cannot confirm the quote was built for this wallet. Refusing to sign.");
                 }
               }
+              swapWalletAddress = solanaWalletAddress;
 
               const txBase64 = await normalizeSolanaTransaction(currentQuote.transaction, CHAIN_RPCS.solana, async () => solanaWalletAddress);
 
@@ -3853,6 +3957,7 @@ EXAMPLES:
               if (!wcAddress) {
                 throw new CommandError('No WalletConnect session for this chain. Reconnect with `walletconnect connect` and retry.', 'NO_WALLET');
               }
+              swapWalletAddress = wcAddress;
               const isNative = isNativeToken(currentQuote.inputMint);
 
               // Guard the swap target before any RPC call, approval, or signing —
@@ -4187,6 +4292,7 @@ EXAMPLES:
             } else {
               // EVM: quote.transaction is { to, data, value, gas, gasPrice }
               const walletAddress = exported.evm.address;
+              swapWalletAddress = walletAddress;
 
               // Guard the swap target before any RPC call, approval, or signing —
               // whatever `to`/`data` the quote supplied gets signed verbatim, so
@@ -4472,6 +4578,23 @@ EXAMPLES:
               execParams.requestId = requestId; // Solana Jupiter Ultra
             }
 
+            // Gasless stays on the legacy route: the standard route has no gasless
+            // envelope, so sending a signed Relay authorization there would drop
+            // the gasless framing and submit it as a plain swap. Only a non-gasless
+            // swap can opt into the standard route.
+            const swapRoute = gasless ? 'legacy' : executionRoute();
+            if (swapRoute === 'standard') {
+              // Attribution + cross-chain fields the standard route reads from the
+              // body. Attached only here because the legacy schema rejects some of
+              // them (an aggregator on an EVM swap in particular).
+              if (swapWalletAddress) execParams.walletAddress = swapWalletAddress;
+              if (currentQuote.aggregator) execParams.aggregator = currentQuote.aggregator;
+              if (quoteData.toChain && quoteData.toChain !== quoteData.chain) {
+                execParams.isCrossChain = true;
+                execParams.toChain = quoteData.toChain;
+              }
+            }
+
             // A retry re-POSTs the signed payload. For a normal swap that's a
             // byte-identical replay the node dedupes, so retrying an ambiguous
             // 5xx/network failure can't itself double-broadcast. But a --gasless
@@ -4482,7 +4605,7 @@ EXAMPLES:
             // gasless we therefore don't retry: a single POST either succeeds or
             // fails closed (BROADCAST_FAILED marks the quote spent and aborts).
             swapHandedOff = true;
-            const result = await executeTransaction(execParams, { retries: gasless ? 0 : undefined });
+            const result = await executeTransaction(execParams, { retries: gasless ? 0 : undefined, route: swapRoute, attemptId });
 
             if (result.status === 'Success') {
               let txId = result.signature || result.txHash;
@@ -4502,6 +4625,16 @@ EXAMPLES:
               // quote for a retry would race the reverted tx's nonce. This is
               // intentional, not an oversight.
               markQuoteExecuted(quoteId, { broadcast: { txHash: txId } });
+
+              // Standard-route soft-fail: the node rejected our broadcast but the
+              // signed tx carries a deterministic hash and may still propagate. The
+              // quote is already burned (marked above), so we do NOT fall through to
+              // the next candidate — that would be the double broadcast this path
+              // exists to avoid. Surface the warning and keep going with the hash.
+              if (result.broadcastSucceeded === false) {
+                log(`  ⚠ The broadcast was rejected by the node but the transaction may still propagate: ${result.broadcastError || 'no detail returned'}`);
+                log(`    Do NOT re-quote until you have checked the explorer.`);
+              }
 
               // For EVM: verify the tx actually succeeded on-chain
               if (chainType === 'evm') {
@@ -4560,7 +4693,9 @@ EXAMPLES:
               log(`    Status:      ${result.status}`);
               log(`    ${result.signature ? 'Signature' : 'Tx Hash'}:   ${txId}`);
               log(`    Chain:       ${chainConfig.name} (${result.chainType})`);
-              log(`    Broadcaster: ${result.broadcaster}`);
+              // The standard route reports no broadcaster; only print it when the
+              // response actually carries one (the legacy route does).
+              if (result.broadcaster) log(`    Broadcaster: ${result.broadcaster}`);
               log(`    Explorer:    ${explorerUrl}`);
 
               if (result.swapEvents?.length) {
@@ -4604,7 +4739,11 @@ EXAMPLES:
               return undefined; // Success — done
             } else {
               log(`\n  ✗ Quote ${quoteName} failed: ${result.status}`);
-              if (result.error) log(`    Error:  ${result.error}`);
+              // The standard route reports a typed failure as `code` (e.g. a
+              // landed revert) with an optional `message`, where the legacy route
+              // used `error`; surface whichever is present.
+              const failReason = result.error || result.message || result.code;
+              if (failReason) log(`    Error:  ${failReason}`);
               // A non-Success result can still carry a hash — the same
               // /execute response shape (status: 'Failed' + txHash) is
               // observed for approval broadcasts in trading.test.js, so a
@@ -4614,7 +4753,7 @@ EXAMPLES:
               // is cheaper than a silent double broadcast.
               const failedTxId = result.signature || result.txHash;
               if (failedTxId) markQuoteExecuted(quoteId, { broadcast: { txHash: failedTxId } });
-              lastQuoteError = `${quoteName}: ${result.error || result.status}`;
+              lastQuoteError = `${quoteName}: ${failReason || result.status}`;
               if (qi + 1 < endIndex) log(`  Trying next quote...`);
             }
 

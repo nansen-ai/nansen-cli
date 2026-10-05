@@ -4171,6 +4171,353 @@ describe('API error handling', () => {
   });
 });
 
+describe('executeTransaction — standard execution route', () => {
+  let origFetch;
+  beforeEach(() => { origFetch = global.fetch; });
+  afterEach(() => {
+    global.fetch = origFetch;
+    delete process.env.NANSEN_TRADING_EXECUTION_ROUTE;
+  });
+
+  // Returns captured calls ({ url, body, headers }); `responses` are returned in
+  // order and the last one repeats. Each response is { status?, body }.
+  function stubExecuteFetch(responses) {
+    const calls = [];
+    let i = 0;
+    global.fetch = vi.fn(async (url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      calls.push({ url: urlStr, body: JSON.parse(opts.body), headers: opts.headers || {} });
+      const spec = responses[Math.min(i, responses.length - 1)];
+      i++;
+      const status = spec.status ?? 200;
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        text: async () => JSON.stringify(spec.body ?? {}),
+      };
+    });
+    return calls;
+  }
+
+  it('maps an EVM swap to VM type + chain id + source and drops simulate', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([{ body: { success: true, txHash: '0xabc' } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base', simulate: true, quoteId: 'q1', walletAddress: '0xWallet' },
+      { route: 'standard' },
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toMatch(/\/execution\/standard$/);
+    expect(calls[0].body).toMatchObject({
+      chain: 'evm',
+      chainId: '8453',
+      source: 'cli',
+      quoteId: 'q1',
+      walletAddress: '0xWallet',
+      signedTransaction: '0xsigned',
+    });
+    expect(calls[0].body).not.toHaveProperty('simulate');
+    expect(res.status).toBe('Success');
+    expect(res.txHash).toBe('0xabc');
+  });
+
+  it('maps a Solana swap to VM type with no chain id, and keeps a signature', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([{ body: { success: true, txHash: 'SolSig111' } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: 'c2lnbmVk', chain: 'solana', requestId: 'req-1' },
+      { route: 'standard' },
+    );
+
+    expect(calls[0].body).toMatchObject({ chain: 'solana', source: 'cli', requestId: 'req-1' });
+    expect(calls[0].body).not.toHaveProperty('chainId');
+    // Solana keeps `signature` populated (mirrors the legacy shape) for output.
+    expect(res.signature).toBe('SolSig111');
+    expect(res.txHash).toBe('SolSig111');
+  });
+
+  it('maps cross-chain fields to isCrossChain + destination chain id + aggregator', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([{ body: { success: true, txHash: '0xbridge' } }]);
+
+    await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base', isCrossChain: true, toChain: 'solana', aggregator: 'lifi' },
+      { route: 'standard' },
+    );
+
+    expect(calls[0].body).toMatchObject({ isCrossChain: true, toChainId: '501', aggregator: 'lifi' });
+  });
+
+  it('reuses one attempt id across an internal retry', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([
+      { status: 502, body: { code: 'UPSTREAM' } },
+      { body: { success: true, txHash: '0xok' } },
+    ]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', attemptId: 'attempt-xyz', retryDelayMs: 0 },
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0].headers['x-trade-attempt-id']).toBe('attempt-xyz');
+    expect(calls[1].headers['x-trade-attempt-id']).toBe('attempt-xyz');
+    expect(res.status).toBe('Success');
+  });
+
+  it('classifies a 409 DUPLICATE_EXECUTION as a fatal broadcast failure', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 409, body: { code: 'DUPLICATE_EXECUTION' } }]);
+
+    await expect(executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    )).rejects.toMatchObject({ code: 'BROADCAST_FAILED', status: 409 });
+  });
+
+  it('normalises a soft-fail (node-rejected but maybe propagating) to success', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ body: { success: true, txHash: '0xsoft', broadcastSucceeded: false, broadcastError: 'node rejected' } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard' },
+    );
+
+    expect(res.status).toBe('Success');
+    expect(res.broadcastSucceeded).toBe(false);
+    expect(res.broadcastError).toBe('node rejected');
+    expect(res.txHash).toBe('0xsoft');
+  });
+
+  it('surfaces a landed revert (success:false with a hash) as a Failed result', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ body: { success: false, code: 'TRANSACTION_REVERTED', txHash: '0xdead' } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard' },
+    );
+
+    expect(res.status).toBe('Failed');
+    expect(res.txHash).toBe('0xdead');
+    expect(res.code).toBe('TRANSACTION_REVERTED');
+  });
+
+  it('leaves a 400 pre-broadcast code nonfatal and surfaces its message', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 400, body: { code: 'QUOTE_EXPIRED', message: 'Quote expired' } }]);
+
+    await expect(executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    )).rejects.toMatchObject({ code: 'QUOTE_EXPIRED', status: 400, message: 'Quote expired' });
+  });
+
+  it('defaults to the legacy route and sends the untranslated body', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([{ body: { status: 'Success', txHash: '0x1', chainType: 'evm', broadcaster: 'legacy' } }]);
+
+    const res = await executeTransaction({ signedTransaction: '0xsigned', chain: 'base', simulate: true });
+
+    expect(calls[0].url).toMatch(/\/execute$/);
+    expect(calls[0].body).toMatchObject({ chain: 'base', simulate: true });
+    expect(calls[0].body).not.toHaveProperty('source');
+    expect(res.broadcaster).toBe('legacy');
+  });
+});
+
+describe('standard execution route — swap command flow', () => {
+  function stubStandardSwapFetch({ responses = [] } = {}) {
+    const executeCalls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      const isStd = urlStr.includes('trading-api') && urlStr.endsWith('/execution/standard');
+      const isLegacy = urlStr.includes('trading-api') && urlStr.endsWith('/execute');
+      if (isStd || isLegacy) {
+        const idx = executeCalls.length;
+        executeCalls.push({ path: isStd ? '/execution/standard' : '/execute', body, headers: opts?.headers || {} });
+        const spec = responses[Math.min(idx, responses.length - 1)] ?? { body: { success: true } };
+        const status = spec.status ?? 200;
+        const resp = { ...(spec.body || {}) };
+        if (resp.success && resp.txHash === undefined && body.signedTransaction) {
+          resp.txHash = evmTxHash(body.signedTransaction);
+        }
+        return Promise.resolve({ ok: status >= 200 && status < 300, status, text: () => Promise.resolve(JSON.stringify(resp)) });
+      }
+      if (urlStr.includes('trading-api') && urlStr.includes('/bridge/status')) {
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'DONE', substatus: 'COMPLETED' })) });
+      }
+      if (body.method === 'eth_getCode') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x6080604052' })) });
+      if (body.method === 'eth_call') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x' })) });
+      if (body.method === 'eth_estimateGas') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5208' })) });
+      if (body.method === 'eth_getTransactionCount') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5' })) });
+      if (body.method === 'eth_getTransactionReceipt') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { status: '0x1', blockNumber: '0x100' } })) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
+    }));
+    return { executeCalls };
+  }
+
+  function nativeEthQuote() {
+    return {
+      aggregator: 'lifi',
+      inputMint: BASE_ETH,
+      outputMint: BASE_USDC,
+      inAmount: '1000000000000000000',
+      outAmount: '3000000000',
+      transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000', maxFeePerGas: '1000000', maxPriorityFeePerGas: '1000000' },
+    };
+  }
+
+  function saveNativeEthQuote(quotes, extra = {}) {
+    return saveQuote(
+      { success: true, quotes },
+      'base',
+      'local',
+      null,
+      extra.toChain ?? null,
+      {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: showWallet('default').evm,
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+          toChain: extra.toChain ?? null,
+        }),
+      },
+    );
+  }
+
+  beforeEach(() => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'standard';
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    delete process.env.NANSEN_TRADING_EXECUTION_ROUTE;
+    delete process.env.PRIVY_APP_ID;
+    delete process.env.PRIVY_APP_SECRET;
+  });
+
+  it('sends the standard-route body and a stable attempt id from the real swap path', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote()]);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls).toHaveLength(1);
+    expect(executeCalls[0].path).toBe('/execution/standard');
+    expect(executeCalls[0].body).toMatchObject({
+      chain: 'evm',
+      chainId: '8453',
+      source: 'cli',
+      walletAddress: showWallet('default').evm,
+    });
+    expect(executeCalls[0].body).not.toHaveProperty('simulate');
+    expect(typeof executeCalls[0].headers['x-trade-attempt-id']).toBe('string');
+    expect(executeCalls[0].headers['x-trade-attempt-id'].length).toBeGreaterThan(0);
+  });
+
+  it('maps a cross-chain swap to isCrossChain + destination chain id + aggregator', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote()], { toChain: 'solana' });
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls[0].body).toMatchObject({ isCrossChain: true, toChainId: '501', aggregator: 'lifi' });
+  });
+
+  it('aborts on a 409 without broadcasting the next quote, and marks the quote spent', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ status: 409, body: { code: 'DUPLICATE_EXECUTION' } }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+    // Exactly one broadcast: the candidate loop did NOT try the second quote.
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    // Quote is burned so a later re-execute is refused.
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
+  it('does not re-broadcast on a soft-fail, warns, and marks the quote spent', async () => {
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [{ body: { success: true, broadcastSucceeded: false, broadcastError: 'node rejected' } }],
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('may still propagate'))).toBe(true);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow(/already executed/);
+  });
+
+  it('prints a Signature line (not Tx Hash) for a Solana standard-route success', async () => {
+    // Solana via Privy keeps the local wallet out of the picture, isolating the
+    // output label on the normalised response.
+    const sigCount = Buffer.from([0x01]);
+    const emptySig = Buffer.alloc(64);
+    const messageBytes = Buffer.from([
+      0x01, 0x00, 0x01, 0x02,
+      ...Buffer.alloc(32), ...Buffer.alloc(32), ...Buffer.alloc(32),
+      0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00,
+    ]);
+    const txBase64 = Buffer.concat([sigCount, emptySig, messageBytes]).toString('base64');
+
+    const quoteId = saveQuote(
+      { success: true, quotes: [{ aggregator: 'jupiter', inputMint: SOL_MINT, outputMint: SOL_USDC, inAmount: '1000000000', outAmount: '50000000', transaction: txBase64, metadata: { requestId: 'req-1' } }] },
+      'solana',
+      'privy',
+      { evm: 'wl_evm_1', solana: 'wl_sol_1' },
+      null,
+      { swapMode: 'exactIn', request: solanaIntent({ walletAddress: 'SolPrivyAddr1111111111111111111111111111' }) },
+    );
+
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.includes('privy.io') && opts?.method === 'GET') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: 'SolPrivyAddr1111111111111111111111111111', chain_type: 'solana' }) });
+      }
+      if (urlStr.includes('privy.io')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: 'c2lnbmVkVHg=' } }) });
+      }
+      if (urlStr.includes('trading-api') && urlStr.endsWith('/execution/standard')) {
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ success: true, txHash: 'SolTxSig111' })) });
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({})) });
+    }));
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    process.env.PRIVY_APP_ID = 'test-app-id';
+    process.env.PRIVY_APP_SECRET = 'test-secret';
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(logs.some(l => l.includes('Signature:') && l.includes('SolTxSig111'))).toBe(true);
+    expect(logs.some(l => l.includes('Tx Hash:'))).toBe(false);
+  });
+});
+
 describe('formatQuote price impact warning', () => {
   it('should show warning when priceImpactPct exceeds 5%', () => {
     const output = formatQuote({ aggregator: 'jupiter', inputMint: 'So11111111111111111111111111111111111111112', outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', inAmount: '1000', outAmount: '500', priceImpactPct: '22.59' });
