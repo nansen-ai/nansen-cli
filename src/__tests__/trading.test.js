@@ -4318,6 +4318,50 @@ describe('executeTransaction — standard execution route', () => {
     )).rejects.toMatchObject({ code: 'QUOTE_EXPIRED', status: 400, message: 'Quote expired' });
   });
 
+  it('prefers the aggregator revert reason over the static message, keeping the typed code', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ body: {
+      success: false,
+      code: 'TRANSACTION_REVERTED',
+      message: 'Transaction reverted',
+      revertReason: 'min return not reached',
+      txHash: '0xdead',
+    } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard' },
+    );
+
+    // `message` alone is a static summary — `revertReason` is the only field
+    // carrying why this particular swap failed.
+    expect(res.error).toBe('TRANSACTION_REVERTED: min return not reached');
+  });
+
+  it('falls back to the static message when no revert reason is returned', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ body: { success: false, code: 'SIMULATION_FAILED', message: 'Simulation failed', txHash: '0xd1' } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard' },
+    );
+
+    expect(res.error).toBe('SIMULATION_FAILED: Simulation failed');
+  });
+
+  it('leaves a success body without an error string', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ body: { success: true, txHash: '0xok' } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard' },
+    );
+
+    expect(res.error).toBeUndefined();
+  });
+
   it('defaults to the legacy route and sends the untranslated body', async () => {
     const { executeTransaction } = await import('../trading.js');
     const calls = stubExecuteFetch([{ body: { status: 'Success', txHash: '0x1', chainType: 'evm', broadcaster: 'legacy' } }]);
@@ -4332,7 +4376,7 @@ describe('executeTransaction — standard execution route', () => {
 });
 
 describe('standard execution route — swap command flow', () => {
-  function stubStandardSwapFetch({ responses = [] } = {}) {
+  function stubStandardSwapFetch({ responses = [], receiptStatus = '0x1' } = {}) {
     const executeCalls = [];
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
@@ -4357,7 +4401,7 @@ describe('standard execution route — swap command flow', () => {
       if (body.method === 'eth_call') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x' })) });
       if (body.method === 'eth_estimateGas') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5208' })) });
       if (body.method === 'eth_getTransactionCount') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5' })) });
-      if (body.method === 'eth_getTransactionReceipt') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { status: '0x1', blockNumber: '0x100' } })) });
+      if (body.method === 'eth_getTransactionReceipt') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { status: receiptStatus, blockNumber: '0x100' } })) });
       return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
     }));
     return { executeCalls };
@@ -4469,6 +4513,102 @@ describe('standard execution route — swap command flow', () => {
     expect(logs.some(l => l.includes('may still propagate'))).toBe(true);
     expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
     expect(() => loadQuote(quoteId)).toThrow(/already executed/);
+  });
+
+  it('aborts before signing when the route env var is not a known route', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote()]);
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'Standard'; // wrong case
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'INVALID_EXECUTION_ROUTE' });
+
+    // Nothing was signed or sent, and the quote is still usable — a typo must
+    // never silently fall back to the legacy route.
+    expect(executeCalls).toHaveLength(0);
+    expect(() => loadQuote(quoteId)).not.toThrow();
+  });
+
+  it('stops at a landed revert instead of signing the next candidate, and reports the revert reason', async () => {
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [{ body: {
+        success: false,
+        code: 'TRANSACTION_REVERTED',
+        message: 'Transaction reverted',
+        revertReason: 'min return not reached',
+        txHash: '0x' + 'ab'.repeat(32),
+      } }],
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'TX_REVERTED' });
+
+    // The backend keeps the per-quote lock after any attempt that produced a
+    // hash, so a second candidate could only come back 409 — it must not be
+    // signed at all.
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
+  it('still falls back to the next candidate when the failure carries no hash', async () => {
+    // No txHash is the backend's "provably never broadcast" shape: it releases
+    // the quote lock, so the sequential fallback stays available.
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [{ body: { success: false, error: 'aggregator returned no route' } }],
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+
+    expect(executeCalls).toHaveLength(2);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(true);
+  });
+
+  it('leaves the legacy route candidate fallback untouched on a failure with a hash', async () => {
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [{ body: { status: 'Failed', error: 'reverted', txHash: '0x' + 'cd'.repeat(32), chainType: 'evm' } }],
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow();
+
+    expect(executeCalls.every(c => c.path === '/execute')).toBe(true);
+    expect(executeCalls).toHaveLength(2);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(true);
+  });
+
+  it('stops at an on-chain receipt revert instead of signing the next candidate', async () => {
+    // The other half of the single-flight rule: the route accepted the broadcast
+    // (success:true) and the revert only surfaces in the receipt. The quote is
+    // claimed server-side all the same, so the next candidate cannot be sent.
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [{ body: { success: true } }],
+      receiptStatus: '0x0',
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'TX_REVERTED' });
+
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
   });
 
   it('prints a Signature line (not Tx Hash) for a Solana standard-route success', async () => {

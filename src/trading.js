@@ -34,8 +34,19 @@ const CLIENT_USER_AGENT = `nansen-cli/${packageVersion}`;
 // broadcast-only endpoint. Defaults to 'legacy' until the standard route is
 // verified end to end on live funds; flip via env var rather than a code change.
 // Read at call time (not frozen at import) so the route can be selected per run.
+// Validated rather than defaulted: a typo ('Standard', a stray space) silently
+// running the legacy route is the worst failure mode during a staged rollout —
+// you believe you exercised the new route and you did not.
 function executionRoute() {
-  return process.env.NANSEN_TRADING_EXECUTION_ROUTE || 'legacy';
+  const route = process.env.NANSEN_TRADING_EXECUTION_ROUTE;
+  if (!route) return 'legacy';
+  if (route !== 'legacy' && route !== 'standard') {
+    throw new CommandError(
+      `Unknown NANSEN_TRADING_EXECUTION_ROUTE "${route}". Use "standard" or "legacy" (unset means legacy).`,
+      'INVALID_EXECUTION_ROUTE',
+    );
+  }
+  return route;
 }
 // Solana's max transaction wire size (IPv6 MTU minus headers).
 const SOLANA_MAX_TX_SIZE = 1232;
@@ -224,6 +235,23 @@ function toStandardBody(params) {
 }
 
 /**
+ * Pick the most specific failure reason a standard-route response carries.
+ *
+ * For a landed revert the route returns a typed `code` plus a STATIC `message`,
+ * and puts the aggregator's actual on-chain failure reason in `revertReason` —
+ * so taking `message` alone drops the only informative field. Keep the typed
+ * code alongside the detail so the reason stays attributable.
+ *
+ * @param {object} body - standard-route response body
+ * @returns {string|undefined} the reason, or undefined on a success body
+ */
+function standardFailureReason(body) {
+  const detail = body.revertReason || body.error || body.message;
+  if (body.code && detail) return `${body.code}: ${detail}`;
+  return detail || body.code;
+}
+
+/**
  * Normalise a standard-route response into the legacy result shape the call sites
  * and output block already understand. Keeps `signature` populated for Solana so
  * the existing success output and its matchers keep working, and synthesises
@@ -242,6 +270,9 @@ function fromStandardResponse(body, chainType) {
     txHash: body.txHash,
     signature: chainType === 'solana' ? body.txHash : undefined,
     chainType,
+    // Collapsed into `error` so the shared output block keeps reading one field
+    // on both routes; undefined on a success body.
+    error: standardFailureReason(body),
   };
 }
 
@@ -1281,7 +1312,11 @@ function isFatalBroadcastError(err) {
   return err?.code === 'TXHASH_MISMATCH'
     || err?.code === 'INVALID_SIGNED_TX'
     || err?.code === 'RECEIPT_TIMEOUT'
-    || err?.code === 'BROADCAST_FAILED';
+    || err?.code === 'BROADCAST_FAILED'
+    // A revert is a transaction that provably left this process and landed, so
+    // it belongs to the same class: never fall through to the next candidate,
+    // and surface the revert itself rather than a generic "all quotes failed".
+    || err?.code === 'TX_REVERTED';
 }
 
 /**
@@ -3223,6 +3258,9 @@ EXAMPLES:
         // and its internal retries so the backend can tie an execution to a single
         // user attempt rather than counting each retry as a new one.
         const attemptId = crypto.randomUUID();
+        // Resolved once here, before any signing, so an unrecognised route value
+        // aborts the command instead of surfacing mid-loop as a per-quote failure.
+        const configuredRoute = executionRoute();
 
         const allQuotes = quoteData.response.quotes || [];
         if (!allQuotes.length) {
@@ -4582,7 +4620,7 @@ EXAMPLES:
             // envelope, so sending a signed Relay authorization there would drop
             // the gasless framing and submit it as a plain swap. Only a non-gasless
             // swap can opt into the standard route.
-            const swapRoute = gasless ? 'legacy' : executionRoute();
+            const swapRoute = gasless ? 'legacy' : configuredRoute;
             if (swapRoute === 'standard') {
               // Attribution + cross-chain fields the standard route reads from the
               // body. Attached only here because the legacy schema rejects some of
@@ -4631,9 +4669,21 @@ EXAMPLES:
               // quote is already burned (marked above), so we do NOT fall through to
               // the next candidate — that would be the double broadcast this path
               // exists to avoid. Surface the warning and keep going with the hash.
+              // `broadcastSucceeded` is set by both the EVM and Solana standard
+              // executors; the hash is still ours (the Solana signature, or
+              // keccak256 of the signed EVM bytes), so it stays pollable.
               if (result.broadcastSucceeded === false) {
                 log(`  ⚠ The broadcast was rejected by the node but the transaction may still propagate: ${result.broadcastError || 'no detail returned'}`);
+                log(`    ${result.signature ? 'Signature' : 'Tx Hash'}: ${txId}`);
+                log(`    Explorer:  ${explorerUrl}`);
                 log(`    Do NOT re-quote until you have checked the explorer.`);
+                // Say so up front: the receipt poll below runs for up to 3 minutes
+                // and, for a broadcast the node refused, most likely ends in the
+                // RECEIPT_TIMEOUT banner. Without this the warning above is buried
+                // behind a silent wait and a scarier-looking error.
+                if (chainType === 'evm') {
+                  log(`    Checking for a receipt anyway — this can take up to 3 minutes and may time out.`);
+                }
               }
 
               // For EVM: verify the tx actually succeeded on-chain
@@ -4680,7 +4730,13 @@ EXAMPLES:
                   log(`    Tx Hash:   ${txId || result.txHash}`);
                   log(`    Explorer:  ${explorerUrl}`);
                   log(`    Error:     ${receiptErr.message}`);
-                  if (qi + 1 < endIndex) {
+                  // The standard route holds a per-quote single-flight lock and
+                  // deliberately KEEPS it after any attempt that produced a hash.
+                  // Every candidate in this response shares one backend quote id,
+                  // so the next one would be signed — a real signing operation, and
+                  // a prompt on the Privy/WalletConnect signers — only to come back
+                  // 409 DUPLICATE_EXECUTION. Report the revert instead.
+                  if (qi + 1 < endIndex && swapRoute !== 'standard') {
                     log(`  Trying next quote...`);
                     lastQuoteError = `${quoteName} reverted on-chain`;
                     continue;
@@ -4754,6 +4810,17 @@ EXAMPLES:
               const failedTxId = result.signature || result.txHash;
               if (failedTxId) markQuoteExecuted(quoteId, { broadcast: { txHash: failedTxId } });
               lastQuoteError = `${quoteName}: ${failReason || result.status}`;
+              // Same single-flight reasoning as the receipt-revert path above: on
+              // the standard route a failure CARRYING A HASH has already claimed
+              // this quote server-side, so the next candidate can only 409. A
+              // failure with no hash is the backend's "provably never broadcast"
+              // shape — it releases the lock, so the fallback stays available.
+              if (swapRoute === 'standard' && failedTxId) {
+                throw new CommandError(
+                  `\n  ⚠ Transaction was broadcast but did NOT succeed.\n    ${result.signature ? 'Signature' : 'Tx Hash'}: ${failedTxId}\n    Explorer:  ${chainConfig.explorer + failedTxId}\n    Error:     ${failReason || result.status}\n\n  This quote is spent. Request a new one with "nansen trade quote".`,
+                  'TX_REVERTED',
+                );
+              }
               if (qi + 1 < endIndex) log(`  Trying next quote...`);
             }
 
