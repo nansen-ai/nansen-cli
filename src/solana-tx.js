@@ -151,3 +151,77 @@ export function resolveStaticAccount(parsed, index) {
   if (index < parsed.staticAccountKeys.length) return parsed.staticAccountKeys[index];
   return null;
 }
+
+// Owner of every address-lookup-table account.
+export const ADDRESS_LOOKUP_TABLE_PROGRAM = 'AddressLookupTab1e1111111111111111111111111';
+// LookupTableMeta: typeIndex u32, deactivationSlot u64, lastExtendedSlot u64,
+// lastExtendedSlotStartIndex u8, authority Option<Pubkey>, padding. The
+// 32-byte addresses start right after it.
+// The program always reserves all 56 bytes, even when authority is None.
+const LOOKUP_TABLE_META_SIZE = 56;
+const LOOKUP_TABLE_TYPE_INDEX = 1;
+// Lookups index a table with a single byte.
+const LOOKUP_TABLE_MAX_ADDRESSES = 256;
+// A table that has never been deactivated stores u64::MAX here.
+const LOOKUP_TABLE_ACTIVE_SLOT = 0xffffffffffffffffn;
+// The SlotHashes sysvar: the recent slots a deactivating table stays usable for.
+export const SLOT_HASHES_SYSVAR = 'SysvarS1otHashes111111111111111111111111111';
+export const SYSVAR_PROGRAM = 'Sysvar1111111111111111111111111111111111111';
+
+/**
+ * Parse the raw data of an address-lookup-table account into its addresses and
+ * its deactivation slot (null when it has never been deactivated). Throws on
+ * anything that isn't an initialized table, so a truncated or foreign account
+ * can't be read as a short or shifted address list.
+ */
+export function parseAddressLookupTable(data) {
+  if (data.length < LOOKUP_TABLE_META_SIZE || (data.length - LOOKUP_TABLE_META_SIZE) % 32 !== 0) {
+    throw new Error('Malformed address lookup table: unexpected account data length');
+  }
+  if ((data.length - LOOKUP_TABLE_META_SIZE) / 32 > LOOKUP_TABLE_MAX_ADDRESSES) {
+    throw new Error(`Malformed address lookup table: more than ${LOOKUP_TABLE_MAX_ADDRESSES} addresses`);
+  }
+  if (data.readUInt32LE(0) !== LOOKUP_TABLE_TYPE_INDEX) {
+    throw new Error('Malformed address lookup table: account is not an initialized lookup table');
+  }
+  const addresses = [];
+  for (let offset = LOOKUP_TABLE_META_SIZE; offset < data.length; offset += 32) {
+    addresses.push(base58Encode(data.subarray(offset, offset + 32)));
+  }
+  const deactivationSlot = data.readBigUInt64LE(4);
+  return {
+    deactivationSlot: deactivationSlot === LOOKUP_TABLE_ACTIVE_SLOT ? null : deactivationSlot,
+    addresses,
+  };
+}
+
+/**
+ * Parse the SlotHashes sysvar (u64 count, then count × (u64 slot, 32-byte
+ * hash)) into its slots.
+ */
+export function parseSlotHashes(data) {
+  if (data.length < 8) throw new Error('Malformed SlotHashes sysvar: unexpected account data length');
+  const count = data.readBigUInt64LE(0);
+  if (8n + count * 40n > BigInt(data.length)) {
+    throw new Error('Malformed SlotHashes sysvar: unexpected account data length');
+  }
+  const slots = [];
+  for (let i = 0; i < Number(count); i++) slots.push(data.readBigUInt64LE(8 + i * 40));
+  return slots;
+}
+
+/**
+ * Whether the runtime still resolves addresses through a table, mirroring its
+ * LookupTableMeta status rule. Deactivating a table doesn't disable it at
+ * once: it stays usable while its deactivation slot is the current slot or is
+ * still in SlotHashes, and only then becomes deactivated.
+ *
+ * A deactivation slot past `currentSlot` also counts as usable. Our two RPC
+ * reads can come from nodes at different heights, and a slot we haven't seen
+ * yet can't have left SlotHashes.
+ */
+export function isLookupTableUsable(deactivationSlot, currentSlot, slotHashes) {
+  if (deactivationSlot === null) return true;
+  if (deactivationSlot >= currentSlot) return true;
+  return slotHashes.includes(deactivationSlot);
+}

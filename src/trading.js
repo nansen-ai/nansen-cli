@@ -11,7 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import { base58Encode, exportWallet, getWalletConfig, showWallet, listWallets } from './wallet.js';
 import { base58Decode, encodeCompactU16 } from './transfer.js';
-import { buildMessageV0, fetchRecentBlockhash } from './x402-svm.js';
+import { buildMessageV0, fetchAddressLookupTables, fetchRecentBlockhash } from './x402-svm.js';
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendSolanaTransactionViaWalletConnect, sendApprovalViaWalletConnect } from './walletconnect-trading.js';
 import { retrievePassword } from './keychain.js';
@@ -749,10 +749,13 @@ function decodeInstructionData(hex) {
  * — into a signable base64 VersionedTransaction. Some aggregators (Relay's Solana-source
  * bridge quotes) return this shape instead of a ready-to-sign serialized transaction.
  *
- * Every account is kept static; the address-lookup-table hint is a size optimization,
- * not a correctness requirement, so skipping it is valid as long as the compiled
- * transaction still fits Solana's packet limit. Full lookup-table compilation is
- * unimplemented — throws instead of silently building an oversized/invalid transaction.
+ * Accounts stay static whenever the transaction fits Solana's packet limit that way, so
+ * the common case needs no extra RPC call and the safety checks see every account. Only
+ * a route too large to fit (e.g. a source-chain swap ahead of the bridge deposit) has its
+ * addressLookupTableAddresses fetched and used to compress accounts. A table only ever
+ * replaces an account with a reference to that same address, and lookup-table entries
+ * are immutable once written, so compression doesn't change what the instructions touch.
+ * Throws instead of building an oversized/invalid transaction.
  *
  * getExpectedSigner is an async thunk resolving to the address of the wallet that is
  * about to sign. The transaction only ever gets a single signature written into slot 0
@@ -785,6 +788,7 @@ export async function compileRawSolanaTransaction(transaction, rpcUrl, getExpect
     );
   }
 
+  const unsignedSize = (message) => 1 + 64 + message.messageBytes.length; // compact-u16(1) + 1 signature slot
   const preflight = buildMessageV0({ feePayer, instructions, recentBlockhash: SIZE_CHECK_BLOCKHASH });
   if (preflight.numRequiredSignatures !== 1) {
     throw new Error(
@@ -792,17 +796,32 @@ export async function compileRawSolanaTransaction(transaction, rpcUrl, getExpect
       `but only the wallet's own signature can be provided.`
     );
   }
-  const unsignedSize = 1 + 64 + preflight.messageBytes.length; // compact-u16(1) + 1 signature slot
-  if (unsignedSize > SOLANA_MAX_TX_SIZE) {
-    throw new Error(
-      `Solana transaction too large to compile without address-lookup-table support ` +
-      `(${unsignedSize} bytes > ${SOLANA_MAX_TX_SIZE} limit). This route needs its ` +
-      `address lookup tables resolved, which isn't supported yet.`
-    );
+
+  let addressLookupTables = [];
+  let size = unsignedSize(preflight);
+  if (size > SOLANA_MAX_TX_SIZE) {
+    const hint = transaction.addressLookupTableAddresses;
+    const tableAddresses = [...new Set(Array.isArray(hint) ? hint : [])];
+    if (tableAddresses.length === 0) {
+      throw new Error(
+        `Solana transaction too large to compile (${size} bytes > ${SOLANA_MAX_TX_SIZE} limit) and ` +
+        `the quote supplied no address lookup tables to compress it. Get a new quote.`
+      );
+    }
+    addressLookupTables = await fetchAddressLookupTables(rpcUrl, tableAddresses);
+    size = unsignedSize(buildMessageV0({
+      feePayer, instructions, recentBlockhash: SIZE_CHECK_BLOCKHASH, addressLookupTables,
+    }));
+    if (size > SOLANA_MAX_TX_SIZE) {
+      throw new Error(
+        `Solana transaction too large to compile (${size} bytes > ${SOLANA_MAX_TX_SIZE} limit) even ` +
+        `with its ${tableAddresses.length} address lookup table(s). Get a new quote.`
+      );
+    }
   }
 
   const recentBlockhash = await fetchRecentBlockhash(rpcUrl);
-  const { messageBytes } = buildMessageV0({ feePayer, instructions, recentBlockhash });
+  const { messageBytes } = buildMessageV0({ feePayer, instructions, recentBlockhash, addressLookupTables });
   const unsignedTx = Buffer.concat([encodeCompactU16(1), Buffer.alloc(64), messageBytes]);
   return unsignedTx.toString('base64');
 }

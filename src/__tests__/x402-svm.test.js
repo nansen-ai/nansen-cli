@@ -12,6 +12,7 @@ import {
   buildUnsignedSvmTransaction,
   createSvmPaymentPayload,
   fetchRecentBlockhash,
+  fetchAddressLookupTables,
 } from '../x402-svm.js';
 import { CHAIN_RPCS } from '../rpc-urls.js';
 
@@ -337,5 +338,47 @@ describe('fetchRecentBlockhash', () => {
     }
     expect(caught.message).toMatch(/Solana RPC unavailable/);
     expect(caught.message).not.toMatch(/did not respond/);
+  });
+});
+
+describe('fetchAddressLookupTables', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const rpcReturns = (body, { ok = true, status = 200 } = {}) =>
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok, status, json: async () => body }));
+  const tableAddress = () => base58Encode(crypto.randomBytes(32));
+
+  it('rejects an invalid RPC URL without echoing it', async () => {
+    await expect(fetchAddressLookupTables('not-a-url?api-key=secret', [tableAddress()]))
+      .rejects.toThrow(/^Invalid Solana RPC URL: expected a full http/);
+  });
+
+  it('surfaces HTTP and JSON-RPC errors as actionable failures', async () => {
+    rpcReturns({}, { ok: false, status: 503 });
+    await expect(fetchAddressLookupTables('http://unused', [tableAddress()]))
+      .rejects.toThrow(/Solana RPC returned HTTP 503 while fetching address lookup tables/);
+    rpcReturns({ error: { code: 429, message: 'rate limited' } });
+    await expect(fetchAddressLookupTables('http://unused', [tableAddress()]))
+      .rejects.toThrow(/Solana RPC failed \(rate limited\) while fetching address lookup tables/);
+  });
+
+  it('refuses a deactivated table when the RPC returns no SlotHashes sysvar to check it against', async () => {
+    const meta = Buffer.alloc(56);
+    meta.writeUInt32LE(1, 0);
+    meta.writeBigUInt64LE(500n, 4);
+    const table = { owner: 'AddressLookupTab1e1111111111111111111111111', data: [meta.toString('base64'), 'base64'] };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ result: { context: { slot: 1000 }, value: [table] } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ result: { context: { slot: 1000 }, value: [null] } }) }));
+    await expect(fetchAddressLookupTables('http://unused', [tableAddress()]))
+      .rejects.toThrow(/no usable SlotHashes sysvar/);
+  });
+
+  it('rejects an account list that does not line up with the requested tables', async () => {
+    rpcReturns({ result: { value: [] } });
+    await expect(fetchAddressLookupTables('http://unused', [tableAddress()]))
+      .rejects.toThrow(/returned an unexpected account list/);
   });
 });
