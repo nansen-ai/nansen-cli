@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAddressLookupTable, parseTransactionMessage, resolveStaticAccount } from '../solana-tx.js';
+import { isLookupTableUsable, parseAddressLookupTable, parseSlotHashes, parseTransactionMessage, resolveStaticAccount } from '../solana-tx.js';
 import { base58Decode, base58Encode, generateSolanaWallet } from '../wallet.js';
 
 function encodeCompactU16(value) {
@@ -151,13 +151,13 @@ describe('parseAddressLookupTable', () => {
     return Buffer.concat([meta, ...addresses.map((a) => base58Decode(a))]);
   };
 
-  it('returns the addresses of an active table in order', () => {
+  it('returns the addresses of a never-deactivated table in order', () => {
     const addresses = [generateSolanaWallet().address, generateSolanaWallet().address];
-    expect(parseAddressLookupTable(tableData(addresses))).toEqual({ isActive: true, addresses });
+    expect(parseAddressLookupTable(tableData(addresses))).toEqual({ deactivationSlot: null, addresses });
   });
 
-  it('reports a deactivated table as inactive', () => {
-    expect(parseAddressLookupTable(tableData([], { deactivationSlot: 42n })).isActive).toBe(false);
+  it('returns the deactivation slot of a deactivated table', () => {
+    expect(parseAddressLookupTable(tableData([], { deactivationSlot: 42n })).deactivationSlot).toBe(42n);
   });
 
   it('rejects truncated data, a partial address and an uninitialized table', () => {
@@ -170,5 +170,46 @@ describe('parseAddressLookupTable', () => {
   it('rejects a table with more addresses than a one-byte index can reach', () => {
     const data = Buffer.concat([tableData([]), Buffer.alloc(257 * 32)]);
     expect(() => parseAddressLookupTable(data)).toThrow(/more than 256 addresses/);
+  });
+});
+
+describe('parseSlotHashes', () => {
+  const slotHashesData = (slots) => {
+    const data = Buffer.alloc(8 + slots.length * 40);
+    data.writeBigUInt64LE(BigInt(slots.length), 0);
+    slots.forEach((slot, i) => data.writeBigUInt64LE(slot, 8 + i * 40));
+    return data;
+  };
+
+  it('returns the slots in order', () => {
+    expect(parseSlotHashes(slotHashesData([100n, 99n, 97n]))).toEqual([100n, 99n, 97n]);
+  });
+
+  it('rejects data shorter than its declared count', () => {
+    expect(() => parseSlotHashes(slotHashesData([100n, 99n]).subarray(0, 60))).toThrow(/unexpected account data length/);
+    expect(() => parseSlotHashes(Buffer.alloc(4))).toThrow(/unexpected account data length/);
+  });
+});
+
+describe('isLookupTableUsable', () => {
+  const slotHashes = [999n, 998n, 996n];
+
+  it('treats a never-deactivated table as usable', () => {
+    expect(isLookupTableUsable(null, 1000n, [])).toBe(true);
+  });
+
+  it('treats a table deactivating in the current slot or still in SlotHashes as usable', () => {
+    expect(isLookupTableUsable(1000n, 1000n, slotHashes)).toBe(true);
+    expect(isLookupTableUsable(996n, 1000n, slotHashes)).toBe(true);
+  });
+
+  it('treats a deactivation slot past the observed slot as usable', () => {
+    expect(isLookupTableUsable(1005n, 1000n, slotHashes)).toBe(true);
+  });
+
+  it('treats a table whose deactivation slot has left SlotHashes as deactivated', () => {
+    expect(isLookupTableUsable(400n, 1000n, slotHashes)).toBe(false);
+    // A skipped slot is never in SlotHashes.
+    expect(isLookupTableUsable(997n, 1000n, slotHashes)).toBe(false);
   });
 });

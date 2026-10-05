@@ -9,7 +9,14 @@ import { encodeCompactU16, deriveATA as _deriveATA } from './transfer.js';
 import { resolvePaymentAmount, resolvePayTo } from './x402-policy.js';
 import { SOLANA_MAINNET_NETWORK } from './x402-tokens.js';
 import { CHAIN_RPCS } from './rpc-urls.js';
-import { ADDRESS_LOOKUP_TABLE_PROGRAM, parseAddressLookupTable } from './solana-tx.js';
+import {
+  ADDRESS_LOOKUP_TABLE_PROGRAM,
+  SLOT_HASHES_SYSVAR,
+  SYSVAR_PROGRAM,
+  isLookupTableUsable,
+  parseAddressLookupTable,
+  parseSlotHashes,
+} from './solana-tx.js';
 
 // ============= Constants =============
 
@@ -469,13 +476,10 @@ export async function fetchRecentBlockhash(rpcUrl = CHAIN_RPCS.solana) {
 }
 
 /**
- * Fetch and parse address-lookup-table accounts, in the order given.
- *
- * Throws unless every address is an active table owned by the lookup-table
- * program: a quote that names a missing, foreign or deactivated table can't be
- * compiled into a transaction the runtime will accept.
+ * getMultipleAccounts (base64) with the shared timeout and actionable errors.
+ * Returns the accounts in request order and the slot the RPC read them at.
  */
-export async function fetchAddressLookupTables(rpcUrl, addresses) {
+async function getMultipleAccountsBase64(rpcUrl, addresses, purpose) {
   if (!isHttpUrl(rpcUrl)) {
     throw new Error(
       'Invalid Solana RPC URL: expected a full http:// or https:// URL. Check NANSEN_SOLANA_RPC.'
@@ -485,10 +489,9 @@ export async function fetchAddressLookupTables(rpcUrl, addresses) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SOLANA_RPC_TIMEOUT_MS);
   const rpcError = (detail, cause) => new Error(
-    `Solana RPC ${detail} while fetching address lookup tables. Retry or configure a different RPC endpoint.`,
+    `Solana RPC ${detail} while fetching ${purpose}. Retry or configure a different RPC endpoint.`,
     cause ? { cause } : undefined
   );
-
   const timeoutError = (cause) => rpcError(`did not respond within ${SOLANA_RPC_TIMEOUT_MS / 1000}s`, cause);
 
   let data;
@@ -525,13 +528,31 @@ export async function fetchAddressLookupTables(rpcUrl, addresses) {
     throw rpcError(`failed (${String(data.error.message ?? data.error.code ?? 'unknown RPC error')})`);
   }
   const accounts = data?.result?.value;
-  // Each table is matched to its address by position, so a short or padded
-  // array would pair a table with the wrong address.
+  // Each account is matched to its address by position, so a short or padded
+  // array would pair an account with the wrong address.
   if (!Array.isArray(accounts) || accounts.length !== addresses.length) {
     throw rpcError('returned an unexpected account list');
   }
+  return { accounts, slot: data.result.context?.slot };
+}
 
-  return accounts.map((account, i) => {
+const accountBytes = (account) =>
+  Buffer.from((Array.isArray(account.data) ? account.data[0] : account.data) ?? '', 'base64');
+
+/**
+ * Fetch and parse address-lookup-table accounts, in the order given.
+ *
+ * Throws unless every address is a table owned by the lookup-table program
+ * that the runtime will still resolve: a quote that names a missing, foreign or
+ * deactivated table can't be compiled into a transaction the runtime accepts.
+ * A table that is only deactivating is still usable (see isLookupTableUsable);
+ * telling the two apart needs the SlotHashes sysvar, which is fetched only when
+ * some table has a deactivation slot.
+ */
+export async function fetchAddressLookupTables(rpcUrl, addresses) {
+  const { accounts } = await getMultipleAccountsBase64(rpcUrl, addresses, 'address lookup tables');
+
+  const tables = accounts.map((account, i) => {
     const key = addresses[i];
     if (!account) {
       throw new Error(`Address lookup table ${key} not found on-chain. Get a new quote.`);
@@ -539,13 +560,25 @@ export async function fetchAddressLookupTables(rpcUrl, addresses) {
     if (account.owner !== ADDRESS_LOOKUP_TABLE_PROGRAM) {
       throw new Error(`Account ${key} is not an address lookup table. Get a new quote.`);
     }
-    const raw = Array.isArray(account.data) ? account.data[0] : account.data;
-    const table = parseAddressLookupTable(Buffer.from(raw ?? '', 'base64'));
-    if (!table.isActive) {
-      throw new Error(`Address lookup table ${key} has been deactivated. Get a new quote.`);
-    }
-    return { key, addresses: table.addresses };
+    return { key, ...parseAddressLookupTable(accountBytes(account)) };
   });
+
+  if (tables.some((t) => t.deactivationSlot !== null)) {
+    const { accounts: [sysvar], slot } = await getMultipleAccountsBase64(rpcUrl, [SLOT_HASHES_SYSVAR], 'recent slot hashes');
+    if (!sysvar || sysvar.owner !== SYSVAR_PROGRAM || !Number.isSafeInteger(slot)) {
+      throw new Error(
+        'Solana RPC returned no usable SlotHashes sysvar, so a deactivating address lookup table cannot be checked. Retry or configure a different RPC endpoint.'
+      );
+    }
+    const slotHashes = parseSlotHashes(accountBytes(sysvar));
+    for (const table of tables) {
+      if (!isLookupTableUsable(table.deactivationSlot, BigInt(slot), slotHashes)) {
+        throw new Error(`Address lookup table ${table.key} has been deactivated. Get a new quote.`);
+      }
+    }
+  }
+
+  return tables.map(({ key, addresses: tableAddresses }) => ({ key, addresses: tableAddresses }));
 }
 
 /**

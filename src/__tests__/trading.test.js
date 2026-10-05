@@ -8128,15 +8128,26 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
       return { owner, lamports: 1, executable: false, data: [data.toString('base64'), 'base64'] };
     }
 
+    const CURRENT_SLOT = 1000;
+    // SlotHashes as the RPC sees it at CURRENT_SLOT: recent slots, with 997 skipped.
+    function slotHashesAccount(slots = [999n, 998n, 996n]) {
+      const data = Buffer.alloc(8 + slots.length * 40);
+      data.writeBigUInt64LE(BigInt(slots.length), 0);
+      slots.forEach((slot, i) => data.writeBigUInt64LE(slot, 8 + i * 40));
+      return { owner: 'Sysvar1111111111111111111111111111111111111', lamports: 1, executable: false, data: [data.toString('base64'), 'base64'] };
+    }
+
     // Serves getMultipleAccounts from `accounts` (address → account, missing → null)
-    // and getLatestBlockhash from `blockhash`; records every request body.
+    // plus the SlotHashes sysvar, and getLatestBlockhash from `blockhash`;
+    // records every request body.
     function stubSolanaRpc(accounts, blockhash = randomPubkey()) {
       const requests = [];
+      const all = { SysvarS1otHashes111111111111111111111111111: slotHashesAccount(), ...accounts };
       vi.stubGlobal('fetch', vi.fn().mockImplementation((_url, opts) => {
         const body = JSON.parse(opts.body);
         requests.push(body);
         const result = body.method === 'getMultipleAccounts'
-          ? { value: body.params[0].map((a) => accounts[a] ?? null) }
+          ? { context: { slot: CURRENT_SLOT }, value: body.params[0].map((a) => all[a] ?? null) }
           : { value: { blockhash } };
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ result }) });
       }));
@@ -8234,7 +8245,33 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
       const route = largeRoute(signer, { writable, readonly: [], tables: { programId: randomPubkey(), addresses: [table] } });
 
       await expect(compileRawSolanaTransaction(route, 'http://unused', async () => signer)).rejects.toThrow(error);
-      expect(requests.map((r) => r.method)).toEqual(['getMultipleAccounts']);
+      expect(requests.map((r) => r.method)).not.toContain('getLatestBlockhash');
+    });
+
+    it.each([
+      ['deactivated in the current slot', 1000n],
+      ['still in SlotHashes', 996n],
+    ])('uses a deactivating table that is %s', async (_label, deactivationSlot) => {
+      const signer = generateSolanaWallet().address;
+      const writable = Array.from({ length: 40 }, randomPubkey);
+      const table = randomPubkey();
+      const requests = stubSolanaRpc({ [table]: lookupTableAccount(writable, { deactivationSlot }) });
+      const route = largeRoute(signer, { writable, readonly: [], tables: { programId: randomPubkey(), addresses: [table] } });
+
+      const parsed = parseTransactionMessage(await compileRawSolanaTransaction(route, 'http://unused', async () => signer));
+      expect(parsed.addressTableLookups.map((l) => l.lookupTableAddress)).toEqual([table]);
+      expect(requests[1].params[0]).toEqual(['SysvarS1otHashes111111111111111111111111111']);
+    });
+
+    it('only reads SlotHashes when a table has been deactivated', async () => {
+      const signer = generateSolanaWallet().address;
+      const writable = Array.from({ length: 40 }, randomPubkey);
+      const table = randomPubkey();
+      const requests = stubSolanaRpc({ [table]: lookupTableAccount(writable) });
+      const route = largeRoute(signer, { writable, readonly: [], tables: { programId: randomPubkey(), addresses: [table] } });
+
+      await compileRawSolanaTransaction(route, 'http://unused', async () => signer);
+      expect(requests.map((r) => r.method)).toEqual(['getMultipleAccounts', 'getLatestBlockhash']);
     });
 
     it('rejects a route that is still too large after compression', async () => {

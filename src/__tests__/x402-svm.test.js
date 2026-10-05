@@ -364,6 +364,18 @@ describe('fetchAddressLookupTables', () => {
       .rejects.toThrow(/Solana RPC failed \(rate limited\) while fetching address lookup tables/);
   });
 
+  it('refuses a deactivated table when the RPC returns no SlotHashes sysvar to check it against', async () => {
+    const meta = Buffer.alloc(56);
+    meta.writeUInt32LE(1, 0);
+    meta.writeBigUInt64LE(500n, 4);
+    const table = { owner: 'AddressLookupTab1e1111111111111111111111111', data: [meta.toString('base64'), 'base64'] };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ result: { context: { slot: 1000 }, value: [table] } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ result: { context: { slot: 1000 }, value: [null] } }) }));
+    await expect(fetchAddressLookupTables('http://unused', [tableAddress()]))
+      .rejects.toThrow(/no usable SlotHashes sysvar/);
+  });
+
   it('rejects an account list that does not line up with the requested tables', async () => {
     rpcReturns({ result: { value: [] } });
     await expect(fetchAddressLookupTables('http://unused', [tableAddress()]))
