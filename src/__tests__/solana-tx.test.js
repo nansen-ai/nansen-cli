@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseTransactionMessage, resolveStaticAccount } from '../solana-tx.js';
+import { parseAddressLookupTable, parseTransactionMessage, resolveStaticAccount } from '../solana-tx.js';
 import { base58Decode, base58Encode, generateSolanaWallet } from '../wallet.js';
 
 function encodeCompactU16(value) {
@@ -140,5 +140,35 @@ describe('parseTransactionMessage', () => {
     });
     const parsed = parseTransactionMessage(wrapTransaction(messageBytes));
     expect(base58Encode(base58Decode(parsed.staticAccountKeys[0]))).toBe(wallet.address);
+  });
+});
+
+describe('parseAddressLookupTable', () => {
+  const tableData = (addresses, { typeIndex = 1, deactivationSlot = 0xffffffffffffffffn } = {}) => {
+    const meta = Buffer.alloc(56);
+    meta.writeUInt32LE(typeIndex, 0);
+    meta.writeBigUInt64LE(deactivationSlot, 4);
+    return Buffer.concat([meta, ...addresses.map((a) => base58Decode(a))]);
+  };
+
+  it('returns the addresses of an active table in order', () => {
+    const addresses = [generateSolanaWallet().address, generateSolanaWallet().address];
+    expect(parseAddressLookupTable(tableData(addresses))).toEqual({ isActive: true, addresses });
+  });
+
+  it('reports a deactivated table as inactive', () => {
+    expect(parseAddressLookupTable(tableData([], { deactivationSlot: 42n })).isActive).toBe(false);
+  });
+
+  it('rejects truncated data, a partial address and an uninitialized table', () => {
+    const address = generateSolanaWallet().address;
+    expect(() => parseAddressLookupTable(Buffer.alloc(40))).toThrow(/unexpected account data length/);
+    expect(() => parseAddressLookupTable(tableData([address]).subarray(0, 80))).toThrow(/unexpected account data length/);
+    expect(() => parseAddressLookupTable(tableData([address], { typeIndex: 0 }))).toThrow(/not an initialized lookup table/);
+  });
+
+  it('rejects a table with more addresses than a one-byte index can reach', () => {
+    const data = Buffer.concat([tableData([]), Buffer.alloc(257 * 32)]);
+    expect(() => parseAddressLookupTable(data)).toThrow(/more than 256 addresses/);
   });
 });

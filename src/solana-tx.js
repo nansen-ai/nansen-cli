@@ -151,3 +151,40 @@ export function resolveStaticAccount(parsed, index) {
   if (index < parsed.staticAccountKeys.length) return parsed.staticAccountKeys[index];
   return null;
 }
+
+// Owner of every address-lookup-table account.
+export const ADDRESS_LOOKUP_TABLE_PROGRAM = 'AddressLookupTab1e1111111111111111111111111';
+// LookupTableMeta: typeIndex u32, deactivationSlot u64, lastExtendedSlot u64,
+// lastExtendedSlotStartIndex u8, authority Option<Pubkey>, padding. The
+// 32-byte addresses start right after it.
+const LOOKUP_TABLE_META_SIZE = 56;
+const LOOKUP_TABLE_TYPE_INDEX = 1;
+// Lookups index a table with a single byte.
+const LOOKUP_TABLE_MAX_ADDRESSES = 256;
+// A table that has never been deactivated stores u64::MAX here.
+const LOOKUP_TABLE_ACTIVE_SLOT = 0xffffffffffffffffn;
+
+/**
+ * Parse the raw data of an address-lookup-table account into its addresses.
+ * Throws on anything that isn't an initialized table, so a truncated or
+ * foreign account can't be read as a short or shifted address list.
+ */
+export function parseAddressLookupTable(data) {
+  if (data.length < LOOKUP_TABLE_META_SIZE || (data.length - LOOKUP_TABLE_META_SIZE) % 32 !== 0) {
+    throw new Error('Malformed address lookup table: unexpected account data length');
+  }
+  if ((data.length - LOOKUP_TABLE_META_SIZE) / 32 > LOOKUP_TABLE_MAX_ADDRESSES) {
+    throw new Error(`Malformed address lookup table: more than ${LOOKUP_TABLE_MAX_ADDRESSES} addresses`);
+  }
+  if (data.readUInt32LE(0) !== LOOKUP_TABLE_TYPE_INDEX) {
+    throw new Error('Malformed address lookup table: account is not an initialized lookup table');
+  }
+  const addresses = [];
+  for (let offset = LOOKUP_TABLE_META_SIZE; offset < data.length; offset += 32) {
+    addresses.push(base58Encode(data.subarray(offset, offset + 32)));
+  }
+  return {
+    isActive: data.readBigUInt64LE(4) === LOOKUP_TABLE_ACTIVE_SLOT,
+    addresses,
+  };
+}

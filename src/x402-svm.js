@@ -9,6 +9,7 @@ import { encodeCompactU16, deriveATA as _deriveATA } from './transfer.js';
 import { resolvePaymentAmount, resolvePayTo } from './x402-policy.js';
 import { SOLANA_MAINNET_NETWORK } from './x402-tokens.js';
 import { CHAIN_RPCS } from './rpc-urls.js';
+import { ADDRESS_LOOKUP_TABLE_PROGRAM, parseAddressLookupTable } from './solana-tx.js';
 
 // ============= Constants =============
 
@@ -50,8 +51,13 @@ export function deriveATA(ownerBase58, mintBase58, tokenProgramBase58 = TOKEN_PR
  * Returns numRequiredSignatures alongside the bytes. Each caller writes a
  * fixed number of signature slots and asserts this value against it, since a
  * header that disagrees with the slot count is rejected at broadcast.
+ *
+ * addressLookupTables ([{ key, addresses }], resolved on-chain by the caller)
+ * moves accounts out of the static key list into table lookups. Only accounts
+ * that are neither signers nor invoked as a program are eligible — the runtime
+ * requires both to be static keys — so the fee payer always stays static.
  */
-export function buildMessageV0({ feePayer, instructions, recentBlockhash, accounts: _accounts }) {
+export function buildMessageV0({ feePayer, instructions, recentBlockhash, addressLookupTables = [] }) {
   // All unique accounts in order: feePayer first, then signers, then rest
   const accountMap = new Map();
   const feePayerKey = feePayer;
@@ -75,10 +81,37 @@ export function buildMessageV0({ feePayer, instructions, recentBlockhash, accoun
     }
   }
 
+  // Pull lookup-eligible accounts out of the static list, table by table. An
+  // account found in more than one table is loaded from the first.
+  const invokedPrograms = new Set(instructions.map(ix => ix.programId));
+  const lookups = [];
+  const loadedWritable = [];
+  const loadedReadonly = [];
+  const loaded = new Set();
+  for (const table of addressLookupTables) {
+    const writableIndexes = [];
+    const readonlyIndexes = [];
+    table.addresses.forEach((address, index) => {
+      const meta = accountMap.get(address);
+      if (!meta || meta.isSigner || invokedPrograms.has(address) || loaded.has(address)) return;
+      loaded.add(address);
+      if (meta.isWritable) {
+        writableIndexes.push(index);
+        loadedWritable.push(address);
+      } else {
+        readonlyIndexes.push(index);
+        loadedReadonly.push(address);
+      }
+    });
+    if (writableIndexes.length || readonlyIndexes.length) {
+      lookups.push({ key: table.key, writableIndexes, readonlyIndexes });
+    }
+  }
+
   // Sort: signers+writable, signers+readonly, non-signer+writable, non-signer+readonly
   // feePayer always at index 0
   const sortedKeys = [feePayerKey];
-  const rest = [...accountMap.entries()].filter(([k]) => k !== feePayerKey);
+  const rest = [...accountMap.entries()].filter(([k]) => k !== feePayerKey && !loaded.has(k));
 
   // Signer+writable
   for (const [k, v] of rest) if (v.isSigner && v.isWritable) sortedKeys.push(k);
@@ -104,9 +137,15 @@ export function buildMessageV0({ feePayer, instructions, recentBlockhash, accoun
     }
   }
 
-  // Build the account keys index
+  // Build the account keys index: static keys, then every table's writable
+  // loads, then every table's readonly loads — the order the runtime resolves.
+  const allKeys = [...sortedKeys, ...loadedWritable, ...loadedReadonly];
+  // Instruction account indexes are single bytes.
+  if (allKeys.length > 256) {
+    throw new Error(`Solana transaction references ${allKeys.length} accounts; a message can index at most 256.`);
+  }
   const keyIndex = new Map();
-  sortedKeys.forEach((k, i) => keyIndex.set(k, i));
+  allKeys.forEach((k, i) => keyIndex.set(k, i));
 
   // Compile instructions
   const compiledInstructions = instructions.map(ix => {
@@ -146,8 +185,15 @@ export function buildMessageV0({ feePayer, instructions, recentBlockhash, accoun
     parts.push(ix.data);
   }
 
-  // Address table lookups (empty — all accounts referenced statically above)
-  parts.push(encodeCompactU16(0));
+  // Address table lookups
+  parts.push(encodeCompactU16(lookups.length));
+  for (const lookup of lookups) {
+    parts.push(base58DecodePubkey(lookup.key));
+    parts.push(encodeCompactU16(lookup.writableIndexes.length));
+    parts.push(Buffer.from(lookup.writableIndexes));
+    parts.push(encodeCompactU16(lookup.readonlyIndexes.length));
+    parts.push(Buffer.from(lookup.readonlyIndexes));
+  }
 
   return { messageBytes: Buffer.concat(parts), numRequiredSignatures };
 }
@@ -252,7 +298,6 @@ export function buildUnsignedSvmTransaction(
     feePayer: feePayerStr,
     instructions,
     recentBlockhash,
-    accounts: null,
   });
   // The header must agree with the signature slots written below. A
   // server-supplied feePayer equal to the paying wallet collapses the two
@@ -421,6 +466,86 @@ export async function fetchRecentBlockhash(rpcUrl = CHAIN_RPCS.solana) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Fetch and parse address-lookup-table accounts, in the order given.
+ *
+ * Throws unless every address is an active table owned by the lookup-table
+ * program: a quote that names a missing, foreign or deactivated table can't be
+ * compiled into a transaction the runtime will accept.
+ */
+export async function fetchAddressLookupTables(rpcUrl, addresses) {
+  if (!isHttpUrl(rpcUrl)) {
+    throw new Error(
+      'Invalid Solana RPC URL: expected a full http:// or https:// URL. Check NANSEN_SOLANA_RPC.'
+    );
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SOLANA_RPC_TIMEOUT_MS);
+  const rpcError = (detail, cause) => new Error(
+    `Solana RPC ${detail} while fetching address lookup tables. Retry or configure a different RPC endpoint.`,
+    cause ? { cause } : undefined
+  );
+
+  const timeoutError = (cause) => rpcError(`did not respond within ${SOLANA_RPC_TIMEOUT_MS / 1000}s`, cause);
+
+  let data;
+  try {
+    let response;
+    try {
+      response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getMultipleAccounts',
+          params: [addresses, { encoding: 'base64', commitment: 'confirmed' }],
+        }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (controller.signal.aborted) throw timeoutError(err);
+      throw rpcError('was unavailable', err);
+    }
+    if (!response.ok) throw rpcError(`returned HTTP ${response.status}`);
+    try {
+      data = await response.json();
+    } catch (err) {
+      if (controller.signal.aborted) throw timeoutError(err);
+      throw rpcError('returned an invalid response', err);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (data?.error) {
+    throw rpcError(`failed (${String(data.error.message ?? data.error.code ?? 'unknown RPC error')})`);
+  }
+  const accounts = data?.result?.value;
+  // Each table is matched to its address by position, so a short or padded
+  // array would pair a table with the wrong address.
+  if (!Array.isArray(accounts) || accounts.length !== addresses.length) {
+    throw rpcError('returned an unexpected account list');
+  }
+
+  return accounts.map((account, i) => {
+    const key = addresses[i];
+    if (!account) {
+      throw new Error(`Address lookup table ${key} not found on-chain. Get a new quote.`);
+    }
+    if (account.owner !== ADDRESS_LOOKUP_TABLE_PROGRAM) {
+      throw new Error(`Account ${key} is not an address lookup table. Get a new quote.`);
+    }
+    const raw = Array.isArray(account.data) ? account.data[0] : account.data;
+    const table = parseAddressLookupTable(Buffer.from(raw ?? '', 'base64'));
+    if (!table.isActive) {
+      throw new Error(`Address lookup table ${key} has been deactivated. Get a new quote.`);
+    }
+    return { key, addresses: table.addresses };
+  });
 }
 
 /**

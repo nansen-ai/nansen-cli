@@ -68,6 +68,7 @@ import {
   exportWallet,
 } from '../wallet.js';
 import * as wcTrading from '../walletconnect-trading.js';
+import { parseTransactionMessage } from '../solana-tx.js';
 
 let originalHome;
 let tempDir;
@@ -8097,11 +8098,11 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
       .rejects.toThrow(/requires 2 signatures/);
   });
 
-  it('rejects a transaction too large to compile without address lookup tables', async () => {
+  it('rejects a transaction too large to compile when the quote supplies no lookup tables', async () => {
     const signer = generateSolanaWallet().address;
     // A single instruction whose data alone blows past Solana's 1232-byte packet
-    // limit: skipping ALTs is only valid while the static tx still fits, so an
-    // oversized route must throw, not silently build an unsignable transaction.
+    // limit: with no lookup tables to compress accounts, an oversized route must
+    // throw, not silently build an unsignable transaction.
     const bigData = 'ab'.repeat(1300); // 1300 bytes, valid hex
     const oversized = {
       instructions: [{
@@ -8111,6 +8112,141 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
       }],
     };
     await expect(compileRawSolanaTransaction(oversized, 'http://unused', async () => signer))
-      .rejects.toThrow(/too large to compile without address-lookup-table support/);
+      .rejects.toThrow(/too large to compile \(\d+ bytes > 1232 limit\) and the quote supplied no address lookup tables/);
+  });
+
+  describe('address lookup tables', () => {
+    const ALT_PROGRAM = 'AddressLookupTab1e1111111111111111111111111';
+    const U64_MAX = 0xffffffffffffffffn;
+    const randomPubkey = () => base58Encode(crypto.randomBytes(32));
+
+    function lookupTableAccount(addresses, { deactivationSlot = U64_MAX, owner = ALT_PROGRAM } = {}) {
+      const meta = Buffer.alloc(56);
+      meta.writeUInt32LE(1, 0);
+      meta.writeBigUInt64LE(deactivationSlot, 4);
+      const data = Buffer.concat([meta, ...addresses.map((a) => base58Decode(a))]);
+      return { owner, lamports: 1, executable: false, data: [data.toString('base64'), 'base64'] };
+    }
+
+    // Serves getMultipleAccounts from `accounts` (address → account, missing → null)
+    // and getLatestBlockhash from `blockhash`; records every request body.
+    function stubSolanaRpc(accounts, blockhash = randomPubkey()) {
+      const requests = [];
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((_url, opts) => {
+        const body = JSON.parse(opts.body);
+        requests.push(body);
+        const result = body.method === 'getMultipleAccounts'
+          ? { value: body.params[0].map((a) => accounts[a] ?? null) }
+          : { value: { blockhash } };
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ result }) });
+      }));
+      return requests;
+    }
+
+    // A swap-then-bridge shaped route: one signer, one program, and enough
+    // non-signer accounts that keeping them all static overflows 1232 bytes.
+    function largeRoute(signer, { writable, readonly, tables }) {
+      return {
+        instructions: [{
+          keys: [
+            { pubkey: signer, isSigner: true, isWritable: true },
+            ...writable.map((pubkey) => ({ pubkey, isSigner: false, isWritable: true })),
+            ...readonly.map((pubkey) => ({ pubkey, isSigner: false, isWritable: false })),
+          ],
+          programId: tables.programId,
+          data: 'deadbeef',
+        }],
+        addressLookupTableAddresses: tables.addresses,
+      };
+    }
+
+    it('compresses a too-large route through its tables, resolving every account back to the original', async () => {
+      const signer = generateSolanaWallet().address;
+      const programId = randomPubkey();
+      const writable = Array.from({ length: 20 }, randomPubkey);
+      const readonly = Array.from({ length: 20 }, randomPubkey);
+      const tableA = randomPubkey();
+      const tableB = randomPubkey();
+      // Table A: the signer and program (must stay static), all writable accounts
+      // and the first five readonly ones. Table B: every readonly account, so
+      // the five shared with A must be loaded from A only.
+      const tableAEntries = [signer, programId, ...writable, ...readonly.slice(0, 5)];
+      const tableBEntries = [...readonly].reverse();
+      const requests = stubSolanaRpc({
+        [tableA]: lookupTableAccount(tableAEntries),
+        [tableB]: lookupTableAccount(tableBEntries),
+      });
+      const route = largeRoute(signer, { writable, readonly, tables: { programId, addresses: [tableA, tableB] } });
+
+      const txBase64 = await compileRawSolanaTransaction(route, 'http://unused', async () => signer);
+      expect(Buffer.from(txBase64, 'base64').length).toBeLessThanOrEqual(1232);
+
+      const parsed = parseTransactionMessage(txBase64);
+      expect(parsed.staticAccountKeys).toEqual([signer, programId]);
+      expect(parsed.header).toEqual({ numRequiredSignatures: 1, numReadonlySignedAccounts: 0, numReadonlyUnsignedAccounts: 1 });
+      const [lookupA, lookupB] = parsed.addressTableLookups;
+      expect(lookupA.lookupTableAddress).toBe(tableA);
+      expect(lookupB.lookupTableAddress).toBe(tableB);
+      expect(lookupA.writableIndexes.map((i) => tableAEntries[i])).toEqual(writable);
+      expect(lookupA.readonlyIndexes.map((i) => tableAEntries[i])).toEqual(readonly.slice(0, 5));
+      expect(lookupB.writableIndexes).toEqual([]);
+      expect(lookupB.readonlyIndexes.map((i) => tableBEntries[i]).sort()).toEqual(readonly.slice(5).sort());
+
+      // The runtime's account order: static keys, then each table's writable
+      // loads, then each table's readonly loads.
+      const resolved = [
+        ...parsed.staticAccountKeys,
+        ...lookupA.writableIndexes.map((i) => tableAEntries[i]),
+        ...lookupB.writableIndexes.map((i) => tableBEntries[i]),
+        ...lookupA.readonlyIndexes.map((i) => tableAEntries[i]),
+        ...lookupB.readonlyIndexes.map((i) => tableBEntries[i]),
+      ];
+      const [ix] = parsed.instructions;
+      expect(resolved[ix.programIdIndex]).toBe(programId);
+      expect(ix.accountIndexes.map((i) => resolved[i])).toEqual([signer, ...writable, ...readonly]);
+
+      const tableRequest = requests.find((r) => r.method === 'getMultipleAccounts');
+      expect(tableRequest.params).toEqual([[tableA, tableB], { encoding: 'base64', commitment: 'confirmed' }]);
+    });
+
+    it('keeps a route that already fits fully static and never fetches its tables', async () => {
+      const signer = generateSolanaWallet().address;
+      const other = randomPubkey();
+      const table = randomPubkey();
+      const requests = stubSolanaRpc({ [table]: lookupTableAccount([other]) });
+      const route = largeRoute(signer, { writable: [other], readonly: [], tables: { programId: randomPubkey(), addresses: [table] } });
+
+      const parsed = parseTransactionMessage(await compileRawSolanaTransaction(route, 'http://unused', async () => signer));
+      expect(parsed.addressTableLookups).toEqual([]);
+      expect(parsed.staticAccountKeys).toContain(other);
+      expect(requests.map((r) => r.method)).toEqual(['getLatestBlockhash']);
+    });
+
+    it.each([
+      ['missing', () => undefined, /not found on-chain/],
+      ['not owned by the lookup-table program', (entries) => lookupTableAccount(entries, { owner: randomPubkey() }), /is not an address lookup table/],
+      ['deactivated', (entries) => lookupTableAccount(entries, { deactivationSlot: 123n }), /has been deactivated/],
+    ])('refuses a table that is %s, before fetching a blockhash', async (_label, makeAccount, error) => {
+      const signer = generateSolanaWallet().address;
+      const writable = Array.from({ length: 40 }, randomPubkey);
+      const table = randomPubkey();
+      const requests = stubSolanaRpc({ [table]: makeAccount(writable) });
+      const route = largeRoute(signer, { writable, readonly: [], tables: { programId: randomPubkey(), addresses: [table] } });
+
+      await expect(compileRawSolanaTransaction(route, 'http://unused', async () => signer)).rejects.toThrow(error);
+      expect(requests.map((r) => r.method)).toEqual(['getMultipleAccounts']);
+    });
+
+    it('rejects a route that is still too large after compression', async () => {
+      const signer = generateSolanaWallet().address;
+      const writable = Array.from({ length: 40 }, randomPubkey);
+      const table = randomPubkey();
+      // The table holds none of the route's accounts, so nothing compresses.
+      stubSolanaRpc({ [table]: lookupTableAccount([randomPubkey()]) });
+      const route = largeRoute(signer, { writable, readonly: [], tables: { programId: randomPubkey(), addresses: [table] } });
+
+      await expect(compileRawSolanaTransaction(route, 'http://unused', async () => signer))
+        .rejects.toThrow(/too large to compile \(\d+ bytes > 1232 limit\) even with its 1 address lookup table/);
+    });
   });
 });
