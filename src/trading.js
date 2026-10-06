@@ -3261,6 +3261,13 @@ EXAMPLES:
         // Resolved once here, before any signing, so an unrecognised route value
         // aborts the command instead of surfacing mid-loop as a per-quote failure.
         const configuredRoute = executionRoute();
+        // Gasless stays on the legacy route: the standard route has no gasless
+        // envelope, so sending a signed Relay authorization there would drop the
+        // gasless framing and submit it as a plain swap. Only a non-gasless swap
+        // can opt into the standard route. Resolved here rather than at the
+        // broadcast call because the WalletConnect branch — which may never reach
+        // that call — also has to know which route is in force.
+        const swapRoute = gasless ? 'legacy' : configuredRoute;
 
         const allQuotes = quoteData.response.quotes || [];
         if (!allQuotes.length) {
@@ -4263,6 +4270,18 @@ EXAMPLES:
                 // executeTransaction() marker further down.
                 markQuoteExecuted(quoteId, { broadcast: { txHash: wcResult.txHash } });
 
+                // Say it out loud when the selected route was bypassed. A wallet
+                // that broadcasts for us hands back a hash instead of signed
+                // bytes, so there is nothing to POST and the swap never reaches
+                // /execution/standard — no server-side outcome tracking for this
+                // trade. Silence here is the staged-rollout failure mode
+                // executionRoute() already guards against at the other end: you
+                // believe you exercised the new route and you did not.
+                if (swapRoute === 'standard') {
+                  log('  Note: the wallet broadcast this swap itself, so the standard');
+                  log('        execution route was bypassed (no server-side tracking).');
+                }
+
                 // Wallet broadcast — verify on-chain
                 log('  Verifying on-chain status...');
                 try {
@@ -4280,7 +4299,14 @@ EXAMPLES:
                   log(`    Tx Hash:   ${wcResult.txHash}`);
                   log(`    Explorer:  ${chainConfig.explorer}${wcResult.txHash}`);
                   log(`    Error:     ${receiptErr.message}`);
-                  if (qi + 1 < endIndex) {
+                  // Same rule as every other standard-route path: a landed revert
+                  // ends the command. The wallet broadcast this one itself, so no
+                  // backend single-flight lock would stop the next candidate — it
+                  // would be a second real swap, approved in the wallet, against a
+                  // quote already recorded as spent. Keep "revert is terminal"
+                  // uniform across signers instead of leaving WalletConnect as the
+                  // one path where selecting the standard route changes nothing.
+                  if (qi + 1 < endIndex && swapRoute !== 'standard') {
                     log(`  Trying next quote...`);
                     lastQuoteError = `${quoteName} reverted on-chain`;
                     continue;
@@ -4616,11 +4642,6 @@ EXAMPLES:
               execParams.requestId = requestId; // Solana Jupiter Ultra
             }
 
-            // Gasless stays on the legacy route: the standard route has no gasless
-            // envelope, so sending a signed Relay authorization there would drop
-            // the gasless framing and submit it as a plain swap. Only a non-gasless
-            // swap can opt into the standard route.
-            const swapRoute = gasless ? 'legacy' : configuredRoute;
             if (swapRoute === 'standard') {
               // Attribution + cross-chain fields the standard route reads from the
               // body. Attached only here because the legacy schema rejects some of

@@ -4634,10 +4634,10 @@ describe('standard execution route — swap command flow', () => {
 
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
-      if (urlStr.includes('privy.io') && opts?.method === 'GET') {
+      if (urlStr.startsWith('https://api.privy.io/') && opts?.method === 'GET') {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: 'SolPrivyAddr1111111111111111111111111111', chain_type: 'solana' }) });
       }
-      if (urlStr.includes('privy.io')) {
+      if (urlStr.startsWith('https://api.privy.io/')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: 'c2lnbmVkVHg=' } }) });
       }
       if (urlStr.includes('trading-api') && urlStr.endsWith('/execution/standard')) {
@@ -4655,6 +4655,76 @@ describe('standard execution route — swap command flow', () => {
 
     expect(logs.some(l => l.includes('Signature:') && l.includes('SolTxSig111'))).toBe(true);
     expect(logs.some(l => l.includes('Tx Hash:'))).toBe(false);
+  });
+
+  // A WalletConnect wallet that broadcasts for us hands back a hash, not signed
+  // bytes, so the swap never reaches /execution/standard. That bypass is allowed
+  // (there is nothing to POST) but it must not leave WalletConnect as the one
+  // signer where selecting the standard route silently changes nothing.
+  function saveWcQuote(wcAddress, quotes) {
+    return saveQuote(
+      { success: true, quotes },
+      'base',
+      'walletconnect',
+      null,
+      null,
+      {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: wcAddress,
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+        }),
+      },
+    );
+  }
+
+  it('stops at a revert and says the route was bypassed when WalletConnect broadcasts directly', async () => {
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect')
+      .mockResolvedValue({ txHash: '0x' + 'ef'.repeat(32) });
+    const { executeCalls } = stubStandardSwapFetch({ receiptStatus: '0x0' });
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'TX_REVERTED' });
+
+    // One wallet prompt, not two: the second candidate would be a second real
+    // swap against a quote already recorded as spent.
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    // Nothing was POSTed anywhere — the wallet broadcast it.
+    expect(executeCalls).toHaveLength(0);
+    expect(logs.some(l => l.includes('the standard'))).toBe(true);
+    expect(logs.some(l => l.includes('execution route was bypassed'))).toBe(true);
+  });
+
+  it('keeps the WalletConnect candidate fallback on the legacy route', async () => {
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect')
+      .mockResolvedValue({ txHash: '0x' + 'ef'.repeat(32) });
+    stubStandardSwapFetch({ receiptStatus: '0x0' });
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'TX_REVERTED' });
+
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(true);
+    expect(logs.some(l => l.includes('execution route was bypassed'))).toBe(false);
   });
 });
 
