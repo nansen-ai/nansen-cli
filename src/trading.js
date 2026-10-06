@@ -3269,6 +3269,23 @@ EXAMPLES:
         // that call — also has to know which route is in force.
         const swapRoute = gasless ? 'legacy' : configuredRoute;
 
+        // The standard route keys its per-quote single-flight lock on the backend
+        // quote id, so a submission without one claims duplicate protection and
+        // has none. Every live /quote response carries
+        // response.metadata.quoteId, so reaching this is shape drift or a
+        // hand-edited quote file, never a routine swap — the cost of stopping is
+        // a re-quote, the cost of proceeding is an unprotected broadcast, and the
+        // local claim is per-machine and does not replace it. Checked here, with
+        // the route itself, so it refuses before anything is signed instead of
+        // surfacing mid-loop as a per-candidate failure.
+        const backendQuoteId = quoteData.response?.metadata?.quoteId;
+        if (swapRoute === 'standard' && !backendQuoteId) {
+          throw new CommandError(
+            `Quote "${quoteId}" carries no backend quote id, which the standard execution route requires for its duplicate-submission lock. Request a fresh quote with "nansen trade quote", or unset NANSEN_TRADING_EXECUTION_ROUTE to broadcast on the legacy route.`,
+            'MISSING_QUOTE_ID',
+          );
+        }
+
         const allQuotes = quoteData.response.quotes || [];
         if (!allQuotes.length) {
           throw new CommandError('❌ No quote data found', 'NO_QUOTES');
@@ -4630,32 +4647,18 @@ EXAMPLES:
               simulate: !noSimulate && !gasless,
             };
 
-            // Prefer the backend quote id saved from /quote; per-aggregator ids can
-            // appear on individual quote metadata and are only a fallback.
-            //
-            // The fallback is legacy-only on purpose. A per-quote id is minted by
-            // the AGGREGATOR, not the backend (LiFi, for instance, returns
-            // '<uuid>:<index>'), so it is a different identifier in a different
-            // namespace. On the legacy route that only costs some BI correlation.
-            // On the standard route `quoteId` is what the backend keys its
-            // per-quote single-flight lock on, so sending an aggregator id there
-            // would present a value the lock cannot match: the request would look
-            // idempotency-protected and would not be. Send the backend id or
-            // nothing.
-            const backendQuoteId = swapRoute === 'standard'
-              ? quoteData.response?.metadata?.quoteId
-              : (quoteData.response?.metadata?.quoteId ?? currentQuote.metadata?.quoteId);
-            if (backendQuoteId) {
-              execParams.quoteId = backendQuoteId;
-            } else if (swapRoute === 'standard') {
-              // Every live /quote response carries response.metadata.quoteId, so
-              // this is the shape-drift case rather than a routine one. Don't fail
-              // the swap over it — the local claim (claimQuoteForExecution) and the
-              // executed marker already stop a repeat run, and this route stops at
-              // a failed swap rather than re-signing. But don't let the server-side
-              // lock go missing silently either.
-              log('  Note: this quote carries no backend quote id, so the server-side');
-              log('        duplicate-submission lock does not apply to this broadcast.');
+            // The backend quote id, resolved with the route above. The per-quote
+            // fallback below is reachable on the legacy route only, because the
+            // standard route already refused the no-backend-id case before any
+            // signing. That split is deliberate: a per-quote id is minted by the
+            // AGGREGATOR, not the backend (LiFi returns '<uuid>:<index>'), so it
+            // is a different identifier in a different namespace. It is fine as a
+            // BI correlation hint, and wrong as the key the standard route's
+            // single-flight lock is held on — that request would look
+            // idempotency-protected and would not be.
+            const quoteIdForExecute = backendQuoteId ?? currentQuote.metadata?.quoteId;
+            if (quoteIdForExecute) {
+              execParams.quoteId = quoteIdForExecute;
             }
             // The backend's /execute schema is strict; sending fields it doesn't expect
             // for the (chain × aggregator × gasless) combination causes 502s or

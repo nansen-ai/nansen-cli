@@ -4418,9 +4418,13 @@ describe('standard execution route — swap command flow', () => {
     };
   }
 
+  // Every live /quote response carries metadata.quoteId, and the standard route
+  // now requires it, so the default fixture carries one too. Pass
+  // `metadata: null` to build the shape-drift quote that gets refused.
   function saveNativeEthQuote(quotes, extra = {}) {
+    const metadata = extra.metadata === undefined ? { quoteId: 'backend-quote-id' } : extra.metadata;
     return saveQuote(
-      { success: true, quotes, ...(extra.metadata ? { metadata: extra.metadata } : {}) },
+      { success: true, quotes, ...(metadata ? { metadata } : {}) },
       'base',
       'local',
       null,
@@ -4624,7 +4628,7 @@ describe('standard execution route — swap command flow', () => {
     const txBase64 = Buffer.concat([sigCount, emptySig, messageBytes]).toString('base64');
 
     const quoteId = saveQuote(
-      { success: true, quotes: [{ aggregator: 'jupiter', inputMint: SOL_MINT, outputMint: SOL_USDC, inAmount: '1000000000', outAmount: '50000000', transaction: txBase64, metadata: { requestId: 'req-1' } }] },
+      { success: true, metadata: { quoteId: 'backend-quote-id' }, quotes: [{ aggregator: 'jupiter', inputMint: SOL_MINT, outputMint: SOL_USDC, inAmount: '1000000000', outAmount: '50000000', transaction: txBase64, metadata: { requestId: 'req-1' } }] },
       'solana',
       'privy',
       { evm: 'wl_evm_1', solana: 'wl_sol_1' },
@@ -4663,7 +4667,7 @@ describe('standard execution route — swap command flow', () => {
   // signer where selecting the standard route silently changes nothing.
   function saveWcQuote(wcAddress, quotes) {
     return saveQuote(
-      { success: true, quotes },
+      { success: true, quotes, metadata: { quoteId: 'backend-quote-id' } },
       'base',
       'walletconnect',
       null,
@@ -4793,20 +4797,34 @@ describe('standard execution route — swap command flow', () => {
     expect(executeCalls[0].body.quoteId).toBe('backend-quote-id');
   });
 
-  it('omits the quote id rather than sending an aggregator id, and says the lock does not apply', async () => {
+  it('refuses standard execution rather than broadcasting without the backend lock', async () => {
     const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
     const quoteId = saveNativeEthQuote(
       [{ ...nativeEthQuote(), metadata: { quoteId: 'aggregator-lifi-id:0' } }],
+      { metadata: null },
     );
 
-    const logs = [];
-    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'MISSING_QUOTE_ID' });
+
+    // Refused before anything was signed or sent, not after.
+    expect(executeCalls).toHaveLength(0);
+  });
+
+  it('still broadcasts on the legacy route when only an aggregator quote id is available', async () => {
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { status: 'Success' } }] });
+    const quoteId = saveNativeEthQuote(
+      [{ ...nativeEthQuote(), metadata: { quoteId: 'aggregator-lifi-id:0' } }],
+      { metadata: null },
+    );
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     await cmds.execute([], screenApi, {}, { quote: quoteId });
 
-    expect(executeCalls[0].path).toBe('/execution/standard');
-    expect(executeCalls[0].body.quoteId).toBeUndefined();
-    expect(logs.some(l => l.includes('no backend quote id'))).toBe(true);
-    expect(logs.some(l => l.includes('duplicate-submission lock does not apply'))).toBe(true);
+    expect(executeCalls[0].path).toBe('/execute');
+    expect(executeCalls[0].body.quoteId).toBe('aggregator-lifi-id:0');
   });
 });
 
