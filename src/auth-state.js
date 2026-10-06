@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { AuthError, authDirectory, validAuthPointer } from './auth-credentials.js';
 import { createAuthStore } from './auth-store.js';
 import { refreshSession, retireSession, validateSession } from './auth-device.js';
+import { openLocalFile, readLocalFile } from './local-file.js';
 
 const queues = new Map();
 const MAX_RETRYABLE_RENEWALS = 5;
@@ -16,8 +17,8 @@ const journalExists = file => {
 };
 const stateError = () => new AuthError('AUTH_STATE_INVALID', 'Saved authentication cannot be read safely. Repair config.json permissions or restore the file; no other credential was selected.');
 function safePath(file, directory = false) {
-  if (!fs.existsSync(file)) return;
-  const stat = fs.lstatSync(file);
+  const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+  if (!stat) return;
   if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile()) ||
       (process.platform !== 'win32' && ((stat.mode & 0o022) || stat.uid !== process.getuid()))) throw stateError();
 }
@@ -25,8 +26,7 @@ const uuid = value => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value)
 function readJournal(file, id) {
   try {
     safePath(file);
-    if (fs.statSync(file).size > 4096) throw journalError();
-    const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const value = JSON.parse(readLocalFile(file, { root: path.dirname(path.dirname(file)), privateFile: true, maxBytes: 4096 }));
     if (value?.id !== id) throw journalError();
     if (value.kind === 'rotation') {
       if (value.version !== 2 || value.id !== value.selectionEpoch || !uuid(value.selectionEpoch) ||
@@ -96,7 +96,7 @@ export function createAuthState({ directory = authDirectory(), store = createAut
     safePath(configFile);
     if (!fs.existsSync(configFile)) return {};
     try {
-      const value = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+      const value = JSON.parse(readLocalFile(configFile, { root: directory, privateFile: true }));
       if (!value || typeof value !== 'object' || Array.isArray(value) || (value.auth && !validAuthPointer(value.auth))) throw new Error();
       return value;
     } catch { throw stateError(); }
@@ -129,7 +129,9 @@ export function createAuthState({ directory = authDirectory(), store = createAut
     const native = await locks();
     signal?.throwIfAborted();
     safePath(file);
-    const fd = fs.openSync(file, 'a+', 0o600);
+    let fd;
+    try { fd = openLocalFile(file, { root: directory, flags: fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_APPEND, privateFile: true }); }
+    catch { throw stateError(); }
 
     try {
       while (!native.tryLock(fd)) {

@@ -9,6 +9,7 @@ import { rejectBlankOption } from './query-options.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { readLocalFile } from './local-file.js';
 import { base58Encode, exportWallet, getWalletConfig, showWallet, listWallets } from './wallet.js';
 import { base58Decode, encodeCompactU16 } from './transfer.js';
 import { buildMessageV0, fetchAddressLookupTables, fetchRecentBlockhash } from './x402-svm.js';
@@ -135,11 +136,8 @@ export function getQuotesDir() {
 
 // Resolve a filename inside the quotes dir, rejecting path traversal.
 export function safeQuotesPath(filename) {
-  const base = path.resolve(getQuotesDir());
-  const target = path.resolve(base, filename);
-  const relative = path.relative(base, target);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
-  return target;
+  if (typeof filename !== 'string' || !filename || filename === '.' || filename === '..' || /[/\\:]/.test(filename) || filename.includes('\0')) return null;
+  return path.join(path.resolve(getQuotesDir()), filename);
 }
 
 // ============= Trading API Client =============
@@ -457,7 +455,7 @@ export function loadTxRecord(txHash) {
   if (!filePath) return null;
   if (!fs.existsSync(filePath)) return null;
   try {
-    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const data = JSON.parse(readLocalFile(filePath, { root: path.dirname(getQuotesDir()) }));
     if (Date.now() - data.timestamp > TX_RECORD_TTL_MS) {
       fs.unlinkSync(filePath);
       return null;
@@ -516,7 +514,7 @@ export function loadQuote(quoteId) {
 }
 
 function readQuoteFile(filePath, quoteId) {
-  const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  const data = JSON.parse(readLocalFile(filePath, { root: path.dirname(getQuotesDir()) }));
   if (Date.now() - data.timestamp > 3600000) {
     fs.unlinkSync(filePath);
     throw new Error('Quote has expired. Please request a new quote.');
@@ -596,7 +594,7 @@ export function claimQuoteForExecution(quoteId) {
     if (released) return;
     released = true;
     try {
-      if (handedOff && !JSON.parse(fs.readFileSync(claimedPath, 'utf8')).executedAt) return;
+      if (handedOff && !JSON.parse(readLocalFile(claimedPath, { root: path.dirname(getQuotesDir()) })).executedAt) return;
       fs.renameSync(claimedPath, quotePath);
     } catch { /* gone (expired and cleaned up): nothing to release */ }
   };
@@ -624,7 +622,7 @@ export function markQuoteExecuted(quoteId, progress = {}) {
     : safeQuotesPath(`${quoteId}.json`);
   if (!filePath || !fs.existsSync(filePath)) return;
   try {
-    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const data = JSON.parse(readLocalFile(filePath, { root: path.dirname(getQuotesDir()) }));
     data.executedAt = data.executedAt || Date.now();
     if (progress.broadcast) {
       data.broadcasts = [...(data.broadcasts || []), { ...progress.broadcast, at: Date.now() }];
@@ -650,7 +648,7 @@ export function cleanupQuotes() {
     if (!file.endsWith('.json')) continue;
     const ttl = file.startsWith('tx-') ? TX_RECORD_TTL_MS : 3600000;
     try {
-      const data = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+      const data = JSON.parse(readLocalFile(path.join(dir, file), { root: path.dirname(dir) }));
       if (now - data.timestamp > ttl) fs.unlinkSync(path.join(dir, file));
     } catch { /* ignore */ }
   }

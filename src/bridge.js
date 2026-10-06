@@ -9,6 +9,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { readLocalFile } from './local-file.js';
 
 import { CommandError, validateAddress } from './api.js';
 import { signSecp256k1 } from './crypto.js';
@@ -246,7 +247,7 @@ export function loadBridgeQuote(quoteId) {
   if (!filePath || !fs.existsSync(filePath)) {
     throw new Error(`Bridge quote "${quoteId}" not found. Quotes expire after 1 hour.`);
   }
-  const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  const data = JSON.parse(readLocalFile(filePath, { root: path.dirname(getQuotesDir()) }));
   if (Date.now() - data.timestamp > QUOTE_TTL_MS) {
     fs.unlinkSync(filePath);
     throw new Error('Bridge quote has expired. Please request a new quote.');
@@ -292,7 +293,7 @@ export function markBridgeQuoteExecuted(quoteId, progress = {}) {
   const filePath = safeQuotesPath(`${quoteId}.json`);
   if (!filePath || !fs.existsSync(filePath)) return;
   try {
-    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const data = JSON.parse(readLocalFile(filePath, { root: path.dirname(getQuotesDir()) }));
     data.executedAt = data.executedAt || Date.now();
     if (progress.broadcast) {
       data.broadcasts = [...(data.broadcasts || []), { ...progress.broadcast, at: Date.now() }];
