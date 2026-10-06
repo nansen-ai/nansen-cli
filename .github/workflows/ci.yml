@@ -68,6 +68,24 @@ jobs:
       - name: Run tests
         run: npm test
 
+  local-file-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        node-version: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npx vitest run src/__tests__/local-file-security.test.js src/__tests__/local-file-platform.test.js
+
   native-optional-install:
     name: "Native auth on ${{ matrix.image }}: ${{ matrix.outcome }}"
     runs-on: ubuntu-latest
@@ -112,7 +130,7 @@ jobs:
           printf '%s\n' "- $NANSEN_IMAGE: $NANSEN_AUTH_OUTCOME. Confirmed with published 2.0.0 and the PR tarball." >> "$GITHUB_STEP_SUMMARY"
 
   publish:
-    needs: [lint, test, native-optional-install]
+    needs: [lint, test, local-file-windows, native-optional-install]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     outputs:

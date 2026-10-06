@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { readLocalFile } from './local-file.js';
 
 export const DEFAULT_API_ORIGIN = 'https://api.nansen.ai';
 const DEV_CONFIG = fileURLToPath(new URL('../config.json', import.meta.url));
@@ -32,17 +33,28 @@ export function validAuthPointer(auth) {
 }
 export function readAuthConfig(env = process.env, devConfigPath = DEV_CONFIG) {
   const userPath = path.join(authDirectory(env), 'config.json');
-  const configPath = fs.existsSync(userPath) ? userPath : fs.existsSync(devConfigPath) ? devConfigPath : null;
+  let configFileExists;
+  try { configFileExists = Boolean(fs.lstatSync(userPath, { throwIfNoEntry: false })); }
+  catch { return { config: {}, configPath: userPath, configError: 'unreadable', configFileExists: true, devConfigPath }; }
+  const configPath = configFileExists ? userPath : fs.existsSync(devConfigPath) ? devConfigPath : null;
   let config = {};
   let configError = null;
   if (configPath) {
     try {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      const options = { root: path.dirname(configPath), privateFile: configPath === userPath };
+      let contents;
+      try { contents = readLocalFile(configPath, options); }
+      catch (error) {
+        // Login and renewal replace config atomically. Revalidate once from scratch.
+        if (!error.localFileRace) throw error;
+        contents = readLocalFile(configPath, options);
+      }
+      config = JSON.parse(contents);
       if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error();
     } catch (err) { config = {}; configError = err instanceof SyntaxError ? 'parse' : 'unreadable'; }
   }
   if (config.auth && !validAuthPointer(config.auth)) configError = 'format';
-  return { config, configPath, configError, configFileExists: fs.existsSync(userPath), devConfigPath };
+  return { config, configPath, configError, configFileExists, devConfigPath };
 }
 export function resolveCredential({ env = process.env, explicitKey, snapshot = readAuthConfig(env) } = {}) {
   if (explicitKey !== undefined) return explicitKey === null ? { kind: 'anonymous', source: null } : { kind: 'api-key', source: 'explicit', apiKey: explicitKey };

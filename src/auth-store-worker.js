@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import locks from 'fs-native-extensions';
+import { openLocalFile } from './local-file.js';
 
 const stop = () => process.kill(process.pid, 'SIGKILL');
 const timer = setTimeout(stop, 10000);
@@ -13,8 +14,8 @@ process.stdout.on('error', stop);
 let input = '', phase = 'guard';
 let fd;
 function safe(file, directory = false) {
-  if (!fs.existsSync(file)) return;
-  const stat = fs.lstatSync(file);
+  const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+  if (!stat) return;
   if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile()) ||
       (process.platform !== 'win32' && ((stat.mode & 0o022) || stat.uid !== process.getuid()))) throw new Error();
 }
@@ -27,7 +28,7 @@ function receive(line) {
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const file = path.join(directory, 'auth-store.lock');
     safe(file);
-    fd = fs.openSync(file, 'a+', 0o600);
+    fd = openLocalFile(file, { root: directory, flags: fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_APPEND, privateFile: true });
     // Independent acquisition: no cross-platform inherited-lock assumptions.
     // This stable inode is never unlinked, including by recovery.
     if (!locks.tryLock(fd)) throw new Error();

@@ -21,6 +21,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { openLocalFile } from './local-file.js';
 
 import { getCacheDir, getConfigDir, DEFAULT_CACHE_TTL, NansenError, ErrorCode } from './api.js';
 import { getCostMapFile, COST_MAP_TTL_MS } from './cost-cache.js';
@@ -86,15 +87,10 @@ function readTimestamp(file, field) {
   let fd;
   let raw;
   try {
-    // O_NOFOLLOW prevents a final-component symlink replacement after lstat.
-    // Windows does not define it. There, only the earlier lstat check applies;
-    // opening with O_RDONLY does not prevent this race.
-    const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0);
-    fd = fs.openSync(file, flags);
-    if (!fs.fstatSync(fd).isFile()) return { raced: true };
+    fd = openLocalFile(file, { root: getConfigDir() });
     raw = fs.readFileSync(fd, 'utf8');
   } catch (error) {
-    if (error?.code === 'ENOENT' || error?.code === 'ELOOP') return { raced: true };
+    if (error?.code === 'ENOENT' || error?.code === 'ELOOP' || error?.code === 'LOCAL_FILE_UNSAFE') return { raced: true };
     throw fsError('read', file, error);
   } finally {
     if (fd !== undefined) fs.closeSync(fd);

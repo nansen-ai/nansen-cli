@@ -46,7 +46,7 @@ import os from 'os';
 import path from 'path';
 
 import { exportWallet, getWalletConfig, showWallet } from '../wallet.js';
-import { buildBridgeCommands } from '../bridge.js';
+import { buildBridgeCommands, loadBridgeQuote } from '../bridge.js';
 
 const ADDR = '0x' + 'ab'.repeat(20);
 // Real Base -> Hyperliquid deposit router/selector — the preflight rejects
@@ -128,8 +128,61 @@ describe('bridge EVM broadcast fail-closed', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     process.env.HOME = prevHome;
     fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  it.each(['read', 'write', 'flush'])('keeps the quote claimed when the post-broadcast marker %s fails', async failure => {
+    const quoteId = `bridge-marker-${failure}`;
+    writeQuote(quoteId);
+    const claimed = path.join(quotesDir, `${quoteId}.executing.json`);
+    const extraLink = path.join(tmpHome, 'linked-quote.json');
+    const sync = fs.fsyncSync.bind(fs);
+    evmRpcCall.mockImplementation(async (_chain, method) => {
+      if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x1' };
+      if (method === 'eth_sendRawTransaction') {
+        if (failure === 'read') fs.linkSync(claimed, extraLink);
+        if (failure === 'write') vi.spyOn(fs, 'writeSync').mockImplementation(() => { throw new Error('fixture write failure'); });
+        if (failure === 'flush') vi.spyOn(fs, 'fsyncSync').mockImplementation(fd => {
+          if (fs.fstatSync(fd).isFile()) throw new Error('fixture flush failure');
+          return sync(fd);
+        });
+        return '0xbroadcast';
+      }
+      return '0x0';
+    });
+    const cmds = buildBridgeCommands({ log: () => {} });
+    await expect(cmds.execute([], api, {}, { quote: quoteId, wallet: 'w' }))
+      .rejects.toMatchObject({ code: 'QUOTE_STATE_UNSAFE' });
+    vi.restoreAllMocks();
+    if (fs.existsSync(extraLink)) fs.unlinkSync(extraLink);
+    expect(fs.existsSync(claimed)).toBe(true);
+    expect(fs.existsSync(path.join(quotesDir, `${quoteId}.json`))).toBe(false);
+    expect(() => loadBridgeQuote(quoteId)).toThrow('claimed');
+    signEvmTransaction.mockClear();
+    await expect(cmds.execute([], api, {}, { quote: quoteId, wallet: 'w' })).rejects.toThrow('claimed');
+    expect(signEvmTransaction).not.toHaveBeenCalled();
+    expect(evmRpcCall.mock.calls.filter(([, method]) => method === 'eth_sendRawTransaction')).toHaveLength(1);
+  });
+
+  it('refuses a simultaneous execute while the first broadcast is awaiting its receipt', async () => {
+    const quoteId = 'bridge-concurrent'; writeQuote(quoteId);
+    evmRpcCall.mockImplementation(async (_chain, method) => method === 'eth_getBlockByNumber' ? { baseFeePerGas: '0x1' } : '0xbroadcast');
+    let entered, finish;
+    const waiting = new Promise(resolve => { entered = resolve; });
+    waitForReceipt.mockImplementationOnce(() => {
+      entered();
+      return new Promise(resolve => { finish = () => resolve({ status: '0x1' }); });
+    });
+    const cmds = buildBridgeCommands({ log: () => {} });
+    const first = cmds.execute([], api, {}, { quote: quoteId, wallet: 'w' });
+    await waiting;
+    try {
+      await expect(cmds.execute([], api, {}, { quote: quoteId, wallet: 'w' })).rejects.toThrow('claimed');
+      expect(signEvmTransaction).toHaveBeenCalledTimes(1);
+    } finally { finish(); await first; }
+    expect(() => loadBridgeQuote(quoteId)).toThrow('already executed');
   });
 
   it('marks the quote spent on an AMBIGUOUS send failure (non-JSON 502) and refuses a re-execute', async () => {

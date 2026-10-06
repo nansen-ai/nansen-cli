@@ -503,8 +503,8 @@ describe('safeQuotesPath', () => {
   });
 
   it('should handle edge cases safely', () => {
-    expect(safeQuotesPath('')).not.toBeNull(); // empty string resolves to base dir
-    expect(safeQuotesPath('.')).not.toBeNull(); // current dir is safe
+    expect(safeQuotesPath('')).toBeNull();
+    expect(safeQuotesPath('.')).toBeNull();
     expect(safeQuotesPath('..')).toBeNull(); // parent dir is rejected
   });
 });

@@ -21,7 +21,7 @@ async function until(test, timeout = 5000) {
 function harness() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-lifetime-')); roots.push(root);
   fs.mkdirSync(path.join(root, 'entries'));
-  for (const file of ['auth-state.js', 'auth-device.js', 'auth-store.js', 'auth-store-worker.js', 'auth-credentials.js']) fs.copyFileSync(path.join(src, file), path.join(root, file));
+  for (const file of ['auth-state.js', 'auth-device.js', 'auth-store.js', 'auth-store-worker.js', 'auth-credentials.js', 'local-file.js']) fs.copyFileSync(path.join(src, file), path.join(root, file));
   fs.writeFileSync(path.join(root, 'auth-store-worker.js'), `import ${JSON.stringify(guard)};\n` + fs.readFileSync(path.join(root, 'auth-store-worker.js'), 'utf8'));
   fs.writeFileSync(path.join(root, 'package.json'), '{"type":"module"}');
   fs.symlinkSync(path.join(src, '../node_modules'), path.join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
