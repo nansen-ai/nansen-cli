@@ -134,7 +134,8 @@ describe('managed authentication files', () => {
       input: `${JSON.stringify({ directory: root })}\n`, encoding: 'utf8', timeout: 3000,
     });
     expect(result.error).toBeUndefined();
-    expect(result.signal).toBe('SIGKILL');
+    if (process.platform === 'win32') expect(result.status).toBe(1);
+    else expect(result.signal).toBe('SIGKILL');
     expect(result.stdout).not.toContain('ready');
     expect(fs.readFileSync(outside, 'utf8')).toBe('{}');
   });
