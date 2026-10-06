@@ -214,8 +214,17 @@ export async function getQuote(params) {
  * @param {object} params - legacy executeTransaction params
  * @returns {object} standard-route request body
  */
+// CHAIN_MAP is keyed lowercase, but a quote stores the chain exactly as the
+// user typed it (`--chain Base`) — only resolveChain() lowercases on the way
+// through, and these lookups bypass it. Normalise here so a capitalised
+// spelling cannot throw after the transaction is already signed, or drop
+// toChainId and send a misclassified cross-chain request.
+function chainConfigFor(name) {
+  return name ? CHAIN_MAP[String(name).toLowerCase()] : undefined;
+}
+
 function toStandardBody(params) {
-  const cfg = CHAIN_MAP[params.chain];
+  const cfg = chainConfigFor(params.chain);
   const body = {
     chain: cfg.type,                 // VM type, not the chain name
     signedTransaction: params.signedTransaction,
@@ -228,7 +237,7 @@ function toStandardBody(params) {
   if (params.walletAddress) body.walletAddress = params.walletAddress;
   if (params.isCrossChain) {
     body.isCrossChain = true;
-    const toCfg = params.toChain && CHAIN_MAP[params.toChain];
+    const toCfg = chainConfigFor(params.toChain);
     if (toCfg) body.toChainId = toCfg.index;
   }
   return body;
@@ -380,7 +389,7 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       // JSON error (e.g. { code: "UPSTREAM_TIMEOUT" }) already explains itself
       // via `details`; tacking "you may be out of SOL" onto a gateway timeout
       // would misdirect the user.
-      const chainType = params.chain && CHAIN_MAP[params.chain]?.type;
+      const chainType = chainConfigFor(params.chain)?.type;
       const feeHint = !parsed
         ? chainType === 'solana'
           ? ' This often means the transaction failed simulation — check that you have enough SOL for fees (~0.005 SOL minimum).'
@@ -449,7 +458,7 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
           { code: 'BROADCAST_FAILED', status: res.status }
         );
       }
-      return fromStandardResponse(body, params.chain && CHAIN_MAP[params.chain]?.type);
+      return fromStandardResponse(body, chainConfigFor(params.chain)?.type);
     }
     return body;
   }
@@ -3277,7 +3286,13 @@ EXAMPLES:
       let handoffAmbiguous = false;
       try {
         const quoteData = loadQuote(quoteId);
-        const chain = quoteData.chain;
+        // The quote command stores the chain exactly as the user typed it
+        // (`--chain Base`), but every lookup downstream — CHAIN_RPCS here,
+        // CHAIN_MAP in the standard-route body — is keyed lowercase, and only
+        // resolveChain() normalises on its own. Without this a capitalised
+        // spelling quotes fine and then fails at execute with
+        // "No RPC URL configured for chain: Base".
+        const chain = quoteData.chain?.toLowerCase();
         const chainConfig = resolveChain(chain);
         const chainType = chainConfig.type;
 

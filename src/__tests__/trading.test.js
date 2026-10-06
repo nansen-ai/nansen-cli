@@ -4890,6 +4890,66 @@ describe('standard execution route — swap command flow', () => {
     expect(() => loadQuote(quoteId)).toThrow(/claimed by another execution/i);
   });
 
+  // The quote command stores the chain exactly as the user typed it (--chain Base),
+  // and only resolveChain() lowercases on the way through. The standard-route body
+  // indexes CHAIN_MAP directly, so an uppercase spelling has to be normalised there
+  // too -- it would otherwise throw AFTER the transaction is signed.
+  it('builds the standard-route body from a chain name the user capitalised', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveQuote(
+      { success: true, metadata: { quoteId: 'backend-quote-id' }, quotes: [nativeEthQuote()] },
+      'Base',
+      'local',
+      null,
+      null,
+      {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: showWallet('default').evm,
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+        }),
+      },
+    );
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls[0].path).toBe('/execution/standard');
+    expect(executeCalls[0].body).toMatchObject({ chain: 'evm', chainId: '8453' });
+  });
+
+  it('sets toChainId from a destination chain the user capitalised', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveQuote(
+      { success: true, metadata: { quoteId: 'backend-quote-id' }, quotes: [nativeEthQuote()] },
+      'base',
+      'local',
+      null,
+      'Solana',
+      {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: showWallet('default').evm,
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+          toChain: 'Solana',
+        }),
+      },
+    );
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls[0].body.isCrossChain).toBe(true);
+    // Silently omitting this produces a misclassified cross-chain request.
+    expect(executeCalls[0].body.toChainId).toBeDefined();
+  });
+
   it('still broadcasts on the legacy route when only an aggregator quote id is available', async () => {
     process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
     const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { status: 'Success' } }] });
