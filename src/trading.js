@@ -4258,7 +4258,26 @@ EXAMPLES:
                 });
               } catch (wcErr) {
                 log(`  ❌ WalletConnect transaction failed for ${quoteName}: ${wcErr.message}`);
-                if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                // This failure is ambiguous by construction. wcExec drops the
+                // child's exit code and kill signal, so a user rejection (nothing
+                // was broadcast) and a send-transaction timeout (the wallet may
+                // have accepted AND broadcast before the CLI gave up) arrive here
+                // as the same bare Error — there is nothing left to tell them
+                // apart. On this path the wallet broadcasts for us, so no backend
+                // single-flight lock stands between the next candidate and a
+                // second real swap on top of a possibly-live one; it would also
+                // be a second approval prompt. Treat it exactly like the landed
+                // revert below: on the standard route it ends the command. The
+                // quote is already unusable either way — swapHandedOff is set
+                // above, so the claim is kept rather than released.
+                if (qi + 1 < endIndex && swapRoute !== 'standard') {
+                  log(`  Trying next quote...`);
+                  lastQuoteError = `${quoteName}: ${wcErr.message}`;
+                  continue;
+                }
+                if (swapRoute === 'standard') {
+                  throw new CommandError(`\n  ⚠ WalletConnect did not return a transaction hash for ${quoteName}: ${wcErr.message}\n\n  The wallet may still have broadcast this swap. Check the wallet and the\n  explorer before retrying — retrying may broadcast a second swap.`, 'BROADCAST_FAILED');
+                }
                 lastQuoteError = `${quoteName}: ${wcErr.message}`;
                 continue;
               }
@@ -4613,10 +4632,30 @@ EXAMPLES:
 
             // Prefer the backend quote id saved from /quote; per-aggregator ids can
             // appear on individual quote metadata and are only a fallback.
-            const backendQuoteId =
-              quoteData.response?.metadata?.quoteId ?? currentQuote.metadata?.quoteId;
+            //
+            // The fallback is legacy-only on purpose. A per-quote id is minted by
+            // the AGGREGATOR, not the backend (LiFi, for instance, returns
+            // '<uuid>:<index>'), so it is a different identifier in a different
+            // namespace. On the legacy route that only costs some BI correlation.
+            // On the standard route `quoteId` is what the backend keys its
+            // per-quote single-flight lock on, so sending an aggregator id there
+            // would present a value the lock cannot match: the request would look
+            // idempotency-protected and would not be. Send the backend id or
+            // nothing.
+            const backendQuoteId = swapRoute === 'standard'
+              ? quoteData.response?.metadata?.quoteId
+              : (quoteData.response?.metadata?.quoteId ?? currentQuote.metadata?.quoteId);
             if (backendQuoteId) {
               execParams.quoteId = backendQuoteId;
+            } else if (swapRoute === 'standard') {
+              // Every live /quote response carries response.metadata.quoteId, so
+              // this is the shape-drift case rather than a routine one. Don't fail
+              // the swap over it — the local claim (claimQuoteForExecution) and the
+              // executed marker already stop a repeat run, and this route stops at
+              // a failed swap rather than re-signing. But don't let the server-side
+              // lock go missing silently either.
+              log('  Note: this quote carries no backend quote id, so the server-side');
+              log('        duplicate-submission lock does not apply to this broadcast.');
             }
             // The backend's /execute schema is strict; sending fields it doesn't expect
             // for the (chain × aggregator × gasless) combination causes 502s or

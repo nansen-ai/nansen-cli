@@ -4420,7 +4420,7 @@ describe('standard execution route — swap command flow', () => {
 
   function saveNativeEthQuote(quotes, extra = {}) {
     return saveQuote(
-      { success: true, quotes },
+      { success: true, quotes, ...(extra.metadata ? { metadata: extra.metadata } : {}) },
       'base',
       'local',
       null,
@@ -4725,6 +4725,88 @@ describe('standard execution route — swap command flow', () => {
     expect(sendSpy).toHaveBeenCalledTimes(2);
     expect(logs.some(l => l.includes('Trying next quote'))).toBe(true);
     expect(logs.some(l => l.includes('execution route was bypassed'))).toBe(false);
+  });
+
+  // wcExec throws away the child's exit code and kill signal, so a user
+  // rejection and a send-transaction timeout (wallet may have broadcast) are
+  // indistinguishable here. The route that stops at a failed swap has to stop
+  // at this one too, or the "failure" is a second wallet prompt on top of a
+  // possibly-live swap.
+  it('stops at an ambiguous WalletConnect send failure instead of signing the next candidate', async () => {
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect')
+      .mockRejectedValue(new Error('Command failed: walletconnect send-transaction'));
+    const { executeCalls } = stubStandardSwapFetch();
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({
+        code: 'BROADCAST_FAILED',
+        message: expect.stringContaining('may still have broadcast this swap'),
+      });
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(executeCalls).toHaveLength(0);
+  });
+
+  it('keeps the WalletConnect candidate fallback on the legacy route when the send fails', async () => {
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect')
+      .mockRejectedValue(new Error('Command failed: walletconnect send-transaction'));
+    stubStandardSwapFetch();
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toThrow();
+
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(true);
+  });
+
+  // quoteId is the key the backend's per-quote single-flight lock is held on.
+  // A per-quote id is minted by the aggregator in its own namespace (LiFi
+  // returns '<uuid>:<index>'), so sending one would look idempotency-protected
+  // and silently not be.
+  it('sends the backend quote id, not the aggregator one, as the standard-route key', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveNativeEthQuote(
+      [{ ...nativeEthQuote(), metadata: { quoteId: 'aggregator-lifi-id:0' } }],
+      { metadata: { quoteId: 'backend-quote-id' } },
+    );
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls[0].path).toBe('/execution/standard');
+    expect(executeCalls[0].body.quoteId).toBe('backend-quote-id');
+  });
+
+  it('omits the quote id rather than sending an aggregator id, and says the lock does not apply', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveNativeEthQuote(
+      [{ ...nativeEthQuote(), metadata: { quoteId: 'aggregator-lifi-id:0' } }],
+    );
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls[0].path).toBe('/execution/standard');
+    expect(executeCalls[0].body.quoteId).toBeUndefined();
+    expect(logs.some(l => l.includes('no backend quote id'))).toBe(true);
+    expect(logs.some(l => l.includes('duplicate-submission lock does not apply'))).toBe(true);
   });
 });
 
