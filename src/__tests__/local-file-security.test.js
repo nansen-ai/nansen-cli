@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openLocalFile, readLocalFile } from '../local-file.js';
 import { readAuthConfig, resolveCredential } from '../auth-credentials.js';
@@ -70,7 +71,7 @@ describe('managed authentication files', () => {
     const original = fs.openSync.bind(fs);
     vi.spyOn(fs, 'openSync').mockImplementation((file, ...args) => {
       if (file === config()) {
-        fs.renameSync(file, `${file}.original`);
+        fs.renameSync(file, `${file}.original-${randomUUID()}`);
         if (kind === 'symlink') fs.symlinkSync(outside, file);
         else if (kind === 'hardlink') fs.linkSync(outside, file);
         else fs.copyFileSync(outside, file);
@@ -80,6 +81,21 @@ describe('managed authentication files', () => {
     const read = vi.spyOn(fs, 'readFileSync');
     expect(snapshot().configError).toBe('unreadable');
     expect(read).not.toHaveBeenCalled();
+  });
+
+  it('revalidates a legitimate atomic config update once before reading', () => {
+    write(config(), { apiKey: 'old-key' });
+    const original = fs.openSync.bind(fs);
+    let replaced = false;
+    vi.spyOn(fs, 'openSync').mockImplementation((file, ...args) => {
+      if (file === config() && !replaced) {
+        replaced = true;
+        write(`${file}.new`, { apiKey: 'new-key' });
+        fs.renameSync(`${file}.new`, file);
+      }
+      return original(file, ...args);
+    });
+    expect(snapshot()).toMatchObject({ config: { apiKey: 'new-key' }, configError: null });
   });
 
   it('refuses linked journal metadata and oversized journals before reading', () => {
@@ -114,7 +130,7 @@ describe('managed authentication files', () => {
   it('the real secure-store worker rejects a linked lock before accepting an operation', () => {
     const outside = path.join(home, 'outside.lock'); write(outside, {});
     fs.symlinkSync(outside, path.join(root, 'auth-store.lock'));
-    const result = spawnSync(process.execPath, [new URL('../auth-store-worker.js', import.meta.url).pathname], {
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL('../auth-store-worker.js', import.meta.url))], {
       input: `${JSON.stringify({ directory: root })}\n`, encoding: 'utf8', timeout: 3000,
     });
     expect(result.error).toBeUndefined();
@@ -125,6 +141,20 @@ describe('managed authentication files', () => {
 });
 
 describe('managed trading files', () => {
+  it('preserves quotes, bridge quotes, tx records and cache stats through a symlinked storage root', async () => {
+    const storage = path.join(home, 'persistent'); fs.renameSync(root, storage); fs.symlinkSync(storage, root, 'dir');
+    const id = saveQuote({ quotes: [] }, 'base');
+    expect(loadQuote(id).quoteId).toBe(id);
+    const claim = claimQuoteForExecution(id); claim.release();
+    saveTxRecord('hash', { aggregator: 'relay' }); expect(loadTxRecord('hash').aggregator).toBe('relay');
+    write(path.join(getQuotesDir(), 'bridge.json'), { type: 'bridge', timestamp: Date.now(), response: {} });
+    expect(loadBridgeQuote('bridge').type).toBe('bridge');
+    write(path.join(root, 'cache', `${'a'.repeat(64)}.json`), { timestamp: Date.now(), data: [] });
+    vi.resetModules();
+    const { collectCacheStats } = await import('../cache-inspect.js');
+    expect(collectCacheStats().caches[0].entries).toBe(1);
+  });
+
   it.each(['../config', 'nested/id', 'nested\\id', 'C:secret', 'id\0suffix'])('rejects quote path %s', id => {
     expect(safeQuotesPath(`${id}.json`)).toBeNull();
     expect(() => loadQuote(id)).toThrow('not found');
@@ -180,6 +210,19 @@ describe('managed trading files', () => {
 });
 
 describe('descriptor validation', () => {
+  it('checks directory identity even when the file inode is unchanged', () => {
+    const dir = path.join(root, 'nested'); const file = path.join(dir, 'state.json'); write(file, {});
+    const original = fs.openSync.bind(fs);
+    vi.spyOn(fs, 'openSync').mockImplementation((target, ...args) => {
+      fs.renameSync(dir, `${dir}.original`); fs.mkdirSync(dir);
+      fs.renameSync(path.join(`${dir}.original`, 'state.json'), file);
+      return original(target, ...args);
+    });
+    const read = vi.spyOn(fs, 'readFileSync');
+    expect(() => readLocalFile(file, { root })).toThrow(`at ${dir}: directory was replaced`);
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it('rejects a symlink replacement even when no-follow is unavailable', () => {
     const file = config(); write(file, {});
     const original = fs.openSync.bind(fs);

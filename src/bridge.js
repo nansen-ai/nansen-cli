@@ -9,12 +9,13 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { readLocalFile } from './local-file.js';
+import { readLocalFile, writeLocalFile } from './local-file.js';
 
 import { CommandError, validateAddress } from './api.js';
 import { signSecp256k1 } from './crypto.js';
 import {
   assertEvmFeeWithinCap,
+  claimQuoteForExecution,
   convertToBaseUnits,
   evmRpcCall,
   getEvmNonce,
@@ -243,10 +244,18 @@ function saveBridgeQuote(response, originChain, destinationChain, walletProvider
 }
 
 export function loadBridgeQuote(quoteId) {
+  const claimedPath = safeQuotesPath(`${quoteId}.executing.json`);
+  if (claimedPath && fs.lstatSync(claimedPath, { throwIfNoEntry: false })) {
+    throw new Error(`Bridge quote "${quoteId}" is claimed by another execution. Funds may be in flight. Check "nansen bridge status" before requesting a new quote.`);
+  }
   const filePath = safeQuotesPath(`${quoteId}.json`);
   if (!filePath || !fs.existsSync(filePath)) {
     throw new Error(`Bridge quote "${quoteId}" not found. Quotes expire after 1 hour.`);
   }
+  return readBridgeQuoteFile(filePath, quoteId);
+}
+
+function readBridgeQuoteFile(filePath, quoteId) {
   const data = JSON.parse(readLocalFile(filePath, { root: path.dirname(getQuotesDir()) }));
   if (Date.now() - data.timestamp > QUOTE_TTL_MS) {
     fs.unlinkSync(filePath);
@@ -290,9 +299,14 @@ export function loadBridgeQuote(quoteId) {
 // later step throwing must not leave the quote reusable. The step counters make
 // a partial failure legible to the operator (see loadBridgeQuote).
 export function markBridgeQuoteExecuted(quoteId, progress = {}) {
-  const filePath = safeQuotesPath(`${quoteId}.json`);
-  if (!filePath || !fs.existsSync(filePath)) return;
+  const claimedPath = safeQuotesPath(`${quoteId}.executing.json`);
+  const filePath = claimedPath && fs.lstatSync(claimedPath, { throwIfNoEntry: false })
+    ? claimedPath : safeQuotesPath(`${quoteId}.json`);
   try {
+    if (!filePath || !fs.existsSync(filePath)) {
+      if (progress.required) throw new Error('Missing execution state');
+      return;
+    }
     const data = JSON.parse(readLocalFile(filePath, { root: path.dirname(getQuotesDir()) }));
     data.executedAt = data.executedAt || Date.now();
     if (progress.broadcast) {
@@ -302,11 +316,9 @@ export function markBridgeQuoteExecuted(quoteId, progress = {}) {
       data.broadcastSteps = Math.max(data.broadcastSteps || 0, progress.broadcastSteps);
     }
     if (progress.totalSteps !== undefined) data.totalSteps = progress.totalSteps;
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), { mode: 0o600 });
+    writeLocalFile(filePath, JSON.stringify(data, null, 2), { root: path.dirname(getQuotesDir()) });
   } catch {
-    // Best-effort: if the marker can't be written, the next execute attempt
-    // will still proceed, but that's preferable to crashing after a successful
-    // broadcast.
+    throw new CommandError('Could not safely record bridge execution. Funds may already be in flight. The quote remains claimed; check "nansen bridge status" before requesting a new quote.', 'QUOTE_STATE_UNSAFE');
   }
 }
 
@@ -2044,90 +2056,105 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
       preflightResult ??= await preflightPlan();
       const { evmIntent, hlIntent } = preflightResult;
 
-      // Consume the quote at each INDIVIDUAL broadcast, before any receipt wait.
-      // A tx can be accepted by the network and then have waitForReceipt time
-      // out; if the quote were still unspent, a retry would re-sign and re-send
-      // it with a fresh nonce. markBridgeQuoteExecuted pins executedAt on the
-      // first call, so the quote is spent the instant anything is in flight.
-      const onBroadcast = (stepId, txHash) =>
-        markBridgeQuoteExecuted(quoteId, {
-          broadcast: { step: stepId, txHash: txHash || null },
-          totalSteps: steps.length,
-        });
-
-      // Step-level counter, recorded only once a step fully completes.
-      const markBroadcast = (index) =>
-        markBridgeQuoteExecuted(quoteId, {
-          broadcastSteps: index + 1,
-          totalSteps: steps.length,
-        });
-
-      if (execution_type === 'evm_transaction') {
-        // Overrides move real money differently from what was quoted, so say so
-        // rather than letting them apply silently.
-        if (overridesSummary) {
-          log(`  Overrides: ${overridesSummary}`);
+      const claim = claimQuoteForExecution(quoteId, readBridgeQuoteFile);
+      let handedOff = false;
+      let keepClaimed = false;
+      try {
+        if (JSON.stringify(claim.quote) !== JSON.stringify(quoteData)) {
+          throw new CommandError('Bridge quote changed while awaiting execution. Request a fresh quote.', 'QUOTE_STATE_UNSAFE');
         }
-        for (const [index, step] of steps.entries()) {
-          await processEvmStep(step, {
-            chain: quoteData.originChain,
-            privateKeyHex: creds.privateKey,
-            signerAddress: signer.address,
-            log,
-            onBroadcast,
-            feeOverrides,
-            nonceSequence,
-            intent: evmIntent,
+        // Consume the quote at each INDIVIDUAL broadcast, before any receipt wait.
+        // A tx can be accepted by the network and then have waitForReceipt time
+        // out; if the quote were still unspent, a retry would re-sign and re-send
+        // it with a fresh nonce. markBridgeQuoteExecuted pins executedAt on the
+        // first call, so the quote is spent the instant anything is in flight.
+        const onBroadcast = (stepId, txHash) => {
+          handedOff = true;
+          markBridgeQuoteExecuted(quoteId, {
+            required: true,
+            broadcast: { step: stepId, txHash: txHash || null },
+            totalSteps: steps.length,
           });
-          markBroadcast(index);
-        }
-      } else if (execution_type === 'hyperliquid_signature') {
-        if (creds.provider === 'privy') {
-          const { PrivyClient } = await import('./privy.js');
-          const privyClient = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);
+        };
+
+        // Step-level counter, recorded only once a step fully completes.
+        const markBroadcast = (index) =>
+          markBridgeQuoteExecuted(quoteId, {
+            required: true,
+            broadcastSteps: index + 1,
+            totalSteps: steps.length,
+          });
+
+        if (execution_type === 'evm_transaction') {
+          // Overrides move real money differently from what was quoted, so say so
+          // rather than letting them apply silently.
+          if (overridesSummary) {
+            log(`  Overrides: ${overridesSummary}`);
+          }
           for (const [index, step] of steps.entries()) {
-            await processSignatureStepPrivy(step, {
-              privyClient,
-              // `signer` above — the same resolution that was screened and
-              // matched against the quote, rather than resolving a second time.
-              walletId: signer.privyWalletIds?.evm,
+            await processEvmStep(step, {
+              chain: quoteData.originChain,
+              privateKeyHex: creds.privateKey,
+              signerAddress: signer.address,
               log,
-              apiInstance,
               onBroadcast,
-              intent: hlIntent,
+              feeOverrides,
+              nonceSequence,
+              intent: evmIntent,
             });
             markBroadcast(index);
+          }
+        } else if (execution_type === 'hyperliquid_signature') {
+          if (creds.provider === 'privy') {
+            const { PrivyClient } = await import('./privy.js');
+            const privyClient = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);
+            for (const [index, step] of steps.entries()) {
+              await processSignatureStepPrivy(step, {
+                privyClient,
+                // `signer` above — the same resolution that was screened and
+                // matched against the quote, rather than resolving a second time.
+                walletId: signer.privyWalletIds?.evm,
+                log,
+                apiInstance,
+                onBroadcast,
+                intent: hlIntent,
+              });
+              markBroadcast(index);
+            }
+          } else {
+            for (const [index, step] of steps.entries()) {
+              await processSignatureStepLocal(step, {
+                privateKeyHex: creds.privateKey,
+                log,
+                apiInstance,
+                onBroadcast,
+                intent: hlIntent,
+              });
+              markBroadcast(index);
+            }
           }
         } else {
-          for (const [index, step] of steps.entries()) {
-            await processSignatureStepLocal(step, {
-              privateKeyHex: creds.privateKey,
-              log,
-              apiInstance,
-              onBroadcast,
-              intent: hlIntent,
-            });
-            markBroadcast(index);
+          throw new Error(`Unknown execution type: ${execution_type}`);
+        }
+
+        // Every step is out; the marker above already consumed the quote.
+        markBridgeQuoteExecuted(quoteId, { required: true, broadcastSteps: steps.length, totalSteps: steps.length });
+
+        log(`\n  Bridge submitted. Polling for completion...`);
+        const status = await pollBridgeCompletion(apiInstance, { requestId: request_id, log });
+
+        if (status.status === 'success') {
+          log(`\n  Bridge completed!`);
+          if (status.destination_tx_hashes?.length) {
+            log(`  Destination tx: ${status.destination_tx_hashes[0]}`);
           }
         }
-      } else {
-        throw new Error(`Unknown execution type: ${execution_type}`);
-      }
-
-      // Every step is out; the marker above already consumed the quote.
-      markBridgeQuoteExecuted(quoteId, { broadcastSteps: steps.length, totalSteps: steps.length });
-
-      log(`\n  Bridge submitted. Polling for completion...`);
-      const status = await pollBridgeCompletion(apiInstance, { requestId: request_id, log });
-
-      if (status.status === 'success') {
-        log(`\n  Bridge completed!`);
-        if (status.destination_tx_hashes?.length) {
-          log(`  Destination tx: ${status.destination_tx_hashes[0]}`);
-        }
-      }
-      log('');
-      return undefined;
+        log('');
+        return undefined;
+      } catch (error) {
+        keepClaimed = handedOff && error.code === 'QUOTE_STATE_UNSAFE';
+        throw error;
+      } finally { claim.release({ handedOff, keepClaimed }); }
     },
 
     'status': async (args, apiInstance, flags, options) => {

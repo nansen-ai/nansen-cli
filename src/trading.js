@@ -9,7 +9,7 @@ import { rejectBlankOption } from './query-options.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { readLocalFile } from './local-file.js';
+import { readLocalFile, writeLocalFile } from './local-file.js';
 import { base58Encode, exportWallet, getWalletConfig, showWallet, listWallets } from './wallet.js';
 import { base58Decode, encodeCompactU16 } from './transfer.js';
 import { buildMessageV0, fetchAddressLookupTables, fetchRecentBlockhash } from './x402-svm.js';
@@ -541,7 +541,7 @@ function readQuoteFile(filePath, quoteId) {
 
 function quoteClaimedError(quoteId, claimedPath) {
   return new Error(
-    `Quote "${quoteId}" is claimed by another execution (${claimedPath}). If that run is still going, wait for it to finish. If it was interrupted, a swap may or may not have been broadcast: check the wallet on the explorer, then request a new quote with "nansen trade quote". The claimed quote is removed when it expires.`,
+    `Quote "${quoteId}" is claimed by another execution (${claimedPath}). If that run is still going, wait for it to finish. If it was interrupted, a transaction may or may not have been broadcast: check the wallet on the explorer, then request a new quote with the matching quote command. The claimed quote is removed when it expires.`,
   );
 }
 
@@ -572,12 +572,14 @@ function quoteClaimedError(quoteId, claimedPath) {
  * after its 1-hour lifetime.
  *
  * @param {string} quoteId
- * @returns {{ quote: object, release: (opts?: { handedOff?: boolean }) => void }}
+ * @param {function} [readQuote] Validates the claimed quote, including its type.
+ * @returns {{ quote: object, release: (opts?: { handedOff?: boolean, keepClaimed?: boolean }) => void }}
  */
-export function claimQuoteForExecution(quoteId) {
+export function claimQuoteForExecution(quoteId, readQuote = readQuoteFile) {
   const quotePath = safeQuotesPath(`${quoteId}.json`);
   const claimedPath = safeQuotesPath(`${quoteId}.executing.json`);
   if (!quotePath || !claimedPath) throw new Error(`Invalid quote id "${quoteId}".`);
+  if (fs.lstatSync(claimedPath, { throwIfNoEntry: false })) throw quoteClaimedError(quoteId, claimedPath);
 
   try {
     fs.renameSync(quotePath, claimedPath);
@@ -590,9 +592,10 @@ export function claimQuoteForExecution(quoteId) {
   }
 
   let released = false;
-  const release = ({ handedOff = false } = {}) => {
+  const release = ({ handedOff = false, keepClaimed = false } = {}) => {
     if (released) return;
     released = true;
+    if (keepClaimed) return;
     try {
       if (handedOff && !JSON.parse(readLocalFile(claimedPath, { root: path.dirname(getQuotesDir()) })).executedAt) return;
       fs.renameSync(claimedPath, quotePath);
@@ -600,9 +603,13 @@ export function claimQuoteForExecution(quoteId) {
   };
 
   try {
-    return { quote: readQuoteFile(claimedPath, quoteId), release };
+    if (process.platform !== 'win32') {
+      const fd = fs.openSync(path.dirname(claimedPath), 'r');
+      try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    }
+    return { quote: readQuote(claimedPath, quoteId), release };
   } catch (err) {
-    // Already executed, expired or not a swap quote: nothing is signed, so
+    // Invalid, already executed, or expired: nothing is signed, so
     // put back whatever is still there.
     release();
     throw err;
@@ -627,11 +634,10 @@ export function markQuoteExecuted(quoteId, progress = {}) {
     if (progress.broadcast) {
       data.broadcasts = [...(data.broadcasts || []), { ...progress.broadcast, at: Date.now() }];
     }
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), { mode: 0o600 });
+    writeLocalFile(filePath, JSON.stringify(data, null, 2), { root: path.dirname(getQuotesDir()) });
   } catch {
-    // Best-effort: if the marker can't be written, the next execute attempt
-    // will still proceed, but that's preferable to crashing after a successful
-    // broadcast.
+    // The execution claim stays in place without a readable marker, so a
+    // later execution cannot sign again after an uncertain broadcast.
   }
 }
 

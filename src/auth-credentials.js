@@ -41,9 +41,15 @@ export function readAuthConfig(env = process.env, devConfigPath = DEV_CONFIG) {
   let configError = null;
   if (configPath) {
     try {
-      config = JSON.parse(readLocalFile(configPath, {
-        root: path.dirname(configPath), privateFile: configPath === userPath,
-      }));
+      const options = { root: path.dirname(configPath), privateFile: configPath === userPath };
+      let contents;
+      try { contents = readLocalFile(configPath, options); }
+      catch (error) {
+        // Login and renewal replace config atomically. Revalidate once from scratch.
+        if (!error.localFileRace) throw error;
+        contents = readLocalFile(configPath, options);
+      }
+      config = JSON.parse(contents);
       if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error();
     } catch (err) { config = {}; configError = err instanceof SyntaxError ? 'parse' : 'unreadable'; }
   }
