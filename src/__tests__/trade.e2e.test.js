@@ -35,6 +35,28 @@ function runCli(...args) {
   return { stdout: stdout || '', stderr: stderr || '', exitCode: status ?? 1 };
 }
 
+/**
+ * Resolve the default wallet's addresses from `wallet list`.
+ *
+ * `wallet list` reports data, so it prints the standard JSON envelope on stdout
+ * in a terminal and a pipe alike (#584) — there is no `EVM:`/`Solana:` summary
+ * to grep. Parse the envelope instead of matching prose.
+ */
+function walletAddresses() {
+  const { stdout } = runCli('wallet', 'list');
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`Could not parse "wallet list" output as JSON:\n${stdout}`);
+  }
+  const wallets = parsed?.data?.wallets || [];
+  const defaultName = parsed?.data?.defaultWallet;
+  const wallet = wallets.find((w) => w.name === defaultName) || wallets[0];
+  if (!wallet) throw new Error(`No wallet configured; "wallet list" returned:\n${stdout}`);
+  return { evm: wallet.evm, solana: wallet.solana };
+}
+
 const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const BASE_ETH = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 const SWAP_AMOUNT_ETH = '270000000000000'; // ~$0.50 ETH (18 decimals)
@@ -49,9 +71,8 @@ describe.sequential('e2e: ETH ↔ USDC swap round-trip on Base', () => {
   };
 
   it('should have a wallet configured', () => {
-    const result = runCli('wallet', 'list');
-    const output = result.stdout + result.stderr;
-    expect(output).toContain('EVM:');
+    const { evm } = walletAddresses();
+    expect(evm, 'Expected an EVM address on the default wallet').toBeTruthy();
   });
 
   it('quote ETH → USDC on Base', () => {
@@ -209,13 +230,10 @@ describe.sequential('e2e: cross-chain ETH (Base) ↔ SOL (Solana) round-trip', (
   };
 
   it('should have a wallet with both EVM and Solana addresses', () => {
-    const result = runCli('wallet', 'list');
-    const output = result.stdout + result.stderr;
-    expect(output).toContain('EVM:');
-    expect(output).toContain('Solana:');
-    const solMatch = output.match(/Solana:\s+([1-9A-HJ-NP-Za-km-z]+)/);
-    expect(solMatch, `Expected Solana address in output:\n${output}`).toBeTruthy();
-    state.solanaAddress = solMatch[1];
+    const { evm, solana } = walletAddresses();
+    expect(evm, 'Expected an EVM address on the default wallet').toBeTruthy();
+    expect(solana, 'Expected a Solana address on the default wallet').toBeTruthy();
+    state.solanaAddress = solana;
   });
 
   it('snapshot SOL balance before forward swap', async () => {
@@ -336,12 +354,9 @@ describe.sequential('e2e: SOL ↔ USDC swap round-trip on Solana', () => {
   };
 
   it('should have a wallet with Solana address', () => {
-    const result = runCli('wallet', 'list');
-    const output = result.stdout + result.stderr;
-    expect(output).toContain('Solana:');
-    const solMatch = output.match(/Solana:\s+([1-9A-HJ-NP-Za-km-z]+)/);
-    expect(solMatch, `Expected Solana address in output:\n${output}`).toBeTruthy();
-    state.solanaAddress = solMatch[1];
+    const { solana } = walletAddresses();
+    expect(solana, 'Expected a Solana address on the default wallet').toBeTruthy();
+    state.solanaAddress = solana;
   });
 
   it('quote SOL → USDC on Solana', () => {
