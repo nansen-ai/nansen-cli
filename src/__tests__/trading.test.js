@@ -4852,21 +4852,41 @@ describe('standard execution route — swap command flow', () => {
     expect(() => loadQuote(quoteId)).not.toThrow();
   });
 
-  it('keeps the claim when an earlier candidate ended ambiguously', async () => {
-    stubStandardSwapFetch({
-      responses: [
-        // Candidate 1: a non-JSON 4xx — the endpoint never said what it did.
-        { status: 400, body: { code: 'SOMETHING_ELSE', message: 'nope' } },
-        // Candidate 2: the provably-not-broadcast shape.
-        { body: { success: false, code: 'QUOTE_EXPIRED' }, noHash: true },
-      ],
-    });
+  // A definitive 4xx rejection is the endpoint saying it never broadcast.
+  // The branches that raise it already promise the quote stays reusable; the
+  // claim has to agree, or a rejected run strands a quote that is still good.
+  it('releases the local claim when the endpoint definitively rejected the request', async () => {
+    stubStandardSwapFetch({ responses: [{ status: 400, body: { code: 'QUOTE_EXPIRED', message: 'quote expired' } }] });
     const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow();
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
 
-    // Candidate 2's clean answer must not speak for candidate 1.
+    expect(() => loadQuote(quoteId)).not.toThrow();
+  });
+
+  // The surviving ambiguous-and-continuing path: a WalletConnect send that
+  // threw without saying whether the wallet broadcast, on the legacy route
+  // where the run goes on to the next candidate. A later candidate's clean
+  // rejection must not hand the claim back on that attempt's behalf.
+  it('keeps the claim when an earlier candidate ended ambiguously', async () => {
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect')
+      // Candidate 1: ambiguous — the wallet may or may not have broadcast.
+      .mockRejectedValueOnce(new Error('Command failed: walletconnect send-transaction'))
+      // Candidate 2: sign-only, so it falls through to the shared POST —
+      // which definitively rejects it.
+      .mockResolvedValue({ signedTransaction: '0xdeadbeef' });
+    stubStandardSwapFetch({ responses: [{ status: 400, body: { code: 'QUOTE_EXPIRED', message: 'quote expired' } }] });
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId })).rejects.toThrow();
+
     expect(() => loadQuote(quoteId)).toThrow(/claimed by another execution/i);
   });
 

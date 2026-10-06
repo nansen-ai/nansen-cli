@@ -403,7 +403,7 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       // rejection, so it stays nonfatal and leaves the quote reusable.
       lastError = Object.assign(
         new Error(`Execute API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`),
-        { code: 'EXECUTE_ERROR', status: res.status, details: text.slice(0, 200) }
+        { code: 'EXECUTE_ERROR', status: res.status, details: text.slice(0, 200), broadcastRuledOut: true }
       );
       throw lastError;
     }
@@ -422,9 +422,16 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
     }
 
     if (!res.ok) {
+      // Everything ambiguous has been classified above: a network error, a
+      // truncated body and ANY 5xx are already BROADCAST_FAILED, and a
+      // standard-route 409 is carved out. What reaches here is a parseable
+      // 4xx error body — a definitive rejection of the request, on the same
+      // reading the non-JSON branch just above already applies. Say so, so
+      // the caller can hand the local quote claim back instead of stranding a
+      // quote that was never broadcast.
       const code = body.code || 'EXECUTE_ERROR';
       const msg = body.message || `Execute request failed with status ${res.status}`;
-      throw Object.assign(new Error(msg), { code, status: res.status, details: body.details });
+      throw Object.assign(new Error(msg), { code, status: res.status, details: body.details, broadcastRuledOut: true });
     }
 
     if (isStandard) {
@@ -4937,10 +4944,15 @@ EXAMPLES:
             // timeout, or an ambiguous broadcast failure). See
             // isFatalBroadcastError.
             if (isFatalBroadcastError(quoteErr)) throw quoteErr;
-            // Whatever this was, it did not come back with the backend's
-            // "no transaction" answer, so from here on no later candidate may
-            // hand the claim back on this run's behalf.
-            if (swapHandedOff) handoffAmbiguous = true;
+            // A rejection the API classified as definitively pre-broadcast puts
+            // this attempt in the same class as a "failed, no hash" body: the
+            // signed tx never left the backend, so the claim can go back. The
+            // comments on those branches already promise the quote stays
+            // reusable; without this the finalizer silently kept it claimed.
+            // Anything else did not come back with that answer, so from here on
+            // no later candidate may hand the claim back on this run's behalf.
+            if (quoteErr?.broadcastRuledOut && !handoffAmbiguous) swapHandedOff = false;
+            else if (swapHandedOff) handoffAmbiguous = true;
             const msg = quoteErr.message || '';
             log(`  ❌ Quote ${quoteName} failed: ${msg}`);
             if (msg.includes('AccountNotFound') && chainType === 'solana') {
