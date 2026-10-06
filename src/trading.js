@@ -427,9 +427,24 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       throw Object.assign(new Error(msg), { code, status: res.status, details: body.details });
     }
 
-    return isStandard
-      ? fromStandardResponse(body, params.chain && CHAIN_MAP[params.chain]?.type)
-      : body;
+    if (isStandard) {
+      // A success body with no hash is not a success we can report. There is
+      // nothing to print, nothing to poll and nothing the user can check on an
+      // explorer, and on Solana nothing downstream fills it in (the EVM path
+      // derives its own hash from the signed bytes, Solana has no equivalent
+      // step here) — so it would surface as a completed swap with an undefined
+      // hash. The request WAS accepted, so it is ambiguous rather than failed:
+      // treat it as a fail-closed broadcast failure, which marks the quote spent
+      // and aborts instead of signing the next candidate on top of it.
+      if (body.success && !body.txHash) {
+        throw Object.assign(
+          new Error('The execution endpoint reported success but returned no transaction hash, so the outcome cannot be verified. The swap may still be live — check the wallet on the explorer before retrying.'),
+          { code: 'BROADCAST_FAILED', status: res.status }
+        );
+      }
+      return fromStandardResponse(body, params.chain && CHAIN_MAP[params.chain]?.type);
+    }
+    return body;
   }
   throw lastError;
 }
@@ -3248,6 +3263,11 @@ EXAMPLES:
       // API broadcast, or a WalletConnect wallet that may broadcast it), so the
       // claim is only handed back when no swap can be in flight.
       let swapHandedOff = false;
+      // Sticky across candidates: set once any attempt ends without the backend
+      // telling us whether it broadcast. An explicit "failed, no hash" response
+      // clears swapHandedOff for its own attempt, but it says nothing about an
+      // earlier attempt that threw mid-POST — so that one has to keep the claim.
+      let handoffAmbiguous = false;
       try {
         const quoteData = loadQuote(quoteId);
         const chain = quoteData.chain;
@@ -4287,6 +4307,7 @@ EXAMPLES:
                 // revert below: on the standard route it ends the command. The
                 // quote is already unusable either way — swapHandedOff is set
                 // above, so the claim is kept rather than released.
+                handoffAmbiguous = true;
                 if (qi + 1 < endIndex && swapRoute !== 'standard') {
                   log(`  Trying next quote...`);
                   lastQuoteError = `${quoteName}: ${wcErr.message}`;
@@ -4872,6 +4893,17 @@ EXAMPLES:
               // is cheaper than a silent double broadcast.
               const failedTxId = result.signature || result.txHash;
               if (failedTxId) markQuoteExecuted(quoteId, { broadcast: { txHash: failedTxId } });
+              else if (!handoffAmbiguous) {
+                // The backend answered, and its answer is "no transaction". That
+                // is the same statement the candidate fallback below already
+                // trusts enough to go sign another transaction against this
+                // quote, so trust it to hand the local claim back too — nothing
+                // left this process. Otherwise a run where every candidate is
+                // rejected this way leaves <quote>.executing.json behind, and the
+                // next execute is refused with "claimed by another execution"
+                // for a quote that was never broadcast and is still good.
+                swapHandedOff = false;
+              }
               lastQuoteError = `${quoteName}: ${failReason || result.status}`;
               // Same single-flight reasoning as the receipt-revert path above: on
               // the standard route a failure CARRYING A HASH has already claimed
@@ -4905,6 +4937,10 @@ EXAMPLES:
             // timeout, or an ambiguous broadcast failure). See
             // isFatalBroadcastError.
             if (isFatalBroadcastError(quoteErr)) throw quoteErr;
+            // Whatever this was, it did not come back with the backend's
+            // "no transaction" answer, so from here on no later candidate may
+            // hand the claim back on this run's behalf.
+            if (swapHandedOff) handoffAmbiguous = true;
             const msg = quoteErr.message || '';
             log(`  ❌ Quote ${quoteName} failed: ${msg}`);
             if (msg.includes('AccountNotFound') && chainType === 'solana') {

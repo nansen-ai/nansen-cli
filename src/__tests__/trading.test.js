@@ -4389,7 +4389,9 @@ describe('standard execution route — swap command flow', () => {
         const spec = responses[Math.min(idx, responses.length - 1)] ?? { body: { success: true } };
         const status = spec.status ?? 200;
         const resp = { ...(spec.body || {}) };
-        if (resp.success && resp.txHash === undefined && body.signedTransaction) {
+        // Autofill mirrors the real endpoint, which returns a hash with a
+        // success. `noHash: true` builds the shapes where it does not.
+        if (!spec.noHash && resp.success && resp.txHash === undefined && body.signedTransaction) {
           resp.txHash = evmTxHash(body.signedTransaction);
         }
         return Promise.resolve({ ok: status >= 200 && status < 300, status, text: () => Promise.resolve(JSON.stringify(resp)) });
@@ -4810,6 +4812,62 @@ describe('standard execution route — swap command flow', () => {
 
     // Refused before anything was signed or sent, not after.
     expect(executeCalls).toHaveLength(0);
+  });
+
+  // A success with no hash is not reportable: nothing to print, nothing to poll,
+  // nothing to check on an explorer. The EVM path would paper over it by
+  // deriving its own hash from the signed bytes; Solana has no equivalent step,
+  // so it would print a completed swap with an undefined hash.
+  it('fails closed when the endpoint reports success but returns no transaction hash', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true }, noHash: true }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    // One POST, not two: the next candidate would be signed on top of a
+    // request the endpoint already accepted.
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+    expect(logs.some(l => l.includes('undefined'))).toBe(false);
+    // Ambiguous, so the quote is spent and stays spent.
+    expect(() => loadQuote(quoteId)).toThrow(/already executed/i);
+  });
+
+  // The candidate fallback already trusts "failed, no hash" enough to go sign
+  // another transaction against this quote, so it has to trust it enough to
+  // hand the local claim back too.
+  it('releases the local claim when every candidate failed with no transaction hash', async () => {
+    stubStandardSwapFetch({ responses: [{ body: { success: false, code: 'QUOTE_EXPIRED' }, noHash: true }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+
+    // Nothing was broadcast, so the quote is loadable again rather than stuck
+    // behind "claimed by another execution".
+    expect(() => loadQuote(quoteId)).not.toThrow();
+  });
+
+  it('keeps the claim when an earlier candidate ended ambiguously', async () => {
+    stubStandardSwapFetch({
+      responses: [
+        // Candidate 1: a non-JSON 4xx — the endpoint never said what it did.
+        { status: 400, body: { code: 'SOMETHING_ELSE', message: 'nope' } },
+        // Candidate 2: the provably-not-broadcast shape.
+        { body: { success: false, code: 'QUOTE_EXPIRED' }, noHash: true },
+      ],
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow();
+
+    // Candidate 2's clean answer must not speak for candidate 1.
+    expect(() => loadQuote(quoteId)).toThrow(/claimed by another execution/i);
   });
 
   it('still broadcasts on the legacy route when only an aggregator quote id is available', async () => {
