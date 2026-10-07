@@ -202,18 +202,6 @@ export async function getQuote(params) {
   return body;
 }
 
-/**
- * Translate the CLI's legacy broadcast params into the standard-route request body.
- *
- * The standard route keys the chain on VM type ('evm' | 'solana') plus an explicit
- * chain id, and reads the client source and wallet from the body rather than
- * inferring them. Only the whitelisted fields are forwarded — the server-side
- * pre-broadcast simulation toggle no longer exists on this route, so `simulate`
- * is intentionally dropped rather than sent and ignored.
- *
- * @param {object} params - legacy executeTransaction params
- * @returns {object} standard-route request body
- */
 // CHAIN_MAP is keyed lowercase, but a quote stores the chain exactly as the
 // user typed it (`--chain Base`) — only resolveChain() lowercases on the way
 // through, and these lookups bypass it. Normalise here so a capitalised
@@ -223,12 +211,43 @@ function chainConfigFor(name) {
   return name ? CHAIN_MAP[String(name).toLowerCase()] : undefined;
 }
 
+/**
+ * Translate the CLI's legacy broadcast params into the standard-route request body.
+ *
+ * The standard route keys the chain on VM type ('evm' | 'solana') plus an explicit
+ * chain id, and reads the client source and wallet from the body rather than
+ * inferring them. Only the whitelisted fields are forwarded.
+ *
+ * @param {object} params - legacy executeTransaction params
+ * @returns {object} standard-route request body
+ */
 function toStandardBody(params) {
   const cfg = chainConfigFor(params.chain);
   const body = {
     chain: cfg.type,                 // VM type, not the chain name
     signedTransaction: params.signedTransaction,
     source: 'cli',                   // no longer inferred from the client header
+    // Opt into the server-side pre-broadcast simulation. This route's `simulate`
+    // defaults to FALSE, which means Solana broadcasts with `skipPreflight: true`
+    // and the EVM path only re-simulates AFTER an approval is submitted — whereas
+    // the deprecated /execute route simulated unconditionally. Sending `true` is
+    // what keeps "a transaction that would revert does not reach the network"
+    // true across the move; omitting it would drop that guarantee silently, which
+    // is the one failure mode a route switch must not have.
+    //
+    // Hardcoded rather than forwarded from `params.simulate`: on the legacy route
+    // that field was inert (the trading service simulated every broadcast whatever
+    // it said), so --no-simulate has only ever governed the CLI's own eth_call
+    // revert check. Forwarding it here would quietly widen that flag into "also
+    // disable the backend preflight" — a new, sharper meaning for a flag users
+    // already pass for a different reason.
+    //
+    // Honoured as sent: the backend ignores `simulate` on the EVM path when
+    // `signedApprovalTransaction` is set, and the CLI never sets it (approvals
+    // broadcast as their own executeTransaction call). Upstream EVM preflight
+    // coverage is Base-only, which costs us nothing — Base is the only EVM chain
+    // CHAIN_MAP trades.
+    simulate: true,
   };
   if (cfg.type === 'evm') body.chainId = String(cfg.chainId);
   if (params.quoteId) body.quoteId = params.quoteId;

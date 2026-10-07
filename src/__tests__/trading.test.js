@@ -4199,12 +4199,12 @@ describe('executeTransaction — standard execution route', () => {
     return calls;
   }
 
-  it('maps an EVM swap to VM type + chain id + source and drops simulate', async () => {
+  it('maps an EVM swap to VM type + chain id + source, opting into simulation', async () => {
     const { executeTransaction } = await import('../trading.js');
     const calls = stubExecuteFetch([{ body: { success: true, txHash: '0xabc' } }]);
 
     const res = await executeTransaction(
-      { signedTransaction: '0xsigned', chain: 'base', simulate: true, quoteId: 'q1', walletAddress: '0xWallet' },
+      { signedTransaction: '0xsigned', chain: 'base', quoteId: 'q1', walletAddress: '0xWallet' },
       { route: 'standard' },
     );
 
@@ -4217,10 +4217,25 @@ describe('executeTransaction — standard execution route', () => {
       quoteId: 'q1',
       walletAddress: '0xWallet',
       signedTransaction: '0xsigned',
+      simulate: true,
     });
-    expect(calls[0].body).not.toHaveProperty('simulate');
     expect(res.status).toBe('Success');
     expect(res.txHash).toBe('0xabc');
+  });
+
+  // The route's own default is `simulate: false`, so an omitted field is not the
+  // same request. Pin that --no-simulate (which only ever governed the CLI's own
+  // eth_call check) cannot turn the backend preflight off by leaking through.
+  it('opts into simulation even when the caller passed simulate: false', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([{ body: { success: true, txHash: '0xabc' } }]);
+
+    await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base', simulate: false },
+      { route: 'standard' },
+    );
+
+    expect(calls[0].body.simulate).toBe(true);
   });
 
   it('maps a Solana swap to VM type with no chain id, and keeps a signature', async () => {
@@ -4474,8 +4489,8 @@ describe('standard execution route — swap command flow', () => {
       chainId: '8453',
       source: 'cli',
       walletAddress: showWallet('default').evm,
+      simulate: true,
     });
-    expect(executeCalls[0].body).not.toHaveProperty('simulate');
     expect(typeof executeCalls[0].headers['x-trade-attempt-id']).toBe('string');
     expect(executeCalls[0].headers['x-trade-attempt-id'].length).toBeGreaterThan(0);
   });
