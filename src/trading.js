@@ -4448,7 +4448,31 @@ EXAMPLES:
                 return undefined; // Success
               }
 
-              // Wallet returned signedTransaction — fall through to broadcast via Trading API
+              // Wallet returned signedTransaction — fall through to broadcast via Trading API.
+              //
+              // Guarded locally even though it cannot fire today:
+              // sendTransactionViaWalletConnect throws rather than resolving without one
+              // of txHash/signedTransaction, so every reachable shape is handled above.
+              // That invariant lives in another module, though, and the failure mode if
+              // it ever relaxes to a bare return is the worst one here — an undefined
+              // payload POSTs a malformed body, comes back a definitive 4xx carrying
+              // broadcastRuledOut, hands the local quote claim back, and signs the NEXT
+              // candidate: a second wallet prompt on top of a swap this wallet may
+              // already have broadcast.
+              //
+              // Terminal on BOTH routes, unlike the ambiguous send failure above, which
+              // keeps the legacy candidate fallback only to preserve behaviour that
+              // predates the standard route. This state has no such history — it is
+              // unreachable today — so there is nothing to preserve and no reason to
+              // offer a second prompt for a possibly-live swap. BROADCAST_FAILED is
+              // classified fatal, so the candidate catch rethrows it before the
+              // claim-release branch and the quote stays claimed.
+              if (!wcResult.signedTransaction) {
+                throw new CommandError(
+                  `\n  ⚠ WalletConnect returned no transaction hash and no signed transaction for ${quoteName}.\n\n  The wallet may still have broadcast this swap. Check the wallet and the\n  explorer before retrying — retrying may broadcast a second swap.`,
+                  'BROADCAST_FAILED',
+                );
+              }
               signedTransaction = wcResult.signedTransaction;
 
             } else {

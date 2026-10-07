@@ -4776,6 +4776,55 @@ describe('standard execution route — swap command flow', () => {
     expect(executeCalls).toHaveLength(0);
   });
 
+  // sendTransactionViaWalletConnect throws rather than resolving without one of
+  // txHash/signedTransaction, so this shape cannot arise through it — the mock is
+  // reaching past that contract on purpose, because the call-site guard exists for a
+  // future relaxation of it. What matters is that an unusable response never reaches
+  // the broadcast and never offers a second candidate.
+  it('stops when WalletConnect resolves with neither a hash nor a signed transaction', async () => {
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({});
+    const { executeCalls } = stubStandardSwapFetch();
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({
+        code: 'BROADCAST_FAILED',
+        message: expect.stringContaining('no transaction hash and no signed transaction'),
+      });
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(executeCalls).toHaveLength(0);
+  });
+
+  // Unlike the ambiguous send failure, which keeps the legacy fallback for
+  // backwards compatibility, an unusable response is terminal on both routes.
+  it('stops on the legacy route too when WalletConnect returns nothing usable', async () => {
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({});
+    const { executeCalls } = stubStandardSwapFetch();
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(executeCalls).toHaveLength(0);
+  });
+
   it('keeps the WalletConnect candidate fallback on the legacy route when the send fails', async () => {
     process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
     const wcAddress = showWallet('default').evm;
