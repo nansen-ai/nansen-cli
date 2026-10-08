@@ -4193,7 +4193,8 @@ describe('executeTransaction — standard execution route', () => {
       return {
         ok: status >= 200 && status < 300,
         status,
-        text: async () => JSON.stringify(spec.body ?? {}),
+        // `text` lets a case stub a non-JSON body (an edge HTML error page).
+        text: async () => spec.text ?? JSON.stringify(spec.body ?? {}),
       };
     });
     return calls;
@@ -4292,6 +4293,45 @@ describe('executeTransaction — standard execution route', () => {
       { signedTransaction: '0xsigned', chain: 'base' },
       { route: 'standard', retries: 0 },
     )).rejects.toMatchObject({ code: 'BROADCAST_FAILED', status: 409 });
+  });
+
+  it.each([
+    ['an undocumented conflict code', { code: 'EXECUTION_IN_PROGRESS', message: 'already running' }],
+    ['a conflict body with no code at all', { message: 'conflict' }],
+  ])('classifies a 409 with %s as a fatal broadcast failure', async (_label, body) => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 409, body }]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    ).catch(e => e);
+    // Never broadcastRuledOut: the candidate loop must not hand the claim back
+    // and sign the next quote on top of an execution the backend still holds.
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 409 });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('classifies a non-JSON 409 on the standard route as a fatal broadcast failure', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 409, text: '<html>conflict</html>' }]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    ).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 409 });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('leaves a legacy-route 409 on the definitive-rejection path', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 409, body: { code: 'SOME_CONFLICT' } }]);
+
+    await expect(executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { retries: 0 },
+    )).rejects.toMatchObject({ code: 'SOME_CONFLICT', status: 409, broadcastRuledOut: true });
   });
 
   it('normalises a soft-fail (node-rejected but maybe propagating) to success', async () => {
@@ -4517,6 +4557,21 @@ describe('standard execution route — swap command flow', () => {
     expect(executeCalls).toHaveLength(1);
     expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
     // Quote is burned so a later re-execute is refused.
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
+  it('aborts on a 409 whose code is not DUPLICATE_EXECUTION, without broadcasting the next quote', async () => {
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [{ status: 409, body: { code: 'EXECUTION_IN_PROGRESS', message: 'already running' } }],
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
     expect(() => loadQuote(quoteId)).toThrow();
   });
 

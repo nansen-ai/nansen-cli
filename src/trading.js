@@ -425,6 +425,32 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       throw lastError;
     }
 
+    // The standard route holds a single-flight lock on the quote id, so ANY 409
+    // means the first attempt is in flight or already produced a hash — never
+    // "safe to try again". Classify every standard-route conflict as
+    // BROADCAST_FAILED (fatal, fail-closed) so the caller marks the quote spent
+    // and aborts instead of signing the next candidate on top of a possibly-live
+    // swap. This also makes an internal retry safe: if the first POST landed and
+    // the retry races back a 409, it aborts.
+    //
+    // Checked on the STATUS ALONE, ahead of both the non-JSON and the generic
+    // !res.ok branches below. DUPLICATE_EXECUTION is the one documented conflict
+    // code and a JSON body is the documented shape, but an unrecognised code —
+    // or an edge-generated HTML 409 that never reaches the backend's own error
+    // shape — is more reason to fail closed, not less. Either of those branches
+    // would mark it broadcastRuledOut, hand the local quote claim back and let
+    // the candidate loop sign the next quote on top of an execution the backend
+    // is still holding.
+    if (isStandard && res.status === 409) {
+      const conflict = parsed && body?.code === 'DUPLICATE_EXECUTION'
+        ? 'This quote was already submitted for execution'
+        : `The execution endpoint reported a conflict for this quote (${(parsed && body?.code) || 'no code'}${parsed && body?.message ? `: ${body.message}` : ''})`;
+      throw Object.assign(
+        new Error(`${conflict}; the first transaction may be live. Request a new quote with "nansen trade quote".`),
+        { code: 'BROADCAST_FAILED', status: 409, details: parsed ? body?.details : text.slice(0, 200) }
+      );
+    }
+
     if (!parsed) {
       // Non-JSON on a sub-500 status (a Cloudflare challenge or HTML error
       // page). A clean sub-500 HTTP response is a definitive edge/backend
@@ -436,23 +462,10 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       throw lastError;
     }
 
-    // The standard route holds a single-flight lock on the quote id, so a 409
-    // means the first attempt is in flight or already produced a hash — never
-    // "safe to try again". Classify it as BROADCAST_FAILED (fatal, fail-closed)
-    // so the caller marks the quote spent and aborts instead of signing the next
-    // candidate on top of a possibly-live swap. This also makes an internal retry
-    // safe: if the first POST landed and the retry races back a 409, it aborts.
-    if (isStandard && res.status === 409 && body.code === 'DUPLICATE_EXECUTION') {
-      throw Object.assign(
-        new Error('This quote was already submitted for execution; the first transaction may be live. Request a new quote with "nansen trade quote".'),
-        { code: 'BROADCAST_FAILED', status: 409 }
-      );
-    }
-
     if (!res.ok) {
       // Everything ambiguous has been classified above: a network error, a
-      // truncated body and ANY 5xx are already BROADCAST_FAILED, and a
-      // standard-route 409 is carved out. What reaches here is a parseable
+      // truncated body and ANY 5xx are already BROADCAST_FAILED, and EVERY
+      // standard-route 409 is carved out regardless of body shape. What reaches here is a parseable
       // 4xx error body — a definitive rejection of the request, on the same
       // reading the non-JSON branch just above already applies. Say so, so
       // the caller can hand the local quote claim back instead of stranding a
