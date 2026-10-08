@@ -5707,6 +5707,7 @@ describe('ERC-20 excessive allowance handling', () => {
     expect(executeBodies[0].signedTransaction).toContain(amountWord(0n)); // the revoke (approve to 0)
     expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
     expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow(/claimed by another execution/);
   });
 
   it('fails closed when reapproval fails after a successful revoke', async () => {
@@ -5730,6 +5731,7 @@ describe('ERC-20 excessive allowance handling', () => {
     expect(executeBodies[0].signedTransaction).toContain(amountWord(0n));
     expect(executeBodies[1].signedTransaction).toContain(amountWord(100000n));
     expect(logs.some(l => l.includes('Approval failed for #1 after revoking the prior allowance (now 0)'))).toBe(true);
+    expect(() => loadQuote(quoteId)).toThrow(/claimed by another execution/);
   });
 
   it('fails closed when a revoke receipt succeeds but the allowance does not actually clear', async () => {
@@ -5765,13 +5767,14 @@ describe('ERC-20 excessive allowance handling', () => {
       return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
     }));
 
-    const logs = [];
-    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    const err = await cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId }).catch(e => e);
 
     // Only the revoke was broadcast; the reapproval and swap never ran.
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toContain('Revoke tx confirmed but allowance was not cleared');
     expect(executeBodies).toHaveLength(1);
-    expect(logs.some(l => l.includes('Revoke tx confirmed but allowance was not cleared for #1: could not verify the allowance was cleared (allowance did not reach expected state after 5 attempts (last read: 2000000))'))).toBe(true);
+    expect(() => loadQuote(quoteId)).toThrow();
   });
 
   it('fails closed when a reapproval receipt succeeds but the allowance does not actually increase', async () => {
@@ -5814,13 +5817,14 @@ describe('ERC-20 excessive allowance handling', () => {
       return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
     }));
 
-    const logs = [];
-    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    const err = await cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId }).catch(e => e);
 
     // Both the revoke and the reapproval were broadcast; the swap never ran.
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toContain('Approval tx confirmed but allowance did not reach the required amount');
     expect(executeBodies).toHaveLength(2);
-    expect(logs.some(l => l.includes('Approval tx confirmed but allowance did not reach the required amount for #1 after revoking the prior allowance (now 0): could not verify the approval took effect (allowance did not reach expected state after 5 attempts (last read: 0))'))).toBe(true);
+    expect(() => loadQuote(quoteId)).toThrow();
   });
 
   it('fails closed when post-revoke allowance verification returns empty data', async () => {
@@ -5858,12 +5862,13 @@ describe('ERC-20 excessive allowance handling', () => {
       return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
     }));
 
-    const logs = [];
-    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    const err = await cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId }).catch(e => e);
 
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toContain('invalid allowance() return data: 0x');
     expect(executeBodies).toHaveLength(1);
-    expect(logs.some(l => l.includes('invalid allowance() return data: 0x'))).toBe(true);
+    expect(() => loadQuote(quoteId)).toThrow();
   });
 
   it('guards the allowance timing override outside test environments', () => {
