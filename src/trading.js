@@ -1265,7 +1265,12 @@ export async function waitForReceipt(chain, txHash, timeoutMs = 180000, pollMs =
  * @returns {boolean}
  */
 function isFatalBroadcastError(err) {
-  return err?.code === 'TXHASH_MISMATCH'
+  // Set at the WalletConnect boundary (see markBroadcastAmbiguous): the wallet
+  // was asked to send and we never learned the outcome. This covers the approval
+  // and allowance-revoke sends too, which run BEFORE swapHandedOff is set and so
+  // are invisible to the handed-off check in the candidate loop's outer catch.
+  return err?.broadcastAmbiguous === true
+    || err?.code === 'TXHASH_MISMATCH'
     || err?.code === 'INVALID_SIGNED_TX'
     || err?.code === 'RECEIPT_TIMEOUT'
     || err?.code === 'BROADCAST_FAILED'
@@ -4060,6 +4065,14 @@ EXAMPLES:
                         throw new Error('Allowance revoke returned no transaction hash and no signed transaction; cannot confirm allowance was cleared');
                       }
                     } catch (revokeErr) {
+                      // A revoke the wallet may already have broadcast must not
+                      // fall through: the next candidate would prompt for and
+                      // send a swap while this one is still in flight, against an
+                      // allowance whose real value is unknown. Re-raise with the
+                      // recovery hint the log line below would have carried.
+                      if (revokeErr?.broadcastAmbiguous) {
+                        throw ambiguousBroadcast(`Allowance revoke for ${quoteName} failed after the wallet was asked to send: ${revokeErr.message}. The revoke may still be live.${allowanceRevokeRecoveryHint(revokeTxHash)}`);
+                      }
                       if (isFatalBroadcastError(revokeErr)) throw revokeErr;
                       log(`  ❌ Allowance revoke failed for ${quoteName}: ${revokeErr.message}.${allowanceRevokeRecoveryHint(revokeTxHash)}`);
                       if (qi + 1 < endIndex) log(`  Trying next quote...`);
@@ -4121,10 +4134,17 @@ EXAMPLES:
                       throw new Error('returned no transaction hash and no signed transaction; cannot confirm approval landed');
                     }
                   } catch (approvalErr) {
-                    if (isFatalBroadcastError(approvalErr)) throw approvalErr;
                     const revokedMsg = shouldRevoke
                       ? ' after revoking the prior allowance (now 0)'
                       : '';
+                    // Same as the revoke above: an approval the wallet may have
+                    // broadcast leaves the allowance unknown, so ending here is
+                    // the only answer that cannot double-send. The revoked note
+                    // matters most on this path — the prior allowance is already 0.
+                    if (approvalErr?.broadcastAmbiguous) {
+                      throw ambiguousBroadcast(`Approval for ${quoteName} failed${revokedMsg} after the wallet was asked to send: ${approvalErr.message}. The approval may still be live — check the allowance before retrying.`);
+                    }
+                    if (isFatalBroadcastError(approvalErr)) throw approvalErr;
                     log(`  ❌ Approval failed for ${quoteName}${revokedMsg}: ${approvalErr.message}`);
                     if (qi + 1 < endIndex) log(`  Trying next quote...`);
                     lastQuoteError = `${quoteName} approval failed`;

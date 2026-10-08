@@ -515,3 +515,42 @@ describe('sendSolanaTransactionViaWalletConnect', () => {
     );
   });
 });
+
+// Once the wallet has been asked to send, nothing that goes wrong afterwards
+// proves the transaction stayed put — execFile collapses a user rejection, a
+// 120s approval timeout and a spawn failure into the same bare Error. The flag
+// is what stops trading.js reading any of them as "nothing was sent" and
+// signing the next candidate on top of a possibly-live transaction. It is set
+// at this boundary so every call site inherits it, including ones added later.
+describe('WalletConnect sends mark every failure as an ambiguous handoff', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  const sends = [
+    ['sendTransactionViaWalletConnect', () => sendTransactionViaWalletConnect({ to: '0xabc', data: '0x', value: '0', gas: '21000', chainId: 8453 })],
+    ['sendSolanaTransactionViaWalletConnect', () => sendSolanaTransactionViaWalletConnect('3Bxs3z...')],
+    ['sendApprovalViaWalletConnect', () => sendApprovalViaWalletConnect('0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae', 8453, 1000n)],
+  ];
+
+  for (const [name, call] of sends) {
+    it(`${name}: a failed send is marked ambiguous`, async () => {
+      mockExecFile('', new Error('Command failed: walletconnect send-transaction'));
+      await expect(call()).rejects.toMatchObject({ broadcastAmbiguous: true });
+    });
+
+    it(`${name}: an unparseable reply is marked ambiguous`, async () => {
+      mockExecFile('not json at all');
+      await expect(call()).rejects.toMatchObject({ broadcastAmbiguous: true });
+    });
+
+    it(`${name}: a reply with no usable field is marked ambiguous`, async () => {
+      mockExecFile(JSON.stringify({ unrelated: true }));
+      await expect(call()).rejects.toMatchObject({ broadcastAmbiguous: true });
+    });
+  }
+
+  it('leaves a successful send unmarked', async () => {
+    mockExecFile(JSON.stringify({ transactionHash: '0xdeadbeef' }));
+    await expect(sendTransactionViaWalletConnect({ to: '0xabc', data: '0x', value: '0', gas: '21000', chainId: 8453 }))
+      .resolves.toEqual({ txHash: '0xdeadbeef' });
+  });
+});

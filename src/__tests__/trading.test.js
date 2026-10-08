@@ -2210,6 +2210,84 @@ describe('EVM swap gas zero fallback (execute)', () => {
     expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ gas: '31500' }));
   });
 
+  // The approval and allowance-revoke sends run BEFORE swapHandedOff is set, so
+  // the candidate loop's handed-off check cannot see them. Their own catches used
+  // to `continue`, which meant an approval the wallet had already broadcast let
+  // the next candidate prompt for and send a swap against an allowance whose real
+  // value was unknown. The boundary flag is what makes these terminal.
+  function saveWcErc20Quote(count = 2) {
+    const wcAddress = '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4';
+    const quote = () => ({
+      aggregator: 'lifi',
+      inputMint: BASE_USDC,
+      outputMint: BASE_ETH,
+      inAmount: '100000',
+      inputAmount: '100000',
+      outAmount: '44000000000000',
+      approvalAddress: LIFI_ROUTER,
+      transaction: zeroGasErc20Tx(),
+    });
+    return saveQuote({
+      success: true,
+      quotes: Array.from({ length: count }, quote),
+    }, 'base', 'walletconnect', null, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({
+        walletAddress: wcAddress,
+        fromToken: BASE_USDC,
+        toToken: BASE_ETH,
+        amount: '100000',
+        maxInputAmount: '100000',
+      }),
+    });
+  }
+
+  const ambiguousWcError = () =>
+    Object.assign(new Error('Command failed: walletconnect send-transaction'), { broadcastAmbiguous: true });
+
+  it('WalletConnect ERC-20: an ambiguous approval ends the run instead of trying the next quote', async () => {
+    const wcAddress = '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4';
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const approvalSpy = vi.spyOn(wcTrading, 'sendApprovalViaWalletConnect').mockRejectedValue(ambiguousWcError());
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmocktx' });
+    __setAllowanceTimingForTests({ verifyDelayMs: 0, propagationDelayMs: 0 });
+    stubGasFallbackFetch({ allowance: 0n });
+
+    const quoteId = saveWcErc20Quote(2);
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    // Asked once, and no swap was sent behind the unknown allowance.
+    expect(approvalSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+  });
+
+  it('WalletConnect ERC-20: an ambiguous allowance revoke ends the run instead of trying the next quote', async () => {
+    const wcAddress = '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4';
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const approvalSpy = vi.spyOn(wcTrading, 'sendApprovalViaWalletConnect').mockRejectedValue(ambiguousWcError());
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmocktx' });
+    __setAllowanceTimingForTests({ verifyDelayMs: 0, propagationDelayMs: 0 });
+    // Far above 10x the trade, so the run revokes before re-approving and the
+    // very first wallet call is the revoke.
+    stubGasFallbackFetch({ allowance: 10000000n });
+
+    const quoteId = saveWcErc20Quote(2);
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    expect(approvalSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+  });
+
   it('WalletConnect ERC-20: logs estimated gas when quote has no gas', async () => {
     const wcAddress = '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4';
     vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
