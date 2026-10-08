@@ -1202,39 +1202,41 @@ export async function waitForReceipt(chain, txHash, timeoutMs = 180000, pollMs =
       if (receipt) {
         const status = parseInt(receipt.status, 16);
         if (status !== 1) {
-          throw new Error(`Transaction reverted on-chain (status: ${receipt.status}). Tx: ${txHash}`);
+          const revertErr = new Error(`Transaction reverted on-chain (status: ${receipt.status}). Tx: ${txHash}`);
+          revertErr.code = 'TX_REVERTED';
+          throw revertErr;
         }
         return receipt;
       }
     } catch (e) {
       // Re-throw confirmed on-chain reverts immediately; swallow transient RPC/network errors
-      if (e.message?.startsWith('Transaction reverted')) throw e;
+      if (e.code === 'TX_REVERTED') throw e;
       // else: continue polling (pending tx, transient network error, etc.)
     }
     // Receipt not yet available — wait and retry
     await new Promise(r => setTimeout(r, pollMs));
   }
   // A timeout is NOT a confirmed revert: the tx may still be pending under our
-  // nonce. Tag it so callers can distinguish "reverted" (safe to try the next
-  // quote) from "unconfirmed" (retrying may broadcast a second tx that races
-  // the first for the same nonce). See the swap-path receipt catch.
+  // nonce. Tag it so callers can distinguish "reverted" (confirmed failure,
+  // but still terminal for this invocation) from "unconfirmed" (the tx may
+  // still be live). See the swap-path receipt catch.
   const timeoutErr = new Error(`Transaction receipt not found after ${timeoutMs}ms. Tx: ${txHash}`);
   timeoutErr.code = 'RECEIPT_TIMEOUT';
   throw timeoutErr;
 }
 
 /**
- * Post-broadcast failures that must abort the whole `execute` rather than fall
- * through to the next quote. Once a transaction is broadcast we hold no evidence
- * about what landed on-chain, so "try the next quote" would sign and broadcast a
- * second transaction — the one thing we must not do. Covers every path (swap,
+ * Post-broadcast outcomes that must abort the whole `execute` rather than fall
+ * through to the next quote. Ambiguous failures may conceal a live transaction;
+ * confirmed reverts are known failures, but still require the user to review the
+ * transaction and request a fresh quote explicitly. Covers every path (swap,
  * approval, revoke; Privy/WalletConnect/local-key). Each code is thrown with a
  * rationale at its throw site:
  *   - TXHASH_MISMATCH  — broadcaster reported a tx we did not sign
  *   - INVALID_SIGNED_TX — we cannot even derive a hash for what we broadcast
  *   - RECEIPT_TIMEOUT  — receipt never landed; the tx may still be pending, so
  *                        retrying would race a second tx against the same nonce
- *                        (a confirmed on-chain revert is NOT this — it may retry)
+ *   - TX_REVERTED     — receipt confirmed failure; stop and require a new quote
  *   - BROADCAST_FAILED — /execute returned an uninterpretable response (non-JSON,
  *                        typically a 502/503 after all retries) AFTER we POSTed
  *                        the signed tx. A dropped ack is indistinguishable from
@@ -1255,15 +1257,10 @@ function isFatalBroadcastError(err) {
     || err?.code === 'INVALID_SIGNED_TX'
     || err?.code === 'RECEIPT_TIMEOUT'
     || err?.code === 'BROADCAST_FAILED'
-    // A revert IS provably broadcast, but unlike the codes above its outcome is
-    // DEFINITIVE: the receipt says the swap did not execute and the nonce is
-    // burned, so the next candidate signs under a fresh nonce and cannot double-
-    // broadcast. The loop therefore still falls through on a non-final candidate
-    // (see the revert branch in the candidate loop) — deliberately, because a
-    // revert on a stale route is exactly what the next quote is for. This code
-    // exists so the FINAL candidate's revert surfaces itself rather than a
-    // generic "all quotes failed". Note waitForReceipt throws a codeless Error
-    // for a revert; TX_REVERTED is attached only by that final-candidate wrap.
+    // A confirmed revert is terminal too. Although its outcome is definitive
+    // and its nonce is consumed, one `trade execute` invocation must never
+    // broadcast a second transaction automatically. The user must inspect the
+    // reverted transaction and request a fresh quote explicitly.
     || err?.code === 'TX_REVERTED';
 }
 
@@ -4241,17 +4238,11 @@ EXAMPLES:
                   if (receiptErr.code === 'RECEIPT_TIMEOUT') {
                     throw new CommandError(`\n  ⚠ Transaction was broadcast but NOT confirmed within the wait window.\n    Tx Hash:   ${wcResult.txHash}\n    Explorer:  ${chainConfig.explorer}${wcResult.txHash}\n    ${receiptErr.message}\n\n  The transaction may still be pending — do NOT assume it failed. Check the\n  explorer before retrying; retrying may broadcast a second swap.`, 'RECEIPT_TIMEOUT');
                   }
-                  if (isFatalBroadcastError(receiptErr)) throw receiptErr;
-                  log(`\n  ⚠ Transaction was broadcast but REVERTED on-chain!`);
-                  log(`    Tx Hash:   ${wcResult.txHash}`);
-                  log(`    Explorer:  ${chainConfig.explorer}${wcResult.txHash}`);
-                  log(`    Error:     ${receiptErr.message}`);
-                  if (qi + 1 < endIndex) {
-                    log(`  Trying next quote...`);
-                    lastQuoteError = `${quoteName} reverted on-chain`;
-                    continue;
+                  if (receiptErr.code === 'TX_REVERTED') {
+                    throw new CommandError(`\n  ⚠ Transaction was broadcast but REVERTED on-chain!\n    Tx Hash:   ${wcResult.txHash}\n    Explorer:  ${chainConfig.explorer}${wcResult.txHash}\n    Error:     ${receiptErr.message}\n\n  No further quote was attempted. Review the transaction, then request a new quote before retrying.`, 'TX_REVERTED');
                   }
-                  throw new CommandError(`\n  ⚠ Transaction was broadcast but REVERTED on-chain!\n    Tx Hash:   ${wcResult.txHash}\n    Explorer:  ${chainConfig.explorer}${wcResult.txHash}\n    Error:     ${receiptErr.message}`, 'TX_REVERTED');
+                  if (isFatalBroadcastError(receiptErr)) throw receiptErr;
+                  throw receiptErr;
                 }
 
                 log(`\n  ✓ Transaction successful!`);
@@ -4628,11 +4619,9 @@ EXAMPLES:
               // WalletConnect sign-only fallback, and --gasless Relay — every
               // path that reaches this shared broadcast call.
               //
-              // Deliberate: a broadcast that later reverts on-chain (the
-              // "Trying next quote" path below) still consumes the quote —
-              // the revert still burned the nonce, so re-signing this same
-              // quote for a retry would race the reverted tx's nonce. This is
-              // intentional, not an oversight.
+              // Deliberate: a broadcast that later reverts on-chain still
+              // consumes the quote and ends this invocation. The user must
+              // review that transaction and request a fresh quote explicitly.
               markQuoteExecuted(quoteId, { broadcast: { txHash: txId } });
 
               // For EVM: verify the tx actually succeeded on-chain
@@ -4674,17 +4663,11 @@ EXAMPLES:
                   if (receiptErr.code === 'RECEIPT_TIMEOUT') {
                     throw new CommandError(`\n  ⚠ Transaction was broadcast but NOT confirmed within the wait window.\n    Tx Hash:   ${txId || result.txHash}\n    Explorer:  ${explorerUrl}\n    ${receiptErr.message}\n\n  The transaction may still be pending — do NOT assume it failed. Check the\n  explorer before retrying; retrying may broadcast a second swap against the\n  same nonce.`, 'RECEIPT_TIMEOUT');
                   }
-                  if (isFatalBroadcastError(receiptErr)) throw receiptErr;
-                  log(`\n  ⚠ Transaction was broadcast but REVERTED on-chain!`);
-                  log(`    Tx Hash:   ${txId || result.txHash}`);
-                  log(`    Explorer:  ${explorerUrl}`);
-                  log(`    Error:     ${receiptErr.message}`);
-                  if (qi + 1 < endIndex) {
-                    log(`  Trying next quote...`);
-                    lastQuoteError = `${quoteName} reverted on-chain`;
-                    continue;
+                  if (receiptErr.code === 'TX_REVERTED') {
+                    throw new CommandError(`\n  ⚠ Transaction was broadcast but REVERTED on-chain!\n    Tx Hash:   ${txId || result.txHash}\n    Explorer:  ${explorerUrl}\n    Error:     ${receiptErr.message}\n\n  No further quote was attempted. Review the transaction, then request a new quote before retrying.`, 'TX_REVERTED');
                   }
-                  throw new CommandError(`\n  ⚠ Transaction was broadcast but REVERTED on-chain!\n    Tx Hash:   ${txId || result.txHash}\n    Explorer:  ${explorerUrl}\n    Error:     ${receiptErr.message}\n\n  The trading API reported success, but the contract execution failed.\n  This can happen due to: stale quotes, insufficient gas, or liquidity changes.`, 'TX_REVERTED');
+                  if (isFatalBroadcastError(receiptErr)) throw receiptErr;
+                  throw receiptErr;
                 }
               }
 
