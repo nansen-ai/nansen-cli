@@ -77,6 +77,13 @@ const BASE_ETH = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const OUT_TOKEN = '0x4200000000000000000000000000000000000006';
 const LIFI_ROUTER = '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae';
+
+// Identifier fixtures the execute boundary accepts. EVM hashes are 32-byte
+// keccak and Solana signatures 64-byte ed25519 base58, so placeholders like
+// 'SolSig' or '0xApprovalHash' are rejected as unusable -- see assertUsableTxId.
+const FIXTURE_SOL_SIG = base58Encode(Buffer.alloc(64, 7));
+const FIXTURE_EVM_HASH = '0x' + 'a7'.repeat(32);
+
 const RELAY_ROUTER = '0xf5042e6ffac5a625d4e7848e0b01373d8eb9e222';
 
 // `trade quote` / `trade execute` screen the wallet against the sanctions list
@@ -2926,7 +2933,7 @@ describe('Privy execute support', () => {
       if (urlStr.includes('trading-api')) {
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolTxSig', chainType: 'solana', broadcaster: 'test' })),
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'test' })),
         });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
@@ -4145,7 +4152,7 @@ describe('API error handling', () => {
     global.fetch = origFetch;
   });
 
-  it('treats non-JSON sub-500 execute responses as nonfatal execute errors', async () => {
+  it('fails closed on a non-JSON sub-500 execute response', async () => {
     const origFetch = global.fetch;
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
@@ -4158,8 +4165,9 @@ describe('API error handling', () => {
       signedTransaction: 'test',
       chain: 'solana',
     }, { retries: 0 })).rejects.toMatchObject({
-      code: 'EXECUTE_ERROR',
+      code: 'BROADCAST_FAILED',
       status: 429,
+      details: '<!DOCTYPE html><html><body>rate limited</body></html>',
     });
 
     global.fetch = origFetch;
@@ -4852,6 +4860,70 @@ describe('confirmEvmBroadcast: binds receipt confirmation to the locally-derived
     vi.unstubAllGlobals();
   });
 
+  it('fails closed when a gasless EVM success response has no transaction hash', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+
+    let executePosts = 0;
+    let receiptRequests = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const body = opts?.body ? (() => { try { return JSON.parse(opts.body); } catch { return {}; } })() : {};
+      if (body.method === 'eth_getTransactionCount') {
+        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5' })) });
+      }
+      if (body.method === 'eth_getCode') {
+        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x6080604052' })) });
+      }
+      if (body.method === 'eth_call') {
+        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x' })) });
+      }
+      if (body.method === 'eth_getTransactionReceipt') {
+        receiptRequests += 1;
+      }
+      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
+        executePosts += 1;
+        return Promise.resolve({
+          ok: true,
+          // A Solana-style signature cannot identify Relay's EVM solver tx.
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'NotAnEvmTxHash', chainType: 'evm', broadcaster: 'relay' })),
+        });
+      }
+      return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
+    }));
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'relay',
+        inputMint: BASE_USDC,
+        outputMint: OUT_TOKEN,
+        inAmount: '10000000',
+        outAmount: '50000000',
+        approvalAddress: '',
+        transaction: { to: RELAY_ROUTER, data: '0x12345678', value: '0', gas: '300000', maxFeePerGas: '5000000', maxPriorityFeePerGas: '1000000' },
+        metadata: { requestId: 'relay-gasless-no-hash', steps: [{ kind: 'evm-tx' }] },
+      }],
+    }, 'base', 'local', null, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({ walletAddress: showWallet('default').evm, fromToken: BASE_USDC, toToken: OUT_TOKEN, amount: '10000000', maxInputAmount: '10000000' }),
+    });
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    const err = await cmds.execute([], screenApi, { gasless: true }, { quote: quoteId }).catch(e => e);
+
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toMatch(/without a gasless EVM transaction identifier/i);
+    expect(executePosts).toBe(1);
+    expect(receiptRequests).toBe(0);
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow(/already executed|claimed by another execution/);
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    vi.unstubAllGlobals();
+  });
+
   it('polls OUR locally-derived hash — not the broadcaster hash — when the broadcaster returns none (guarantee #2)', async () => {
     // A signed tx whose bytes are ours; the broadcaster returns no hash at all.
     const signedTx = '0x02' + 'ab'.repeat(96);
@@ -5536,7 +5608,7 @@ describe('ERC-20 excessive allowance handling', () => {
       allowance: 2000000n,
       executeResponses: [
         { status: 'Success', txHash: '0xRevokeHash', chainType: 'evm', broadcaster: 'test' },
-        { status: 'Success', txHash: '0xApprovalHash', chainType: 'evm', broadcaster: 'test' },
+        { status: 'Success', txHash: FIXTURE_EVM_HASH, chainType: 'evm', broadcaster: 'test' },
         { status: 'Success', txHash: '0xSwapHash', chainType: 'evm', broadcaster: 'test' },
       ],
     });
@@ -5621,7 +5693,7 @@ describe('ERC-20 excessive allowance handling', () => {
       allowance: 2000000n,
       executeResponses: [
         { status: 'Success', txHash: '0xRevokeHash', chainType: 'evm', broadcaster: 'test' },
-        { status: 'Failed', error: 'approval simulation failed', txHash: '0xApprovalHash', chainType: 'evm', broadcaster: 'test' },
+        { status: 'Failed', error: 'approval simulation failed', txHash: FIXTURE_EVM_HASH, chainType: 'evm', broadcaster: 'test' },
       ],
     });
 
@@ -6002,7 +6074,7 @@ describe('Relay aggregator: --gasless flag dispatch', () => {
         executeBodies.push(JSON.parse(opts.body));
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'relay' })),
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'relay' })),
         });
       }
       // Bridge status: return DONE so post-execute polling exits
@@ -6581,7 +6653,7 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
         executeBodies.push(JSON.parse(opts.body));
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'solana-rpc' })),
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'solana-rpc' })),
         });
       }
       if (urlStr.includes('/bridge/status')) {
@@ -6649,7 +6721,7 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
         executeBodies.push(JSON.parse(opts.body));
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'jupiter' })),
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'jupiter' })),
         });
       }
       return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null })) });
@@ -6699,7 +6771,7 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
         executeBodies.push(JSON.parse(opts.body));
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'jupiter' })),
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'jupiter' })),
         });
       }
       return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null })) });
@@ -7476,7 +7548,7 @@ describe('Solana intent binding (adversarial)', () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
       if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'jupiter' })) });
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'jupiter' })) });
       }
       return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null })) });
     }));
@@ -7903,7 +7975,7 @@ describe('Solana execute: swap-outcome verification blocks signing (adversarial)
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
       if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'jupiter' })) });
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'jupiter' })) });
       }
       return rpcMock(url, opts);
     }));
@@ -7985,7 +8057,7 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
         executeBodies.push(body);
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'relay' })),
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'relay' })),
         });
       }
       if (urlStr.includes('/bridge/status')) {
@@ -8324,5 +8396,325 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
       await expect(compileRawSolanaTransaction(route, 'http://unused', async () => signer))
         .rejects.toThrow(/too large to compile \(\d+ bytes > 1232 limit\) even with its 1 address lookup table/);
     });
+  });
+});
+
+// ============= Execute response classification =============
+
+describe('executeTransaction: response classification', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  function stubExecute({ status = 200, text = '{}' }) {
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      calls.push({ url: String(url), body: JSON.parse(opts.body) });
+      return Promise.resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        text: () => Promise.resolve(text),
+      });
+    }));
+    return calls;
+  }
+
+  const run = async (opts = {}, chain = 'base') => {
+    const { executeTransaction } = await import('../trading.js');
+    return executeTransaction({ signedTransaction: '0xsigned', chain }, { retries: 0, ...opts });
+  };
+
+  it('returns a readable 2xx body unchanged', async () => {
+    stubExecute({ text: JSON.stringify({ status: 'Success', txHash: FIXTURE_EVM_HASH }) });
+    await expect(run()).resolves.toMatchObject({ status: 'Success', txHash: FIXTURE_EVM_HASH });
+  });
+
+  it.each([
+    ['an empty body', ''],
+    ['an HTML page', '<html>ok</html>'],
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['a bare string', '"nope"'],
+    ['a bare number', '0'],
+    ['an object without a status', '{}'],
+    ['an unknown status', JSON.stringify({ status: 'Unknown' })],
+    ['a non-string status', JSON.stringify({ status: 200 })],
+  ])('fails closed on a 2xx carrying %s', async (_label, text) => {
+    stubExecute({ status: 200, text });
+    const err = await run().catch(e => e);
+    // The endpoint ACCEPTED the request. An unreadable or malformed answer is
+    // this client failing to understand it, not proof it never broadcast.
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 200 });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('fails closed on a 204 with no content', async () => {
+    stubExecute({ status: 204, text: '' });
+    const err = await run().catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it.each([
+    ['a non-JSON page', 400, '<html>bad request</html>'],
+    ['null', 400, 'null'],
+    ['an array', 400, '[]'],
+    ['a request timeout', 408, JSON.stringify({ code: 'REQUEST_TIMEOUT' })],
+    ['a rate limit', 429, JSON.stringify({ code: 'RATE_LIMITED' })],
+  ])('fails closed on a 4xx carrying %s', async (_label, status, text) => {
+    stubExecute({ status, text });
+    const err = await run().catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('preserves a structured 4xx as diagnostic detail without authorizing fallback', async () => {
+    stubExecute({ status: 400, text: JSON.stringify({ code: 'QUOTE_EXPIRED', message: 'quote expired' }) });
+    const err = await run().catch(e => e);
+    expect(err).toMatchObject({
+      code: 'BROADCAST_FAILED',
+      status: 400,
+      details: { code: 'QUOTE_EXPIRED', message: 'quote expired' },
+    });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it.each([
+    ['an object signature', 'solana', { signature: {} }],
+    ['a non-base58 signature', 'solana', { signature: 'not-a-signature!!' }],
+    ['a signature of the wrong length', 'solana', { signature: base58Encode(Buffer.alloc(32, 7)) }],
+    ['a numeric signature', 'solana', { signature: 12345 }],
+    ['a Solana-shaped txHash', 'solana', { txHash: 'not-a-signature!!' }],
+    ['an object txHash', 'base', { txHash: {} }],
+    ['a truncated txHash', 'base', { txHash: '0xabc' }],
+    ['a non-hex txHash', 'base', { txHash: '0x' + 'zz'.repeat(32) }],
+    ['a numeric txHash', 'base', { txHash: 12345 }],
+  ])('fails closed on a success carrying %s', async (_label, chain, fields) => {
+    stubExecute({ text: JSON.stringify({ status: 'Success', ...fields }) });
+    const err = await run({}, chain).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toMatch(/unusable transaction/);
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it.each([
+    ['a base58 signature on Solana', 'solana', { signature: FIXTURE_SOL_SIG }],
+    ['a signature carried as txHash on Solana', 'solana', { txHash: FIXTURE_SOL_SIG }],
+    ['a 0x-prefixed hash on EVM', 'base', { txHash: FIXTURE_EVM_HASH }],
+    ['a bare hex hash on EVM', 'base', { txHash: FIXTURE_EVM_HASH.slice(2) }],
+    ['no identifier at all', 'base', {}],
+  ])('accepts %s', async (_label, chain, fields) => {
+    stubExecute({ text: JSON.stringify({ status: 'Success', ...fields }) });
+    await expect(run({}, chain)).resolves.toMatchObject({ status: 'Success' });
+  });
+
+  // A Failed response is checked by the same rule: its identifier is what tells
+  // the caller a transaction may have reached the network.
+  it('fails closed on a failure carrying an unusable identifier', async () => {
+    stubExecute({ text: JSON.stringify({ status: 'Failed', txHash: {} }) });
+    const err = await run().catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+  });
+
+  it('never rules out a broadcast for a 5xx, whatever the body', async () => {
+    stubExecute({ status: 502, text: JSON.stringify({ code: 'UPSTREAM_TIMEOUT' }) });
+    const err = await run().catch(e => e);
+    // The gateway may have forwarded the signed tx before failing.
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 502 });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('never rules out a broadcast when the POST itself failed', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('socket hang up')));
+    const err = await run().catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+});
+
+// ============= Execute: the quote claim and terminal failures =============
+
+describe('trade execute: claim handling and terminal failures', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  // Mirrors the RPC surface a local-wallet EVM swap touches, so the run reaches
+  // the broadcast POST rather than stopping at a preflight check.
+  function stubSwapFetch({ execute, receiptStatus = '0x1' }) {
+    const executeCalls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
+        executeCalls.push(body);
+        const status = execute.status ?? 200;
+        const resp = { ...(execute.body || {}) };
+        // Mirror the real endpoint, which returns the hash of the bytes we sent.
+        // confirmEvmBroadcast binds the receipt to our locally-derived hash, so a
+        // made-up one fails as a substitution rather than reaching the receipt.
+        if (resp.status === 'Success' && resp.txHash === undefined && body.signedTransaction) {
+          resp.txHash = evmTxHash(body.signedTransaction);
+        }
+        return Promise.resolve({
+          ok: status >= 200 && status < 300,
+          status,
+          text: () => Promise.resolve(execute.text ?? JSON.stringify(resp)),
+        });
+      }
+      const rpc = (result) => Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result })) });
+      if (body.method === 'eth_getCode') return rpc('0x6080604052');
+      if (body.method === 'eth_call') return rpc('0x');
+      if (body.method === 'eth_estimateGas') return rpc('0x5208');
+      if (body.method === 'eth_getTransactionCount') return rpc('0x5');
+      if (body.method === 'eth_getTransactionReceipt') return rpc({ status: receiptStatus, blockNumber: '0x100' });
+      return rpc(null);
+    }));
+    return { executeCalls };
+  }
+
+  function saveEthQuote(count = 1) {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    const quote = () => ({
+      aggregator: 'lifi',
+      inputMint: BASE_ETH,
+      outputMint: BASE_USDC,
+      inAmount: '1000000000000000000',
+      outAmount: '3000000000',
+      transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000', maxFeePerGas: '1000000', maxPriorityFeePerGas: '1000000' },
+    });
+    return saveQuote(
+      { success: true, quotes: Array.from({ length: count }, quote) },
+      'base', 'local', null, null,
+      {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: showWallet('default').evm,
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+        }),
+      },
+    );
+  }
+
+  // Even a structured 4xx only proves what response came back, not whether the
+  // backend forwarded the signed transaction first. It must consume the quote
+  // and stop before a second candidate is signed.
+  it('fails closed when the endpoint returns a structured 4xx', async () => {
+    const { executeCalls } = stubSwapFetch({ execute: { status: 400, body: { code: 'QUOTE_EXPIRED', message: 'quote expired' } } });
+    const quoteId = saveEthQuote(2);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    expect(executeCalls).toHaveLength(1);
+    expect(() => loadQuote(quoteId)).toThrow();
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('persists the EVM txHash instead of a stray Solana signature on failure', async () => {
+    const { executeCalls } = stubSwapFetch({
+      execute: { body: {
+        status: 'Failed', error: 'broadcast failed',
+        signature: 'not-an-evm-transaction-id', txHash: FIXTURE_EVM_HASH,
+      } },
+    });
+    const quoteId = saveEthQuote(2);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    expect(executeCalls).toHaveLength(1);
+    expect(() => loadQuote(quoteId)).toThrow(new RegExp(`already executed.*${FIXTURE_EVM_HASH}`, 's'));
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('fails closed on a missing status without broadcasting a second candidate', async () => {
+    const responseBody = {};
+    const { executeCalls } = stubSwapFetch({ execute: { body: responseBody } });
+    const quoteId = saveEthQuote(2);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    const err = await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(e => e);
+
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toMatch(/invalid application status/);
+    expect(executeCalls).toHaveLength(1);
+    expect(() => loadQuote(quoteId)).toThrow();
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('fails closed when Solana reports success without a transaction identifier', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+
+    const executeCalls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
+        executeCalls.push(JSON.parse(opts.body));
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', chainType: 'solana', broadcaster: 'jupiter' })),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null })),
+      });
+    }));
+
+    const txBase64 = Buffer.concat([
+      Buffer.from([0x01]),
+      Buffer.alloc(64),
+      Buffer.from([0x01, 0x00, 0x01, 0x02, ...Buffer.alloc(96), 0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00]),
+    ]).toString('base64');
+    const solQuote = () => ({
+      aggregator: 'jupiter',
+      inputMint: SOL_MINT,
+      outputMint: SOL_USDC,
+      inAmount: '1000000000',
+      outAmount: '50000000',
+      transaction: txBase64,
+    });
+    const quoteId = saveQuote(
+      { success: true, quotes: [solQuote(), solQuote()] },
+      'solana', 'local', null, null,
+      { swapMode: 'exactIn', request: solanaIntent({ walletAddress: showWallet('default').solana }) },
+    );
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+    expect(logs.some(l => l.includes('undefined'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow();
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  // One end-to-end invariant for the boundary check above: an unusable
+  // identifier must not reach stdout, the explorer URL or the persisted
+  // broadcast marker, and must not authorize a second candidate.
+  it('never reports or persists an unusable transaction identifier', async () => {
+    const { executeCalls } = stubSwapFetch({ execute: { body: { status: 'Success', txHash: 'not-a-hash' } } });
+    const quoteId = saveEthQuote(2);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+    const err = await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(e => e);
+
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('not-a-hash'))).toBe(false);
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow();
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
   });
 });
