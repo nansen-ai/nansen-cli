@@ -8532,11 +8532,14 @@ describe('executeTransaction: response classification', () => {
     ['an array', '[]'],
     ['a bare string', '"nope"'],
     ['a bare number', '0'],
+    ['an object without a status', '{}'],
+    ['an unknown status', JSON.stringify({ status: 'Unknown' })],
+    ['a non-string status', JSON.stringify({ status: 200 })],
   ])('fails closed on a 2xx carrying %s', async (_label, text) => {
     stubExecute({ status: 200, text });
     const err = await run().catch(e => e);
-    // The endpoint ACCEPTED the request. An unreadable answer is this client
-    // failing to understand it, not the backend saying it never broadcast.
+    // The endpoint ACCEPTED the request. An unreadable or malformed answer is
+    // this client failing to understand it, not proof it never broadcast.
     expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 200 });
     expect(err.broadcastRuledOut).toBeUndefined();
   });
@@ -8677,6 +8680,21 @@ describe('trade execute: claim handling and terminal failures', () => {
     await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
 
     expect(() => loadQuote(quoteId)).not.toThrow();
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('fails closed on a missing status without broadcasting a second candidate', async () => {
+    const responseBody = {};
+    const { executeCalls } = stubSwapFetch({ execute: { body: responseBody } });
+    const quoteId = saveEthQuote(2);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    const err = await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(e => e);
+
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toMatch(/invalid application status/);
+    expect(executeCalls).toHaveLength(1);
+    expect(() => loadQuote(quoteId)).toThrow();
     delete process.env.NANSEN_WALLET_PASSWORD;
   });
 

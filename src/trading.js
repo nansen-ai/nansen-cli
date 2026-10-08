@@ -355,6 +355,17 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       );
     }
 
+    // A readable object is not necessarily a valid acknowledgement. Only the
+    // documented terminal statuses are safe for callers to interpret; treating
+    // a missing or unknown status as an ordinary failure could make the quote
+    // loop broadcast another candidate after an incomplete success response.
+    if (body.status !== 'Success' && body.status !== 'Failed') {
+      throw ambiguousBroadcast(
+        `The execute endpoint returned an invalid application status (${JSON.stringify(body.status)}), so the outcome cannot be verified. The transaction may still be live — check the wallet on the explorer before retrying.`,
+        { status: res.status, details: body },
+      );
+    }
+
     return body;
   }
   throw lastError;
