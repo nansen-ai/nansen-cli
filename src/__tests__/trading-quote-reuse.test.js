@@ -267,9 +267,12 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     const flags = { 'no-simulate': true, 'no-verify-outcome': true };
 
-    // Single-candidate quote, so the Failed result exhausts the loop.
-    await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
-      .rejects.toThrow(/all quotes failed/i);
+    // A hash means the transaction may have reached the network, so the
+    // application-level failure must be terminal instead of trying another
+    // candidate.
+    const err = await cmds.execute([], screenApi, flags, { quote: quoteId }).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toMatch(/reported Failed with transaction identifier/i);
     expect(executeBodies).toHaveLength(1);
 
     const quoteFile = JSON.parse(fs.readFileSync(path.join(getQuotesDir(), `${quoteId}.json`), 'utf8'));

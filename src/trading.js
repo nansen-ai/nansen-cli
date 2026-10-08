@@ -223,6 +223,20 @@ function isReadableBody(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+// A readable application-level failure can still describe a transaction that
+// was broadcast. The identifier is evidence of handoff, so callers must retain
+// the quote claim and stop rather than treating the response as "nothing sent".
+function hashBearingFailure(result, label) {
+  const txId = result?.signature || result?.txHash;
+  if (!txId) return null;
+  const error = ambiguousBroadcast(
+    `${label} reported ${result.status || 'failure'} with transaction identifier ${txId}. The transaction may have been broadcast, so no further quote will be tried. Check it on-chain before requesting a fresh quote.`,
+    { details: result },
+  );
+  error.txHash = txId;
+  return error;
+}
+
 export async function executeTransaction(params, { retries = 2, retryDelayMs = 1500 } = {}) {
   const headers = {
     'Content-Type': 'application/json',
@@ -3676,6 +3690,11 @@ EXAMPLES:
                     }
                     const revokeResult = await executeTransaction({ signedTransaction: signedRevoke, chain, simulate: !noSimulate });
                     if (revokeResult.status !== 'Success') {
+                      const handedOffFailure = hashBearingFailure(revokeResult, `Allowance revoke for ${quoteName}`);
+                      if (handedOffFailure) {
+                        ancillaryHandedOff = true;
+                        throw handedOffFailure;
+                      }
                       log(`  ❌ Allowance revoke failed for ${quoteName}: ${revokeResult.error || 'unknown'}`);
                       if (qi + 1 < endIndex) log(`  Trying next quote...`);
                       lastQuoteError = `${quoteName} allowance revoke failed`;
@@ -3730,6 +3749,11 @@ EXAMPLES:
                   }
                   const approvalResult = await executeTransaction({ signedTransaction: signedApproval, chain, simulate: !noSimulate });
                   if (approvalResult.status !== 'Success') {
+                    const handedOffFailure = hashBearingFailure(approvalResult, `Approval for ${quoteName}`);
+                    if (handedOffFailure) {
+                      ancillaryHandedOff = true;
+                      throw handedOffFailure;
+                    }
                     const revokedMsg = shouldRevoke
                       ? ' after revoking the prior allowance (now 0)'
                       : '';
@@ -4036,6 +4060,11 @@ EXAMPLES:
                           simulate: !noSimulate,
                         });
                         if (broadcastResult.status !== 'Success') {
+                          const handedOffFailure = hashBearingFailure(broadcastResult, `Allowance revoke for ${quoteName}`);
+                          if (handedOffFailure) {
+                            ancillaryHandedOff = true;
+                            throw handedOffFailure;
+                          }
                           throw new Error(broadcastResult.error || 'broadcast failed');
                         }
                         ancillaryHandedOff = true;
@@ -4099,6 +4128,11 @@ EXAMPLES:
                         simulate: !noSimulate,
                       });
                       if (broadcastResult.status !== 'Success') {
+                        const handedOffFailure = hashBearingFailure(broadcastResult, `Approval for ${quoteName}`);
+                        if (handedOffFailure) {
+                          ancillaryHandedOff = true;
+                          throw handedOffFailure;
+                        }
                         throw new Error(broadcastResult.error || 'broadcast failed');
                       }
                       ancillaryHandedOff = true;
@@ -4414,6 +4448,11 @@ EXAMPLES:
                     });
 
                     if (revokeResult.status !== 'Success') {
+                      const handedOffFailure = hashBearingFailure(revokeResult, `Allowance revoke for ${quoteName}`);
+                      if (handedOffFailure) {
+                        ancillaryHandedOff = true;
+                        throw handedOffFailure;
+                      }
                       log(`  ❌ Allowance revoke failed for ${quoteName}: ${revokeResult.error || 'unknown error'}`);
                       if (qi + 1 < endIndex) log(`  Trying next quote...`);
                       lastQuoteError = `${quoteName} allowance revoke failed`;
@@ -4462,6 +4501,11 @@ EXAMPLES:
                   });
 
                   if (approvalResult.status !== 'Success') {
+                    const handedOffFailure = hashBearingFailure(approvalResult, `Approval for ${quoteName}`);
+                    if (handedOffFailure) {
+                      ancillaryHandedOff = true;
+                      throw handedOffFailure;
+                    }
                     const revokedMsg = shouldRevoke
                       ? ' after revoking the prior allowance (now 0)'
                       : '';
@@ -4722,8 +4766,9 @@ EXAMPLES:
               // out, but the asymmetry favors marking: a needless re-quote
               // is cheaper than a silent double broadcast.
               const failedTxId = result.signature || result.txHash;
-              if (failedTxId) markQuoteExecuted(quoteId, { broadcast: { txHash: failedTxId } });
-              else if (!handoffAmbiguous) {
+              if (failedTxId) {
+                throw hashBearingFailure(result, `${quoteName} swap`);
+              } else if (!handoffAmbiguous) {
                 // The backend answered, and its answer is "no transaction". That
                 // is the same statement the candidate fallback below already
                 // trusts enough to go sign another transaction against this
@@ -4744,11 +4789,13 @@ EXAMPLES:
             // as spent. The signed tx may already be live on the backend (a 502
             // on the ack, not on the send), so fail closed: mark it here so a
             // later "trade execute --quote <id>" (or an agent auto-retry) is
-            // refused before it re-signs under a fresh nonce. No broadcast hash
-            // is recorded — we don't have one — which yields loadQuote's generic
-            // "may still be pending, check the explorer" message.
+            // refused before it re-signs under a fresh nonce. Preserve a hash
+            // when the application-level failure supplied one; transport
+            // failures have no hash and retain the generic pending warning.
             if (quoteErr?.code === 'BROADCAST_FAILED') {
-              markQuoteExecuted(quoteId);
+              markQuoteExecuted(quoteId, quoteErr.txHash
+                ? { broadcast: { txHash: quoteErr.txHash } }
+                : undefined);
             }
             // Post-broadcast failures abort the whole execute — never retry the
             // next quote once a transaction is already out and its outcome is

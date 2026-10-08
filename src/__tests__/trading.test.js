@@ -5723,15 +5723,15 @@ describe('ERC-20 excessive allowance handling', () => {
       ],
     });
 
-    const logs = [];
-    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    const err = await cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId }).catch(e => e);
 
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toContain('reported Failed with transaction identifier 0xApprovalHash');
     expect(executeBodies).toHaveLength(2);
     expect(executeBodies[0].signedTransaction).toContain(amountWord(0n));
     expect(executeBodies[1].signedTransaction).toContain(amountWord(100000n));
-    expect(logs.some(l => l.includes('Approval failed for #1 after revoking the prior allowance (now 0)'))).toBe(true);
-    expect(() => loadQuote(quoteId)).toThrow(/claimed by another execution/);
+    expect(() => loadQuote(quoteId)).toThrow(/already executed|claimed by another execution/);
   });
 
   it('fails closed when a revoke receipt succeeds but the allowance does not actually clear', async () => {
