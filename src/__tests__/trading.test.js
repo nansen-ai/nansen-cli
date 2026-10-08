@@ -1266,6 +1266,45 @@ describe('buildTradingCommands', () => {
     delete process.env.NANSEN_WALLET_PASSWORD;
   });
 
+  // `trade quote --chain Base` stores the chain exactly as the user typed it,
+  // and only resolveChain() lowercases on the way through. CHAIN_RPCS is keyed
+  // lowercase, so the quote used to be created fine and then never execute:
+  // "No RPC URL configured for chain: Base".
+  it('executes a quote whose chain the user capitalised', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      if (body.method === 'eth_getCode') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x6080604052' })) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
+    }));
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'lifi',
+        inputMint: BASE_USDC,
+        outputMint: BASE_ETH,
+        inAmount: '1000000',
+        outAmount: '500000000000000',
+        // Non-zero value on an ERC-20 swap, so the run stops at a validation we
+        // already cover. The point is only WHERE it stops: past the chain
+        // lookup, not at it.
+        transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '5000000000000000000', gas: '200000' },
+      }],
+    }, 'Base', 'local', null, null, { swapMode: 'exactIn', request: evmIntent({ walletAddress: showWallet('default').evm, fromToken: BASE_USDC, toToken: BASE_ETH }) });
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/All quotes failed/);
+    // The chain resolved; the run reached the per-quote validation below it.
+    expect(logs.some(l => l.includes('No RPC URL configured'))).toBe(false);
+    expect(logs.some(l => l.includes('non-zero tx.value'))).toBe(true);
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
   it('should reject native ETH swap with missing inAmount but non-zero tx.value', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';

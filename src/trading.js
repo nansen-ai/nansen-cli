@@ -38,6 +38,13 @@ const CHAIN_MAP = {
   base:     { index: '8453', type: 'evm',   chainId: 8453, name: 'Base',     explorer: 'https://basescan.org/tx/', lifiChainId: '8453' },
 };
 
+// CHAIN_MAP is keyed lowercase, but a quote stores the chain exactly as the
+// user typed it (`--chain Base`) — only resolveChain() lowercases on the way
+// through, and direct lookups bypass it.
+function chainConfigFor(name) {
+  return name ? CHAIN_MAP[String(name).toLowerCase()] : undefined;
+}
+
 // Extend when adding new EVM chains (e.g. arbitrum WETH, polygon WMATIC)
 const WRAPPED_NATIVE_TOKENS = {
   base:     { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', nativeSymbol: 'ETH' },
@@ -270,7 +277,7 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       // JSON error (e.g. { code: "UPSTREAM_TIMEOUT" }) already explains itself
       // via `details`; tacking "you may be out of SOL" onto a gateway timeout
       // would misdirect the user.
-      const chainType = params.chain && CHAIN_MAP[params.chain]?.type;
+      const chainType = chainConfigFor(params.chain)?.type;
       const feeHint = !parsed
         ? chainType === 'solana'
           ? ' This often means the transaction failed simulation — check that you have enough SOL for fees (~0.005 SOL minimum).'
@@ -3146,7 +3153,14 @@ EXAMPLES:
       let swapHandedOff = false;
       try {
         const quoteData = loadQuote(quoteId);
-        const chain = quoteData.chain;
+        // The quote command stores the chain exactly as the user typed it
+        // (`--chain Base`), but the lookups downstream — CHAIN_RPCS here above
+        // all — are keyed lowercase, and only resolveChain() normalises on its
+        // own. Without this a capitalised spelling quotes fine and then fails at
+        // execute with "No RPC URL configured for chain: Base", so the quote can
+        // never be used. Normalised once here, which also fixes quotes already
+        // on disk.
+        const chain = quoteData.chain?.toLowerCase();
         const chainConfig = resolveChain(chain);
         const chainType = chainConfig.type;
 
