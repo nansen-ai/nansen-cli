@@ -35,6 +35,30 @@ export const X402_PAYMENT_REJECTED = Symbol('x402PaymentRejected');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * Finalize a transmitted x402 payment in the local spend ledger and audit log.
+ *
+ * Every terminal branch of _x402Retry must call this exactly once. An attempt
+ * that is never finalized stays `signed` in the audit log, leaks its pending
+ * entry, and — for accepted or ambiguous outcomes — is never counted against
+ * the daily cap, so a later run can overspend by that amount.
+ */
+async function finalizeX402Attempt(paymentMeta, patch) {
+  if (!paymentMeta || !paymentMeta.paymentId) return;
+  try {
+    const { finalizePaymentAttempt } = await import('./x402-ledger.js');
+    finalizePaymentAttempt(paymentMeta.paymentId, patch);
+  } catch { /* best-effort audit */ }
+}
+
+function classifyX402Rejection(data) {
+  const text = JSON.stringify(data).toLowerCase();
+  if ((text.includes('insufficient') && text.includes('balance')) || text.includes('insufficient_funds')) {
+    return 'INSUFFICIENT_BALANCE';
+  }
+  return null;
+}
+
 export function telemetryHeaders() {
   if (TELEMETRY_DISABLED) return {};
   return { 'X-Anonymous-Id': getAnonymousId() };
@@ -795,7 +819,7 @@ export class NansenAPI {
    * an attemptX402Payment() method so adding a new payment provider only requires
    * touching that one method, not hunting inside the retry loop.
    */
-  async _x402Retry(signature, walletLabel, network, url, body, options = {}, asset = null) {
+  async _x402Retry(signature, walletLabel, network, url, body, options = {}, asset = null, paymentMeta = {}) {
     // Mirror request(): paid retries must use the original method. Hardcoding
     // POST burned a payment signature then hit the wrong route for GET/DELETE/PATCH.
     const method = options.method || 'POST';
@@ -828,6 +852,7 @@ export class NansenAPI {
       // the server may have received and settled it before we lost the
       // response. Fail closed rather than let the caller sign and send a
       // second payment for the same logical request.
+      await finalizeX402Attempt(paymentMeta, { status: 'ambiguous' });
       throw new NansenError(
         `x402 payment outcome unknown: request failed after the signed payment was transmitted (${err.message}). Not attempting another payment for the same request.`,
         ErrorCode.PAYMENT_AMBIGUOUS,
@@ -835,12 +860,15 @@ export class NansenAPI {
     }
     // fetch resolves when response headers are available, before body parsing;
     // duration_ms therefore reports time-to-headers (TTFB), not full download.
+    // Capture the server request id once — it is the primary correlation key to
+    // server-side logs and is threaded into every payment audit record below.
+    const responseRequestId = requestIdOf(paidResponse);
     traceResponse({
       method,
       url,
       status: paidResponse.status,
       durationMs: Date.now() - startedAt,
-      requestId: requestIdOf(paidResponse),
+      requestId: responseRequestId,
       attempt: 1,
       payment: 'x402',
     });
@@ -848,6 +876,9 @@ export class NansenAPI {
       // An admission denial does not prove that a transmitted payment cannot
       // settle. Stop here instead of authorizing another rail or wallet.
       if ([401, 403, 429, 451].includes(paidResponse.status)) {
+        // Denied admission is not proof the payment did not settle — same
+        // reasoning as the 5xx branch below, so it counts against the cap too.
+        await finalizeX402Attempt(paymentMeta, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
         throw new NansenError(
           `x402 payment outcome unknown: paid request was denied (${paidResponse.status}). Not attempting another payment for the same request.`,
           ErrorCode.PAYMENT_AMBIGUOUS,
@@ -857,19 +888,32 @@ export class NansenAPI {
       // processed it before failing to respond. Only a readable non-5xx
       // rejection body is safe to treat as "try the next option".
       if (paidResponse.status >= 500) {
+        await finalizeX402Attempt(paymentMeta, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
         throw new NansenError(
           `x402 payment outcome unknown: server returned ${paidResponse.status} after the signed payment was transmitted. Not attempting another payment for the same request.`,
           ErrorCode.PAYMENT_AMBIGUOUS,
         );
       }
+      let rejectionData;
       try {
-        await paidResponse.json();
+        rejectionData = await paidResponse.json();
       } catch (err) {
+        await finalizeX402Attempt(paymentMeta, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
         throw new NansenError(
           `x402 payment outcome unknown: rejection response body was unreadable (${err.message}). Not attempting another payment for the same request.`,
           ErrorCode.PAYMENT_AMBIGUOUS,
         );
       }
+      const rejClass = classifyX402Rejection(rejectionData);
+      if (rejClass === 'INSUFFICIENT_BALANCE') {
+        console.error(`[x402] Payment rejected for insufficient balance on ${network || 'unknown'}. Fund the x402 wallet or lower the request amount.`);
+      }
+      await finalizeX402Attempt(paymentMeta, {
+        status: 'rejected',
+        httpStatus: paidResponse.status,
+        reason: rejClass || null,
+        requestId: responseRequestId,
+      });
       return X402_PAYMENT_REJECTED;
     }
     if (walletLabel) {
@@ -888,6 +932,7 @@ export class NansenAPI {
     try {
       data = await paidResponse.json();
     } catch (err) {
+      await finalizeX402Attempt(paymentMeta, { status: 'ambiguous', httpStatus: paidResponse.status, requestId: responseRequestId });
       // The payment was accepted (2xx) — it settled. We just can't read the
       // response body, so surface that plainly rather than silently treating
       // it as a rejection and paying again.
@@ -896,6 +941,7 @@ export class NansenAPI {
         ErrorCode.PAYMENT_AMBIGUOUS,
       );
     }
+    await finalizeX402Attempt(paymentMeta, { status: 'accepted', httpStatus: paidResponse.status, requestId: responseRequestId });
     const meta = readResponseMeta(paidResponse);
     this.lastResponseMeta = meta;
     if (meta && data !== null && typeof data === 'object') data[RESPONSE_META] = meta;
@@ -1105,8 +1151,8 @@ export class NansenAPI {
               // Default wallet is Privy: sign via Privy
               try {
                 const { createPrivyPaymentSignatures } = await import('./privy.js');
-                for await (const { signature, network } of createPrivyPaymentSignatures(response, url)) {
-                  const result = await this._x402Retry(signature, `Privy wallet ${defaultWalletName}`, network, url, body, options);
+                for await (const { signature, network, asset, paymentId } of createPrivyPaymentSignatures(response, url)) {
+                  const result = await this._x402Retry(signature, `Privy wallet ${defaultWalletName}`, network, url, body, options, asset, { paymentId });
                   if (result !== X402_PAYMENT_REJECTED) return result;
                 }
               } catch (privyErr) {
@@ -1115,6 +1161,9 @@ export class NansenAPI {
                 // treated as an ordinary payment failure — there is no other
                 // provider to fall back to here, and retrying could double-pay.
                 if (privyErr instanceof NansenError && privyErr.code === ErrorCode.PAYMENT_AMBIGUOUS) throw privyErr;
+                if (privyErr?.failClosedX402) {
+                  throw new NansenError(privyErr.message, ErrorCode.PAYMENT_REQUIRED, 402);
+                }
                 message = safeSessionError ? 'x402 Privy payment failed. Check the wallet configuration and balance.' : `x402 Privy payment failed: ${privyErr.message}`;
               }
             } else {
@@ -1122,8 +1171,8 @@ export class NansenAPI {
               // 1. Try local wallet with fallback across payment networks
               try {
                 const { createPaymentSignatures } = await import('./x402.js');
-                for await (const { signature, network, asset } of createPaymentSignatures(response, url)) {
-                  const result = await this._x402Retry(signature, `local wallet ${defaultWalletName}`, network, url, body, options, asset);
+                for await (const { signature, network, asset, paymentId } of createPaymentSignatures(response, url)) {
+                  const result = await this._x402Retry(signature, `local wallet ${defaultWalletName}`, network, url, body, options, asset, { paymentId });
                   if (result !== X402_PAYMENT_REJECTED) return result;
                   // This payment option was cleanly rejected without settling, try next
                 }
@@ -1133,6 +1182,9 @@ export class NansenAPI {
                 // WalletConnect below — that would sign and transmit a second,
                 // independent payment authorization for the same request.
                 if (localErr instanceof NansenError && localErr.code === ErrorCode.PAYMENT_AMBIGUOUS) throw localErr;
+                if (localErr?.failClosedX402) {
+                  throw new NansenError(localErr.message, ErrorCode.PAYMENT_REQUIRED, 402);
+                }
                 /* local wallet unavailable for any other reason, try WalletConnect */
               }
 
@@ -1154,8 +1206,8 @@ export class NansenAPI {
                 if (paymentRequirements) {
                   try {
                     const { handleX402Payment } = await import('./walletconnect-x402.js');
-                    const paymentSignature = await handleX402Payment(paymentRequirements);
-                    const result = await this._x402Retry(paymentSignature, 'WalletConnect', null, url, body, options);
+                    const payment = await handleX402Payment(paymentRequirements);
+                    const result = await this._x402Retry(payment.signature, 'WalletConnect', payment.network, url, body, options, payment.asset, { paymentId: payment.paymentId });
                     if (result !== X402_PAYMENT_REJECTED) return result;
                   } catch (x402Err) {
                     // WalletConnect is the last resort in this chain — an
@@ -1163,6 +1215,12 @@ export class NansenAPI {
                     // ordinary "payment failed" that invites the caller to
                     // retry the whole request (and sign yet another payment).
                     if (x402Err instanceof NansenError && x402Err.code === ErrorCode.PAYMENT_AMBIGUOUS) throw x402Err;
+                    // A corrupt spend ledger fails closed: surface the "ledger is
+                    // corrupt" signal instead of downgrading it to a generic
+                    // payment failure (mirrors the Privy and local-wallet paths).
+                    if (x402Err?.failClosedX402) {
+                      throw new NansenError(x402Err.message, ErrorCode.PAYMENT_REQUIRED, 402);
+                    }
                     message = this.selection.kind !== 'anonymous'
                       ? 'x402 wallet payment failed. Check the wallet configuration and balance, or top up the selected account.'
                       : 'No API key configured. Three ways to authenticate:\n' +

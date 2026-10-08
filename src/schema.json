@@ -2347,7 +2347,7 @@
       }
     },
     "wallet": {
-      "description": "Wallet management. x402 auto-payments are guarded by a client-side policy: per-payment USD cap via NANSEN_X402_MAX_AMOUNT (default 1.00; 'unlimited' to disable) and an optional recipient allowlist via NANSEN_X402_ALLOWED_PAYTO (comma-separated addresses).",
+      "description": "Wallet management. x402 auto-payments are guarded by a client-side policy: per-payment USD cap via NANSEN_X402_MAX_AMOUNT (default 1.00; 'unlimited' to disable), cumulative daily cap via NANSEN_X402_DAILY_MAX_AMOUNT (default 10.00; 'unlimited' to disable), optional per-session cap via NANSEN_X402_SESSION_MAX_AMOUNT, and an optional recipient allowlist via NANSEN_X402_ALLOWED_PAYTO (comma-separated addresses). Signed payment attempts are logged to ~/.nansen/x402/payments.jsonl. If a transmitted payment cannot be written to the daily spend ledger, the failure is recorded at ~/.nansen/x402/accounting-failure.jsonl and x402 auto-payment fails closed on this machine until that file is reconciled and removed.",
       "subcommands": {
         "create": {
           "description": "Create a new wallet. Explicitly blank --name values are rejected for local and Privy wallets.",
