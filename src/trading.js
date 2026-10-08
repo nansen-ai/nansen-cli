@@ -1269,9 +1269,15 @@ function isFatalBroadcastError(err) {
     || err?.code === 'INVALID_SIGNED_TX'
     || err?.code === 'RECEIPT_TIMEOUT'
     || err?.code === 'BROADCAST_FAILED'
-    // A revert is a transaction that provably left this process and landed, so
-    // it belongs to the same class: never fall through to the next candidate,
-    // and surface the revert itself rather than a generic "all quotes failed".
+    // A revert IS provably broadcast, but unlike the codes above its outcome is
+    // DEFINITIVE: the receipt says the swap did not execute and the nonce is
+    // burned, so the next candidate signs under a fresh nonce and cannot double-
+    // broadcast. The loop therefore still falls through on a non-final candidate
+    // (see the revert branch in the candidate loop) — deliberately, because a
+    // revert on a stale route is exactly what the next quote is for. This code
+    // exists so the FINAL candidate's revert surfaces itself rather than a
+    // generic "all quotes failed". Note waitForReceipt throws a codeless Error
+    // for a revert; TX_REVERTED is attached only by that final-candidate wrap.
     || err?.code === 'TX_REVERTED';
 }
 
@@ -4202,10 +4208,17 @@ EXAMPLES:
                   chainId: chainConfig.chainId,
                 });
               } catch (wcErr) {
-                log(`  ❌ WalletConnect transaction failed for ${quoteName}: ${wcErr.message}`);
-                if (qi + 1 < endIndex) log(`  Trying next quote...`);
-                lastQuoteError = `${quoteName}: ${wcErr.message}`;
-                continue;
+                // The wallet was already asked to send, and wcExec rejects with a
+                // bare Error(err.message) for EVERY failure — a user rejection, a
+                // 120s approval timeout and a spawn failure are indistinguishable
+                // here. A timeout in particular is the case where the user DID
+                // approve and the wallet DID broadcast while our subprocess gave
+                // up waiting. So this cannot be read as "nothing was sent": it is
+                // ambiguous, and must fail closed rather than sign the next quote
+                // on top of a possibly-live transaction. (This catch used to
+                // `continue`, which bypassed the loop's whole fail-closed path
+                // below — it never reached `catch (quoteErr)`.)
+                throw ambiguousBroadcast(`WalletConnect transaction failed for ${quoteName}: ${wcErr.message} — the wallet may still have broadcast it; check the explorer before retrying.`);
               }
 
               if (wcResult.txHash) {
@@ -4769,7 +4782,22 @@ EXAMPLES:
             // come back with that answer, so from here on no later candidate may
             // hand the claim back on this run's behalf.
             if (quoteErr?.broadcastRuledOut && !handoffAmbiguous) swapHandedOff = false;
-            else if (swapHandedOff) handoffAmbiguous = true;
+            else if (swapHandedOff) {
+              handoffAmbiguous = true;
+              // The swap was already handed to a wallet or the backend, and
+              // nothing in this error proves it stayed put — an uncoded throw is
+              // this client failing to learn the outcome, not the backend saying
+              // "I never sent it". Marking handoffAmbiguous only protected the
+              // CLAIM; the loop still fell through and signed the next candidate
+              // against the same quote. Abort instead, and mark the quote spent
+              // so a later `trade execute --quote <id>` is refused too.
+              //
+              // The paths that legitimately continue are unaffected: a
+              // definitive rejection takes the branch above, and the backend's
+              // "failed, no transaction" answer never throws at all.
+              markQuoteExecuted(quoteId);
+              throw ambiguousBroadcast(`${quoteName} failed after the transaction was handed off: ${quoteErr.message || quoteErr} — the outcome could not be verified, so no further quote will be tried. Check the wallet on the explorer before retrying.`);
+            }
             const msg = quoteErr.message || '';
             log(`  ❌ Quote ${quoteName} failed: ${msg}`);
             if (msg.includes('AccountNotFound') && chainType === 'solana') {
