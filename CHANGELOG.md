@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.1.0
+
+### Minor Changes
+
+- [#728](https://github.com/nansen-ai/nansen-cli/pull/728) [`c5ef96f`](https://github.com/nansen-ai/nansen-cli/commit/c5ef96f63181711304f832f26c5156c8c2d5841c) Thanks [@gulshngill](https://github.com/gulshngill)! - Drop support for Node.js 20 (EOL since April 2026). The minimum supported version is now Node.js 22: `engines.node` is `>=22.0.0`, CI tests on Node 22 and 24, and `nansen doctor` reports Node 20 as below the required version.
+
+- [#584](https://github.com/nansen-ai/nansen-cli/pull/584) [`435ae1a`](https://github.com/nansen-ai/nansen-cli/commit/435ae1a717f7f3771ccce4dd3026851bbccd8166) Thanks [@ygd58](https://github.com/ygd58)! - `nansen wallet list` now prints the standard JSON envelope on stdout, `{"success":true,"data":{"wallets":[...],"defaultWallet":...}}`, so `nansen wallet list | jq .` works and `--pretty`, `--table`, `--format csv` and `--fields` apply to it like any other command. It previously printed a readable summary with no data envelope, which agents could not parse. The output is the same in a terminal and in a pipe; use `--pretty` for readable JSON or `--table` for a table. With no wallets it returns an empty `wallets` list instead of a hint.
+
+- [#727](https://github.com/nansen-ai/nansen-cli/pull/727) [`9404c13`](https://github.com/nansen-ai/nansen-cli/commit/9404c13ec32a063cbc54aba697e6297374993591) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - `nansen wallet show <name>` now prints the standard JSON envelope on stdout, `{"success":true,"data":{"name":...,"provider":...,"evm":...,"solana":...,"createdAt":...,"isDefault":...}}`, so `nansen wallet show main | jq .` works and `--pretty`, `--table`, `--format csv` and `--fields` apply to it. Privy wallets also include `privyWalletIds`. The redacted default of `nansen wallet export <name>` does the same, returning `{"name":...,"redacted":true,"evm":{"address":...},"solana":{"address":...}}` with no key fields. Both previously printed a readable summary that agents could not parse. `wallet export --reveal` and `--file` are unchanged.
+
+### Patch Changes
+
+- [#724](https://github.com/nansen-ai/nansen-cli/pull/724) [`1f2fc6e`](https://github.com/nansen-ai/nansen-cli/commit/1f2fc6e3b76ae9faa66202ba295c1d668ae33a73) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Use the resolved gas limit when signing local EVM swaps, including quotes with both gas and gasLimit fields.
+
+- [#731](https://github.com/nansen-ai/nansen-cli/pull/731) [`f4cf188`](https://github.com/nansen-ai/nansen-cli/commit/f4cf188191b0973d7058381febccf36149cfaba5) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Reject symlinks, hard links, and replaced files when reading saved authentication and trading quotes. Validate authentication lock descriptors before use. Claim bridge quotes before signing and block reuse if a post-broadcast execution marker cannot be saved. Authentication reads now require user-owned paths without group or other write permissions on POSIX; repair permissions before retrying an unsafe saved-key read.
+
+- [#729](https://github.com/nansen-ai/nansen-cli/pull/729) [`7b54c0e`](https://github.com/nansen-ai/nansen-cli/commit/7b54c0e5448f672dadb071a467f7812ad6775581) Thanks [@gulshngill](https://github.com/gulshngill)! - Solana-source bridge routes that are too large to fit in a transaction without address lookup tables (for example a token swap ahead of the bridge deposit) now compile and sign. The CLI fetches the route's lookup tables, checks that each one is active and on-chain, and uses them to compress accounts. Routes that already fit are compiled as before.
+
+- [#733](https://github.com/nansen-ai/nansen-cli/pull/733) [`353629a`](https://github.com/nansen-ai/nansen-cli/commit/353629a5ddf8dcace3fe66cba653e33e41330067) Thanks [@kome12](https://github.com/kome12)! - `trade execute`: accept a capitalised chain name. `trade quote --chain Base` stores the chain exactly as you typed it, but the RPC registry is keyed lowercase, so the quote could be created and then never executed ("No RPC URL configured for chain: Base"). The chain is now normalised once when the quote is loaded, which also fixes quotes already on disk.
+
 ## 2.0.1
 
 ### Patch Changes
