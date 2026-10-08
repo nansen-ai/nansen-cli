@@ -4934,6 +4934,24 @@ describe('confirmEvmBroadcast: binds receipt confirmation to the locally-derived
     vi.unstubAllGlobals();
   });
 
+  it('tags a confirmed on-chain revert with code TX_REVERTED', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      return Promise.resolve({
+        text: () => Promise.resolve(JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id || 1,
+          result: { status: '0x0', blockNumber: '0x100' },
+        })),
+      });
+    }));
+
+    await expect(waitForReceipt('base', '0x' + '22'.repeat(32), 20, 5))
+      .rejects.toMatchObject({ code: 'TX_REVERTED' });
+
+    vi.unstubAllGlobals();
+  });
+
   it('aborts the whole swap on a receipt timeout — never retries the next quote (no duplicate broadcast)', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
@@ -8324,5 +8342,91 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
       await expect(compileRawSolanaTransaction(route, 'http://unused', async () => signer))
         .rejects.toThrow(/too large to compile \(\d+ bytes > 1232 limit\) even with its 1 address lookup table/);
     });
+  });
+});
+
+// ============= Execute: the quote claim and terminal failures =============
+
+describe('trade execute: claim handling and terminal failures', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  // Mirrors the RPC surface a local-wallet EVM swap touches, so the run reaches
+  // the broadcast POST rather than stopping at a preflight check.
+  function stubSwapFetch({ execute, receiptStatus = '0x1' }) {
+    const executeCalls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
+        executeCalls.push(body);
+        const status = execute.status ?? 200;
+        const resp = { ...(execute.body || {}) };
+        // Mirror the real endpoint, which returns the hash of the bytes we sent.
+        // confirmEvmBroadcast binds the receipt to our locally-derived hash, so a
+        // made-up one fails as a substitution rather than reaching the receipt.
+        if (resp.status === 'Success' && resp.txHash === undefined && body.signedTransaction) {
+          resp.txHash = evmTxHash(body.signedTransaction);
+        }
+        return Promise.resolve({
+          ok: status >= 200 && status < 300,
+          status,
+          text: () => Promise.resolve(execute.text ?? JSON.stringify(resp)),
+        });
+      }
+      const rpc = (result) => Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result })) });
+      if (body.method === 'eth_getCode') return rpc('0x6080604052');
+      if (body.method === 'eth_call') return rpc('0x');
+      if (body.method === 'eth_estimateGas') return rpc('0x5208');
+      if (body.method === 'eth_getTransactionCount') return rpc('0x5');
+      if (body.method === 'eth_getTransactionReceipt') return rpc({ status: receiptStatus, blockNumber: '0x100' });
+      return rpc(null);
+    }));
+    return { executeCalls };
+  }
+
+  function saveEthQuote(count = 1) {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    const quote = () => ({
+      aggregator: 'lifi',
+      inputMint: BASE_ETH,
+      outputMint: BASE_USDC,
+      inAmount: '1000000000000000000',
+      outAmount: '3000000000',
+      transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000', maxFeePerGas: '1000000', maxPriorityFeePerGas: '1000000' },
+    });
+    return saveQuote(
+      { success: true, quotes: Array.from({ length: count }, quote) },
+      'base', 'local', null, null,
+      {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: showWallet('default').evm,
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+        }),
+      },
+    );
+  }
+
+  // A revert is a transaction that provably landed. Even though its outcome is
+  // known and the nonce was consumed, this invocation must stop and require the
+  // user to request a fresh quote instead of broadcasting another transaction.
+  it('stops after an on-chain revert instead of trying the next quote', async () => {
+    const { executeCalls } = stubSwapFetch({ execute: { body: { status: 'Success' } }, receiptStatus: '0x0' });
+    const quoteId = saveEthQuote(2);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+    const err = await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(e => e);
+
+    expect(err).toMatchObject({ code: 'TX_REVERTED' });
+    expect(err.message).toContain('request a new quote');
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(line => line.includes('Trying next quote'))).toBe(false);
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
   });
 });
