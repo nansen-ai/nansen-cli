@@ -270,8 +270,10 @@ function assertUsableTxId(body, chainType) {
 // A readable application-level failure can still describe a transaction that
 // was broadcast. The identifier is evidence of handoff, so callers must retain
 // the quote claim and stop rather than treating the response as "nothing sent".
-function hashBearingFailure(result, label) {
-  const txId = result?.signature || result?.txHash;
+function hashBearingFailure(result, label, chainType) {
+  const txId = chainType === 'evm'
+    ? result?.txHash
+    : (result?.signature || result?.txHash);
   if (!txId) return null;
   const error = ambiguousBroadcast(
     `${label} reported ${result.status || 'failure'} with transaction identifier ${txId}. The transaction may have been broadcast, so no further quote will be tried. Check it on-chain before requesting a fresh quote.`,
@@ -3742,7 +3744,7 @@ EXAMPLES:
                     }
                     const revokeResult = await executeTransaction({ signedTransaction: signedRevoke, chain, simulate: !noSimulate });
                     if (revokeResult.status !== 'Success') {
-                      const handedOffFailure = hashBearingFailure(revokeResult, `Allowance revoke for ${quoteName}`);
+                      const handedOffFailure = hashBearingFailure(revokeResult, `Allowance revoke for ${quoteName}`, 'evm');
                       if (handedOffFailure) {
                         ancillaryHandedOff = true;
                         throw handedOffFailure;
@@ -3801,7 +3803,7 @@ EXAMPLES:
                   }
                   const approvalResult = await executeTransaction({ signedTransaction: signedApproval, chain, simulate: !noSimulate });
                   if (approvalResult.status !== 'Success') {
-                    const handedOffFailure = hashBearingFailure(approvalResult, `Approval for ${quoteName}`);
+                    const handedOffFailure = hashBearingFailure(approvalResult, `Approval for ${quoteName}`, 'evm');
                     if (handedOffFailure) {
                       ancillaryHandedOff = true;
                       throw handedOffFailure;
@@ -4112,7 +4114,7 @@ EXAMPLES:
                           simulate: !noSimulate,
                         });
                         if (broadcastResult.status !== 'Success') {
-                          const handedOffFailure = hashBearingFailure(broadcastResult, `Allowance revoke for ${quoteName}`);
+                          const handedOffFailure = hashBearingFailure(broadcastResult, `Allowance revoke for ${quoteName}`, 'evm');
                           if (handedOffFailure) {
                             ancillaryHandedOff = true;
                             throw handedOffFailure;
@@ -4172,7 +4174,7 @@ EXAMPLES:
                         simulate: !noSimulate,
                       });
                       if (broadcastResult.status !== 'Success') {
-                        const handedOffFailure = hashBearingFailure(broadcastResult, `Approval for ${quoteName}`);
+                        const handedOffFailure = hashBearingFailure(broadcastResult, `Approval for ${quoteName}`, 'evm');
                         if (handedOffFailure) {
                           ancillaryHandedOff = true;
                           throw handedOffFailure;
@@ -4461,7 +4463,7 @@ EXAMPLES:
                     });
 
                     if (revokeResult.status !== 'Success') {
-                      const handedOffFailure = hashBearingFailure(revokeResult, `Allowance revoke for ${quoteName}`);
+                      const handedOffFailure = hashBearingFailure(revokeResult, `Allowance revoke for ${quoteName}`, 'evm');
                       if (handedOffFailure) {
                         ancillaryHandedOff = true;
                         throw handedOffFailure;
@@ -4514,7 +4516,7 @@ EXAMPLES:
                   });
 
                   if (approvalResult.status !== 'Success') {
-                    const handedOffFailure = hashBearingFailure(approvalResult, `Approval for ${quoteName}`);
+                    const handedOffFailure = hashBearingFailure(approvalResult, `Approval for ${quoteName}`, 'evm');
                     if (handedOffFailure) {
                       ancillaryHandedOff = true;
                       throw handedOffFailure;

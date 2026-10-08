@@ -8697,6 +8697,43 @@ describe('trade execute: claim handling and terminal failures', () => {
     delete process.env.NANSEN_WALLET_PASSWORD;
   });
 
+  // Same invariant through the OUTER catch rather than a local one: Solana WC
+  // sets swapHandedOff before signing, so an uncoded throw from it used to set
+  // handoffAmbiguous (protecting only the claim) and then continue.
+  it('aborts instead of trying the next quote when Solana WalletConnect signing throws', async () => {
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
+    const signSpy = vi.spyOn(wcTrading, 'sendSolanaTransactionViaWalletConnect')
+      .mockRejectedValue(new Error('Command failed: walletconnect send-transaction (timeout)'));
+
+    const txBase64 = Buffer.concat([
+      Buffer.from([0x01]),
+      Buffer.alloc(64),
+      Buffer.from([0x01, 0x00, 0x01, 0x02, ...Buffer.alloc(96), 0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00]),
+    ]).toString('base64');
+
+    const solQuote = () => ({
+      aggregator: 'jupiter',
+      inputMint: SOL_MINT,
+      outputMint: SOL_USDC,
+      inAmount: '1000000000',
+      outAmount: '50000000',
+      transaction: txBase64,
+    });
+    const quoteId = saveQuote(
+      { success: true, quotes: [solQuote(), solQuote()] },
+      'solana', 'walletconnect', null, null,
+      { swapMode: 'exactIn', request: solanaIntent({ walletAddress: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM' }) },
+    );
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    expect(signSpy).toHaveBeenCalledTimes(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+  });
+
   it('fails closed when Solana reports success without a transaction identifier', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
