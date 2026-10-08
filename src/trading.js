@@ -199,6 +199,74 @@ export async function getQuote(params) {
  * @param {boolean} [params.simulate] - Run pre-broadcast simulation
  * @returns {Promise<object>} Execution result
  */
+/**
+ * `ambiguousBroadcast` is the default for every failure after the signed payload
+ * is handed to fetch. An HTTP status describes the response, not whether the
+ * backend forwarded the transaction before producing it: 408/429 and even an
+ * intermediary-generated 400/409 can arrive after processing began. Until the
+ * execute API has a documented, authenticated field that explicitly guarantees
+ * pre-broadcast rejection, no response from this endpoint may authorize signing
+ * the next candidate.
+ */
+function ambiguousBroadcast(message, { status, details } = {}) {
+  // Deliberately never carries broadcastRuledOut. BROADCAST_FAILED is classified
+  // fatal by isFatalBroadcastError, so the caller aborts the whole execute.
+  return Object.assign(new Error(message), { code: 'BROADCAST_FAILED', status, details });
+}
+
+/**
+ * A JSON body the branches below can read fields off. JSON.parse also succeeds
+ * on `null`, an array and a bare string or number, none of which carry the
+ * diagnostic fields used below.
+ */
+function isReadableBody(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * A transaction identifier is not decoration: it reaches the explorer URL, the
+ * quote's persisted broadcast marker and receipt polling. A value of the wrong
+ * shape is worse than none at all — it produces a link to nothing and a marker
+ * that cannot be checked — so a malformed one is an unverifiable outcome, not a
+ * cosmetic defect.
+ *
+ * Only presence was checked before, and presence is a weak test: `signature:
+ * {}`, `signature: "not-a-signature"` and a non-string `txHash` are all truthy.
+ * Validating at this one boundary covers every execution path, because this is
+ * where they all read the response — a per-call-site check would have to be
+ * repeated for each new broadcaster. Presence remains the caller's business,
+ * since only it knows whether a local hash exists to fall back on.
+ */
+function assertUsableTxId(body, chainType) {
+  const check = (field, label, isValid) => {
+    const value = body[field];
+    // Absent is not malformed. Whether an identifier is REQUIRED depends on the
+    // execution mode (gasless EVM and Solana have no locally derived hash), so
+    // that call stays at the call site.
+    if (value === undefined || value === null || value === '') return;
+    if (typeof value !== 'string' || !isValid(value)) {
+      throw ambiguousBroadcast(
+        `The execute endpoint reported ${body.status} with an unusable ${label} (${JSON.stringify(value)}), so the transaction cannot be identified or verified. It may still be live — check the wallet on the explorer before retrying.`,
+        { details: body },
+      );
+    }
+  };
+
+  if (chainType === 'solana') {
+    // A Solana signature is 64 bytes, base58-encoded. `txHash` is read as an
+    // alias for it on this chain, so it has to satisfy the same rule.
+    const isSignature = (v) => {
+      try { return base58Decode(v).length === 64; } catch { return false; }
+    };
+    check('signature', 'transaction signature', isSignature);
+    check('txHash', 'transaction signature', isSignature);
+  } else if (chainType === 'evm') {
+    // 32 bytes of hex. The 0x is optional because a broadcaster may report the
+    // hash bare — assertTxHashMatch normalizes both sides before comparing.
+    check('txHash', 'transaction hash', (v) => /^(0x)?[0-9a-fA-F]{64}$/.test(v));
+  }
+}
+
 export async function executeTransaction(params, { retries = 2, retryDelayMs = 1500 } = {}) {
   const headers = {
     'Content-Type': 'application/json',
@@ -228,10 +296,7 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       // the SAME signed bytes (a byte-identical replay a node dedupes), so a
       // retry here can't itself double-broadcast; only exhausting them fails
       // closed at the caller (isFatalBroadcastError → mark the quote spent).
-      lastError = Object.assign(
-        new Error(`Execute POST to /execute failed: ${netErr.message}`),
-        { code: 'BROADCAST_FAILED' }
-      );
+      lastError = ambiguousBroadcast(`Execute POST to /execute failed: ${netErr.message}`);
       if (attempt < retries) continue;
       throw lastError;
     }
@@ -245,10 +310,7 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       // fail closed as BROADCAST_FAILED rather than surface a codeless error the
       // candidate loop would treat as nonfatal. A retry re-sends byte-identical
       // bytes a node dedupes.
-      lastError = Object.assign(
-        new Error(`Execute response body read failed (status ${res.status}): ${bodyErr.message}`),
-        { code: 'BROADCAST_FAILED', status: res.status }
-      );
+      lastError = ambiguousBroadcast(`Execute response body read failed (status ${res.status}): ${bodyErr.message}`, { status: res.status });
       if (res.status >= 500 && attempt < retries) continue;
       throw lastError;
     }
@@ -285,31 +347,56 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
             ? ' This often means the transaction failed simulation — check that you have enough ETH for gas fees.'
             : ''
         : '';
-      lastError = Object.assign(
-        new Error(`Execute API returned ${res.status} — treating as an ambiguous broadcast failure; the transaction may already be live.${feeHint}`),
-        { code: 'BROADCAST_FAILED', status: res.status, details: parsed ? body : text.slice(0, 200) }
+      lastError = ambiguousBroadcast(
+        `Execute API returned ${res.status} — treating as an ambiguous broadcast failure; the transaction may already be live.${feeHint}`,
+        { status: res.status, details: parsed ? body : text.slice(0, 200) }
       );
       // Retry (re-POSTs byte-identical bytes) then fail closed at the caller.
       if (attempt < retries) continue;
       throw lastError;
     }
 
-    if (!parsed) {
-      // Non-JSON on a sub-500 status (a Cloudflare challenge or HTML error
-      // page). A clean sub-500 HTTP response is a definitive edge/backend
-      // rejection, so it stays nonfatal and leaves the quote reusable.
-      lastError = Object.assign(
-        new Error(`Execute API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`),
-        { code: 'EXECUTE_ERROR', status: res.status, details: text.slice(0, 200) }
+    // A non-2xx status does not prove the signed transaction stayed put. The
+    // backend or an intermediary may have produced the response after forwarding
+    // it, so preserve any structured error only as diagnostic detail and fail
+    // closed. Do not allow the candidate loop to sign another transaction.
+    if (!res.ok) {
+      const readableBody = parsed && isReadableBody(body);
+      throw ambiguousBroadcast(
+        readableBody
+          ? `${body.message || `Execute request failed with status ${res.status}`} — the response does not prove the transaction was rejected before broadcast.`
+          : `Execute API returned an uninterpretable error response (status ${res.status}) — the response does not prove the transaction was rejected before broadcast.`,
+        {
+          status: res.status,
+          details: readableBody ? body : text.slice(0, 200),
+        }
       );
-      throw lastError;
     }
 
-    if (!res.ok) {
-      const code = body.code || 'EXECUTE_ERROR';
-      const msg = body.message || `Execute request failed with status ${res.status}`;
-      throw Object.assign(new Error(msg), { code, status: res.status, details: body.details });
+    // 2xx: the endpoint ACCEPTED the request. Everything from here on is about
+    // reading its answer — and if we cannot read it, we do not know what it did
+    // with the signed transaction. That is not the backend saying "I never
+    // broadcast"; it is this client failing to understand the reply, so it is
+    // ambiguous and fails closed.
+    if (!parsed || !isReadableBody(body)) {
+      throw ambiguousBroadcast(
+        `The execute endpoint returned a ${res.status} this client cannot interpret, so the outcome cannot be verified. The transaction may still be live — check the wallet on the explorer before retrying.`,
+        { status: res.status, details: text.slice(0, 200) }
+      );
     }
+
+    // A readable object is not necessarily a valid acknowledgement. Only the
+    // documented terminal statuses are safe for callers to interpret; treating
+    // a missing or unknown status as an ordinary failure could make the quote
+    // loop broadcast another candidate after an incomplete success response.
+    if (body.status !== 'Success' && body.status !== 'Failed') {
+      throw ambiguousBroadcast(
+        `The execute endpoint returned an invalid application status (${JSON.stringify(body.status)}), so the outcome cannot be verified. The transaction may still be live — check the wallet on the explorer before retrying.`,
+        { status: res.status, details: body },
+      );
+    }
+
+    assertUsableTxId(body, chainConfigFor(params.chain)?.type);
 
     return body;
   }
@@ -4523,7 +4610,19 @@ EXAMPLES:
             const result = await executeTransaction(execParams, { retries: gasless ? 0 : undefined });
 
             if (result.status === 'Success') {
-              let txId = result.signature || result.txHash;
+              const gaslessEvm = gasless && chainType === 'evm';
+              // `signature` is a Solana field. Reading it on EVM let a stray one
+              // win over the real `txHash` and reach the explorer URL and the
+              // persisted broadcast marker; executeTransaction has already
+              // validated the shape of whichever field is used here.
+              let txId = chainType === 'evm' ? result.txHash : (result.signature || result.txHash);
+              if ((chainType === 'solana' || gaslessEvm) && !txId) {
+                const executionType = gaslessEvm ? 'gasless EVM' : 'Solana';
+                throw ambiguousBroadcast(
+                  `The execute API reported success for ${quoteName} without a ${executionType} transaction identifier. The broadcast cannot be verified, so no further quote will be tried. Check the wallet on the explorer before retrying.`,
+                  { details: result },
+                );
+              }
               let explorerUrl = chainConfig.explorer + txId;
 
               // The transaction is on-chain (or in flight) the instant the
@@ -4588,7 +4687,7 @@ EXAMPLES:
 
               log(`\n  ✓ Transaction successful!`);
               log(`    Status:      ${result.status}`);
-              log(`    ${result.signature ? 'Signature' : 'Tx Hash'}:   ${txId}`);
+              log(`    ${chainType === 'solana' ? 'Signature' : 'Tx Hash'}:   ${txId}`);
               log(`    Chain:       ${chainConfig.name} (${result.chainType})`);
               log(`    Broadcaster: ${result.broadcaster}`);
               log(`    Explorer:    ${explorerUrl}`);
@@ -4642,8 +4741,16 @@ EXAMPLES:
               // tell from here whether the hash means the tx actually went
               // out, but the asymmetry favors marking: a needless re-quote
               // is cheaper than a silent double broadcast.
-              const failedTxId = result.signature || result.txHash;
-              if (failedTxId) markQuoteExecuted(quoteId, { broadcast: { txHash: failedTxId } });
+              const failedTxId = chainType === 'evm'
+                ? result.txHash
+                : (result.signature || result.txHash);
+              if (failedTxId) {
+                markQuoteExecuted(quoteId, { broadcast: { txHash: failedTxId } });
+                throw ambiguousBroadcast(
+                  `${quoteName} reported ${result.status} with transaction identifier ${failedTxId}. The transaction may have been broadcast, so no further quote will be tried. Check it on-chain before requesting a fresh quote.`,
+                  { details: result },
+                );
+              }
               lastQuoteError = `${quoteName}: ${result.error || result.status}`;
               if (qi + 1 < endIndex) log(`  Trying next quote...`);
             }

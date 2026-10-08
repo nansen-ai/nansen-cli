@@ -267,9 +267,9 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     const flags = { 'no-simulate': true, 'no-verify-outcome': true };
 
-    // Single-candidate quote, so the Failed result exhausts the loop.
+    // A transaction identifier means the failed result may still have broadcast.
     await expect(cmds.execute([], screenApi, flags, { quote: quoteId }))
-      .rejects.toThrow(/all quotes failed/i);
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
     expect(executeBodies).toHaveLength(1);
 
     const quoteFile = JSON.parse(fs.readFileSync(path.join(getQuotesDir(), `${quoteId}.json`), 'utf8'));
