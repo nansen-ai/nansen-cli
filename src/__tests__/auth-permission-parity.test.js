@@ -63,7 +63,7 @@ it('rejects old read grants rather than broadening their permissions', () => {
   b.scope = 'nansen:api'; const parts = b.accessToken.split('.'); const claims = JSON.parse(Buffer.from(parts[1], 'base64url')); claims.scope = 'nansen:read'; parts[1] = Buffer.from(JSON.stringify(claims)).toString('base64url'); b.accessToken = parts.join('.'); expect(() => validateSession(b)).toThrow();
 });
 it('keeps third-party trading service quote and signed-transaction submission credential-free', async () => {
-  const fetch = vi.fn(async () => new Response('{}')); vi.stubGlobal('fetch', fetch);
+  const fetch = vi.fn(async url => new Response(JSON.stringify(String(url).endsWith('/execute') ? { status: 'Failed' } : {}))); vi.stubGlobal('fetch', fetch);
   await getQuote({ chain: 'base' }); await executeTransaction({ signedTransaction: 'synthetic-only' }, { retries: 0 });
   for (const [,options] of fetch.mock.calls) { expect(options.headers.Authorization).toBeUndefined(); expect(options.headers.apikey).toBeUndefined(); }
 });
