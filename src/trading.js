@@ -452,9 +452,22 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
     }
 
     if (!parsed) {
-      // Non-JSON on a sub-500 status (a Cloudflare challenge or HTML error
-      // page). A clean sub-500 HTTP response is a definitive edge/backend
-      // rejection, so it stays nonfatal and leaves the quote reusable.
+      // A 2xx we cannot read is NOT a rejection. The endpoint accepted the
+      // request — an empty 200, a 204, an HTML page from something in front of
+      // the backend — and we simply cannot tell what it did with the signed
+      // transaction. Falling into the branch below would mark it
+      // broadcastRuledOut, hand the quote claim back and let the candidate loop
+      // broadcast a second swap. Only a NON-2xx can be read as "never
+      // broadcast": that is the status saying the request was refused.
+      if (isStandard && res.ok) {
+        throw Object.assign(
+          new Error(`The execution endpoint returned an unreadable ${res.status} response, so the outcome cannot be verified. The swap may still be live — check the wallet on the explorer before retrying.`),
+          { code: 'BROADCAST_FAILED', status: res.status, details: text.slice(0, 200) }
+        );
+      }
+      // Non-JSON on a sub-500, non-2xx status (a Cloudflare challenge or HTML
+      // error page). The status itself is the rejection, so it stays nonfatal
+      // and leaves the quote reusable.
       lastError = Object.assign(
         new Error(`Execute API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`),
         { code: 'EXECUTE_ERROR', status: res.status, details: text.slice(0, 200), broadcastRuledOut: true }

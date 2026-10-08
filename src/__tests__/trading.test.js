@@ -4343,6 +4343,36 @@ describe('executeTransaction — standard execution route', () => {
     expect(res).toMatchObject({ status: 'Failed', error: 'QUOTE_EXPIRED' });
   });
 
+  it.each([
+    ['an empty 200 body', { status: 200, text: '' }],
+    ['a 204 with no content', { status: 204, text: '' }],
+    ['an HTML 200 page', { status: 200, text: '<html>ok</html>' }],
+  ])('fails closed on %s from the standard route', async (_label, spec) => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([spec]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    ).catch(e => e);
+    // The endpoint accepted the request; an unreadable body is not it saying
+    // "I never broadcast".
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('still rules out a broadcast for a non-JSON NON-2xx on the standard route', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 400, text: '<html>bad request</html>' }]);
+
+    // The status is the rejection, so the quote stays reusable — the 2xx guard
+    // above must not over-correct into burning quotes the backend refused.
+    await expect(executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    )).rejects.toMatchObject({ code: 'EXECUTE_ERROR', status: 400, broadcastRuledOut: true });
+  });
+
   it('classifies a non-JSON 409 on the standard route as a fatal broadcast failure', async () => {
     const { executeTransaction } = await import('../trading.js');
     stubExecuteFetch([{ status: 409, text: '<html>conflict</html>' }]);
@@ -4480,7 +4510,9 @@ describe('standard execution route — swap command flow', () => {
         if (!spec.noHash && resp.success && resp.txHash === undefined && body.signedTransaction) {
           resp.txHash = evmTxHash(body.signedTransaction);
         }
-        return Promise.resolve({ ok: status >= 200 && status < 300, status, text: () => Promise.resolve(JSON.stringify(resp)) });
+        // `raw` stubs a body that is not JSON at all (an empty 200, an HTML page).
+        const payload = spec.raw !== undefined ? spec.raw : JSON.stringify(resp);
+        return Promise.resolve({ ok: status >= 200 && status < 300, status, text: () => Promise.resolve(payload) });
       }
       if (urlStr.includes('trading-api') && urlStr.includes('/bridge/status')) {
         return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'DONE', substatus: 'COMPLETED' })) });
@@ -4588,6 +4620,19 @@ describe('standard execution route — swap command flow', () => {
     expect(executeCalls).toHaveLength(1);
     expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
     // Quote is burned so a later re-execute is refused.
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
+  it('aborts on an unreadable 2xx without broadcasting the next quote', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ raw: '' }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
     expect(() => loadQuote(quoteId)).toThrow();
   });
 
