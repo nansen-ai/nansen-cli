@@ -4751,7 +4751,13 @@ EXAMPLES:
               const failedTxId = chainType === 'evm'
                 ? result.txHash
                 : (result.signature || result.txHash);
-              if (failedTxId) markQuoteExecuted(quoteId, { broadcast: { txHash: failedTxId } });
+              if (failedTxId) {
+                markQuoteExecuted(quoteId, { broadcast: { txHash: failedTxId } });
+                throw ambiguousBroadcast(
+                  `${quoteName} reported ${result.status} with transaction identifier ${failedTxId}. The transaction may have been broadcast, so no further quote will be tried. Check it on-chain before requesting a fresh quote.`,
+                  { details: result },
+                );
+              }
               lastQuoteError = `${quoteName}: ${result.error || result.status}`;
               if (qi + 1 < endIndex) log(`  Trying next quote...`);
             }

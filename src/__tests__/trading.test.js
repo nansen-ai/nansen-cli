@@ -8401,10 +8401,6 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
 
 // ============= Execute response classification =============
 
-// Once the signed payload has been handed to fetch, an HTTP response does not
-// prove whether the backend forwarded it before replying. Ambiguous is therefore
-// the default, so no response shape or status can be read as "safe to retry"
-// until the API provides a documented explicit pre-broadcast signal.
 describe('executeTransaction: response classification', () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -8481,13 +8477,6 @@ describe('executeTransaction: response classification', () => {
     expect(err.broadcastRuledOut).toBeUndefined();
   });
 
-  // The identifier reaches the explorer URL, the persisted broadcast marker and
-  // receipt polling, so a malformed one is an unverifiable outcome rather than a
-  // cosmetic defect. Presence alone was the old test, and presence is weak: an
-  // empty object and an arbitrary string are both truthy.
-  const EVM_HASH = '0x' + 'ab'.repeat(32);
-  const SOL_SIG = base58Encode(Buffer.alloc(64, 7));
-
   it.each([
     ['an object signature', 'solana', { signature: {} }],
     ['a non-base58 signature', 'solana', { signature: 'not-a-signature!!' }],
@@ -8507,10 +8496,10 @@ describe('executeTransaction: response classification', () => {
   });
 
   it.each([
-    ['a base58 signature on Solana', 'solana', { signature: SOL_SIG }],
-    ['a signature carried as txHash on Solana', 'solana', { txHash: SOL_SIG }],
-    ['a 0x-prefixed hash on EVM', 'base', { txHash: EVM_HASH }],
-    ['a bare hex hash on EVM', 'base', { txHash: EVM_HASH.slice(2) }],
+    ['a base58 signature on Solana', 'solana', { signature: FIXTURE_SOL_SIG }],
+    ['a signature carried as txHash on Solana', 'solana', { txHash: FIXTURE_SOL_SIG }],
+    ['a 0x-prefixed hash on EVM', 'base', { txHash: FIXTURE_EVM_HASH }],
+    ['a bare hex hash on EVM', 'base', { txHash: FIXTURE_EVM_HASH.slice(2) }],
     ['no identifier at all', 'base', {}],
   ])('accepts %s', async (_label, chain, fields) => {
     stubExecute({ text: JSON.stringify({ status: 'Success', ...fields }) });
@@ -8623,22 +8612,19 @@ describe('trade execute: claim handling and terminal failures', () => {
   });
 
   it('persists the EVM txHash instead of a stray Solana signature on failure', async () => {
-    stubSwapFetch({
-      execute: {
-        body: {
-          status: 'Failed',
-          error: 'broadcast failed',
-          signature: 'not-an-evm-transaction-id',
-          txHash: FIXTURE_EVM_HASH,
-        },
-      },
+    const { executeCalls } = stubSwapFetch({
+      execute: { body: {
+        status: 'Failed', error: 'broadcast failed',
+        signature: 'not-an-evm-transaction-id', txHash: FIXTURE_EVM_HASH,
+      } },
     });
-    const quoteId = saveEthQuote(1);
+    const quoteId = saveEthQuote(2);
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
-      .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
 
+    expect(executeCalls).toHaveLength(1);
     expect(() => loadQuote(quoteId)).toThrow(new RegExp(`already executed.*${FIXTURE_EVM_HASH}`, 's'));
     delete process.env.NANSEN_WALLET_PASSWORD;
   });
