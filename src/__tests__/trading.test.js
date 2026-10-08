@@ -8326,3 +8326,246 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
     });
   });
 });
+
+// ============= Execute response classification =============
+
+// `executeTransaction` reports a failure in exactly one of two ways, and the
+// difference decides whether the candidate loop may sign a second transaction:
+//
+//   rejectedPreBroadcast — the status or the backend says nothing was broadcast
+//   ambiguousBroadcast   — anything else, which fails closed
+//
+// Ambiguous is the DEFAULT, so a response shape nobody anticipated cannot be
+// read as "safe to retry". These tests pin that default.
+describe('executeTransaction: response classification', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  function stubExecute({ status = 200, text = '{}' }) {
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      calls.push({ url: String(url), body: JSON.parse(opts.body) });
+      return Promise.resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        text: () => Promise.resolve(text),
+      });
+    }));
+    return calls;
+  }
+
+  const run = async (opts = {}) => {
+    const { executeTransaction } = await import('../trading.js');
+    return executeTransaction({ signedTransaction: '0xsigned', chain: 'base' }, { retries: 0, ...opts });
+  };
+
+  it('returns a readable 2xx body unchanged', async () => {
+    stubExecute({ text: JSON.stringify({ status: 'Success', txHash: '0xabc' }) });
+    await expect(run()).resolves.toMatchObject({ status: 'Success', txHash: '0xabc' });
+  });
+
+  it.each([
+    ['an empty body', ''],
+    ['an HTML page', '<html>ok</html>'],
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['a bare string', '"nope"'],
+    ['a bare number', '0'],
+  ])('fails closed on a 2xx carrying %s', async (_label, text) => {
+    stubExecute({ status: 200, text });
+    const err = await run().catch(e => e);
+    // The endpoint ACCEPTED the request. An unreadable answer is this client
+    // failing to understand it, not the backend saying it never broadcast.
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 200 });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('fails closed on a 204 with no content', async () => {
+    stubExecute({ status: 204, text: '' });
+    const err = await run().catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it.each([
+    ['a non-JSON page', '<html>bad request</html>', 'EXECUTE_ERROR'],
+    ['null', 'null', 'EXECUTE_ERROR'],
+    ['an array', '[]', 'EXECUTE_ERROR'],
+  ])('rules out a broadcast for a 4xx carrying %s', async (_label, text, code) => {
+    stubExecute({ status: 400, text });
+    // Reading body.code off null used to throw a TypeError, which carries
+    // neither a code nor the pre-broadcast marker — so the loop treated it as
+    // neither fatal nor a rejection and stranded the quote claim.
+    await expect(run()).rejects.toMatchObject({ code, status: 400, broadcastRuledOut: true });
+  });
+
+  it('surfaces the backend code on a structured 4xx and rules out a broadcast', async () => {
+    stubExecute({ status: 400, text: JSON.stringify({ code: 'QUOTE_EXPIRED', message: 'quote expired' }) });
+    await expect(run()).rejects.toMatchObject({ code: 'QUOTE_EXPIRED', status: 400, broadcastRuledOut: true });
+  });
+
+  it('never rules out a broadcast for a 5xx, whatever the body', async () => {
+    stubExecute({ status: 502, text: JSON.stringify({ code: 'UPSTREAM_TIMEOUT' }) });
+    const err = await run().catch(e => e);
+    // The gateway may have forwarded the signed tx before failing.
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 502 });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('never rules out a broadcast when the POST itself failed', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('socket hang up')));
+    const err = await run().catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+});
+
+// ============= Execute: the quote claim and terminal failures =============
+
+describe('trade execute: claim handling and terminal failures', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  // Mirrors the RPC surface a local-wallet EVM swap touches, so the run reaches
+  // the broadcast POST rather than stopping at a preflight check.
+  function stubSwapFetch({ execute, receiptStatus = '0x1' }) {
+    const executeCalls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
+        executeCalls.push(body);
+        const status = execute.status ?? 200;
+        const resp = { ...(execute.body || {}) };
+        // Mirror the real endpoint, which returns the hash of the bytes we sent.
+        // confirmEvmBroadcast binds the receipt to our locally-derived hash, so a
+        // made-up one fails as a substitution rather than reaching the receipt.
+        if (resp.status === 'Success' && resp.txHash === undefined && body.signedTransaction) {
+          resp.txHash = evmTxHash(body.signedTransaction);
+        }
+        return Promise.resolve({
+          ok: status >= 200 && status < 300,
+          status,
+          text: () => Promise.resolve(execute.text ?? JSON.stringify(resp)),
+        });
+      }
+      const rpc = (result) => Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result })) });
+      if (body.method === 'eth_getCode') return rpc('0x6080604052');
+      if (body.method === 'eth_call') return rpc('0x');
+      if (body.method === 'eth_estimateGas') return rpc('0x5208');
+      if (body.method === 'eth_getTransactionCount') return rpc('0x5');
+      if (body.method === 'eth_getTransactionReceipt') return rpc({ status: receiptStatus, blockNumber: '0x100' });
+      return rpc(null);
+    }));
+    return { executeCalls };
+  }
+
+  function saveEthQuote(count = 1) {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    const quote = () => ({
+      aggregator: 'lifi',
+      inputMint: BASE_ETH,
+      outputMint: BASE_USDC,
+      inAmount: '1000000000000000000',
+      outAmount: '3000000000',
+      transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000', maxFeePerGas: '1000000', maxPriorityFeePerGas: '1000000' },
+    });
+    return saveQuote(
+      { success: true, quotes: Array.from({ length: count }, quote) },
+      'base', 'local', null, null,
+      {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: showWallet('default').evm,
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+        }),
+      },
+    );
+  }
+
+  // The branches that raise a definitive rejection promise the quote stays
+  // reusable. Without the claim release the finalizer silently kept it, and a
+  // fully-rejected run stranded a quote that was still good.
+  it('releases the local claim when the endpoint definitively rejected the request', async () => {
+    stubSwapFetch({ execute: { status: 400, body: { code: 'QUOTE_EXPIRED', message: 'quote expired' } } });
+    const quoteId = saveEthQuote(1);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+
+    expect(() => loadQuote(quoteId)).not.toThrow();
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('releases the local claim when the endpoint reported a failure with no hash', async () => {
+    stubSwapFetch({ execute: { body: { status: 'Failed', error: 'no route' } } });
+    const quoteId = saveEthQuote(1);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+
+    expect(() => loadQuote(quoteId)).not.toThrow();
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  // A revert is a transaction that provably landed, so it must surface as the
+  // revert rather than a generic "all quotes failed".
+  it('reports an on-chain revert as TX_REVERTED, not ALL_QUOTES_FAILED', async () => {
+    stubSwapFetch({ execute: { body: { status: 'Success' } }, receiptStatus: '0x0' });
+    const quoteId = saveEthQuote(1);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'TX_REVERTED' });
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  // The wallet may already have broadcast before returning an incomplete
+  // response, so this must never fall through to a POST with nothing to send.
+  it('stops when WalletConnect returns neither a hash nor signed bytes', async () => {
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({});
+    const { executeCalls } = stubSwapFetch({ execute: { body: { status: 'Success' } } });
+
+    const quoteId = saveQuote(
+      {
+        success: true,
+        quotes: [{
+          aggregator: 'lifi',
+          inputMint: BASE_ETH,
+          outputMint: BASE_USDC,
+          inAmount: '1000000000000000000',
+          outAmount: '3000000000',
+          transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000' },
+        }, {
+          aggregator: 'lifi',
+          inputMint: BASE_ETH,
+          outputMint: BASE_USDC,
+          inAmount: '1000000000000000000',
+          outAmount: '3000000000',
+          transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000' },
+        }],
+      },
+      'base', 'walletconnect', null, null,
+      {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+        }),
+      },
+    );
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    // Nothing was POSTed, and the second candidate was never prompted for.
+    expect(executeCalls).toHaveLength(0);
+  });
+});
