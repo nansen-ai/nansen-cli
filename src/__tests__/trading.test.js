@@ -5006,6 +5006,24 @@ describe('confirmEvmBroadcast: binds receipt confirmation to the locally-derived
     vi.unstubAllGlobals();
   });
 
+  it('tags a confirmed on-chain revert with code TX_REVERTED', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      return Promise.resolve({
+        text: () => Promise.resolve(JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id || 1,
+          result: { status: '0x0', blockNumber: '0x100' },
+        })),
+      });
+    }));
+
+    await expect(waitForReceipt('base', '0x' + '22'.repeat(32), 20, 5))
+      .rejects.toMatchObject({ code: 'TX_REVERTED' });
+
+    vi.unstubAllGlobals();
+  });
+
   it('aborts the whole swap on a receipt timeout — never retries the next quote (no duplicate broadcast)', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
@@ -8595,6 +8613,25 @@ describe('trade execute: claim handling and terminal failures', () => {
       },
     );
   }
+
+  // A revert is a transaction that provably landed. Even though its outcome is
+  // known and the nonce was consumed, this invocation must stop and require the
+  // user to request a fresh quote instead of broadcasting another transaction.
+  it('stops after an on-chain revert instead of trying the next quote', async () => {
+    const { executeCalls } = stubSwapFetch({ execute: { body: { status: 'Success' } }, receiptStatus: '0x0' });
+    const quoteId = saveEthQuote(2);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+    const err = await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(e => e);
+
+    expect(err).toMatchObject({ code: 'TX_REVERTED' });
+    expect(err.message).toContain('request a new quote');
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(line => line.includes('Trying next quote'))).toBe(false);
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
 
   // Even a structured 4xx only proves what response came back, not whether the
   // backend forwarded the signed transaction first. It must consume the quote
