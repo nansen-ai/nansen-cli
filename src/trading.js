@@ -475,6 +475,32 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       throw lastError;
     }
 
+    // JSON.parse succeeding does not mean we got an object: `null`, `[]`, a bare
+    // string and a bare number all parse. None of them carry the fields every
+    // branch below reads, and `body.code` on `null` throws a TypeError — which
+    // has no code, so the candidate loop treats it as neither fatal nor a
+    // definitive rejection and simply moves on to the next quote. Classify the
+    // shape here, before anything reads a field off it.
+    //
+    // Both routes. The split is the same one the unreadable-body branch above
+    // makes: a 2xx means the endpoint accepted the request and we cannot tell
+    // what it did, so fail closed; a non-2xx is the status itself refusing the
+    // request, so the quote stays reusable. Legacy is included deliberately —
+    // it has no single-flight lock, so a body it cannot read is if anything
+    // more dangerous there, not less.
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      if (res.ok) {
+        throw Object.assign(
+          new Error(`The execute endpoint returned a ${res.status} with a body this client cannot interpret, so the outcome cannot be verified. The swap may still be live — check the wallet on the explorer before retrying.`),
+          { code: 'BROADCAST_FAILED', status: res.status, details: text.slice(0, 200) }
+        );
+      }
+      throw Object.assign(
+        new Error(`Execute request failed with status ${res.status}`),
+        { code: 'EXECUTE_ERROR', status: res.status, details: text.slice(0, 200), broadcastRuledOut: true }
+      );
+    }
+
     if (!res.ok) {
       // Everything ambiguous has been classified above: a network error, a
       // truncated body and ANY 5xx are already BROADCAST_FAILED, and EVERY

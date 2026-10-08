@@ -4361,6 +4361,46 @@ describe('executeTransaction — standard execution route', () => {
     expect(err.broadcastRuledOut).toBeUndefined();
   });
 
+  // JSON.parse succeeds on null, [], a bare string and a bare number. Reading
+  // body.code off any of them threw a TypeError, which carries no code — so the
+  // candidate loop treated it as neither fatal nor a definitive rejection.
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['a bare string', '"nope"'],
+    ['a bare number', '0'],
+  ])('fails closed on a 2xx whose JSON body is %s', async (_label, raw) => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 200, text: raw }]);
+
+    for (const route of ['standard', 'legacy']) {
+      const err = await executeTransaction(
+        { signedTransaction: '0xsigned', chain: 'base' },
+        { route, retries: 0 },
+      ).catch(e => e);
+      expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 200 });
+      expect(err.broadcastRuledOut).toBeUndefined();
+    }
+  });
+
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['a bare string', '"nope"'],
+  ])('rules out a broadcast for a 4xx whose JSON body is %s', async (_label, raw) => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 400, text: raw }]);
+
+    for (const route of ['standard', 'legacy']) {
+      // A TypeError here would have no code at all — the quote claim would be
+      // stranded even though the status says the request was refused.
+      await expect(executeTransaction(
+        { signedTransaction: '0xsigned', chain: 'base' },
+        { route, retries: 0 },
+      )).rejects.toMatchObject({ code: 'EXECUTE_ERROR', status: 400, broadcastRuledOut: true });
+    }
+  });
+
   it('still rules out a broadcast for a non-JSON NON-2xx on the standard route', async () => {
     const { executeTransaction } = await import('../trading.js');
     stubExecuteFetch([{ status: 400, text: '<html>bad request</html>' }]);
@@ -5125,6 +5165,19 @@ describe('standard execution route — swap command flow', () => {
     await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
       .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
 
+    expect(() => loadQuote(quoteId)).not.toThrow();
+  });
+
+  it('releases the local claim when a definitive rejection carries a null JSON body', async () => {
+    stubStandardSwapFetch({ responses: [{ status: 400, raw: 'null' }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+
+    // Previously a TypeError, which is neither fatal nor broadcastRuledOut, so
+    // the claim was retained and the quote became permanently unusable.
     expect(() => loadQuote(quoteId)).not.toThrow();
   });
 
