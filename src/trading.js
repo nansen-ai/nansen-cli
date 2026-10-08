@@ -4641,9 +4641,10 @@ EXAMPLES:
 
             if (result.status === 'Success') {
               let txId = result.signature || result.txHash;
-              if (chainType === 'solana' && !txId) {
+              if ((chainType === 'solana' || gasless) && !txId) {
+                const executionType = gasless ? 'gasless EVM' : 'Solana';
                 throw ambiguousBroadcast(
-                  `The execute API reported success for ${quoteName} without a Solana transaction signature. The broadcast cannot be verified, so no further quote will be tried. Check the wallet on the explorer before retrying.`,
+                  `The execute API reported success for ${quoteName} without a ${executionType} transaction identifier. The broadcast cannot be verified, so no further quote will be tried. Check the wallet on the explorer before retrying.`,
                   { details: result },
                 );
               }

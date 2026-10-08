@@ -4931,6 +4931,69 @@ describe('confirmEvmBroadcast: binds receipt confirmation to the locally-derived
     vi.unstubAllGlobals();
   });
 
+  it('fails closed when a gasless EVM success response has no transaction hash', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+
+    let executePosts = 0;
+    let receiptRequests = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const body = opts?.body ? (() => { try { return JSON.parse(opts.body); } catch { return {}; } })() : {};
+      if (body.method === 'eth_getTransactionCount') {
+        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5' })) });
+      }
+      if (body.method === 'eth_getCode') {
+        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x6080604052' })) });
+      }
+      if (body.method === 'eth_call') {
+        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x' })) });
+      }
+      if (body.method === 'eth_getTransactionReceipt') {
+        receiptRequests += 1;
+      }
+      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
+        executePosts += 1;
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', chainType: 'evm', broadcaster: 'relay' })),
+        });
+      }
+      return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
+    }));
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'relay',
+        inputMint: BASE_USDC,
+        outputMint: OUT_TOKEN,
+        inAmount: '10000000',
+        outAmount: '50000000',
+        approvalAddress: '',
+        transaction: { to: RELAY_ROUTER, data: '0x12345678', value: '0', gas: '300000', maxFeePerGas: '5000000', maxPriorityFeePerGas: '1000000' },
+        metadata: { requestId: 'relay-gasless-no-hash', steps: [{ kind: 'evm-tx' }] },
+      }],
+    }, 'base', 'local', null, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({ walletAddress: showWallet('default').evm, fromToken: BASE_USDC, toToken: OUT_TOKEN, amount: '10000000', maxInputAmount: '10000000' }),
+    });
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    const err = await cmds.execute([], screenApi, { gasless: true }, { quote: quoteId }).catch(e => e);
+
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toMatch(/without a gasless EVM transaction identifier/i);
+    expect(executePosts).toBe(1);
+    expect(receiptRequests).toBe(0);
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow(/already executed|claimed by another execution/);
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    vi.unstubAllGlobals();
+  });
+
   it('polls OUR locally-derived hash — not the broadcaster hash — when the broadcaster returns none (guarantee #2)', async () => {
     // A signed tx whose bytes are ours; the broadcaster returns no hash at all.
     const signedTx = '0x02' + 'ab'.repeat(96);
