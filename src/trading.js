@@ -4865,6 +4865,24 @@ EXAMPLES:
                 // behind a silent wait and a scarier-looking error.
                 if (chainType === 'evm') {
                   log(`    Checking for a receipt anyway — this can take up to 3 minutes and may time out.`);
+                } else {
+                  // Solana has no receipt poll below to resolve this. The EVM
+                  // branch either confirms the hash or fails closed on a timeout;
+                  // Solana would fall straight through to "✓ Transaction
+                  // successful!" and exit 0 for a broadcast the node refused, so
+                  // an agent would record a swap that may never have propagated.
+                  // Nothing here verified anything, so do not report success.
+                  //
+                  // The quote was marked spent above and no candidate fallback
+                  // runs from here, so this only changes what we REPORT: a
+                  // non-zero exit carrying the signature, instead of a success
+                  // banner for an outcome we do not know. Chain-gated rather than
+                  // route-gated — if any route hands back broadcastSucceeded:false
+                  // on Solana, we still cannot verify it.
+                  throw new CommandError(
+                    `\n  ⚠ The node rejected this broadcast and the outcome could not be verified.\n    Signature: ${txId}\n    Explorer:  ${explorerUrl}\n    Error:     ${result.broadcastError || 'no detail returned'}\n\n  The transaction may still have propagated. Check the explorer before\n  re-quoting — retrying may broadcast a second swap.`,
+                    'BROADCAST_FAILED',
+                  );
                 }
               }
 

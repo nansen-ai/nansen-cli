@@ -4777,6 +4777,60 @@ describe('standard execution route — swap command flow', () => {
     expect(logs.some(l => l.includes('Tx Hash:'))).toBe(false);
   });
 
+  // The EVM soft-fail test above is resolved by the receipt poll. Solana has no
+  // such poll, so a node-rejected broadcast would otherwise print the success
+  // banner and exit 0 for a transaction that may never have propagated.
+  it('fails closed on a Solana node-rejected broadcast instead of reporting success', async () => {
+    const sigCount = Buffer.from([0x01]);
+    const emptySig = Buffer.alloc(64);
+    const messageBytes = Buffer.from([
+      0x01, 0x00, 0x01, 0x02,
+      ...Buffer.alloc(32), ...Buffer.alloc(32), ...Buffer.alloc(32),
+      0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00,
+    ]);
+    const txBase64 = Buffer.concat([sigCount, emptySig, messageBytes]).toString('base64');
+
+    const quoteId = saveQuote(
+      { success: true, metadata: { quoteId: 'backend-quote-id' }, quotes: [{ aggregator: 'jupiter', inputMint: SOL_MINT, outputMint: SOL_USDC, inAmount: '1000000000', outAmount: '50000000', transaction: txBase64, metadata: { requestId: 'req-1' } }] },
+      'solana',
+      'privy',
+      { evm: 'wl_evm_1', solana: 'wl_sol_1' },
+      null,
+      { swapMode: 'exactIn', request: solanaIntent({ walletAddress: 'SolPrivyAddr1111111111111111111111111111' }) },
+    );
+
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.startsWith('https://api.privy.io/') && opts?.method === 'GET') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: 'SolPrivyAddr1111111111111111111111111111', chain_type: 'solana' }) });
+      }
+      if (urlStr.startsWith('https://api.privy.io/')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: 'c2lnbmVkVHg=' } }) });
+      }
+      if (urlStr.includes('trading-api') && urlStr.endsWith('/execution/standard')) {
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ success: true, txHash: 'SolTxSig111', broadcastSucceeded: false, broadcastError: 'node rejected' })) });
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({})) });
+    }));
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    process.env.PRIVY_APP_ID = 'test-app-id';
+    process.env.PRIVY_APP_SECRET = 'test-secret';
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    // Never the success banner, and the signature is still reported so the
+    // user can check the explorer.
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+    expect(logs.some(l => l.includes('may still propagate'))).toBe(true);
+    expect(logs.some(l => l.includes('SolTxSig111'))).toBe(true);
+    // The quote stays spent — this path must never invite a re-execute.
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
   // A WalletConnect wallet that broadcasts for us hands back a hash, not signed
   // bytes, so the swap never reaches /execution/standard. That bypass is allowed
   // (there is nothing to POST) but it must not leave WalletConnect as the one
