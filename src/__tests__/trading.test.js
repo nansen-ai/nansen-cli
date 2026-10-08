@@ -5700,6 +5700,7 @@ describe('ERC-20 excessive allowance handling', () => {
     expect(executeBodies[0].signedTransaction).toContain(amountWord(0n)); // the revoke (approve to 0)
     expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
     expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow(/claimed by another execution/);
   });
 
   it('fails closed when reapproval fails after a successful revoke', async () => {
@@ -5715,14 +5716,15 @@ describe('ERC-20 excessive allowance handling', () => {
       ],
     });
 
-    const logs = [];
-    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    const err = await cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId }).catch(e => e);
 
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toContain(`reported Failed with transaction identifier ${FIXTURE_EVM_HASH}`);
     expect(executeBodies).toHaveLength(2);
     expect(executeBodies[0].signedTransaction).toContain(amountWord(0n));
     expect(executeBodies[1].signedTransaction).toContain(amountWord(100000n));
-    expect(logs.some(l => l.includes('Approval failed for #1 after revoking the prior allowance (now 0)'))).toBe(true);
+    expect(() => loadQuote(quoteId)).toThrow(/already executed|claimed by another execution/);
   });
 
   it('fails closed when a revoke receipt succeeds but the allowance does not actually clear', async () => {
@@ -5758,13 +5760,14 @@ describe('ERC-20 excessive allowance handling', () => {
       return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
     }));
 
-    const logs = [];
-    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    const err = await cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId }).catch(e => e);
 
     // Only the revoke was broadcast; the reapproval and swap never ran.
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toContain('Revoke tx confirmed but allowance was not cleared');
     expect(executeBodies).toHaveLength(1);
-    expect(logs.some(l => l.includes('Revoke tx confirmed but allowance was not cleared for #1: could not verify the allowance was cleared (allowance did not reach expected state after 5 attempts (last read: 2000000))'))).toBe(true);
+    expect(() => loadQuote(quoteId)).toThrow();
   });
 
   it('fails closed when a reapproval receipt succeeds but the allowance does not actually increase', async () => {
@@ -5807,13 +5810,14 @@ describe('ERC-20 excessive allowance handling', () => {
       return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
     }));
 
-    const logs = [];
-    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    const err = await cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId }).catch(e => e);
 
     // Both the revoke and the reapproval were broadcast; the swap never ran.
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toContain('Approval tx confirmed but allowance did not reach the required amount');
     expect(executeBodies).toHaveLength(2);
-    expect(logs.some(l => l.includes('Approval tx confirmed but allowance did not reach the required amount for #1 after revoking the prior allowance (now 0): could not verify the approval took effect (allowance did not reach expected state after 5 attempts (last read: 0))'))).toBe(true);
+    expect(() => loadQuote(quoteId)).toThrow();
   });
 
   it('fails closed when post-revoke allowance verification returns empty data', async () => {
@@ -5851,12 +5855,13 @@ describe('ERC-20 excessive allowance handling', () => {
       return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
     }));
 
-    const logs = [];
-    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId })).rejects.toThrow(/All quotes failed/i);
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    const err = await cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId }).catch(e => e);
 
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toContain('invalid allowance() return data: 0x');
     expect(executeBodies).toHaveLength(1);
-    expect(logs.some(l => l.includes('invalid allowance() return data: 0x'))).toBe(true);
+    expect(() => loadQuote(quoteId)).toThrow();
   });
 
   it('guards the allowance timing override outside test environments', () => {
@@ -8666,6 +8671,17 @@ describe('trade execute: claim handling and terminal failures', () => {
     delete process.env.NANSEN_WALLET_PASSWORD;
   });
 
+  it('releases the local claim when the endpoint reported a failure with no hash', async () => {
+    stubSwapFetch({ execute: { body: { status: 'Failed', error: 'no route' } } });
+    const quoteId = saveEthQuote(1);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+
+    expect(() => loadQuote(quoteId)).not.toThrow();
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
   it('fails closed on a missing status without broadcasting a second candidate', async () => {
     const responseBody = {};
     const { executeCalls } = stubSwapFetch({ execute: { body: responseBody } });
@@ -8679,6 +8695,43 @@ describe('trade execute: claim handling and terminal failures', () => {
     expect(executeCalls).toHaveLength(1);
     expect(() => loadQuote(quoteId)).toThrow();
     delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  // Same invariant through the OUTER catch rather than a local one: Solana WC
+  // sets swapHandedOff before signing, so an uncoded throw from it used to set
+  // handoffAmbiguous (protecting only the claim) and then continue.
+  it('aborts instead of trying the next quote when Solana WalletConnect signing throws', async () => {
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
+    const signSpy = vi.spyOn(wcTrading, 'sendSolanaTransactionViaWalletConnect')
+      .mockRejectedValue(new Error('Command failed: walletconnect send-transaction (timeout)'));
+
+    const txBase64 = Buffer.concat([
+      Buffer.from([0x01]),
+      Buffer.alloc(64),
+      Buffer.from([0x01, 0x00, 0x01, 0x02, ...Buffer.alloc(96), 0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00]),
+    ]).toString('base64');
+
+    const solQuote = () => ({
+      aggregator: 'jupiter',
+      inputMint: SOL_MINT,
+      outputMint: SOL_USDC,
+      inAmount: '1000000000',
+      outAmount: '50000000',
+      transaction: txBase64,
+    });
+    const quoteId = saveQuote(
+      { success: true, quotes: [solQuote(), solQuote()] },
+      'solana', 'walletconnect', null, null,
+      { swapMode: 'exactIn', request: solanaIntent({ walletAddress: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM' }) },
+    );
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    expect(signSpy).toHaveBeenCalledTimes(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
   });
 
   it('fails closed when Solana reports success without a transaction identifier', async () => {
