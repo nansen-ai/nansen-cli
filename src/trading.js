@@ -200,26 +200,14 @@ export async function getQuote(params) {
  * @returns {Promise<object>} Execution result
  */
 /**
- * The two — and only two — ways `executeTransaction` reports a failure.
- *
- * `rejectedPreBroadcast` is a CLAIM ABOUT THE WORLD: the backend, or the HTTP
- * status itself, told us the signed transaction never left. The caller acts on
- * that by handing the quote claim back and signing the next candidate, so it may
- * only be raised where that is provable.
- *
- * `ambiguousBroadcast` is the ABSENCE of that claim, and it is the default. Every
- * response this client cannot positively interpret ends up here, which fails
- * closed: the caller marks the quote spent and aborts rather than broadcasting a
- * second swap on top of one that may be live. A response shape nobody
- * anticipated is therefore safe by construction, not by someone remembering to
- * write a guard for it.
- *
- * Nothing else in this module may set `broadcastRuledOut`.
+ * `ambiguousBroadcast` is the default for every failure after the signed payload
+ * is handed to fetch. An HTTP status describes the response, not whether the
+ * backend forwarded the transaction before producing it: 408/429 and even an
+ * intermediary-generated 400/409 can arrive after processing began. Until the
+ * execute API has a documented, authenticated field that explicitly guarantees
+ * pre-broadcast rejection, no response from this endpoint may authorize signing
+ * the next candidate.
  */
-function rejectedPreBroadcast(message, { code = 'EXECUTE_ERROR', status, details } = {}) {
-  return Object.assign(new Error(message), { code, status, details, broadcastRuledOut: true });
-}
-
 function ambiguousBroadcast(message, { status, details } = {}) {
   // Deliberately never carries broadcastRuledOut. BROADCAST_FAILED is classified
   // fatal by isFatalBroadcastError, so the caller aborts the whole execute.
@@ -229,9 +217,7 @@ function ambiguousBroadcast(message, { status, details } = {}) {
 /**
  * A JSON body the branches below can read fields off. JSON.parse also succeeds
  * on `null`, an array and a bare string or number, none of which carry the
- * fields we read — and `body.code` on `null` throws a TypeError that carries no
- * code at all, which the candidate loop would treat as neither fatal nor a
- * rejection.
+ * diagnostic fields used below.
  */
 function isReadableBody(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -326,26 +312,21 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       throw lastError;
     }
 
-    // A status outside 2xx is the request being REFUSED: the signed transaction
-    // did not leave the backend, so the quote stays reusable. This is the only
-    // place a rejection is claimed from a status, and it is claimed whatever the
-    // body looks like, because the status alone carries the answer.
+    // A non-2xx status does not prove the signed transaction stayed put. The
+    // backend or an intermediary may have produced the response after forwarding
+    // it, so preserve any structured error only as diagnostic detail and fail
+    // closed. Do not allow the candidate loop to sign another transaction.
     if (!res.ok) {
-      if (!parsed) {
-        // A Cloudflare challenge or an HTML error page from the edge.
-        throw rejectedPreBroadcast(
-          `Execute API returned non-JSON response (status ${res.status}). This may be a Cloudflare challenge or server error.`,
-          { status: res.status, details: text.slice(0, 200) }
-        );
-      }
-      if (!isReadableBody(body)) {
-        throw rejectedPreBroadcast(`Execute request failed with status ${res.status}`, { status: res.status, details: text.slice(0, 200) });
-      }
-      throw rejectedPreBroadcast(body.message || `Execute request failed with status ${res.status}`, {
-        code: body.code || 'EXECUTE_ERROR',
-        status: res.status,
-        details: body.details,
-      });
+      const readableBody = parsed && isReadableBody(body);
+      throw ambiguousBroadcast(
+        readableBody
+          ? `${body.message || `Execute request failed with status ${res.status}`} — the response does not prove the transaction was rejected before broadcast.`
+          : `Execute API returned an uninterpretable error response (status ${res.status}) — the response does not prove the transaction was rejected before broadcast.`,
+        {
+          status: res.status,
+          details: readableBody ? body : text.slice(0, 200),
+        }
+      );
     }
 
     // 2xx: the endpoint ACCEPTED the request. Everything from here on is about
@@ -4317,11 +4298,10 @@ EXAMPLES:
               // one of txHash/signedTransaction, so every reachable shape is handled
               // above. That invariant lives in another module, though, and the failure
               // mode if it ever relaxes to a bare return is the worst one here — an
-              // undefined payload POSTs a malformed body, comes back a definitive 4xx
-              // carrying broadcastRuledOut, hands the local quote claim back, and signs
-              // the NEXT candidate: a second wallet prompt on top of a swap this wallet
-              // may already have broadcast. BROADCAST_FAILED is classified fatal, so
-              // the candidate catch rethrows it and the quote stays claimed.
+              // undefined payload POSTs a malformed body and could hide a wallet
+              // broadcast behind the resulting API error. BROADCAST_FAILED is
+              // classified fatal, so the candidate catch rethrows it and the quote
+              // stays claimed instead of prompting for the next candidate.
               if (!wcResult.signedTransaction) {
                 throw new CommandError(
                   `\n  ⚠ WalletConnect returned no transaction hash and no signed transaction for ${quoteName}.\n\n  The wallet may still have broadcast this swap. Check the wallet and the\n  explorer before retrying — retrying may broadcast a second swap.`,
@@ -4632,6 +4612,12 @@ EXAMPLES:
 
             if (result.status === 'Success') {
               let txId = result.signature || result.txHash;
+              if (chainType === 'solana' && !txId) {
+                throw ambiguousBroadcast(
+                  `The execute API reported success for ${quoteName} without a Solana transaction signature. The broadcast cannot be verified, so no further quote will be tried. Check the wallet on the explorer before retrying.`,
+                  { details: result },
+                );
+              }
               let explorerUrl = chainConfig.explorer + txId;
 
               // The transaction is on-chain (or in flight) the instant the
@@ -4793,16 +4779,10 @@ EXAMPLES:
             // timeout, or an ambiguous broadcast failure). See
             // isFatalBroadcastError.
             if (isFatalBroadcastError(quoteErr)) throw quoteErr;
-            // A rejection the API classified as definitively pre-broadcast puts
-            // this attempt in the same class as a "failed, no hash" body: the
-            // signed tx never left the backend, so the claim can go back. The
-            // branches that raise it already promise the quote stays reusable;
-            // without this the finalizer silently kept it claimed and a rejected
-            // run stranded a quote that was still good. Anything else did not
-            // come back with that answer, so from here on no later candidate may
-            // hand the claim back on this run's behalf.
-            if (quoteErr?.broadcastRuledOut && !handoffAmbiguous) swapHandedOff = false;
-            else if (swapHandedOff) {
+            // No HTTP response is trusted as proof of pre-broadcast rejection.
+            // Once this candidate was handed off, any otherwise-unclassified
+            // error is ambiguous and must stop the loop.
+            if (swapHandedOff) {
               handoffAmbiguous = true;
               // The swap was already handed to a wallet or the backend, and
               // nothing in this error proves it stayed put — an uncoded throw is
@@ -4812,9 +4792,9 @@ EXAMPLES:
               // against the same quote. Abort instead, and mark the quote spent
               // so a later `trade execute --quote <id>` is refused too.
               //
-              // The paths that legitimately continue are unaffected: a
-              // definitive rejection takes the branch above, and the backend's
-              // "failed, no transaction" answer never throws at all.
+              // The paths that legitimately continue are unaffected: failures
+              // detected before handoff never enter this branch, and the
+              // backend's "failed, no transaction" answer never throws at all.
               markQuoteExecuted(quoteId);
               throw ambiguousBroadcast(`${quoteName} failed after the transaction was handed off: ${quoteErr.message || quoteErr} — the outcome could not be verified, so no further quote will be tried. Check the wallet on the explorer before retrying.`);
             }

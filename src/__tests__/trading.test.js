@@ -4223,7 +4223,7 @@ describe('API error handling', () => {
     global.fetch = origFetch;
   });
 
-  it('treats non-JSON sub-500 execute responses as nonfatal execute errors', async () => {
+  it('fails closed on a non-JSON sub-500 execute response', async () => {
     const origFetch = global.fetch;
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
@@ -4236,8 +4236,9 @@ describe('API error handling', () => {
       signedTransaction: 'test',
       chain: 'solana',
     }, { retries: 0 })).rejects.toMatchObject({
-      code: 'EXECUTE_ERROR',
+      code: 'BROADCAST_FAILED',
       status: 429,
+      details: '<!DOCTYPE html><html><body>rate limited</body></html>',
     });
 
     global.fetch = origFetch;
@@ -8407,14 +8408,10 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
 
 // ============= Execute response classification =============
 
-// `executeTransaction` reports a failure in exactly one of two ways, and the
-// difference decides whether the candidate loop may sign a second transaction:
-//
-//   rejectedPreBroadcast — the status or the backend says nothing was broadcast
-//   ambiguousBroadcast   — anything else, which fails closed
-//
-// Ambiguous is the DEFAULT, so a response shape nobody anticipated cannot be
-// read as "safe to retry". These tests pin that default.
+// Once the signed payload has been handed to fetch, an HTTP response does not
+// prove whether the backend forwarded it before replying. Ambiguous is therefore
+// the default, so no response shape or status can be read as "safe to retry"
+// until the API provides a documented explicit pre-broadcast signal.
 describe('executeTransaction: response classification', () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -8465,20 +8462,27 @@ describe('executeTransaction: response classification', () => {
   });
 
   it.each([
-    ['a non-JSON page', '<html>bad request</html>', 'EXECUTE_ERROR'],
-    ['null', 'null', 'EXECUTE_ERROR'],
-    ['an array', '[]', 'EXECUTE_ERROR'],
-  ])('rules out a broadcast for a 4xx carrying %s', async (_label, text, code) => {
-    stubExecute({ status: 400, text });
-    // Reading body.code off null used to throw a TypeError, which carries
-    // neither a code nor the pre-broadcast marker — so the loop treated it as
-    // neither fatal nor a rejection and stranded the quote claim.
-    await expect(run()).rejects.toMatchObject({ code, status: 400, broadcastRuledOut: true });
+    ['a non-JSON page', 400, '<html>bad request</html>'],
+    ['null', 400, 'null'],
+    ['an array', 400, '[]'],
+    ['a request timeout', 408, JSON.stringify({ code: 'REQUEST_TIMEOUT' })],
+    ['a rate limit', 429, JSON.stringify({ code: 'RATE_LIMITED' })],
+  ])('fails closed on a 4xx carrying %s', async (_label, status, text) => {
+    stubExecute({ status, text });
+    const err = await run().catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status });
+    expect(err.broadcastRuledOut).toBeUndefined();
   });
 
-  it('surfaces the backend code on a structured 4xx and rules out a broadcast', async () => {
+  it('preserves a structured 4xx as diagnostic detail without authorizing fallback', async () => {
     stubExecute({ status: 400, text: JSON.stringify({ code: 'QUOTE_EXPIRED', message: 'quote expired' }) });
-    await expect(run()).rejects.toMatchObject({ code: 'QUOTE_EXPIRED', status: 400, broadcastRuledOut: true });
+    const err = await run().catch(e => e);
+    expect(err).toMatchObject({
+      code: 'BROADCAST_FAILED',
+      status: 400,
+      details: { code: 'QUOTE_EXPIRED', message: 'quote expired' },
+    });
+    expect(err.broadcastRuledOut).toBeUndefined();
   });
 
   it('never rules out a broadcast for a 5xx, whatever the body', async () => {
@@ -8563,17 +8567,18 @@ describe('trade execute: claim handling and terminal failures', () => {
     );
   }
 
-  // The branches that raise a definitive rejection promise the quote stays
-  // reusable. Without the claim release the finalizer silently kept it, and a
-  // fully-rejected run stranded a quote that was still good.
-  it('releases the local claim when the endpoint definitively rejected the request', async () => {
-    stubSwapFetch({ execute: { status: 400, body: { code: 'QUOTE_EXPIRED', message: 'quote expired' } } });
-    const quoteId = saveEthQuote(1);
+  // Even a structured 4xx only proves what response came back, not whether the
+  // backend forwarded the signed transaction first. It must consume the quote
+  // and stop before a second candidate is signed.
+  it('fails closed when the endpoint returns a structured 4xx', async () => {
+    const { executeCalls } = stubSwapFetch({ execute: { status: 400, body: { code: 'QUOTE_EXPIRED', message: 'quote expired' } } });
+    const quoteId = saveEthQuote(2);
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
 
-    expect(() => loadQuote(quoteId)).not.toThrow();
+    expect(executeCalls).toHaveLength(1);
+    expect(() => loadQuote(quoteId)).toThrow();
     delete process.env.NANSEN_WALLET_PASSWORD;
   });
 
@@ -8749,5 +8754,59 @@ describe('trade execute: claim handling and terminal failures', () => {
 
     expect(signSpy).toHaveBeenCalledTimes(1);
     expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+  });
+
+  it('fails closed when Solana reports success without a transaction identifier', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+
+    const executeCalls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
+        executeCalls.push(JSON.parse(opts.body));
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', chainType: 'solana', broadcaster: 'jupiter' })),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null })),
+      });
+    }));
+
+    const txBase64 = Buffer.concat([
+      Buffer.from([0x01]),
+      Buffer.alloc(64),
+      Buffer.from([0x01, 0x00, 0x01, 0x02, ...Buffer.alloc(96), 0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00]),
+    ]).toString('base64');
+    const solQuote = () => ({
+      aggregator: 'jupiter',
+      inputMint: SOL_MINT,
+      outputMint: SOL_USDC,
+      inAmount: '1000000000',
+      outAmount: '50000000',
+      transaction: txBase64,
+    });
+    const quoteId = saveQuote(
+      { success: true, quotes: [solQuote(), solQuote()] },
+      'solana', 'local', null, null,
+      { swapMode: 'exactIn', request: solanaIntent({ walletAddress: showWallet('default').solana }) },
+    );
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+    expect(logs.some(l => l.includes('undefined'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow();
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
   });
 });
