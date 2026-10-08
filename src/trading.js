@@ -4640,9 +4640,10 @@ EXAMPLES:
             const result = await executeTransaction(execParams, { retries: gasless ? 0 : undefined });
 
             if (result.status === 'Success') {
-              let txId = result.signature || result.txHash;
-              if ((chainType === 'solana' || gasless) && !txId) {
-                const executionType = gasless ? 'gasless EVM' : 'Solana';
+              const gaslessEvm = gasless && chainType === 'evm';
+              let txId = gaslessEvm ? result.txHash : (result.signature || result.txHash);
+              if ((chainType === 'solana' || gaslessEvm) && !txId) {
+                const executionType = gaslessEvm ? 'gasless EVM' : 'Solana';
                 throw ambiguousBroadcast(
                   `The execute API reported success for ${quoteName} without a ${executionType} transaction identifier. The broadcast cannot be verified, so no further quote will be tried. Check the wallet on the explorer before retrying.`,
                   { details: result },

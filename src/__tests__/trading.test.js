@@ -4956,7 +4956,8 @@ describe('confirmEvmBroadcast: binds receipt confirmation to the locally-derived
         executePosts += 1;
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', chainType: 'evm', broadcaster: 'relay' })),
+          // A Solana-style signature cannot identify Relay's EVM solver tx.
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'NotAnEvmTxHash', chainType: 'evm', broadcaster: 'relay' })),
         });
       }
       return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
