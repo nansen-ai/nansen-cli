@@ -9000,3 +9000,1147 @@ describe('trade execute: claim handling and terminal failures', () => {
     delete process.env.NANSEN_WALLET_PASSWORD;
   });
 });
+
+describe('executeTransaction — standard execution route', () => {
+  let origFetch;
+  beforeEach(() => { origFetch = global.fetch; });
+  afterEach(() => {
+    global.fetch = origFetch;
+    delete process.env.NANSEN_TRADING_EXECUTION_ROUTE;
+  });
+
+  // Returns captured calls ({ url, body, headers }); `responses` are returned in
+  // order and the last one repeats. Each response is { status?, body }.
+  function stubExecuteFetch(responses) {
+    const calls = [];
+    let i = 0;
+    global.fetch = vi.fn(async (url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      calls.push({ url: urlStr, body: JSON.parse(opts.body), headers: opts.headers || {} });
+      const spec = responses[Math.min(i, responses.length - 1)];
+      i++;
+      const status = spec.status ?? 200;
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        // `text` lets a case stub a non-JSON body (an edge HTML error page).
+        text: async () => spec.text ?? JSON.stringify(spec.body ?? {}),
+      };
+    });
+    return calls;
+  }
+
+  it('maps an EVM swap to VM type + chain id + source, opting into simulation', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([{ body: { success: true, txHash: '0x' + 'ab'.repeat(32) } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base', quoteId: 'q1', walletAddress: '0xWallet' },
+      { route: 'standard' },
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toMatch(/\/execution\/standard$/);
+    expect(calls[0].body).toMatchObject({
+      chain: 'evm',
+      chainId: '8453',
+      source: 'cli',
+      quoteId: 'q1',
+      walletAddress: '0xWallet',
+      signedTransaction: '0xsigned',
+      simulate: true,
+    });
+    expect(res.status).toBe('Success');
+    expect(res.txHash).toBe('0x' + 'ab'.repeat(32));
+  });
+
+  // The route's own default is `simulate: false`, so an omitted field is not the
+  // same request. Pin that --no-simulate (which only ever governed the CLI's own
+  // eth_call check) cannot turn the backend preflight off by leaking through.
+  it('opts into simulation even when the caller passed simulate: false', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([{ body: { success: true, txHash: '0x' + 'ab'.repeat(32) } }]);
+
+    await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base', simulate: false },
+      { route: 'standard' },
+    );
+
+    expect(calls[0].body.simulate).toBe(true);
+  });
+
+  it('maps a Solana swap to VM type with no chain id, and keeps a signature', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([{ body: { success: true, txHash: 'DqaqAu6gep4fQwtE6xkaFRj9hrNZX9dtvDZ1X1Agwaxeyhgu8Ncr3GbZya9xfXMchHEES3qTZAZWARVJXAQ8uUo' } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: 'c2lnbmVk', chain: 'solana', requestId: 'req-1' },
+      { route: 'standard' },
+    );
+
+    expect(calls[0].body).toMatchObject({ chain: 'solana', source: 'cli', requestId: 'req-1' });
+    expect(calls[0].body).not.toHaveProperty('chainId');
+    // Solana keeps `signature` populated (mirrors the legacy shape) for output.
+    expect(res.signature).toBe('DqaqAu6gep4fQwtE6xkaFRj9hrNZX9dtvDZ1X1Agwaxeyhgu8Ncr3GbZya9xfXMchHEES3qTZAZWARVJXAQ8uUo');
+    expect(res.txHash).toBe('DqaqAu6gep4fQwtE6xkaFRj9hrNZX9dtvDZ1X1Agwaxeyhgu8Ncr3GbZya9xfXMchHEES3qTZAZWARVJXAQ8uUo');
+  });
+
+  it('maps cross-chain fields to isCrossChain + destination chain id + aggregator', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([{ body: { success: true, txHash: '0x' + 'bd'.repeat(32) } }]);
+
+    await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base', isCrossChain: true, toChain: 'solana', aggregator: 'lifi' },
+      { route: 'standard' },
+    );
+
+    expect(calls[0].body).toMatchObject({ isCrossChain: true, toChainId: '501', aggregator: 'lifi' });
+  });
+
+  it('reuses one attempt id across an internal retry', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([
+      { status: 502, body: { code: 'UPSTREAM' } },
+      { body: { success: true, txHash: '0x' + '0c'.repeat(32) } },
+    ]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', attemptId: 'attempt-xyz', retryDelayMs: 0 },
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0].headers['x-trade-attempt-id']).toBe('attempt-xyz');
+    expect(calls[1].headers['x-trade-attempt-id']).toBe('attempt-xyz');
+    expect(res.status).toBe('Success');
+  });
+
+  it('classifies a 409 DUPLICATE_EXECUTION as a fatal broadcast failure', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 409, body: { code: 'DUPLICATE_EXECUTION' } }]);
+
+    await expect(executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    )).rejects.toMatchObject({ code: 'BROADCAST_FAILED', status: 409 });
+  });
+
+  it.each([
+    ['an undocumented conflict code', { code: 'EXECUTION_IN_PROGRESS', message: 'already running' }],
+    ['a conflict body with no code at all', { message: 'conflict' }],
+  ])('classifies a 409 with %s as a fatal broadcast failure', async (_label, body) => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 409, body }]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    ).catch(e => e);
+    // Never broadcastRuledOut: the candidate loop must not hand the claim back
+    // and sign the next quote on top of an execution the backend still holds.
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 409 });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it.each([
+    ['an empty object', { body: {} }],
+    ['a body with no success field', { body: { status: 'Success', txHash: '0x' + 'ab'.repeat(32) } }],
+    ['a bare null body', { text: 'null' }],
+    ['a non-boolean success', { body: { success: 'true', txHash: '0x' + 'ab'.repeat(32) } }],
+  ])('fails closed on a 2xx standard body shaped as %s', async (_label, spec) => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([spec]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    ).catch(e => e);
+    // Ambiguous, not "provably never broadcast": the endpoint accepted the
+    // request at the HTTP level, so the candidate loop must not try the next
+    // quote on top of it.
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('still accepts an explicit standard-route failure body as a definitive no-broadcast', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ body: { success: false, code: 'QUOTE_EXPIRED' } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    );
+    expect(res).toMatchObject({ status: 'Failed', error: 'QUOTE_EXPIRED' });
+  });
+
+  it.each([
+    ['an empty 200 body', { status: 200, text: '' }],
+    ['a 204 with no content', { status: 204, text: '' }],
+    ['an HTML 200 page', { status: 200, text: '<html>ok</html>' }],
+  ])('fails closed on %s from the standard route', async (_label, spec) => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([spec]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    ).catch(e => e);
+    // The endpoint accepted the request; an unreadable body is not it saying
+    // "I never broadcast".
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  // JSON.parse succeeds on null, [], a bare string and a bare number. Reading
+  // body.code off any of them threw a TypeError, which carries no code — so the
+  // candidate loop treated it as neither fatal nor a definitive rejection.
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['a bare string', '"nope"'],
+    ['a bare number', '0'],
+  ])('fails closed on a 2xx whose JSON body is %s', async (_label, raw) => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 200, text: raw }]);
+
+    for (const route of ['standard', 'legacy']) {
+      const err = await executeTransaction(
+        { signedTransaction: '0xsigned', chain: 'base' },
+        { route, retries: 0 },
+      ).catch(e => e);
+      expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 200 });
+      expect(err.broadcastRuledOut).toBeUndefined();
+    }
+  });
+
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['a bare string', '"nope"'],
+  ])('fails closed on a 4xx whose JSON body is %s', async (_label, raw) => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 400, text: raw }]);
+
+    for (const route of ['standard', 'legacy']) {
+      // A TypeError here would have no code at all — the quote claim would be
+      // stranded even though the status says the request was refused. It is a
+      // BROADCAST_FAILED rather than a rejection because an HTTP status does not
+      // prove the backend never forwarded the transaction.
+      const err = await executeTransaction(
+        { signedTransaction: '0xsigned', chain: 'base' },
+        { route, retries: 0 },
+      ).catch(e => e);
+      expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 400 });
+      expect(err.broadcastRuledOut).toBeUndefined();
+    }
+  });
+
+  it('fails closed on a non-JSON NON-2xx on the standard route', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 400, text: '<html>bad request</html>' }]);
+
+    // An unreadable error page says nothing about whether the signed payload was
+    // forwarded, so it may not authorize signing the next candidate.
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    ).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 400 });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('classifies a non-JSON 409 on the standard route as a fatal broadcast failure', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 409, text: '<html>conflict</html>' }]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    ).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 409 });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  // The two routes no longer disagree about 409: the standard route carves it out
+  // for a clearer message, but the shared non-2xx rule already makes the legacy
+  // route's 409 ambiguous rather than a backend-stated rejection.
+  it('treats an unrecognised legacy-route 409 as an ambiguous broadcast too', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 409, body: { code: 'SOME_CONFLICT' } }]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { retries: 0 },
+    ).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 409 });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('normalises a soft-fail (node-rejected but maybe propagating) to success', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ body: { success: true, txHash: '0x' + '5f'.repeat(32), broadcastSucceeded: false, broadcastError: 'node rejected' } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard' },
+    );
+
+    expect(res.status).toBe('Success');
+    expect(res.broadcastSucceeded).toBe(false);
+    expect(res.broadcastError).toBe('node rejected');
+    expect(res.txHash).toBe('0x' + '5f'.repeat(32));
+  });
+
+  it('surfaces a landed revert (success:false with a hash) as a Failed result', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ body: { success: false, code: 'TRANSACTION_REVERTED', txHash: '0x' + 'de'.repeat(32) } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard' },
+    );
+
+    expect(res.status).toBe('Failed');
+    expect(res.txHash).toBe('0x' + 'de'.repeat(32));
+    expect(res.code).toBe('TRANSACTION_REVERTED');
+  });
+
+  // Even a backend code that reads like a pre-broadcast rejection does not prove
+  // one: the message is surfaced for diagnosis, but the outcome stays ambiguous.
+  it('surfaces a 400 pre-broadcast message while still failing closed', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 400, body: { code: 'QUOTE_EXPIRED', message: 'Quote expired' } }]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    ).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 400 });
+    expect(err.message).toContain('Quote expired');
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('prefers the aggregator revert reason over the static message, keeping the typed code', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ body: {
+      success: false,
+      code: 'TRANSACTION_REVERTED',
+      message: 'Transaction reverted',
+      revertReason: 'min return not reached',
+      txHash: '0x' + 'de'.repeat(32),
+    } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard' },
+    );
+
+    // `message` alone is a static summary — `revertReason` is the only field
+    // carrying why this particular swap failed.
+    expect(res.error).toBe('TRANSACTION_REVERTED: min return not reached');
+  });
+
+  it('falls back to the static message when no revert reason is returned', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ body: { success: false, code: 'SIMULATION_FAILED', message: 'Simulation failed', txHash: '0x' + 'd1'.repeat(32) } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard' },
+    );
+
+    expect(res.error).toBe('SIMULATION_FAILED: Simulation failed');
+  });
+
+  it('leaves a success body without an error string', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ body: { success: true, txHash: '0x' + '0c'.repeat(32) } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard' },
+    );
+
+    expect(res.error).toBeUndefined();
+  });
+
+  it('defaults to the legacy route and sends the untranslated body', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([{ body: { status: 'Success', txHash: '0x' + '01'.repeat(32), chainType: 'evm', broadcaster: 'legacy' } }]);
+
+    const res = await executeTransaction({ signedTransaction: '0xsigned', chain: 'base', simulate: true });
+
+    expect(calls[0].url).toMatch(/\/execute$/);
+    expect(calls[0].body).toMatchObject({ chain: 'base', simulate: true });
+    expect(calls[0].body).not.toHaveProperty('source');
+    expect(res.broadcaster).toBe('legacy');
+  });
+});
+
+describe('standard execution route — swap command flow', () => {
+  function stubStandardSwapFetch({ responses = [], receiptStatus = '0x1' } = {}) {
+    const executeCalls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      const isStd = urlStr.includes('trading-api') && urlStr.endsWith('/execution/standard');
+      const isLegacy = urlStr.includes('trading-api') && urlStr.endsWith('/execute');
+      if (isStd || isLegacy) {
+        const idx = executeCalls.length;
+        executeCalls.push({ path: isStd ? '/execution/standard' : '/execute', body, headers: opts?.headers || {} });
+        const spec = responses[Math.min(idx, responses.length - 1)] ?? { body: { success: true } };
+        const status = spec.status ?? 200;
+        const resp = { ...(spec.body || {}) };
+        // Autofill mirrors the real endpoint, which returns a hash with a
+        // success. `noHash: true` builds the shapes where it does not.
+        if (!spec.noHash && resp.success && resp.txHash === undefined && body.signedTransaction) {
+          resp.txHash = evmTxHash(body.signedTransaction);
+        }
+        // `raw` stubs a body that is not JSON at all (an empty 200, an HTML page).
+        const payload = spec.raw !== undefined ? spec.raw : JSON.stringify(resp);
+        return Promise.resolve({ ok: status >= 200 && status < 300, status, text: () => Promise.resolve(payload) });
+      }
+      if (urlStr.includes('trading-api') && urlStr.includes('/bridge/status')) {
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'DONE', substatus: 'COMPLETED' })) });
+      }
+      if (body.method === 'eth_getCode') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x6080604052' })) });
+      if (body.method === 'eth_call') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x' })) });
+      if (body.method === 'eth_estimateGas') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5208' })) });
+      if (body.method === 'eth_getTransactionCount') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5' })) });
+      if (body.method === 'eth_getTransactionReceipt') return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { status: receiptStatus, blockNumber: '0x100' } })) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
+    }));
+    return { executeCalls };
+  }
+
+  function nativeEthQuote() {
+    return {
+      aggregator: 'lifi',
+      inputMint: BASE_ETH,
+      outputMint: BASE_USDC,
+      inAmount: '1000000000000000000',
+      outAmount: '3000000000',
+      transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000', maxFeePerGas: '1000000', maxPriorityFeePerGas: '1000000' },
+    };
+  }
+
+  // Every live /quote response carries metadata.quoteId, and the standard route
+  // now requires it, so the default fixture carries one too. Pass
+  // `metadata: null` to build the shape-drift quote that gets refused.
+  function saveNativeEthQuote(quotes, extra = {}) {
+    const metadata = extra.metadata === undefined ? { quoteId: 'backend-quote-id' } : extra.metadata;
+    return saveQuote(
+      { success: true, quotes, ...(metadata ? { metadata } : {}) },
+      'base',
+      'local',
+      null,
+      extra.toChain ?? null,
+      {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: showWallet('default').evm,
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+          toChain: extra.toChain ?? null,
+        }),
+      },
+    );
+  }
+
+  beforeEach(() => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'standard';
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    delete process.env.NANSEN_TRADING_EXECUTION_ROUTE;
+    delete process.env.PRIVY_APP_ID;
+    delete process.env.PRIVY_APP_SECRET;
+  });
+
+  it('sends the standard-route body and a stable attempt id from the real swap path', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote()]);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls).toHaveLength(1);
+    expect(executeCalls[0].path).toBe('/execution/standard');
+    expect(executeCalls[0].body).toMatchObject({
+      chain: 'evm',
+      chainId: '8453',
+      source: 'cli',
+      walletAddress: showWallet('default').evm,
+      simulate: true,
+    });
+    expect(typeof executeCalls[0].headers['x-trade-attempt-id']).toBe('string');
+    expect(executeCalls[0].headers['x-trade-attempt-id'].length).toBeGreaterThan(0);
+  });
+
+  it('maps a cross-chain swap to isCrossChain + destination chain id + aggregator', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote()], { toChain: 'solana' });
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls[0].body).toMatchObject({ isCrossChain: true, toChainId: '501', aggregator: 'lifi' });
+  });
+
+  it('aborts on a 409 without broadcasting the next quote, and marks the quote spent', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ status: 409, body: { code: 'DUPLICATE_EXECUTION' } }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+    // Exactly one broadcast: the candidate loop did NOT try the second quote.
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    // Quote is burned so a later re-execute is refused.
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
+  it('aborts on an unreadable 2xx without broadcasting the next quote', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ raw: '' }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
+  it('aborts on an unrecognised 2xx body without broadcasting the next quote', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { status: 'Success' } }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
+  it('aborts on a 409 whose code is not DUPLICATE_EXECUTION, without broadcasting the next quote', async () => {
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [{ status: 409, body: { code: 'EXECUTION_IN_PROGRESS', message: 'already running' } }],
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
+  it('does not re-broadcast on a soft-fail, warns, and marks the quote spent', async () => {
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [{ body: { success: true, broadcastSucceeded: false, broadcastError: 'node rejected' } }],
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('may still propagate'))).toBe(true);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow(/already executed/);
+  });
+
+  it('aborts before signing when the route env var is not a known route', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote()]);
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'Standard'; // wrong case
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'INVALID_EXECUTION_ROUTE' });
+
+    // Nothing was signed or sent, and the quote is still usable — a typo must
+    // never silently fall back to the legacy route.
+    expect(executeCalls).toHaveLength(0);
+    expect(() => loadQuote(quoteId)).not.toThrow();
+  });
+
+  it('stops at a landed revert instead of signing the next candidate', async () => {
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [{ body: {
+        success: false,
+        code: 'TRANSACTION_REVERTED',
+        message: 'Transaction reverted',
+        revertReason: 'min return not reached',
+        txHash: '0x' + 'ab'.repeat(32),
+      } }],
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    // A Failed response carrying a transaction identifier is terminal on every
+    // route: the identifier is evidence the transaction was handed off, so the
+    // shared classifier reports it as an ambiguous broadcast rather than letting
+    // the candidate loop continue.
+    const err = await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toContain('0x' + 'ab'.repeat(32));
+
+    // The backend also keeps the per-quote lock after any attempt that produced a
+    // hash, so a second candidate could only come back 409 — it must not be
+    // signed at all.
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
+  it('still falls back to the next candidate when the failure carries no hash', async () => {
+    // No txHash is the backend's "provably never broadcast" shape: it releases
+    // the quote lock, so the sequential fallback stays available.
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [{ body: { success: false, error: 'aggregator returned no route' } }],
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+
+    expect(executeCalls).toHaveLength(2);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(true);
+  });
+
+  // The hash-bearing-failure rule is not route-conditional: a legacy response
+  // carrying a transaction identifier is the same evidence of handoff, so the
+  // legacy candidate loop stops there too.
+  it('also stops the legacy route on a failure that carries a hash', async () => {
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [{ body: { status: 'Failed', error: 'reverted', txHash: '0x' + 'cd'.repeat(32), chainType: 'evm' } }],
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    const err = await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toContain('0x' + 'cd'.repeat(32));
+
+    expect(executeCalls.every(c => c.path === '/execute')).toBe(true);
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+  });
+
+  it('stops at an on-chain receipt revert instead of signing the next candidate', async () => {
+    // The other half of the single-flight rule: the route accepted the broadcast
+    // (success:true) and the revert only surfaces in the receipt. The quote is
+    // claimed server-side all the same, so the next candidate cannot be sent.
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [{ body: { success: true } }],
+      receiptStatus: '0x0',
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'TX_REVERTED' });
+
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+  });
+
+  it('prints a Signature line (not Tx Hash) for a Solana standard-route success', async () => {
+    // Solana via Privy keeps the local wallet out of the picture, isolating the
+    // output label on the normalised response.
+    const sigCount = Buffer.from([0x01]);
+    const emptySig = Buffer.alloc(64);
+    const messageBytes = Buffer.from([
+      0x01, 0x00, 0x01, 0x02,
+      ...Buffer.alloc(32), ...Buffer.alloc(32), ...Buffer.alloc(32),
+      0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00,
+    ]);
+    const txBase64 = Buffer.concat([sigCount, emptySig, messageBytes]).toString('base64');
+
+    const quoteId = saveQuote(
+      { success: true, metadata: { quoteId: 'backend-quote-id' }, quotes: [{ aggregator: 'jupiter', inputMint: SOL_MINT, outputMint: SOL_USDC, inAmount: '1000000000', outAmount: '50000000', transaction: txBase64, metadata: { requestId: 'req-1' } }] },
+      'solana',
+      'privy',
+      { evm: 'wl_evm_1', solana: 'wl_sol_1' },
+      null,
+      { swapMode: 'exactIn', request: solanaIntent({ walletAddress: 'SolPrivyAddr1111111111111111111111111111' }) },
+    );
+
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.startsWith('https://api.privy.io/') && opts?.method === 'GET') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: 'SolPrivyAddr1111111111111111111111111111', chain_type: 'solana' }) });
+      }
+      if (urlStr.startsWith('https://api.privy.io/')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: 'c2lnbmVkVHg=' } }) });
+      }
+      if (urlStr.includes('trading-api') && urlStr.endsWith('/execution/standard')) {
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ success: true, txHash: '4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj' })) });
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({})) });
+    }));
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    process.env.PRIVY_APP_ID = 'test-app-id';
+    process.env.PRIVY_APP_SECRET = 'test-secret';
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(logs.some(l => l.includes('Signature:') && l.includes('4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj'))).toBe(true);
+    expect(logs.some(l => l.includes('Tx Hash:'))).toBe(false);
+  });
+
+  // The EVM soft-fail test above is resolved by the receipt poll. Solana has no
+  // such poll, so a node-rejected broadcast would otherwise print the success
+  // banner and exit 0 for a transaction that may never have propagated.
+  it('fails closed on a Solana node-rejected broadcast instead of reporting success', async () => {
+    const sigCount = Buffer.from([0x01]);
+    const emptySig = Buffer.alloc(64);
+    const messageBytes = Buffer.from([
+      0x01, 0x00, 0x01, 0x02,
+      ...Buffer.alloc(32), ...Buffer.alloc(32), ...Buffer.alloc(32),
+      0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00,
+    ]);
+    const txBase64 = Buffer.concat([sigCount, emptySig, messageBytes]).toString('base64');
+
+    const quoteId = saveQuote(
+      { success: true, metadata: { quoteId: 'backend-quote-id' }, quotes: [{ aggregator: 'jupiter', inputMint: SOL_MINT, outputMint: SOL_USDC, inAmount: '1000000000', outAmount: '50000000', transaction: txBase64, metadata: { requestId: 'req-1' } }] },
+      'solana',
+      'privy',
+      { evm: 'wl_evm_1', solana: 'wl_sol_1' },
+      null,
+      { swapMode: 'exactIn', request: solanaIntent({ walletAddress: 'SolPrivyAddr1111111111111111111111111111' }) },
+    );
+
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.startsWith('https://api.privy.io/') && opts?.method === 'GET') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: 'SolPrivyAddr1111111111111111111111111111', chain_type: 'solana' }) });
+      }
+      if (urlStr.startsWith('https://api.privy.io/')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: 'c2lnbmVkVHg=' } }) });
+      }
+      if (urlStr.includes('trading-api') && urlStr.endsWith('/execution/standard')) {
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ success: true, txHash: '4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj', broadcastSucceeded: false, broadcastError: 'node rejected' })) });
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({})) });
+    }));
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    process.env.PRIVY_APP_ID = 'test-app-id';
+    process.env.PRIVY_APP_SECRET = 'test-secret';
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    // Never the success banner, and the signature is still reported so the
+    // user can check the explorer.
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+    expect(logs.some(l => l.includes('may still propagate'))).toBe(true);
+    expect(logs.some(l => l.includes('4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj'))).toBe(true);
+    // The quote stays spent — this path must never invite a re-execute.
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
+  // A WalletConnect wallet that broadcasts for us hands back a hash, not signed
+  // bytes, so the swap never reaches /execution/standard. That bypass is allowed
+  // (there is nothing to POST) but it must not leave WalletConnect as the one
+  // signer where selecting the standard route silently changes nothing.
+  function saveWcQuote(wcAddress, quotes) {
+    return saveQuote(
+      { success: true, quotes, metadata: { quoteId: 'backend-quote-id' } },
+      'base',
+      'walletconnect',
+      null,
+      null,
+      {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: wcAddress,
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+        }),
+      },
+    );
+  }
+
+  it('stops at a revert and says the route was bypassed when WalletConnect broadcasts directly', async () => {
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect')
+      .mockResolvedValue({ txHash: '0x' + 'ef'.repeat(32) });
+    const { executeCalls } = stubStandardSwapFetch({ receiptStatus: '0x0' });
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'TX_REVERTED' });
+
+    // One wallet prompt, not two: the second candidate would be a second real
+    // swap against a quote already recorded as spent.
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    // Nothing was POSTed anywhere — the wallet broadcast it.
+    expect(executeCalls).toHaveLength(0);
+    expect(logs.some(l => l.includes('the standard'))).toBe(true);
+    expect(logs.some(l => l.includes('execution route was bypassed'))).toBe(true);
+  });
+
+  // #737 made a confirmed revert terminal on every route, so the legacy path no
+  // longer signs a second candidate after one lands and reverts.
+  it('stops the legacy WalletConnect route at a reverted receipt', async () => {
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect')
+      .mockResolvedValue({ txHash: '0x' + 'ef'.repeat(32) });
+    stubStandardSwapFetch({ receiptStatus: '0x0' });
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'TX_REVERTED' });
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(logs.some(l => l.includes('execution route was bypassed'))).toBe(false);
+  });
+
+  // wcExec throws away the child's exit code and kill signal, so a user
+  // rejection and a send-transaction timeout (wallet may have broadcast) are
+  // indistinguishable here. The route that stops at a failed swap has to stop
+  // at this one too, or the "failure" is a second wallet prompt on top of a
+  // possibly-live swap.
+  it('stops at an ambiguous WalletConnect send failure instead of signing the next candidate', async () => {
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect')
+      .mockRejectedValue(new Error('Command failed: walletconnect send-transaction'));
+    const { executeCalls } = stubStandardSwapFetch();
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({
+        code: 'BROADCAST_FAILED',
+        message: expect.stringContaining('may still have broadcast it'),
+      });
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(executeCalls).toHaveLength(0);
+  });
+
+  // sendTransactionViaWalletConnect throws rather than resolving without one of
+  // txHash/signedTransaction, so this shape cannot arise through it — the mock is
+  // reaching past that contract on purpose, because the call-site guard exists for a
+  // future relaxation of it. What matters is that an unusable response never reaches
+  // the broadcast and never offers a second candidate.
+  it('stops when WalletConnect resolves with neither a hash nor a signed transaction', async () => {
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({});
+    const { executeCalls } = stubStandardSwapFetch();
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({
+        code: 'BROADCAST_FAILED',
+        message: expect.stringContaining('no transaction hash and no signed transaction'),
+      });
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(executeCalls).toHaveLength(0);
+  });
+
+  // Unlike the ambiguous send failure, which keeps the legacy fallback for
+  // backwards compatibility, an unusable response is terminal on both routes.
+  it('stops on the legacy route too when WalletConnect returns nothing usable', async () => {
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({});
+    const { executeCalls } = stubStandardSwapFetch();
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+    expect(executeCalls).toHaveLength(0);
+  });
+
+  // #739 tags every WalletConnect send ambiguous at the boundary, so the legacy
+  // route stops at a failed send too — the wallet may already have broadcast.
+  it('stops the legacy WalletConnect route when the send fails', async () => {
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect')
+      .mockRejectedValue(new Error('Command failed: walletconnect send-transaction'));
+    stubStandardSwapFetch();
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+  });
+
+  // quoteId is the key the backend's per-quote single-flight lock is held on.
+  // A per-quote id is minted by the aggregator in its own namespace (LiFi
+  // returns '<uuid>:<index>'), so sending one would look idempotency-protected
+  // and silently not be.
+  it('sends the backend quote id, not the aggregator one, as the standard-route key', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveNativeEthQuote(
+      [{ ...nativeEthQuote(), metadata: { quoteId: 'aggregator-lifi-id:0' } }],
+      { metadata: { quoteId: 'backend-quote-id' } },
+    );
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls[0].path).toBe('/execution/standard');
+    expect(executeCalls[0].body.quoteId).toBe('backend-quote-id');
+  });
+
+  it('refuses standard execution rather than broadcasting without the backend lock', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveNativeEthQuote(
+      [{ ...nativeEthQuote(), metadata: { quoteId: 'aggregator-lifi-id:0' } }],
+      { metadata: null },
+    );
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'MISSING_QUOTE_ID' });
+
+    // Refused before anything was signed or sent, not after.
+    expect(executeCalls).toHaveLength(0);
+  });
+
+  // A success with no hash is not reportable: nothing to print, nothing to poll,
+  // nothing to check on an explorer. The EVM path would paper over it by
+  // deriving its own hash from the signed bytes; Solana has no equivalent step,
+  // so it would print a completed swap with an undefined hash.
+  it('fails closed when the endpoint reports success but returns no transaction hash', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true }, noHash: true }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    // One POST, not two: the next candidate would be signed on top of a
+    // request the endpoint already accepted.
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+    expect(logs.some(l => l.includes('undefined'))).toBe(false);
+    // Ambiguous, so the quote is spent and stays spent.
+    expect(() => loadQuote(quoteId)).toThrow(/already executed/i);
+  });
+
+  // The candidate fallback already trusts "failed, no hash" enough to go sign
+  // another transaction against this quote, so it has to trust it enough to
+  // hand the local claim back too.
+  it('releases the local claim when every candidate failed with no transaction hash', async () => {
+    stubStandardSwapFetch({ responses: [{ body: { success: false, code: 'QUOTE_EXPIRED' }, noHash: true }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+
+    // Nothing was broadcast, so the quote is loadable again rather than stuck
+    // behind "claimed by another execution".
+    expect(() => loadQuote(quoteId)).not.toThrow();
+  });
+
+  // An HTTP status is not the endpoint stating it never broadcast — it describes
+  // the response, and a 4xx can be produced after the payload was forwarded. So a
+  // typed 4xx code stops the command and the claim is KEPT, rather than releasing
+  // a quote whose transaction may be live.
+  it('keeps the local claim and stops when the endpoint returns a typed 4xx', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ status: 400, body: { code: 'QUOTE_EXPIRED', message: 'quote expired' } }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    const err = await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toContain('quote expired');
+
+    expect(executeCalls).toHaveLength(1);
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
+  it('keeps the local claim and stops when a 4xx carries a null JSON body', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ status: 400, raw: 'null' }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    // Previously a TypeError reading body.code, which is neither fatal nor a
+    // rejection, so the loop went on to sign the next candidate.
+    const err = await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+
+    expect(executeCalls).toHaveLength(1);
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
+  // The surviving ambiguous-and-continuing path: a WalletConnect send that
+  // threw without saying whether the wallet broadcast, on the legacy route
+  // where the run goes on to the next candidate. A later candidate's clean
+  // rejection must not hand the claim back on that attempt's behalf.
+  it('keeps the claim when an earlier candidate ended ambiguously', async () => {
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
+    const wcAddress = showWallet('default').evm;
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect')
+      // Candidate 1: ambiguous — the wallet may or may not have broadcast.
+      .mockRejectedValueOnce(new Error('Command failed: walletconnect send-transaction'))
+      // Candidate 2: sign-only, so it falls through to the shared POST —
+      // which definitively rejects it.
+      .mockResolvedValue({ signedTransaction: '0xdeadbeef' });
+    stubStandardSwapFetch({ responses: [{ status: 400, body: { code: 'QUOTE_EXPIRED', message: 'quote expired' } }] });
+    const quoteId = saveWcQuote(wcAddress, [nativeEthQuote(), nativeEthQuote()]);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    await expect(cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId })).rejects.toThrow();
+
+    expect(() => loadQuote(quoteId)).toThrow(/already executed/i);
+  });
+
+  // The quote command stores the chain exactly as the user typed it (--chain Base),
+  // and only resolveChain() lowercases on the way through. The standard-route body
+  // indexes CHAIN_MAP directly, so an uppercase spelling has to be normalised there
+  // too -- it would otherwise throw AFTER the transaction is signed.
+  it('builds the standard-route body from a chain name the user capitalised', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveQuote(
+      { success: true, metadata: { quoteId: 'backend-quote-id' }, quotes: [nativeEthQuote()] },
+      'Base',
+      'local',
+      null,
+      null,
+      {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: showWallet('default').evm,
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+        }),
+      },
+    );
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls[0].path).toBe('/execution/standard');
+    expect(executeCalls[0].body).toMatchObject({ chain: 'evm', chainId: '8453' });
+  });
+
+  it('sets toChainId from a destination chain the user capitalised', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { success: true } }] });
+    const quoteId = saveQuote(
+      { success: true, metadata: { quoteId: 'backend-quote-id' }, quotes: [nativeEthQuote()] },
+      'base',
+      'local',
+      null,
+      'Solana',
+      {
+        swapMode: 'exactIn',
+        request: evmIntent({
+          walletAddress: showWallet('default').evm,
+          fromToken: BASE_ETH,
+          toToken: BASE_USDC,
+          amount: '1000000000000000000',
+          maxInputAmount: '1000000000000000000',
+          toChain: 'Solana',
+        }),
+      },
+    );
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls[0].body.isCrossChain).toBe(true);
+    // Silently omitting this produces a misclassified cross-chain request.
+    expect(executeCalls[0].body.toChainId).toBeDefined();
+  });
+
+  it('still broadcasts on the legacy route when only an aggregator quote id is available', async () => {
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { status: 'Success' } }] });
+    const quoteId = saveNativeEthQuote(
+      [{ ...nativeEthQuote(), metadata: { quoteId: 'aggregator-lifi-id:0' } }],
+      { metadata: null },
+    );
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls[0].path).toBe('/execute');
+    expect(executeCalls[0].body.quoteId).toBe('aggregator-lifi-id:0');
+  });
+});
