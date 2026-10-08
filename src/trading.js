@@ -476,6 +476,26 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
     }
 
     if (isStandard) {
+      // The route's contract is a boolean `success`. A 2xx body that does not
+      // carry one — {}, a bare `null`, { status: 'Success' }, anything shaped
+      // some other way — is not the backend saying "I did not broadcast"; it is
+      // this client failing to understand the answer, AFTER the endpoint already
+      // accepted the request at the HTTP level. The failure path below reads a
+      // missing hash as "provably never broadcast" and hands the quote claim
+      // back, so letting shape drift through there would sign the next candidate
+      // on top of a swap that may be live. Same rule as the 409 above: an
+      // unrecognised shape fails closed.
+      //
+      // Standard route only. The legacy route has no single-flight lock and its
+      // own long-standing handling of an unexpected body; widening this to it is
+      // a separate change, not a drive-by.
+      if (typeof body?.success !== 'boolean') {
+        throw Object.assign(
+          new Error('The execution endpoint returned a response this client does not recognise, so the outcome cannot be verified. The swap may still be live — check the wallet on the explorer before retrying.'),
+          { code: 'BROADCAST_FAILED', status: res.status, details: text.slice(0, 200) }
+        );
+      }
+
       // A success body with no hash is not a success we can report. There is
       // nothing to print, nothing to poll and nothing the user can check on an
       // explorer, and on Solana nothing downstream fills it in (the EVM path

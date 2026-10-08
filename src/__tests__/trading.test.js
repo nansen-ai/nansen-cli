@@ -4312,6 +4312,37 @@ describe('executeTransaction — standard execution route', () => {
     expect(err.broadcastRuledOut).toBeUndefined();
   });
 
+  it.each([
+    ['an empty object', { body: {} }],
+    ['a body with no success field', { body: { status: 'Success', txHash: '0xabc' } }],
+    ['a bare null body', { text: 'null' }],
+    ['a non-boolean success', { body: { success: 'true', txHash: '0xabc' } }],
+  ])('fails closed on a 2xx standard body shaped as %s', async (_label, spec) => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([spec]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    ).catch(e => e);
+    // Ambiguous, not "provably never broadcast": the endpoint accepted the
+    // request at the HTTP level, so the candidate loop must not try the next
+    // quote on top of it.
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('still accepts an explicit standard-route failure body as a definitive no-broadcast', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ body: { success: false, code: 'QUOTE_EXPIRED' } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    );
+    expect(res).toMatchObject({ status: 'Failed', error: 'QUOTE_EXPIRED' });
+  });
+
   it('classifies a non-JSON 409 on the standard route as a fatal broadcast failure', async () => {
     const { executeTransaction } = await import('../trading.js');
     stubExecuteFetch([{ status: 409, text: '<html>conflict</html>' }]);
@@ -4557,6 +4588,19 @@ describe('standard execution route — swap command flow', () => {
     expect(executeCalls).toHaveLength(1);
     expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
     // Quote is burned so a later re-execute is refused.
+    expect(() => loadQuote(quoteId)).toThrow();
+  });
+
+  it('aborts on an unrecognised 2xx body without broadcasting the next quote', async () => {
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ body: { status: 'Success' } }] });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
     expect(() => loadQuote(quoteId)).toThrow();
   });
 
