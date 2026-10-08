@@ -2119,7 +2119,7 @@
           ]
         },
         "execute": {
-          "description": "Sign and broadcast a quoted trade. Explicitly blank --wallet values are rejected.",
+          "description": "Sign and broadcast a quoted trade. Explicitly blank --wallet values are rejected. NANSEN_TRADING_EXECUTION_ROUTE=standard opts a non-gasless swap into the execution route that tracks the on-chain outcome server-side; unset (or legacy) keeps the default broadcast route, and any other value is rejected rather than silently falling back. Staged rollout — leave it unset unless you are deliberately exercising the new route.",
           "apiEndpoints": [
             "/api/v1/sanctions/screen"
           ],
