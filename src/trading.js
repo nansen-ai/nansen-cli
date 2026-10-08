@@ -4748,7 +4748,9 @@ EXAMPLES:
               // tell from here whether the hash means the tx actually went
               // out, but the asymmetry favors marking: a needless re-quote
               // is cheaper than a silent double broadcast.
-              const failedTxId = result.signature || result.txHash;
+              const failedTxId = chainType === 'evm'
+                ? result.txHash
+                : (result.signature || result.txHash);
               if (failedTxId) markQuoteExecuted(quoteId, { broadcast: { txHash: failedTxId } });
               lastQuoteError = `${quoteName}: ${result.error || result.status}`;
               if (qi + 1 < endIndex) log(`  Trying next quote...`);

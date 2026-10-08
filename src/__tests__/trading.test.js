@@ -8622,6 +8622,27 @@ describe('trade execute: claim handling and terminal failures', () => {
     delete process.env.NANSEN_WALLET_PASSWORD;
   });
 
+  it('persists the EVM txHash instead of a stray Solana signature on failure', async () => {
+    stubSwapFetch({
+      execute: {
+        body: {
+          status: 'Failed',
+          error: 'broadcast failed',
+          signature: 'not-an-evm-transaction-id',
+          txHash: FIXTURE_EVM_HASH,
+        },
+      },
+    });
+    const quoteId = saveEthQuote(1);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+
+    expect(() => loadQuote(quoteId)).toThrow(new RegExp(`already executed.*${FIXTURE_EVM_HASH}`, 's'));
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
   it('fails closed on a missing status without broadcasting a second candidate', async () => {
     const responseBody = {};
     const { executeCalls } = stubSwapFetch({ execute: { body: responseBody } });
