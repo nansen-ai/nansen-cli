@@ -267,6 +267,20 @@ function assertUsableTxId(body, chainType) {
   }
 }
 
+// A readable application-level failure can still describe a transaction that
+// was broadcast. The identifier is evidence of handoff, so callers must retain
+// the quote claim and stop rather than treating the response as "nothing sent".
+function hashBearingFailure(result, label) {
+  const txId = result?.signature || result?.txHash;
+  if (!txId) return null;
+  const error = ambiguousBroadcast(
+    `${label} reported ${result.status || 'failure'} with transaction identifier ${txId}. The transaction may have been broadcast, so no further quote will be tried. Check it on-chain before requesting a fresh quote.`,
+    { details: result },
+  );
+  error.txHash = txId;
+  return error;
+}
+
 export async function executeTransaction(params, { retries = 2, retryDelayMs = 1500 } = {}) {
   const headers = {
     'Content-Type': 'application/json',
@@ -658,12 +672,12 @@ function quoteClaimedError(quoteId, claimedPath) {
  * loaded it before another run executed it (for instance while waiting at the
  * confirmation prompt) sees that run's `executedAt` here, before signing.
  *
- * `release({ handedOff })` puts the quote back under its own name when no swap
+ * `release({ handedOff })` puts the quote back under its own name when no
  * transaction left this process, or when one did and `executedAt` was recorded
- * (loadQuote then refuses it with the broadcast hashes). A swap that was handed
- * off with no recorded marker leaves the quote claimed: a retry is refused
- * rather than risk a second broadcast, and the claim goes away with the quote
- * after its 1-hour lifetime.
+ * (loadQuote then refuses it with the broadcast hashes). A swap, approval, or
+ * revoke that was handed off with no recorded marker leaves the quote claimed:
+ * a retry is refused rather than risk another broadcast, and the claim goes
+ * away with the quote after its 1-hour lifetime.
  *
  * @param {string} quoteId
  * @param {function} [readQuote] Validates the claimed quote, including its type.
@@ -3242,9 +3256,18 @@ EXAMPLES:
 
       let quoteClaim = null;
       // Set just before the swap transaction leaves this process (the Trading
-      // API broadcast, or a WalletConnect wallet that may broadcast it), so the
-      // claim is only handed back when no swap can be in flight.
+      // API broadcast, or a WalletConnect wallet that may broadcast it).
       let swapHandedOff = false;
+      // Approval and allowance-revoke transactions can leave before the swap.
+      // Keep this sticky once any such broadcast is acknowledged: if receipt,
+      // hash, or allowance verification later fails, the cached quote must not
+      // become reusable while the wallet's allowance state is unknown.
+      let ancillaryHandedOff = false;
+      // Sticky across candidates: set once any attempt ends without the backend
+      // telling us whether it broadcast. An explicit "failed, no hash" response
+      // clears swapHandedOff for its own attempt, but it says nothing about an
+      // earlier attempt that threw mid-POST — so that one has to keep the claim.
+      let handoffAmbiguous = false;
       try {
         const quoteData = loadQuote(quoteId);
         // The quote command stores the chain exactly as the user typed it
@@ -3719,11 +3742,17 @@ EXAMPLES:
                     }
                     const revokeResult = await executeTransaction({ signedTransaction: signedRevoke, chain, simulate: !noSimulate });
                     if (revokeResult.status !== 'Success') {
+                      const handedOffFailure = hashBearingFailure(revokeResult, `Allowance revoke for ${quoteName}`);
+                      if (handedOffFailure) {
+                        ancillaryHandedOff = true;
+                        throw handedOffFailure;
+                      }
                       log(`  ❌ Allowance revoke failed for ${quoteName}: ${revokeResult.error || 'unknown'}`);
                       if (qi + 1 < endIndex) log(`  Trying next quote...`);
                       lastQuoteError = `${quoteName} allowance revoke failed`;
                       continue;
                     }
+                    ancillaryHandedOff = true;
                     log(`  Waiting for allowance revoke confirmation...`);
                     try {
                       const { receipt, hash: revokeHash } = await confirmEvmBroadcast(chain, signedRevoke, revokeResult.txHash, 'allowance-revoke');
@@ -3738,10 +3767,7 @@ EXAMPLES:
                     try {
                       await assertAllowanceRevoked(chain, currentQuote.inputMint, walletAddress, currentQuote.approvalAddress);
                     } catch (pollErr) {
-                      log(`  ❌ Revoke tx confirmed but allowance was not cleared for ${quoteName}: ${pollErr.message}.${allowanceRevokeRecoveryHint(revokeResult.txHash)}`);
-                      if (qi + 1 < endIndex) log(`  Trying next quote...`);
-                      lastQuoteError = `${quoteName} allowance revoke verification failed`;
-                      continue;
+                      throw ambiguousBroadcast(`Revoke tx confirmed but allowance was not cleared for ${quoteName}: ${pollErr.message}.${allowanceRevokeRecoveryHint(revokeResult.txHash)} Request a fresh quote after verifying the allowance.`);
                     }
                     await waitForAllowanceTxPropagation();
                   }
@@ -3775,6 +3801,11 @@ EXAMPLES:
                   }
                   const approvalResult = await executeTransaction({ signedTransaction: signedApproval, chain, simulate: !noSimulate });
                   if (approvalResult.status !== 'Success') {
+                    const handedOffFailure = hashBearingFailure(approvalResult, `Approval for ${quoteName}`);
+                    if (handedOffFailure) {
+                      ancillaryHandedOff = true;
+                      throw handedOffFailure;
+                    }
                     const revokedMsg = shouldRevoke
                       ? ' after revoking the prior allowance (now 0)'
                       : '';
@@ -3783,6 +3814,7 @@ EXAMPLES:
                     lastQuoteError = `${quoteName} approval failed`;
                     continue;
                   }
+                  ancillaryHandedOff = true;
                   log(`  Waiting for approval confirmation...`);
                   try {
                     const { receipt, hash: approvalHash } = await confirmEvmBroadcast(chain, signedApproval, approvalResult.txHash, 'allowance-approval');
@@ -3797,10 +3829,7 @@ EXAMPLES:
                   try {
                     await assertAllowanceAtLeast(chain, currentQuote.inputMint, walletAddress, currentQuote.approvalAddress, approveAmt);
                   } catch (pollErr) {
-                    log(`  ❌ Approval tx confirmed but allowance did not reach the required amount for ${quoteName}${shouldRevoke ? ' after revoking the prior allowance (now 0)' : ''}: ${pollErr.message}`);
-                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
-                    lastQuoteError = `${quoteName} approval verification failed`;
-                    continue;
+                    throw ambiguousBroadcast(`Approval tx confirmed but allowance did not reach the required amount for ${quoteName}${shouldRevoke ? ' after revoking the prior allowance (now 0)' : ''}: ${pollErr.message}. Request a fresh quote after verifying the allowance.`);
                   }
                   await waitForAllowanceTxPropagation();
                 }
@@ -4074,6 +4103,7 @@ EXAMPLES:
                         { allowZero: true },
                       );
                       revokeTxHash = revokeResult.txHash;
+                      if (revokeTxHash) ancillaryHandedOff = true;
                       if (!revokeTxHash && revokeResult.signedTransaction) {
                         log(`  Broadcasting allowance revocation via Trading API...`);
                         const broadcastResult = await executeTransaction({
@@ -4082,8 +4112,14 @@ EXAMPLES:
                           simulate: !noSimulate,
                         });
                         if (broadcastResult.status !== 'Success') {
+                          const handedOffFailure = hashBearingFailure(broadcastResult, `Allowance revoke for ${quoteName}`);
+                          if (handedOffFailure) {
+                            ancillaryHandedOff = true;
+                            throw handedOffFailure;
+                          }
                           throw new Error(broadcastResult.error || 'broadcast failed');
                         }
+                        ancillaryHandedOff = true;
                         revokeTxHash = assertTxHashMatch(revokeResult.signedTransaction, broadcastResult.txHash, 'allowance-revoke');
                       }
                       if (!revokeTxHash) {
@@ -4110,10 +4146,7 @@ EXAMPLES:
                     try {
                       await assertAllowanceRevoked(chain, currentQuote.inputMint, wcAddress, currentQuote.approvalAddress);
                     } catch (pollErr) {
-                      log(`  ❌ Revoke tx confirmed but allowance was not cleared for ${quoteName}: ${pollErr.message}.${allowanceRevokeRecoveryHint(revokeTxHash)}`);
-                      if (qi + 1 < endIndex) log(`  Trying next quote...`);
-                      lastQuoteError = `${quoteName} allowance revoke verification failed`;
-                      continue;
+                      throw ambiguousBroadcast(`Revoke tx confirmed but allowance was not cleared for ${quoteName}: ${pollErr.message}.${allowanceRevokeRecoveryHint(revokeTxHash)} Request a fresh quote after verifying the allowance.`);
                     }
                     await waitForAllowanceTxPropagation();
                   }
@@ -4129,6 +4162,7 @@ EXAMPLES:
                       approvalCapForQuote(quoteData),
                     );
                     approvalTxHash = approvalResult.txHash;
+                    if (approvalTxHash) ancillaryHandedOff = true;
                     if (!approvalTxHash && approvalResult.signedTransaction) {
                       // Wallet returned a signed tx instead of broadcasting — broadcast via Trading API
                       log(`  Broadcasting approval via Trading API...`);
@@ -4138,8 +4172,14 @@ EXAMPLES:
                         simulate: !noSimulate,
                       });
                       if (broadcastResult.status !== 'Success') {
+                        const handedOffFailure = hashBearingFailure(broadcastResult, `Approval for ${quoteName}`);
+                        if (handedOffFailure) {
+                          ancillaryHandedOff = true;
+                          throw handedOffFailure;
+                        }
                         throw new Error(broadcastResult.error || 'broadcast failed');
                       }
+                      ancillaryHandedOff = true;
                       approvalTxHash = assertTxHashMatch(approvalResult.signedTransaction, broadcastResult.txHash, 'allowance-approval');
                     }
                     if (!approvalTxHash) {
@@ -4180,10 +4220,7 @@ EXAMPLES:
                     const revokedMsg = shouldRevoke
                       ? ' after revoking the prior allowance (now 0)'
                       : '';
-                    log(`  ❌ Approval tx confirmed but allowance did not reach the required amount for ${quoteName}${revokedMsg}: ${pollErr.message}`);
-                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
-                    lastQuoteError = `${quoteName} approval verification failed`;
-                    continue;
+                    throw ambiguousBroadcast(`Approval tx confirmed but allowance did not reach the required amount for ${quoteName}${revokedMsg}: ${pollErr.message}. Request a fresh quote after verifying the allowance.`);
                   }
                   await waitForAllowanceTxPropagation();
                   log('');
@@ -4424,11 +4461,17 @@ EXAMPLES:
                     });
 
                     if (revokeResult.status !== 'Success') {
+                      const handedOffFailure = hashBearingFailure(revokeResult, `Allowance revoke for ${quoteName}`);
+                      if (handedOffFailure) {
+                        ancillaryHandedOff = true;
+                        throw handedOffFailure;
+                      }
                       log(`  ❌ Allowance revoke failed for ${quoteName}: ${revokeResult.error || 'unknown error'}`);
                       if (qi + 1 < endIndex) log(`  Trying next quote...`);
                       lastQuoteError = `${quoteName} allowance revoke failed`;
                       continue;
                     }
+                    ancillaryHandedOff = true;
 
                     log(`  Waiting for allowance revoke confirmation...`);
                     try {
@@ -4444,10 +4487,7 @@ EXAMPLES:
                     try {
                       await assertAllowanceRevoked(chain, currentQuote.inputMint, walletAddress, currentQuote.approvalAddress);
                     } catch (pollErr) {
-                      log(`  ❌ Revoke tx confirmed but allowance was not cleared for ${quoteName}: ${pollErr.message}.${allowanceRevokeRecoveryHint(revokeResult.txHash)}`);
-                      if (qi + 1 < endIndex) log(`  Trying next quote...`);
-                      lastQuoteError = `${quoteName} allowance revoke verification failed`;
-                      continue;
+                      throw ambiguousBroadcast(`Revoke tx confirmed but allowance was not cleared for ${quoteName}: ${pollErr.message}.${allowanceRevokeRecoveryHint(revokeResult.txHash)} Request a fresh quote after verifying the allowance.`);
                     }
                     await waitForAllowanceTxPropagation();
                   }
@@ -4474,6 +4514,11 @@ EXAMPLES:
                   });
 
                   if (approvalResult.status !== 'Success') {
+                    const handedOffFailure = hashBearingFailure(approvalResult, `Approval for ${quoteName}`);
+                    if (handedOffFailure) {
+                      ancillaryHandedOff = true;
+                      throw handedOffFailure;
+                    }
                     const revokedMsg = shouldRevoke
                       ? ' after revoking the prior allowance (now 0)'
                       : '';
@@ -4482,6 +4527,7 @@ EXAMPLES:
                     lastQuoteError = `${quoteName} approval failed`;
                     continue;
                   }
+                  ancillaryHandedOff = true;
 
                   log(`  Waiting for approval confirmation...`);
                   try {
@@ -4497,10 +4543,7 @@ EXAMPLES:
                   try {
                     await assertAllowanceAtLeast(chain, currentQuote.inputMint, walletAddress, currentQuote.approvalAddress, approveAmt);
                   } catch (pollErr) {
-                    log(`  ❌ Approval tx confirmed but allowance did not reach the required amount for ${quoteName}${shouldRevoke ? ' after revoking the prior allowance (now 0)' : ''}: ${pollErr.message}`);
-                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
-                    lastQuoteError = `${quoteName} approval verification failed`;
-                    continue;
+                    throw ambiguousBroadcast(`Approval tx confirmed but allowance did not reach the required amount for ${quoteName}${shouldRevoke ? ' after revoking the prior allowance (now 0)' : ''}: ${pollErr.message}. Request a fresh quote after verifying the allowance.`);
                   }
                   await waitForAllowanceTxPropagation();
                   log('');
@@ -4750,6 +4793,16 @@ EXAMPLES:
                   `${quoteName} reported ${result.status} with transaction identifier ${failedTxId}. The transaction may have been broadcast, so no further quote will be tried. Check it on-chain before requesting a fresh quote.`,
                   { details: result },
                 );
+              } else if (!handoffAmbiguous) {
+                // The backend answered, and its answer is "no transaction". That
+                // is the same statement the candidate fallback below already
+                // trusts enough to go sign another transaction against this
+                // quote, so trust it to hand the local claim back too — nothing
+                // left this process. Otherwise a run where every candidate is
+                // rejected this way leaves <quote>.executing.json behind, and the
+                // next execute is refused with "claimed by another execution"
+                // for a quote that was never broadcast and is still good.
+                swapHandedOff = false;
               }
               lastQuoteError = `${quoteName}: ${result.error || result.status}`;
               if (qi + 1 < endIndex) log(`  Trying next quote...`);
@@ -4761,11 +4814,13 @@ EXAMPLES:
             // as spent. The signed tx may already be live on the backend (a 502
             // on the ack, not on the send), so fail closed: mark it here so a
             // later "trade execute --quote <id>" (or an agent auto-retry) is
-            // refused before it re-signs under a fresh nonce. No broadcast hash
-            // is recorded — we don't have one — which yields loadQuote's generic
-            // "may still be pending, check the explorer" message.
+            // refused before it re-signs under a fresh nonce. Preserve a hash
+            // when the application-level failure supplied one; transport
+            // failures have no hash and retain the generic pending warning.
             if (quoteErr?.code === 'BROADCAST_FAILED') {
-              markQuoteExecuted(quoteId);
+              markQuoteExecuted(quoteId, quoteErr.txHash
+                ? { broadcast: { txHash: quoteErr.txHash } }
+                : undefined);
             }
             // Post-broadcast failures abort the whole execute — never retry the
             // next quote once a transaction is already out and its outcome is
@@ -4773,6 +4828,25 @@ EXAMPLES:
             // timeout, or an ambiguous broadcast failure). See
             // isFatalBroadcastError.
             if (isFatalBroadcastError(quoteErr)) throw quoteErr;
+            // No HTTP response is trusted as proof of pre-broadcast rejection.
+            // Once this candidate was handed off, any otherwise-unclassified
+            // error is ambiguous and must stop the loop.
+            if (swapHandedOff) {
+              handoffAmbiguous = true;
+              // The swap was already handed to a wallet or the backend, and
+              // nothing in this error proves it stayed put — an uncoded throw is
+              // this client failing to learn the outcome, not the backend saying
+              // "I never sent it". Marking handoffAmbiguous only protected the
+              // CLAIM; the loop still fell through and signed the next candidate
+              // against the same quote. Abort instead, and mark the quote spent
+              // so a later `trade execute --quote <id>` is refused too.
+              //
+              // The paths that legitimately continue are unaffected: failures
+              // detected before handoff never enter this branch, and the
+              // backend's "failed, no transaction" answer never throws at all.
+              markQuoteExecuted(quoteId);
+              throw ambiguousBroadcast(`${quoteName} failed after the transaction was handed off: ${quoteErr.message || quoteErr} — the outcome could not be verified, so no further quote will be tried. Check the wallet on the explorer before retrying.`);
+            }
             const msg = quoteErr.message || '';
             log(`  ❌ Quote ${quoteName} failed: ${msg}`);
             if (msg.includes('AccountNotFound') && chainType === 'solana') {
@@ -4792,9 +4866,9 @@ EXAMPLES:
         if (err.details) msg += `\n  Details: ${JSON.stringify(err.details)}`;
         throw new CommandError(msg, err.code || 'EXECUTE_ERROR');
       } finally {
-        // Hands the quote back only if no swap left this process, or if one
-        // did and its executedAt marker was recorded (see claimQuoteForExecution).
-        if (quoteClaim) quoteClaim.release({ handedOff: swapHandedOff });
+        // Hands the quote back only if no swap/approval/revoke left this process,
+        // or if an executedAt marker was recorded (see claimQuoteForExecution).
+        if (quoteClaim) quoteClaim.release({ handedOff: swapHandedOff || ancillaryHandedOff });
       }
     },
 
