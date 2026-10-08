@@ -1321,7 +1321,12 @@ export async function waitForReceipt(chain, txHash, timeoutMs = 180000, pollMs =
  * @returns {boolean}
  */
 function isFatalBroadcastError(err) {
-  return err?.code === 'TXHASH_MISMATCH'
+  // Set at the WalletConnect boundary (see markBroadcastAmbiguous): the wallet
+  // was asked to send and we never learned the outcome. This covers the approval
+  // and allowance-revoke sends too, which run BEFORE swapHandedOff is set and so
+  // are invisible to the handed-off check in the candidate loop's outer catch.
+  return err?.broadcastAmbiguous === true
+    || err?.code === 'TXHASH_MISMATCH'
     || err?.code === 'INVALID_SIGNED_TX'
     || err?.code === 'RECEIPT_TIMEOUT'
     || err?.code === 'BROADCAST_FAILED'
@@ -4128,6 +4133,14 @@ EXAMPLES:
                         throw new Error('Allowance revoke returned no transaction hash and no signed transaction; cannot confirm allowance was cleared');
                       }
                     } catch (revokeErr) {
+                      // A revoke the wallet may already have broadcast must not
+                      // fall through: the next candidate would prompt for and
+                      // send a swap while this one is still in flight, against an
+                      // allowance whose real value is unknown. Re-raise with the
+                      // recovery hint the log line below would have carried.
+                      if (revokeErr?.broadcastAmbiguous) {
+                        throw ambiguousBroadcast(`Allowance revoke for ${quoteName} failed after the wallet was asked to send: ${revokeErr.message}. The revoke may still be live.${allowanceRevokeRecoveryHint(revokeTxHash)}`);
+                      }
                       if (isFatalBroadcastError(revokeErr)) throw revokeErr;
                       log(`  ❌ Allowance revoke failed for ${quoteName}: ${revokeErr.message}.${allowanceRevokeRecoveryHint(revokeTxHash)}`);
                       if (qi + 1 < endIndex) log(`  Trying next quote...`);
@@ -4193,10 +4206,17 @@ EXAMPLES:
                       throw new Error('returned no transaction hash and no signed transaction; cannot confirm approval landed');
                     }
                   } catch (approvalErr) {
-                    if (isFatalBroadcastError(approvalErr)) throw approvalErr;
                     const revokedMsg = shouldRevoke
                       ? ' after revoking the prior allowance (now 0)'
                       : '';
+                    // Same as the revoke above: an approval the wallet may have
+                    // broadcast leaves the allowance unknown, so ending here is
+                    // the only answer that cannot double-send. The revoked note
+                    // matters most on this path — the prior allowance is already 0.
+                    if (approvalErr?.broadcastAmbiguous) {
+                      throw ambiguousBroadcast(`Approval for ${quoteName} failed${revokedMsg} after the wallet was asked to send: ${approvalErr.message}. The approval may still be live — check the allowance before retrying.`);
+                    }
+                    if (isFatalBroadcastError(approvalErr)) throw approvalErr;
                     log(`  ❌ Approval failed for ${quoteName}${revokedMsg}: ${approvalErr.message}`);
                     if (qi + 1 < endIndex) log(`  Trying next quote...`);
                     lastQuoteError = `${quoteName} approval failed`;
@@ -4277,10 +4297,17 @@ EXAMPLES:
                   chainId: chainConfig.chainId,
                 });
               } catch (wcErr) {
-                log(`  ❌ WalletConnect transaction failed for ${quoteName}: ${wcErr.message}`);
-                if (qi + 1 < endIndex) log(`  Trying next quote...`);
-                lastQuoteError = `${quoteName}: ${wcErr.message}`;
-                continue;
+                // The wallet was already asked to send, and wcExec rejects with a
+                // bare Error(err.message) for EVERY failure — a user rejection, a
+                // 120s approval timeout and a spawn failure are indistinguishable
+                // here. A timeout in particular is the case where the user DID
+                // approve and the wallet DID broadcast while our subprocess gave
+                // up waiting. So this cannot be read as "nothing was sent": it is
+                // ambiguous, and must fail closed rather than sign the next quote
+                // on top of a possibly-live transaction. (This catch used to
+                // `continue`, which bypassed the loop's whole fail-closed path
+                // below — it never reached `catch (quoteErr)`.)
+                throw ambiguousBroadcast(`WalletConnect transaction failed for ${quoteName}: ${wcErr.message} — the wallet may still have broadcast it; check the explorer before retrying.`);
               }
 
               if (wcResult.txHash) {
@@ -4345,7 +4372,24 @@ EXAMPLES:
                 return undefined; // Success
               }
 
-              // Wallet returned signedTransaction — fall through to broadcast via Trading API
+              // Wallet returned signedTransaction — fall through to broadcast via
+              // Trading API.
+              //
+              // Guarded even though it cannot fire today:
+              // sendTransactionViaWalletConnect throws rather than resolving without
+              // one of txHash/signedTransaction, so every reachable shape is handled
+              // above. That invariant lives in another module, though, and the failure
+              // mode if it ever relaxes to a bare return is the worst one here — an
+              // undefined payload POSTs a malformed body and could hide a wallet
+              // broadcast behind the resulting API error. BROADCAST_FAILED is
+              // classified fatal, so the candidate catch rethrows it and the quote
+              // stays claimed instead of prompting for the next candidate.
+              if (!wcResult.signedTransaction) {
+                throw new CommandError(
+                  `\n  ⚠ WalletConnect returned no transaction hash and no signed transaction for ${quoteName}.\n\n  The wallet may still have broadcast this swap. Check the wallet and the\n  explorer before retrying — retrying may broadcast a second swap.`,
+                  'BROADCAST_FAILED',
+                );
+              }
               signedTransaction = wcResult.signedTransaction;
 
             } else {

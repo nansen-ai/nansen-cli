@@ -105,6 +105,36 @@ export async function getWalletConnectAddress(chainType, chainId) {
 }
 
 /**
+ * Run a wallet send and mark anything that goes wrong as an ambiguous handoff.
+ *
+ * Once the wallet has been asked to send, no failure here proves the
+ * transaction stayed put. `wcExec` collapses a user rejection, a 120s approval
+ * timeout and a failure to launch the binary into the same bare
+ * `Error(err.message)`, and the timeout is precisely the case where the user DID
+ * approve and the wallet DID broadcast while the subprocess gave up waiting. A
+ * reply we cannot parse, or one carrying neither a hash nor signed bytes, says
+ * just as little about what the wallet did.
+ *
+ * Callers must therefore never read one of these as "nothing was sent" and go on
+ * to send something else. Marking it here, at the boundary, is what makes that
+ * hold for every call site — including ones added later — instead of depending
+ * on each `catch` to remember. `isFatalBroadcastError` in trading.js treats the
+ * flag as terminal; it is deliberately distinct from `broadcastRuledOut`, which
+ * is the opposite claim (the backend stated nothing was sent).
+ *
+ * @param {() => Promise<T>} fn - the send, from the wallet call through parsing
+ * @returns {Promise<T>}
+ * @template T
+ */
+async function markBroadcastAmbiguous(fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    throw Object.assign(err, { broadcastAmbiguous: true });
+  }
+}
+
+/**
  * Send a transaction via WalletConnect.
  *
  * The connected wallet signs and may broadcast the transaction.
@@ -128,14 +158,16 @@ export async function sendTransactionViaWalletConnect(txData, timeoutMs = 120000
     chainId,
   };
 
-  const output = await wcExec('walletconnect', ['send-transaction', JSON.stringify(payload)], timeoutMs);
-  const result = parseWcJson(output);
+  return markBroadcastAmbiguous(async () => {
+    const output = await wcExec('walletconnect', ['send-transaction', JSON.stringify(payload)], timeoutMs);
+    const result = parseWcJson(output);
 
-  if (result.transactionHash) return { txHash: result.transactionHash };
-  if (result.txHash) return { txHash: result.txHash };
-  if (result.signedTransaction) return { signedTransaction: result.signedTransaction };
+    if (result.transactionHash) return { txHash: result.transactionHash };
+    if (result.txHash) return { txHash: result.txHash };
+    if (result.signedTransaction) return { signedTransaction: result.signedTransaction };
 
-  throw new Error('Unexpected response from walletconnect send-transaction');
+    throw new Error('Unexpected response from walletconnect send-transaction');
+  });
 }
 
 /**
@@ -186,15 +218,20 @@ export async function sendSolanaTransactionViaWalletConnect(txBase58, timeoutMs 
     chainId: SOLANA_MAINNET_CHAIN,
   };
 
-  const output = await wcExec('walletconnect', ['send-transaction', JSON.stringify(payload)], timeoutMs);
-  const result = parseWcJson(output);
+  // Marked ambiguous for the same reason as the EVM send: this goes out over the
+  // CLI's `send-transaction` verb, so a wallet that signs-and-sends has already
+  // broadcast by the time a timeout or an unreadable reply reaches us.
+  return markBroadcastAmbiguous(async () => {
+    const output = await wcExec('walletconnect', ['send-transaction', JSON.stringify(payload)], timeoutMs);
+    const result = parseWcJson(output);
 
-  if (result.signedTransaction) return { signedTransaction: result.signedTransaction };
-  if (result.signature) return { signature: result.signature };
-  // Some wallets (e.g. Phantom) return 'transaction' instead of 'signedTransaction'
-  if (result.transaction) return { signedTransaction: result.transaction };
+    if (result.signedTransaction) return { signedTransaction: result.signedTransaction };
+    if (result.signature) return { signature: result.signature };
+    // Some wallets (e.g. Phantom) return 'transaction' instead of 'signedTransaction'
+    if (result.transaction) return { signedTransaction: result.transaction };
 
-  throw new Error('Unexpected response from walletconnect Solana sign');
+    throw new Error('Unexpected response from walletconnect Solana sign');
+  });
 }
 
 /**
