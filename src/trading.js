@@ -223,6 +223,50 @@ function isReadableBody(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * A transaction identifier is not decoration: it reaches the explorer URL, the
+ * quote's persisted broadcast marker and receipt polling. A value of the wrong
+ * shape is worse than none at all — it produces a link to nothing and a marker
+ * that cannot be checked — so a malformed one is an unverifiable outcome, not a
+ * cosmetic defect.
+ *
+ * Only presence was checked before, and presence is a weak test: `signature:
+ * {}`, `signature: "not-a-signature"` and a non-string `txHash` are all truthy.
+ * Validating at this one boundary covers every execution path, because this is
+ * where they all read the response — a per-call-site check would have to be
+ * repeated for each new broadcaster. Presence remains the caller's business,
+ * since only it knows whether a local hash exists to fall back on.
+ */
+function assertUsableTxId(body, chainType) {
+  const check = (field, label, isValid) => {
+    const value = body[field];
+    // Absent is not malformed. Whether an identifier is REQUIRED depends on the
+    // execution mode (gasless EVM and Solana have no locally derived hash), so
+    // that call stays at the call site.
+    if (value === undefined || value === null || value === '') return;
+    if (typeof value !== 'string' || !isValid(value)) {
+      throw ambiguousBroadcast(
+        `The execute endpoint reported ${body.status} with an unusable ${label} (${JSON.stringify(value)}), so the transaction cannot be identified or verified. It may still be live — check the wallet on the explorer before retrying.`,
+        { details: body },
+      );
+    }
+  };
+
+  if (chainType === 'solana') {
+    // A Solana signature is 64 bytes, base58-encoded. `txHash` is read as an
+    // alias for it on this chain, so it has to satisfy the same rule.
+    const isSignature = (v) => {
+      try { return base58Decode(v).length === 64; } catch { return false; }
+    };
+    check('signature', 'transaction signature', isSignature);
+    check('txHash', 'transaction signature', isSignature);
+  } else if (chainType === 'evm') {
+    // 32 bytes of hex. The 0x is optional because a broadcaster may report the
+    // hash bare — assertTxHashMatch normalizes both sides before comparing.
+    check('txHash', 'transaction hash', (v) => /^(0x)?[0-9a-fA-F]{64}$/.test(v));
+  }
+}
+
 export async function executeTransaction(params, { retries = 2, retryDelayMs = 1500 } = {}) {
   const headers = {
     'Content-Type': 'application/json',
@@ -351,6 +395,8 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
         { status: res.status, details: body },
       );
     }
+
+    assertUsableTxId(body, chainConfigFor(params.chain)?.type);
 
     return body;
   }
@@ -4564,7 +4610,11 @@ EXAMPLES:
 
             if (result.status === 'Success') {
               const gaslessEvm = gasless && chainType === 'evm';
-              let txId = gaslessEvm ? result.txHash : (result.signature || result.txHash);
+              // `signature` is a Solana field. Reading it on EVM let a stray one
+              // win over the real `txHash` and reach the explorer URL and the
+              // persisted broadcast marker; executeTransaction has already
+              // validated the shape of whichever field is used here.
+              let txId = chainType === 'evm' ? result.txHash : (result.signature || result.txHash);
               if ((chainType === 'solana' || gaslessEvm) && !txId) {
                 const executionType = gaslessEvm ? 'gasless EVM' : 'Solana';
                 throw ambiguousBroadcast(
@@ -4644,7 +4694,7 @@ EXAMPLES:
 
               log(`\n  ✓ Transaction successful!`);
               log(`    Status:      ${result.status}`);
-              log(`    ${result.signature ? 'Signature' : 'Tx Hash'}:   ${txId}`);
+              log(`    ${chainType === 'solana' ? 'Signature' : 'Tx Hash'}:   ${txId}`);
               log(`    Chain:       ${chainConfig.name} (${result.chainType})`);
               log(`    Broadcaster: ${result.broadcaster}`);
               log(`    Explorer:    ${explorerUrl}`);

@@ -77,6 +77,13 @@ const BASE_ETH = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const OUT_TOKEN = '0x4200000000000000000000000000000000000006';
 const LIFI_ROUTER = '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae';
+
+// Identifier fixtures the execute boundary accepts. EVM hashes are 32-byte
+// keccak and Solana signatures 64-byte ed25519 base58, so placeholders like
+// 'SolSig' or '0xApprovalHash' are rejected as unusable -- see assertUsableTxId.
+const FIXTURE_SOL_SIG = base58Encode(Buffer.alloc(64, 7));
+const FIXTURE_EVM_HASH = '0x' + 'a7'.repeat(32);
+
 const RELAY_ROUTER = '0xf5042e6ffac5a625d4e7848e0b01373d8eb9e222';
 
 // `trade quote` / `trade execute` screen the wallet against the sanctions list
@@ -2926,7 +2933,7 @@ describe('Privy execute support', () => {
       if (urlStr.includes('trading-api')) {
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolTxSig', chainType: 'solana', broadcaster: 'test' })),
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'test' })),
         });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
@@ -5601,7 +5608,7 @@ describe('ERC-20 excessive allowance handling', () => {
       allowance: 2000000n,
       executeResponses: [
         { status: 'Success', txHash: '0xRevokeHash', chainType: 'evm', broadcaster: 'test' },
-        { status: 'Success', txHash: '0xApprovalHash', chainType: 'evm', broadcaster: 'test' },
+        { status: 'Success', txHash: FIXTURE_EVM_HASH, chainType: 'evm', broadcaster: 'test' },
         { status: 'Success', txHash: '0xSwapHash', chainType: 'evm', broadcaster: 'test' },
       ],
     });
@@ -5686,7 +5693,7 @@ describe('ERC-20 excessive allowance handling', () => {
       allowance: 2000000n,
       executeResponses: [
         { status: 'Success', txHash: '0xRevokeHash', chainType: 'evm', broadcaster: 'test' },
-        { status: 'Failed', error: 'approval simulation failed', txHash: '0xApprovalHash', chainType: 'evm', broadcaster: 'test' },
+        { status: 'Failed', error: 'approval simulation failed', txHash: FIXTURE_EVM_HASH, chainType: 'evm', broadcaster: 'test' },
       ],
     });
 
@@ -6067,7 +6074,7 @@ describe('Relay aggregator: --gasless flag dispatch', () => {
         executeBodies.push(JSON.parse(opts.body));
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'relay' })),
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'relay' })),
         });
       }
       // Bridge status: return DONE so post-execute polling exits
@@ -6646,7 +6653,7 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
         executeBodies.push(JSON.parse(opts.body));
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'solana-rpc' })),
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'solana-rpc' })),
         });
       }
       if (urlStr.includes('/bridge/status')) {
@@ -6714,7 +6721,7 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
         executeBodies.push(JSON.parse(opts.body));
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'jupiter' })),
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'jupiter' })),
         });
       }
       return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null })) });
@@ -6764,7 +6771,7 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
         executeBodies.push(JSON.parse(opts.body));
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'jupiter' })),
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'jupiter' })),
         });
       }
       return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null })) });
@@ -7541,7 +7548,7 @@ describe('Solana intent binding (adversarial)', () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
       if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'jupiter' })) });
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'jupiter' })) });
       }
       return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null })) });
     }));
@@ -7968,7 +7975,7 @@ describe('Solana execute: swap-outcome verification blocks signing (adversarial)
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
       if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'jupiter' })) });
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'jupiter' })) });
       }
       return rpcMock(url, opts);
     }));
@@ -8050,7 +8057,7 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
         executeBodies.push(body);
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'SolSig', chainType: 'solana', broadcaster: 'relay' })),
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'relay' })),
         });
       }
       if (urlStr.includes('/bridge/status')) {
@@ -8414,14 +8421,14 @@ describe('executeTransaction: response classification', () => {
     return calls;
   }
 
-  const run = async (opts = {}) => {
+  const run = async (opts = {}, chain = 'base') => {
     const { executeTransaction } = await import('../trading.js');
-    return executeTransaction({ signedTransaction: '0xsigned', chain: 'base' }, { retries: 0, ...opts });
+    return executeTransaction({ signedTransaction: '0xsigned', chain }, { retries: 0, ...opts });
   };
 
   it('returns a readable 2xx body unchanged', async () => {
-    stubExecute({ text: JSON.stringify({ status: 'Success', txHash: '0xabc' }) });
-    await expect(run()).resolves.toMatchObject({ status: 'Success', txHash: '0xabc' });
+    stubExecute({ text: JSON.stringify({ status: 'Success', txHash: FIXTURE_EVM_HASH }) });
+    await expect(run()).resolves.toMatchObject({ status: 'Success', txHash: FIXTURE_EVM_HASH });
   });
 
   it.each([
@@ -8472,6 +8479,50 @@ describe('executeTransaction: response classification', () => {
       details: { code: 'QUOTE_EXPIRED', message: 'quote expired' },
     });
     expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  // The identifier reaches the explorer URL, the persisted broadcast marker and
+  // receipt polling, so a malformed one is an unverifiable outcome rather than a
+  // cosmetic defect. Presence alone was the old test, and presence is weak: an
+  // empty object and an arbitrary string are both truthy.
+  const EVM_HASH = '0x' + 'ab'.repeat(32);
+  const SOL_SIG = base58Encode(Buffer.alloc(64, 7));
+
+  it.each([
+    ['an object signature', 'solana', { signature: {} }],
+    ['a non-base58 signature', 'solana', { signature: 'not-a-signature!!' }],
+    ['a signature of the wrong length', 'solana', { signature: base58Encode(Buffer.alloc(32, 7)) }],
+    ['a numeric signature', 'solana', { signature: 12345 }],
+    ['a Solana-shaped txHash', 'solana', { txHash: 'not-a-signature!!' }],
+    ['an object txHash', 'base', { txHash: {} }],
+    ['a truncated txHash', 'base', { txHash: '0xabc' }],
+    ['a non-hex txHash', 'base', { txHash: '0x' + 'zz'.repeat(32) }],
+    ['a numeric txHash', 'base', { txHash: 12345 }],
+  ])('fails closed on a success carrying %s', async (_label, chain, fields) => {
+    stubExecute({ text: JSON.stringify({ status: 'Success', ...fields }) });
+    const err = await run({}, chain).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(err.message).toMatch(/unusable transaction/);
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it.each([
+    ['a base58 signature on Solana', 'solana', { signature: SOL_SIG }],
+    ['a signature carried as txHash on Solana', 'solana', { txHash: SOL_SIG }],
+    ['a 0x-prefixed hash on EVM', 'base', { txHash: EVM_HASH }],
+    ['a bare hex hash on EVM', 'base', { txHash: EVM_HASH.slice(2) }],
+    ['no identifier at all', 'base', {}],
+  ])('accepts %s', async (_label, chain, fields) => {
+    stubExecute({ text: JSON.stringify({ status: 'Success', ...fields }) });
+    await expect(run({}, chain)).resolves.toMatchObject({ status: 'Success' });
+  });
+
+  // A Failed response is checked by the same rule: its identifier is what tells
+  // the caller a transaction may have reached the network.
+  it('fails closed on a failure carrying an unusable identifier', async () => {
+    stubExecute({ text: JSON.stringify({ status: 'Failed', txHash: {} }) });
+    const err = await run().catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
   });
 
   it('never rules out a broadcast for a 5xx, whatever the body', async () => {
@@ -8635,6 +8686,26 @@ describe('trade execute: claim handling and terminal failures', () => {
     expect(executeCalls).toHaveLength(1);
     expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
     expect(logs.some(l => l.includes('undefined'))).toBe(false);
+    expect(() => loadQuote(quoteId)).toThrow();
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  // One end-to-end invariant for the boundary check above: an unusable
+  // identifier must not reach stdout, the explorer URL or the persisted
+  // broadcast marker, and must not authorize a second candidate.
+  it('never reports or persists an unusable transaction identifier', async () => {
+    const { executeCalls } = stubSwapFetch({ execute: { body: { status: 'Success', txHash: 'not-a-hash' } } });
+    const quoteId = saveEthQuote(2);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+    const err = await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(e => e);
+
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('not-a-hash'))).toBe(false);
+    expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
     expect(() => loadQuote(quoteId)).toThrow();
 
     delete process.env.NANSEN_WALLET_PASSWORD;
