@@ -165,7 +165,10 @@ describe('parseArgs', () => {
   it('should keep boolean switches read only via flags out of options', () => {
     // Handlers such as perp.js `flags.all` and trading.js `flags.gasless` never
     // look at options, so a switch missing from VALUELESS_FLAGS would go dead
-    // the moment it is followed by any token.
+    // the moment it is followed by any token. `gasless` stays listed after the
+    // flag's removal for exactly that reason: trade execute rejects it with
+    // GASLESS_REMOVED, and that rejection only fires while it still parses as a
+    // boolean instead of swallowing the token after it.
     for (const flag of ['all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password']) {
       const empty = parseArgs([`--${flag}`, '']);
       expect(empty.flags[flag]).toBe(true);

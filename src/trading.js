@@ -357,8 +357,8 @@ function assertUsableTxId(body, chainType) {
   const check = (field, label, isValid) => {
     const value = body[field];
     // Absent is not malformed. Whether an identifier is REQUIRED depends on the
-    // execution mode (gasless EVM and Solana have no locally derived hash), so
-    // that call stays at the call site.
+    // execution mode (Solana has no locally derived hash), so that call stays
+    // at the call site.
     if (value === undefined || value === null || value === '') return;
     if (typeof value !== 'string' || !isValid(value)) {
       throw ambiguousBroadcast(
@@ -1652,7 +1652,7 @@ function toRpcHexValue(value) {
  * guards: the cheap eth_call sim answers "will it revert", this answers "does the
  * outcome match intent" (see assertSwapOutcome in trade-validation.js).
  *
- * EVM-only, and on its own gate independent of --no-simulate/gasless. Runs for
+ * EVM-only, and on its own gate independent of --no-simulate. Runs for
  * cross-chain bridges too — assertSwapOutcome skips only the output-arrival
  * assertion internally, since the output lands on the destination chain and a
  * source-chain simulation can't observe it; the input-outflow and no-sibling-
@@ -2601,7 +2601,6 @@ export async function buildTradeExecutionPlan({
   quoteIndex = 0,
   quoteCount = 1,
   walletAddress = null,
-  gasless = false,
   noSimulate = false,
   noVerifyOutcome = false,
   probe = false,
@@ -2646,8 +2645,6 @@ export async function buildTradeExecutionPlan({
   if (probe && chainConfig.type === 'evm') {
     if (noSimulate) {
       simulation = 'skipped (--no-simulate)';
-    } else if (gasless) {
-      simulation = 'skipped (--gasless routes through the solver)';
     } else if (approvalPending) {
       simulation = 'skipped — runs after the approval transaction lands';
     } else {
@@ -2681,7 +2678,6 @@ export async function buildTradeExecutionPlan({
     ['Trading fee', quote.tradingFeeInUsd ? `$${quote.tradingFeeInUsd}` : null],
     ['Network fee', quote.networkFeeInUsd ? `$${quote.networkFeeInUsd}` : null],
     ['Approval', approval],
-    ['Gas', gasless ? 'paid by the solver (--gasless)' : null],
     ['Simulation', simulation],
     ['Outcome check', noVerifyOutcome ? 'off (--no-verify-outcome)' : 'on, before broadcast'],
   ]);
@@ -2703,27 +2699,12 @@ async function preflightTradeExecutionCandidate({
   chain,
   chainConfig,
   walletAddress,
-  isWalletConnect,
-  gasless,
   noSimulate,
   noVerifyOutcome,
   api,
   verifiedTargets,
   log,
 }) {
-  if (gasless && quote.aggregator !== 'relay') {
-    throw new CommandError(
-      `--gasless is only supported for Relay quotes, not "${quote.aggregator}".`,
-      'GASLESS_UNSUPPORTED_AGGREGATOR',
-    );
-  }
-  if (gasless && isWalletConnect) {
-    throw new CommandError(
-      'Gasless swaps are not supported via WalletConnect. Use a local or Privy wallet.',
-      'GASLESS_UNSUPPORTED_WALLET',
-    );
-  }
-
   if (!walletAddress) {
     throw new CommandError(
       'The cached quote has no signer address, so it cannot be validated safely. Request a new quote.',
@@ -2825,7 +2806,7 @@ async function preflightTradeExecutionCandidate({
   // approval cannot reproduce that future state and reports the deferral in
   // its plan instead.
   if (!approvalPending) {
-    if (!noSimulate && !gasless) {
+    if (!noSimulate) {
       const tx = quote.transaction;
       const sim = await simulateEvmCall(chain, {
         from: walletAddress,
@@ -3331,10 +3312,8 @@ CROSS-CHAIN NOTES (when using --to-chain):
         response.quotes.forEach((q, i) => log(formatQuote(q, i)));
 
         // Gas balance validation — check that the wallet has enough native token for gas.
-        // High-value trades (>= $10) can use gasless/solver-paid routes and bypass this check.
         try {
-          const tradeValueUsd = response.quotes[0]?.inUsdValue;
-          await validateGasBalance({ chain, walletAddress, tradeValueUsd });
+          await validateGasBalance({ chain, walletAddress });
         } catch (gasErr) {
           throw new CommandError(`Error: ${gasErr.message}`, 'INSUFFICIENT_GAS');
         }
@@ -3397,7 +3376,18 @@ CROSS-CHAIN NOTES (when using --to-chain):
       const noSimulate = flags['no-simulate'];
       const noRevokeExcessiveAllowance = flags['no-revoke-excessive-allowance'];
       const noVerifyOutcome = flags['no-verify-outcome'];
-      const gasless = Boolean(flags.gasless);
+      // --gasless is gone. The deprecated broadcast route it posted to validates
+      // its body strictly and has never accepted `gasless` or `steps`, so every
+      // gasless swap was rejected with "Unrecognized keys" before broadcast, on
+      // every chain. Rejected loudly rather than ignored: a script that still
+      // passes it asked the solver to pay, and silently paying its own gas
+      // instead is not a substitution we should make for it.
+      if (flags.gasless) {
+        throw new CommandError(
+          '--gasless has been removed: the backend never accepted gasless swaps from the CLI, so the flag failed before broadcast on every chain. Re-run without it — the wallet pays its own gas.',
+          'GASLESS_REMOVED',
+        );
+      }
       // Parsed before the quote is touched so a typo can't consume it. A bare
       // --max-tx-fee lands in flags, not options, so it would otherwise read as
       // "not given" and silently apply the default cap.
@@ -3421,7 +3411,6 @@ OPTIONS:
   --no-verify-outcome       Skip swap-outcome verification (balance-delta check)
   --no-revoke-excessive-allowance
                             Skip auto-revoking an oversized/legacy allowance before re-approving
-  --gasless                 Relay-only: have Relay's solver pay gas (no WalletConnect)
   --max-tx-fee <eth>        Most one transaction may pay for gas (fee cap x gas limit).
                             Default 1 ETH; 0 disables the check.
   --dry-run                 Validate and print what would be sent, then stop.
@@ -3475,13 +3464,10 @@ EXAMPLES:
         // Resolved once here, before any signing, so an unrecognised route value
         // aborts the command instead of surfacing mid-loop as a per-quote failure.
         const configuredRoute = executionRoute();
-        // Gasless stays on the legacy route: the standard route has no gasless
-        // envelope, so sending a signed Relay authorization there would drop the
-        // gasless framing and submit it as a plain swap. Only a non-gasless swap
-        // can opt into the standard route. Resolved here rather than at the
-        // broadcast call because the WalletConnect branch — which may never reach
-        // that call — also has to know which route is in force.
-        const swapRoute = gasless ? 'legacy' : configuredRoute;
+        // Named apart from configuredRoute because the WalletConnect branch —
+        // which may never reach the broadcast call — also has to know which route
+        // is in force.
+        const swapRoute = configuredRoute;
 
         // The standard route keys its per-quote single-flight lock on the backend
         // quote id, so a submission without one claims duplicate protection and
@@ -3537,8 +3523,6 @@ EXAMPLES:
           .map((quote, index) => ({ quote, index }))
           .filter(({ quote, index }) => index >= startIndex && index < endIndex && quote?.transaction);
         const shouldPreflightPlan = guard.dryRun || (guard.isTTY && !guard.assumeYes);
-        const planUsesWalletConnect = quoteData.signerType === 'walletconnect'
-          || walletName === 'walletconnect' || walletName === 'wc';
         if (guard.dryRun) {
           // The live signer is intentionally unavailable here: dry-run reaches
           // this gate before wallet material or a WalletConnect session is
@@ -3574,8 +3558,6 @@ EXAMPLES:
                 chain,
                 chainConfig,
                 walletAddress: planWallet,
-                isWalletConnect: planUsesWalletConnect,
-                gasless,
                 noSimulate,
                 noVerifyOutcome,
                 api: apiInstance,
@@ -3614,7 +3596,6 @@ EXAMPLES:
               quoteIndex: index,
               quoteCount: allQuotes.length,
               walletAddress: planWallet,
-              gasless,
               noSimulate,
               noVerifyOutcome,
               probe: true,
@@ -3770,20 +3751,6 @@ EXAMPLES:
           }
 
           const isRelay = currentQuote.aggregator === 'relay';
-          if (gasless) {
-            if (!isRelay) {
-              throw new CommandError(
-                `--gasless is only supported for Relay quotes. Selected quote ${quoteName} is from "${currentQuote.aggregator}". Re-run with --quote-index to pin a Relay quote, or omit --gasless.`,
-                'GASLESS_UNSUPPORTED_AGGREGATOR'
-              );
-            }
-            if (isWalletConnect) {
-              throw new CommandError(
-                'Gasless swaps are not supported via WalletConnect (mobile wallets typically auto-broadcast, breaking the gasless flow). Use a local or Privy wallet.',
-                'GASLESS_UNSUPPORTED_WALLET'
-              );
-            }
-          }
 
           log(`\nExecuting trade on ${chainConfig.name}...`);
           if (endIndex - startIndex > 1) {
@@ -4060,7 +4027,7 @@ EXAMPLES:
               }
 
               // Pre-flight simulation
-              if (!noSimulate && !gasless) {
+              if (!noSimulate) {
                 const sim = await simulateEvmCall(chain, {
                   from: walletAddress,
                   to: currentQuote.transaction.to,
@@ -4076,8 +4043,8 @@ EXAMPLES:
               }
 
               // Verify the swap's simulated on-chain outcome matches intent.
-              // Its own gate (runs even when --no-simulate/gasless skip the
-              // cheap revert check above); degrades with a warning if no
+              // Its own gate (runs even when --no-simulate skips the cheap
+              // revert check above); degrades with a warning if no
               // simulation endpoint is available.
               if (!noVerifyOutcome) {
                 const outcome = await verifySwapOutcome({ chain, from: walletAddress, quote: currentQuote, quoteData, api: apiInstance, log });
@@ -4469,7 +4436,7 @@ EXAMPLES:
               }
 
               // Pre-flight simulation
-              if (!noSimulate && !gasless) {
+              if (!noSimulate) {
                 const txData = currentQuote.transaction;
                 const sim = await simulateEvmCall(chain, {
                   from: wcAddress,
@@ -4486,8 +4453,8 @@ EXAMPLES:
               }
 
               // Verify the swap's simulated on-chain outcome matches intent. Its
-              // own gate: runs even when --no-simulate/gasless skip the cheap
-              // eth_call revert check above; degrades with a warning when no
+              // own gate: runs even when --no-simulate skips the cheap eth_call
+              // revert check above; degrades with a warning when no
               // simulation endpoint is set.
               if (!noVerifyOutcome) {
                 const outcome = await verifySwapOutcome({ chain, from: wcAddress, quote: currentQuote, quoteData, api: apiInstance, log });
@@ -4831,7 +4798,7 @@ EXAMPLES:
               // Pre-flight simulation (EVM only) — catch logic reverts before spending gas
               // Runs AFTER approval so eth_call sees the current allowance state
               // Simulates WITHOUT gas limit to check swap logic; gas re-estimation is separate
-              if (!noSimulate && !gasless) {
+              if (!noSimulate) {
                 const txData = currentQuote.transaction;
                 const sim = await simulateEvmCall(chain, {
                   from: walletAddress,
@@ -4848,8 +4815,8 @@ EXAMPLES:
               }
 
               // Verify the swap's simulated on-chain outcome matches intent. Its
-              // own gate: runs even when --no-simulate/gasless skip the cheap
-              // eth_call revert check above; degrades with a warning when no
+              // own gate: runs even when --no-simulate skips the cheap eth_call
+              // revert check above; degrades with a warning when no
               // simulation endpoint is set.
               if (!noVerifyOutcome) {
                 const outcome = await verifySwapOutcome({ chain, from: walletAddress, quote: currentQuote, quoteData, api: apiInstance, log });
@@ -4880,11 +4847,11 @@ EXAMPLES:
               );
             }
 
-            log(gasless ? '  Forwarding to Relay solver (gasless)...' : '  Broadcasting...');
+            log('  Broadcasting...');
             const execParams = {
               signedTransaction,
               chain,
-              simulate: !noSimulate && !gasless,
+              simulate: !noSimulate,
             };
 
             // The backend quote id, resolved with the route above. The per-quote
@@ -4900,8 +4867,8 @@ EXAMPLES:
             if (quoteIdForExecute) {
               execParams.quoteId = quoteIdForExecute;
             }
-            // The backend's /execute schema is strict; sending fields it doesn't expect
-            // for the (chain × aggregator × gasless) combination causes 502s or
+            // The backend's /execute schema is strict; sending fields it doesn't
+            // expect for the (chain × aggregator) combination causes 502s or
             // "Unrecognized keys" rejections. The matrix we've validated against the
             // live backend:
             //   - EVM signed (any aggregator): no aggregator/requestId fields.
@@ -4910,29 +4877,14 @@ EXAMPLES:
             //     intent resolution.
             //   - Solana signed (Relay): omit requestId — backend tries to look it up
             //     as a Jupiter intent and 502s.
-            //   - Gasless (EVM): aggregator + gasless + steps + requestId.
-            //   - Gasless (Solana): currently rejected by the backend ("Unrecognized
-            //     keys"); we still send the gasless envelope and let the backend
-            //     surface the error so users notice when support lands.
-            if (gasless) {
-              execParams.aggregator = 'relay';
-              execParams.gasless = true;
-              const gaslessRequestId = requestId || currentQuote.metadata?.requestId;
-              if (gaslessRequestId) execParams.requestId = gaslessRequestId;
-              if (currentQuote.metadata?.steps) execParams.steps = currentQuote.metadata.steps;
-            } else if (requestId && !isRelay) {
+            if (requestId && !isRelay) {
               execParams.requestId = requestId; // Solana Jupiter Ultra
             }
 
-            // A retry re-POSTs the signed payload. For a normal swap that's a
-            // byte-identical replay the node dedupes, so retrying an ambiguous
-            // 5xx/network failure can't itself double-broadcast. But a --gasless
-            // Relay swap sends a signed AUTHORIZATION, and Relay's solver
-            // broadcasts its OWN wrapping tx from it (the returned txHash is not
-            // our bytes) — so a re-POST after the solver already picked it up
-            // can't be deduped at the node level and risks a second solve. For
-            // gasless we therefore don't retry: a single POST either succeeds or
-            // fails closed (BROADCAST_FAILED marks the quote spent and aborts).
+            // A retry re-POSTs the signed payload. Every remaining execution mode
+            // sends our own signed bytes, so that is a byte-identical replay the
+            // node dedupes: retrying an ambiguous 5xx/network failure cannot itself
+            // double-broadcast.
             if (swapRoute === 'standard') {
               // Attribution and cross-chain fields the standard route reads from
               // the body. Attached only here because the legacy schema rejects
@@ -4946,19 +4898,17 @@ EXAMPLES:
             }
 
             swapHandedOff = true;
-            const result = await executeTransaction(execParams, { retries: gasless ? 0 : undefined, route: swapRoute, attemptId });
+            const result = await executeTransaction(execParams, { route: swapRoute, attemptId });
 
             if (result.status === 'Success') {
-              const gaslessEvm = gasless && chainType === 'evm';
               // `signature` is a Solana field. Reading it on EVM let a stray one
               // win over the real `txHash` and reach the explorer URL and the
               // persisted broadcast marker; executeTransaction has already
               // validated the shape of whichever field is used here.
               let txId = chainType === 'evm' ? result.txHash : (result.signature || result.txHash);
-              if ((chainType === 'solana' || gaslessEvm) && !txId) {
-                const executionType = gaslessEvm ? 'gasless EVM' : 'Solana';
+              if (chainType === 'solana' && !txId) {
                 throw ambiguousBroadcast(
-                  `The execute API reported success for ${quoteName} without a ${executionType} transaction identifier. The broadcast cannot be verified, so no further quote will be tried. Check the wallet on the explorer before retrying.`,
+                  `The execute API reported success for ${quoteName} without a Solana transaction identifier. The broadcast cannot be verified, so no further quote will be tried. Check the wallet on the explorer before retrying.`,
                   { details: result },
                 );
               }
@@ -4968,9 +4918,9 @@ EXAMPLES:
               // Trading API accepts it — the quote is spent here, before the
               // on-chain verification below can throw RECEIPT_TIMEOUT (or
               // anything else) and abort this function. Covers local EVM,
-              // Privy EVM, Privy Solana, local/WalletConnect Solana, the
-              // WalletConnect sign-only fallback, and --gasless Relay — every
-              // path that reaches this shared broadcast call.
+              // Privy EVM, Privy Solana, local/WalletConnect Solana and the
+              // WalletConnect sign-only fallback — every path that reaches this
+              // shared broadcast call.
               //
               // Deliberate: a broadcast that later reverts on-chain still
               // consumes the quote and ends this invocation. The user must
@@ -5020,30 +4970,20 @@ EXAMPLES:
               // For EVM: verify the tx actually succeeded on-chain
               if (chainType === 'evm') {
                 log('  Verifying on-chain status...');
-                // Non-gasless: derive our local hash up front, OUTSIDE the receipt-poll
-                // try below. A hex-validation failure here means no poll ever ran, so it
-                // must surface as itself — not as the "REVERTED on-chain" diagnostic that
-                // catch is reserved for. (Gasless has no local hash to bind to: the Relay
-                // solver wraps and broadcasts its own tx, so result.txHash legitimately is
-                // not the hash of the bytes we signed.)
-                if (!gasless) {
-                  try {
-                    txId = evmTxHash(signedTransaction);
-                  } catch (hashErr) {
-                    throw new CommandError(`Cannot derive local tx hash for ${quoteName}: ${hashErr.message}`, 'INVALID_SIGNED_TX');
-                  }
-                  explorerUrl = chainConfig.explorer + txId;
-                }
+                // Derive our local hash up front, OUTSIDE the receipt-poll try
+                // below. A hex-validation failure here means no poll ever ran, so it
+                // must surface as itself — not as the "REVERTED on-chain" diagnostic
+                // that catch is reserved for.
                 try {
-                  if (gasless) {
-                    // If the solver reported no hash there is nothing to poll — skip
-                    // rather than block on eth_getTransactionReceipt(undefined).
-                    if (result.txHash) await waitForReceipt(chain, result.txHash);
-                  } else {
-                    const { hash } = await confirmEvmBroadcast(chain, signedTransaction, result.txHash);
-                    txId = hash;
-                    explorerUrl = chainConfig.explorer + txId;
-                  }
+                  txId = evmTxHash(signedTransaction);
+                } catch (hashErr) {
+                  throw new CommandError(`Cannot derive local tx hash for ${quoteName}: ${hashErr.message}`, 'INVALID_SIGNED_TX');
+                }
+                explorerUrl = chainConfig.explorer + txId;
+                try {
+                  const { hash } = await confirmEvmBroadcast(chain, signedTransaction, result.txHash);
+                  txId = hash;
+                  explorerUrl = chainConfig.explorer + txId;
                 } catch (receiptErr) {
                   // A receipt TIMEOUT is not a confirmed revert: the tx was
                   // broadcast and may still be pending under our nonce. Retrying

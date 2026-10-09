@@ -4940,131 +4940,6 @@ describe('confirmEvmBroadcast: binds receipt confirmation to the locally-derived
     vi.unstubAllGlobals();
   });
 
-  it('confirms a gasless swap on the broadcaster hash without a mismatch error', async () => {
-    createWallet('default', 'testpass');
-    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
-
-    const executeBodies = [];
-    // Legitimate for gasless: the Relay solver broadcasts its OWN tx, so this
-    // is never evmTxHash(signedTransaction) — must NOT trip TXHASH_MISMATCH.
-    const solverHash = '0x' + 'ab'.repeat(32);
-    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
-      const urlStr = typeof url === 'string' ? url : url.toString();
-      const body = opts?.body ? (() => { try { return JSON.parse(opts.body); } catch { return {}; } })() : {};
-      if (body.method === 'eth_getTransactionCount') {
-        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5' })) });
-      }
-      if (body.method === 'eth_getCode') {
-        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x6080604052' })) });
-      }
-      if (body.method === 'eth_call') {
-        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x' })) });
-      }
-      if (body.method === 'eth_getTransactionReceipt') {
-        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { status: '0x1', blockNumber: '0x100' } })) });
-      }
-      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
-        executeBodies.push(body);
-        return Promise.resolve({
-          ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', txHash: solverHash, chainType: 'evm', broadcaster: 'relay' })),
-        });
-      }
-      return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
-    }));
-
-    const quoteId = saveQuote({
-      success: true,
-      quotes: [{
-        aggregator: 'relay',
-        inputMint: BASE_USDC,
-        outputMint: OUT_TOKEN,
-        inAmount: '10000000',
-        outAmount: '50000000',
-        approvalAddress: '',
-        transaction: { to: RELAY_ROUTER, data: '0x12345678', value: '0', gas: '300000', maxFeePerGas: '5000000', maxPriorityFeePerGas: '1000000' },
-        metadata: { requestId: 'relay-gasless-req', steps: [{ kind: 'evm-tx' }] },
-      }],
-    }, 'base', 'local', null, null, {
-      swapMode: 'exactIn',
-      request: evmIntent({ walletAddress: showWallet('default').evm, fromToken: BASE_USDC, toToken: OUT_TOKEN, amount: '10000000', maxInputAmount: '10000000' }),
-    });
-
-    const logs = [];
-    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    await cmds.execute([], screenApi, { gasless: true }, { quote: quoteId });
-
-    expect(executeBodies).toHaveLength(1);
-    expect(logs.some(l => l.includes('Transaction successful'))).toBe(true);
-
-    delete process.env.NANSEN_WALLET_PASSWORD;
-    vi.unstubAllGlobals();
-  });
-
-  it('fails closed when a gasless EVM success response has no transaction hash', async () => {
-    createWallet('default', 'testpass');
-    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
-
-    let executePosts = 0;
-    let receiptRequests = 0;
-    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
-      const urlStr = typeof url === 'string' ? url : url.toString();
-      const body = opts?.body ? (() => { try { return JSON.parse(opts.body); } catch { return {}; } })() : {};
-      if (body.method === 'eth_getTransactionCount') {
-        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5' })) });
-      }
-      if (body.method === 'eth_getCode') {
-        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x6080604052' })) });
-      }
-      if (body.method === 'eth_call') {
-        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x' })) });
-      }
-      if (body.method === 'eth_getTransactionReceipt') {
-        receiptRequests += 1;
-      }
-      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
-        executePosts += 1;
-        return Promise.resolve({
-          ok: true,
-          // A Solana-style signature cannot identify Relay's EVM solver tx.
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: 'NotAnEvmTxHash', chainType: 'evm', broadcaster: 'relay' })),
-        });
-      }
-      return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
-    }));
-
-    const quoteId = saveQuote({
-      success: true,
-      quotes: [{
-        aggregator: 'relay',
-        inputMint: BASE_USDC,
-        outputMint: OUT_TOKEN,
-        inAmount: '10000000',
-        outAmount: '50000000',
-        approvalAddress: '',
-        transaction: { to: RELAY_ROUTER, data: '0x12345678', value: '0', gas: '300000', maxFeePerGas: '5000000', maxPriorityFeePerGas: '1000000' },
-        metadata: { requestId: 'relay-gasless-no-hash', steps: [{ kind: 'evm-tx' }] },
-      }],
-    }, 'base', 'local', null, null, {
-      swapMode: 'exactIn',
-      request: evmIntent({ walletAddress: showWallet('default').evm, fromToken: BASE_USDC, toToken: OUT_TOKEN, amount: '10000000', maxInputAmount: '10000000' }),
-    });
-
-    const logs = [];
-    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    const err = await cmds.execute([], screenApi, { gasless: true }, { quote: quoteId }).catch(e => e);
-
-    expect(err).toMatchObject({ code: 'BROADCAST_FAILED' });
-    expect(err.message).toMatch(/without a gasless EVM transaction identifier/i);
-    expect(executePosts).toBe(1);
-    expect(receiptRequests).toBe(0);
-    expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
-    expect(() => loadQuote(quoteId)).toThrow(/already executed|claimed by another execution/);
-
-    delete process.env.NANSEN_WALLET_PASSWORD;
-    vi.unstubAllGlobals();
-  });
-
   it('polls OUR locally-derived hash — not the broadcaster hash — when the broadcaster returns none (guarantee #2)', async () => {
     // A signed tx whose bytes are ours; the broadcaster returns no hash at all.
     const signedTx = '0x02' + 'ab'.repeat(96);
@@ -6231,181 +6106,19 @@ describe('Solana execute: static instruction safety check', () => {
 });
 
 
-describe('Relay aggregator: --gasless flag dispatch', () => {
-  it('forwards aggregator/gasless/steps/requestId to /execute when gasless flag is set', async () => {
+describe('--gasless is removed and rejected', () => {
+  // The deprecated broadcast route validates its body strictly and never
+  // accepted `gasless` or `steps`, so the flag was rejected with "Unrecognized
+  // keys" before broadcast on every chain. It is refused up front rather than
+  // ignored: a caller that
+  // passes it asked the solver to pay, and quietly spending the wallet's own gas
+  // instead is not a substitution to make on its behalf.
+  it('refuses a --gasless execute before the quote is read or anything is signed', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
 
-    const executeBodies = [];
-    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
-      const urlStr = typeof url === 'string' ? url : url.toString();
-      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
-        executeBodies.push(JSON.parse(opts.body));
-        return Promise.resolve({
-          ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'relay' })),
-        });
-      }
-      // Bridge status: return DONE so post-execute polling exits
-      if (urlStr.includes('/bridge/status')) {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          text: () => Promise.resolve(JSON.stringify({ status: 'DONE', receiving: { status: 'DONE', txHash: 'destTx' } })),
-        });
-      }
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null })) });
-    }));
-
-    // Minimal Solana tx so signSolanaTransaction succeeds
-    const sigCount = Buffer.from([0x01]);
-    const emptySig = Buffer.alloc(64);
-    const message = Buffer.from([0x01, 0x00, 0x01, 0x02, ...Buffer.alloc(32), ...Buffer.alloc(32), ...Buffer.alloc(32), 0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00]);
-    const txBase64 = Buffer.concat([sigCount, emptySig, message]).toString('base64');
-
-    const quoteId = saveQuote({
-      success: true,
-      metadata: { quoteId: 'backend-relay-quote-id' },
-      quotes: [{
-        aggregator: 'relay',
-        inputMint: '11111111111111111111111111111111',
-        outputMint: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-        inAmount: '1000000000',
-        outAmount: '180000000',
-        approvalAddress: '',
-        transaction: txBase64,
-        metadata: {
-          requestId: 'relay-req-gas',
-          isCrossChain: true,
-          bridgeTool: 'relay',
-          steps: [{ kind: 'transaction', items: [{ data: 'opaque-step-blob' }] }],
-        },
-      }],
-    }, 'solana', 'local', null, 'base', {
-      swapMode: 'exactIn',
-      request: solanaIntent({
-        walletAddress: showWallet('default').solana,
-        fromToken: '11111111111111111111111111111111',
-        toToken: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-        toChain: 'base',
-        amount: '1000000000',
-        maxInputAmount: '1000000000',
-      }),
-    });
-
-    const logs = [];
-    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
-    try { await cmds.execute([], screenApi, { gasless: true }, { quote: quoteId }); } catch { /* bridge polling may fail in test, that's fine */ }
-
-    expect(executeBodies.length).toBeGreaterThanOrEqual(1);
-    const body = executeBodies[0];
-    expect(body.aggregator).toBe('relay');
-    expect(body.gasless).toBe(true);
-    expect(body.requestId).toBe('relay-req-gas');
-    expect(body.steps).toEqual([{ kind: 'transaction', items: [{ data: 'opaque-step-blob' }] }]);
-    expect(body.simulate).toBe(false); // gasless skips simulation
-    expect(body.quoteId).toBe('backend-relay-quote-id');
-
-    delete process.env.NANSEN_WALLET_PASSWORD;
-    vi.unstubAllGlobals();
-  });
-
-  it('does NOT retry the /execute POST on an ambiguous 5xx for a gasless swap (no double-solve)', async () => {
-    // A --gasless Relay swap POSTs a signed authorization; Relay's solver
-    // broadcasts its own wrapping tx from it, so a re-POST after the solver
-    // already picked it up can't be deduped at the node level and risks a second
-    // solve. executeTransaction must therefore be called with retries:0 for
-    // gasless — a single POST that fails closed — unlike a normal swap where the
-    // byte-identical replay is safe to retry. Regression guard: exactly ONE POST
-    // to /execute even though the response is a retryable-looking 502.
-    createWallet('default', 'testpass');
-    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
-
-    let executePosts = 0;
-    vi.stubGlobal('fetch', vi.fn().mockImplementation((url) => {
-      const urlStr = typeof url === 'string' ? url : url.toString();
-      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
-        executePosts += 1;
-        return Promise.resolve({
-          ok: false,
-          status: 502,
-          text: () => Promise.resolve('<!DOCTYPE html><html>502 Bad Gateway</html>'),
-        });
-      }
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null })) });
-    }));
-
-    const sigCount = Buffer.from([0x01]);
-    const emptySig = Buffer.alloc(64);
-    const message = Buffer.from([0x01, 0x00, 0x01, 0x02, ...Buffer.alloc(32), ...Buffer.alloc(32), ...Buffer.alloc(32), 0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00]);
-    const txBase64 = Buffer.concat([sigCount, emptySig, message]).toString('base64');
-
-    const quoteId = saveQuote({
-      success: true,
-      metadata: { quoteId: 'backend-relay-quote-id' },
-      quotes: [{
-        aggregator: 'relay',
-        inputMint: '11111111111111111111111111111111',
-        outputMint: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-        inAmount: '1000000000',
-        outAmount: '180000000',
-        approvalAddress: '',
-        transaction: txBase64,
-        metadata: {
-          requestId: 'relay-req-gas',
-          isCrossChain: true,
-          bridgeTool: 'relay',
-          steps: [{ kind: 'transaction', items: [{ data: 'opaque-step-blob' }] }],
-        },
-      }],
-    }, 'solana', 'local', null, 'base', {
-      swapMode: 'exactIn',
-      request: solanaIntent({
-        walletAddress: showWallet('default').solana,
-        fromToken: '11111111111111111111111111111111',
-        toToken: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-        toChain: 'base',
-        amount: '1000000000',
-        maxInputAmount: '1000000000',
-      }),
-    });
-
-    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], screenApi, { gasless: true }, { quote: quoteId })).rejects.toThrow();
-
-    expect(executePosts).toBe(1); // no retry — the gasless authorization is not re-POSTed
-
-    delete process.env.NANSEN_WALLET_PASSWORD;
-    vi.unstubAllGlobals();
-  });
-
-  it('throws GASLESS_UNSUPPORTED_AGGREGATOR when --gasless is used on a LiFi quote', async () => {
-    createWallet('default', 'testpass');
-    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
-
-    const quoteId = saveQuote({
-      success: true,
-      quotes: [{
-        aggregator: 'lifi',
-        inputMint: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-        outputMint: '11111111111111111111111111111111',
-        inAmount: '10000000',
-        outAmount: '50000000',
-        approvalAddress: '0xLifiSpender',
-        transaction: { to: '0xLifiRouter', data: '0x1234', value: '0', gas: '300000' },
-        metadata: { isCrossChain: true, bridgeTool: 'across' },
-      }],
-    }, 'base', 'local', null, 'solana');
-
-    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], screenApi, { gasless: true }, { quote: quoteId }))
-      .rejects.toThrow(/only supported for Relay quotes/);
-
-    delete process.env.NANSEN_WALLET_PASSWORD;
-  });
-
-  it('throws GASLESS_UNSUPPORTED_WALLET when --gasless is used with WalletConnect', async () => {
-    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
 
     const quoteId = saveQuote({
       success: true,
@@ -6417,15 +6130,21 @@ describe('Relay aggregator: --gasless flag dispatch', () => {
         outAmount: '50000000',
         approvalAddress: '',
         transaction: { to: '0xRelayRouter', data: '0xswap', value: '0', gas: '300000' },
-        metadata: { requestId: 'relay-req-wc', isCrossChain: true, bridgeTool: 'relay' },
+        metadata: { requestId: 'relay-req', steps: [{ kind: 'evm-tx' }], isCrossChain: true, bridgeTool: 'relay' },
       }],
-    }, 'base', 'walletconnect', null, 'solana');
+    }, 'base', 'local', null, 'solana');
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    await expect(cmds.execute([], screenApi, { gasless: true }, { quote: quoteId }))
-      .rejects.toThrow(/not supported via WalletConnect/);
+    const err = await cmds.execute([], screenApi, { gasless: true }, { quote: quoteId }).catch(e => e);
 
-    vi.restoreAllMocks();
+    expect(err).toMatchObject({ code: 'GASLESS_REMOVED' });
+    expect(err.message).toMatch(/--gasless has been removed/);
+    // Nothing reached the network, and the quote is still spendable without the flag.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(() => loadQuote(quoteId)).not.toThrow();
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    vi.unstubAllGlobals();
   });
 });
 
@@ -6603,13 +6322,13 @@ describe('Path traversal protection', () => {
   });
 });
 
-describe('Relay aggregator: EVM execute forwards requestId', () => {
+describe('Relay aggregator: EVM execute omits requestId', () => {
   // Pinned to the deprecated route: this pins the deprecated route's request body, so it is identical on both
   // routes and this stub is written against the legacy response shape.
   // Route-dependent behaviour is covered in 'standard execution route — swap command flow'.
   beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
   afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
-  it('non-gasless EVM Relay execute omits requestId/aggregator (backend rejects them on EVM)', async () => {
+  it('EVM Relay execute omits requestId/aggregator (backend rejects them on EVM)', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
 
@@ -6668,7 +6387,7 @@ describe('Relay aggregator: EVM execute forwards requestId', () => {
     try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* may fail later, ok */ }
 
     expect(executeBodies.length).toBeGreaterThanOrEqual(1);
-    // Non-gasless EVM Relay: the backend's /execute schema rejects both
+    // EVM Relay: the backend's /execute schema rejects both
     // `aggregator` and `requestId` on EVM submissions (requestId is "Solana only").
     // The signed tx itself contains the routing info; no aggregator hint needed.
     expect(executeBodies[0].requestId).toBeUndefined();
@@ -6680,72 +6399,6 @@ describe('Relay aggregator: EVM execute forwards requestId', () => {
     vi.unstubAllGlobals();
   });
 
-  it('gasless EVM Relay execute sends requestId + gasless + steps', async () => {
-    createWallet('default', 'testpass');
-    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
-
-    const executeBodies = [];
-    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
-      const urlStr = typeof url === 'string' ? url : url.toString();
-      const body = opts?.body ? (() => { try { return JSON.parse(opts.body); } catch { return {}; } })() : {};
-      if (body.method === 'eth_getTransactionCount') {
-        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x5' })) });
-      }
-      if (body.method === 'eth_getCode') {
-        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x6080604052' })) });
-      }
-      if (body.method === 'eth_call') {
-        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x' })) });
-      }
-      if (body.method === 'eth_getTransactionReceipt') {
-        return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { status: '0x1', blockNumber: '0x100' } })) });
-      }
-      if (urlStr.includes('/bridge/status')) {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          text: () => Promise.resolve(JSON.stringify({ status: 'DONE', receiving: { status: 'DONE', txHash: 'destTx' } })),
-        });
-      }
-      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
-        executeBodies.push(JSON.parse(opts.body));
-        return Promise.resolve({
-          ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', txHash: '0xRelayHash', chainType: 'evm', broadcaster: 'relay' })),
-        });
-      }
-      return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
-    }));
-
-    const quoteId = saveQuote({
-      success: true,
-      quotes: [{
-        aggregator: 'relay',
-        inputMint: BASE_USDC,
-        outputMint: '11111111111111111111111111111111',
-        inAmount: '10000000',
-        outAmount: '50000000',
-        approvalAddress: '',
-        transaction: { to: RELAY_ROUTER, data: '0x12345678', value: '0', gas: '300000', maxFeePerGas: '5000000', maxPriorityFeePerGas: '1000000' },
-        metadata: { requestId: 'relay-evm-gas-req', isCrossChain: true, bridgeTool: 'relay', steps: [{ kind: 'evm-tx' }] },
-      }],
-    }, 'base', 'local', null, 'solana', {
-      swapMode: 'exactIn',
-      request: evmIntent({ walletAddress: showWallet('default').evm, fromToken: BASE_USDC, toToken: '11111111111111111111111111111111', toChain: 'solana', amount: '10000000', maxInputAmount: '10000000' }),
-    });
-
-    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
-    try { await cmds.execute([], screenApi, { gasless: true }, { quote: quoteId }); } catch { /* ok */ }
-
-    expect(executeBodies.length).toBeGreaterThanOrEqual(1);
-    expect(executeBodies[0].aggregator).toBe('relay');
-    expect(executeBodies[0].gasless).toBe(true);
-    expect(executeBodies[0].requestId).toBe('relay-evm-gas-req');
-    expect(executeBodies[0].steps).toEqual([{ kind: 'evm-tx' }]);
-
-    delete process.env.NANSEN_WALLET_PASSWORD;
-    vi.unstubAllGlobals();
-  });
 });
 
 describe('Relay aggregator: --aggregator override on bridge-status', () => {
@@ -6811,7 +6464,7 @@ describe('Relay aggregator: --aggregator override on bridge-status', () => {
   });
 });
 
-describe('Relay aggregator: Solana non-gasless omits requestId', () => {
+describe('Relay aggregator: Solana omits requestId', () => {
   // Pinned to the deprecated route: this pins the deprecated route's request body, so it is identical on both
   // routes and this stub is written against the legacy response shape.
   // Route-dependent behaviour is covered in 'standard execution route — swap command flow'.
@@ -6821,7 +6474,7 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
   beforeEach(() => { origSolanaSimRpc = SIMULATION_RPCS.solana; SIMULATION_RPCS.solana = null; });
   afterEach(() => { SIMULATION_RPCS.solana = origSolanaSimRpc; });
 
-  it('non-gasless Solana Relay execute does NOT send requestId (backend 502s otherwise)', async () => {
+  it('Solana Relay execute does NOT send requestId (backend 502s otherwise)', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
 
@@ -6889,7 +6542,7 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
     vi.unstubAllGlobals();
   });
 
-  it('non-gasless Solana Jupiter execute DOES send requestId (Jupiter Ultra intent)', async () => {
+  it('Solana Jupiter execute DOES send requestId (Jupiter Ultra intent)', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
 

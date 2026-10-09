@@ -56,8 +56,13 @@ export const EXCLUDED_COMMANDS = new Set([
  * valueless flags: an extra name here is harmless (the following word is
  * checked against the subcommand table anyway), a missing one makes the walker
  * swallow a real subcommand.
+ *
+ * `gasless` is here for the opposite reason to the rest: the flag was removed,
+ * so it is gone from schema.json and is never suggested, but parseArgs still
+ * treats it as a boolean so that `trade execute` can reject it with
+ * GASLESS_REMOVED instead of eating the token after it.
  */
-const EXTRA_VALUELESS = ['help', 'version', 'cache', 'no-cache', 'stream', 'enrich', 'full', 'human'];
+const EXTRA_VALUELESS = ['help', 'version', 'cache', 'no-cache', 'stream', 'enrich', 'full', 'human', 'gasless'];
 
 // Command, subcommand, option and enum tokens are interpolated straight into
 // shell source. Anything that is not a bare word is dropped rather than escaped

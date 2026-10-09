@@ -188,7 +188,6 @@ Cross-chain swaps work the same way — add `--to-chain`. Bridge providers (Li.F
 ```bash
 nansen trade quote --chain base --to-chain solana --from ETH --to SOL --amount 0.0003 --amount-unit token
 nansen trade execute --quote <quoteId>                # signed broadcast
-nansen trade execute --quote <quoteId> --gasless      # Relay-only: solver pays gas
 nansen trade bridge-status --tx-hash <hash> --from-chain base --to-chain solana
 ```
 
