@@ -199,6 +199,12 @@ describe('trade quote compliance gate', () => {
 });
 
 describe('trade execute compliance gate', () => {
+  // Pinned to the deprecated route: screening runs before the broadcast POST,
+  // so it is identical on both routes and this stub answers the legacy
+  // response shape. Route-dependent behaviour is covered in trading.test.js,
+  // 'standard execution route — swap command flow'.
+  beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
+  afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
   function evmIntent({ walletAddress, toChain = null, recipient = null }) {
     return {
       chain: 'base',
@@ -216,6 +222,7 @@ describe('trade execute compliance gate', () => {
   function saveEvmQuote({ walletAddress, signerType = 'local', privyWalletIds = null, toChain = null, recipient = null, request } = {}) {
     return saveQuote({
       success: true,
+      metadata: { quoteId: 'backend-quote-id' },
       quotes: [{
         aggregator: 'lifi',
         inputMint: BASE_ETH,
