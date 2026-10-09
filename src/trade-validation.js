@@ -202,14 +202,26 @@ const USDC_ADDRESSES = {
 // Native token symbols for error messages.
 const NATIVE_SYMBOLS = { solana: 'SOL', base: 'ETH' };
 
-const MIN_GAS_AMOUNTS = { solana: 0.01, base: 0.000024 };
+// The floor a wallet must clear to be allowed to quote. Kept in step with
+// FEE_BUFFER below: that is what the CLI itself holds back when selling the
+// maximum amount of a native token, so a wallet sitting on exactly that reserve
+// must not then be refused a quote. Solana's real cost is a 5000-lamport base
+// fee plus at most ~0.00204 SOL of ATA rent, so 0.005 is still a wide margin.
+//
+// Deliberately NOT sized against MAX_PRIORITY_FEE_LAMPORTS (0.01 SOL). That is
+// an anti-abuse ceiling we refuse to exceed, not a fee we expect to pay, and the
+// worst spend it permits (~0.012044 SOL with base fee and rent) was never
+// covered by this floor at any value it has held — 0.01 did not cover it either.
+// Sizing a minimum-balance gate off that ceiling would block real wallets to
+// defend against a fee level we only tolerate. This check is a best-effort
+// "can you afford a normal trade" gate that also passes on RPC failure; the
+// authority on "can you afford THIS trade" is the execute-time Solana
+// simulation (verifySolanaSwapOutcome), which reads live balances and skips the
+// quote rather than broadcasting an unpayable transaction.
+const MIN_GAS_AMOUNTS = { solana: 0.005, base: 0.000024 };
 const FEE_BUFFER = { solana: 0.005, base: 0.00004 };
 const HIGH_PERCENTAGE_THRESHOLD = 95;
 const AUTO_ADJUST_THRESHOLD_PERCENT = 2;
-
-// Trades at or above this USD value can use gasless/solver-paid routes (e.g. Relay),
-// so the native gas pre-check is skipped for them.
-export const GASLESS_MIN_TRADE_USD = 10;
 
 /**
  * Check if an address is USDC or the native token for a chain (case-insensitive for EVM).
@@ -382,17 +394,15 @@ export async function resolvePercentAmount({ chain, from, walletAddress, percent
  * Returns { hasSufficientNative } or throws on validation failure.
  * Best-effort: if RPC fails, returns passing result.
  *
- * Gasless bypass: trades >= $10 USD can use solver-paid options (e.g. Relay),
- * so the gas check is skipped in that case.
+ * Applies to every trade regardless of value. A $10 bypass used to live here for
+ * solver-paid routes, but it never looked at whether such a route was in play —
+ * it waved through any trade at or above the threshold on value alone, so a
+ * wallet with no native token passed validation and then failed at broadcast.
  */
-export async function validateGasBalance({ chain, walletAddress, tradeValueUsd }) {
+export async function validateGasBalance({ chain, walletAddress }) {
   const normalizedChain = chain.toLowerCase();
   const minGas = MIN_GAS_AMOUNTS[normalizedChain];
   if (minGas === undefined) return { hasSufficientNative: true };
-
-  // High-value trades can use gasless/solver-paid routes — skip the check.
-  const tradeUsd = parseFloat(tradeValueUsd) || 0;
-  if (tradeUsd >= GASLESS_MIN_TRADE_USD) return { hasSufficientNative: true };
 
   const balance = await fetchNativeBalance(normalizedChain, walletAddress);
 
@@ -405,7 +415,7 @@ export async function validateGasBalance({ chain, walletAddress, tradeValueUsd }
 
   const symbol = NATIVE_SYMBOLS[normalizedChain] || 'native token';
   throw new Error(
-    `Insufficient ${symbol} for gas fees. Wallet has ${balance} ${symbol} but needs at least ${minGas} ${symbol}. Either fund the wallet with ${symbol} or trade a value of $${GASLESS_MIN_TRADE_USD}+ to use gasless options.`
+    `Insufficient ${symbol} for gas fees. Wallet has ${balance} ${symbol} but needs at least ${minGas} ${symbol}. Fund the wallet with ${symbol} before trading.`
   );
 }
 

@@ -197,6 +197,9 @@ export function compactSchema(schema) {
 // Long options that never consume the next argument. The shell-completion
 // generator needs the same list to tell an option's value apart from a
 // subcommand, so it lives here rather than inline in parseArgs.
+// `gasless` is retained after the flag's removal: trade execute rejects it
+// explicitly, and that rejection only fires if it still parses as a boolean
+// rather than swallowing the token after it.
 export const VALUELESS_FLAGS = new Set([
   'pretty', 'help', 'version', 'table', 'no-retry', 'cache', 'no-cache', 'stream',
   'enrich', 'full', 'human', 'no-browser', 'api-key-stdin', 'enabled', 'disabled', 'expert', 'json', 'offline',

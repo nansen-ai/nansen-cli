@@ -2119,7 +2119,7 @@
           ]
         },
         "execute": {
-          "description": "Sign and broadcast a quoted trade. Explicitly blank --wallet values are rejected. Non-gasless swaps broadcast through the execution route that tracks the on-chain outcome server-side; NANSEN_TRADING_EXECUTION_ROUTE=legacy is an escape hatch back to the deprecated broadcast route, and any value other than standard or legacy is rejected rather than silently falling back. Gasless swaps and WalletConnect wallets never use the standard route.",
+          "description": "Sign and broadcast a quoted trade. Explicitly blank --wallet values are rejected. Swaps broadcast through the execution route that tracks the on-chain outcome server-side; NANSEN_TRADING_EXECUTION_ROUTE=legacy is an escape hatch back to the deprecated broadcast route, and any value other than standard or legacy is rejected rather than silently falling back. A WalletConnect wallet that broadcasts the swap itself bypasses the standard route (no server-side tracking, and the CLI says so); one that only signs still goes through it. The removed --gasless flag is rejected with GASLESS_REMOVED.",
           "apiEndpoints": [
             "/api/v1/sanctions/screen"
           ],
@@ -2137,10 +2137,6 @@
             "wallet": {
               "type": "string",
               "description": "Wallet name, or \"walletconnect\"/\"wc\" for WalletConnect (EVM only)"
-            },
-            "gasless": {
-              "type": "boolean",
-              "description": "Relay-only: have Relay's solver pay gas + broadcast (user signs only). Requires the selected quote's aggregator to be \"relay\". Not supported via WalletConnect."
             },
             "quote-index": {
               "type": "string",
