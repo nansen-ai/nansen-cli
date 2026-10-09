@@ -236,6 +236,30 @@ describe("createPrivyPaymentSignatures", () => {
     },
   };
 
+  it.each([0n, 50_000_000_000_000_000n])("checks Privy balances before signing (USD1 balance %s)", async usd1Balance => {
+    const payer = "0x" + "11".repeat(20);
+    const u = { ...evmRequirement, network: "eip155:56", asset: "0xcE24439F2D9C6a2289F741120FE202248B666666", amount: "50000000000000000", extra: { name: "Test token", version: "1", chainId: 56 } };
+    const usd1 = { ...u, asset: "0x8d0d000ee44948fc98c9b98a4fa4921476f08b0d" };
+    const fetchMock = vi.fn(async (url, options) => {
+      if (url.includes("/wallets") && !url.includes("/rpc")) {
+        return { ok: true, json: async () => ({ data: [{ id: "wallet-test", address: payer, chain_type: "ethereum" }] }) };
+      }
+      const body = JSON.parse(options.body);
+      if (body.method === "eth_call") {
+        expect(body.params[0].data).toBe("0x70a08231" + payer.slice(2).padStart(64, "0"));
+        return { ok: true, json: async () => ({ result: body.params[0].to === u.asset ? "0x0" : "0x" + usd1Balance.toString(16) }) };
+      }
+      return { ok: true, json: async () => ({ data: { signature: "test-signature" } }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const results = [];
+    for await (const item of createPrivyPaymentSignatures(make402Response([u, usd1]), "https://example.com/resource")) results.push(item);
+    expect(results).toHaveLength(usd1Balance === 0n ? 0 : 1);
+    if (results.length) expect(JSON.parse(atob(results[0].signature)).accepted.asset).toBe(usd1.asset);
+    const signingCalls = fetchMock.mock.calls.filter(([, options]) => options?.body && JSON.parse(options.body).method === "eth_signTypedData_v4");
+    expect(signingCalls).toHaveLength(usd1Balance === 0n ? 0 : 1);
+  });
+
   it("yields nothing if no requirements", async () => {
     const response = { headers: new Headers() };
     const results = [];
@@ -303,7 +327,10 @@ describe("createPrivyPaymentSignatures", () => {
   it("yields a signature for EVM requirement", async () => {
     // Mock fetch: first call = listWallets, second call = signTypedData
     let callCount = 0;
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((_url, options) => {
+      if (options?.body && JSON.parse(options.body).method === "eth_call") {
+        return Promise.resolve({ ok: true, json: async () => ({ result: "0xc350" }) });
+      }
       callCount++;
       if (callCount === 1) {
         // listWallets
@@ -402,7 +429,10 @@ describe("createPrivyPaymentSignatures", () => {
 
   it("continues to next requirement on signing failure", async () => {
     let callCount = 0;
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((_url, options) => {
+      if (options?.body && JSON.parse(options.body).method === "eth_call") {
+        return Promise.resolve({ ok: true, json: async () => ({ result: "0xc350" }) });
+      }
       callCount++;
       if (callCount === 1) {
         // listWallets

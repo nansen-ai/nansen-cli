@@ -12,7 +12,8 @@ import {
   getSolanaRpcUrl,
 } from './x402-svm.js';
 import { resolvePassword } from './keychain.js';
-import { CHAIN_RPCS } from './rpc-urls.js';
+import { EVM_X402_RPCS, hasSufficientEvmPaymentBalance } from './x402-payment-balance.js';
+export { EVM_X402_RPCS } from './x402-payment-balance.js';
 import { evaluatePaymentRequirement, resolvePaymentAmount } from './x402-policy.js';
 import { EVM_X402_TOKENS } from './x402-tokens.js';
 export { EVM_X402_TOKENS } from './x402-tokens.js';
@@ -133,6 +134,7 @@ async function buildPaymentForRequirement(requirement, exported, url) {
   }
 
   if (isEvmNetwork(requirement.network)) {
+    if (!await hasSufficientEvmPaymentBalance(requirement, exported.evm.address)) return null;
     if ((requirement.extra || {}).assetTransferMethod === 'permit2-exact') {
       const resolvedAmount = resolvePaymentAmount(requirement);
       const approved = await hasPermit2Allowance(
@@ -248,13 +250,6 @@ export async function createPaymentSignature(response, url, options = {}) {
   }
   return null;
 }
-
-// RPC endpoint per supported x402 EVM network.
-export const EVM_X402_RPCS = {
-  'eip155:8453': CHAIN_RPCS.base,
-  'eip155:196': CHAIN_RPCS.xlayer,
-  'eip155:56': CHAIN_RPCS.bsc,
-};
 
 function getEvmRpcUrl(network) {
   return EVM_X402_RPCS[network] || null;

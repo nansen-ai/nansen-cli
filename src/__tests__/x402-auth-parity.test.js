@@ -16,6 +16,7 @@ vi.mock('../wallet.js', () => ({
   exportWallet: () => ({ name: 'test', evm: { privateKey: 'synthetic-key', address: '0x1111111111111111111111111111111111111111' } }),
 }));
 vi.mock('../x402-evm.js', async original => ({ ...await original(), createEvmPaymentPayload: mocks.localSign }));
+vi.mock('../x402-payment-balance.js', () => ({ hasSufficientEvmPaymentBalance: async () => true }));
 vi.mock('../x402.js', async original => ({ ...await original(), checkX402Balance: async () => null }));
 vi.mock('../walletconnect-exec.js', () => ({ wcExec: mocks.wcSign }));
 vi.mock('../walletconnect-trading.js', () => ({ getWalletConnectAddress: mocks.wcAddress, parseWcJson: JSON.parse }));
