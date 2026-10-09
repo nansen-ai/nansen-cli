@@ -10,7 +10,7 @@ import { createWallet } from '../wallet.js';
 it('uses a saved API key and reads a CLI-generated quote through a dry run', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nansen-platform-'));
   const requests = [];
-  const quote = { success: true, quotes: [{
+  const quote = { success: true, metadata: { quoteId: 'backend-quote-id' }, quotes: [{
     aggregator: 'lifi', inputMint: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
     outputMint: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
     inAmount: '1000000000000000000', outAmount: '3000000000',

@@ -15,7 +15,7 @@ import os from 'os';
 import {
   resolveChain,
   getWalletChainType,
-  saveQuote,
+  saveQuote as saveQuoteRaw,
   loadQuote,
   claimQuoteForExecution,
   markQuoteExecuted,
@@ -56,6 +56,52 @@ import {
   __setAllowanceTimingForTests,
   safeQuotesPath,
 } from '../trading.js';
+
+// Live /quote responses always carry `response.metadata.quoteId` — verified
+// against Base (lifi, okx), Solana (okx, jupiter) and cross-chain (relay) quotes.
+// The standard execution route, which is now the default, refuses a quote without
+// one, because that id is the key its duplicate-submission lock is held on. These
+// fixtures predate the standard route and mostly omit it, which would make them
+// unrepresentative of any quote a user can actually hold. Inject it here instead
+// of at ~40 call sites; call `saveQuoteRaw` directly to build a response that
+// genuinely lacks one.
+// The standard execution route answers `{ success, txHash }`; the deprecated
+// /execute route answers `{ status: 'Success' | 'Failed', signature?, broadcaster? }`.
+// It also reports a Solana signature in `txHash` and has no `signature` or
+// `broadcaster` field at all. The stubs in this file were written against the
+// legacy shape, so translate on the way out and one stub serves both routes —
+// which keeps these behaviours covered on the default path now that standard is
+// the default, instead of pinning them all to the route users no longer take.
+function asRouteResponse(legacyResponse, isStandardPath) {
+  if (!isStandardPath) return legacyResponse;
+  // chainType/broadcaster are destructured only to drop them: the standard route
+  // reports neither.
+  const { status, chainType: _chainType, broadcaster: _broadcaster, signature, txHash, ...rest } = legacyResponse;
+  const id = txHash ?? signature;
+  return {
+    ...rest,
+    success: status === 'Success',
+    ...(id !== undefined ? { txHash: id } : {}),
+  };
+}
+
+function isStandardExecutePath(urlStr) {
+  return urlStr.includes('/execution/standard');
+}
+
+function isExecutePath(urlStr) {
+  return urlStr.endsWith('/execute') || isStandardExecutePath(urlStr);
+}
+
+function saveQuote(quoteResponse, ...rest) {
+  if (!quoteResponse || typeof quoteResponse !== 'object' || quoteResponse.metadata?.quoteId) {
+    return saveQuoteRaw(quoteResponse, ...rest);
+  }
+  return saveQuoteRaw(
+    { ...quoteResponse, metadata: { ...(quoteResponse.metadata || {}), quoteId: 'backend-quote-id' } },
+    ...rest,
+  );
+}
 import { SIMULATION_RPCS } from '../rpc-urls.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
@@ -2012,7 +2058,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
           json: () => Promise.resolve({ data: { signed_transaction: '0xdeadbeef01' } }),
         });
       }
-      if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
+      if (urlStr.includes('trading-api') && isExecutePath(urlStr)) {
         const response = executeResponses[executeBodies.length] ?? executeResponses.at(-1) ?? { status: 'Success', chainType: 'evm', broadcaster: 'test' };
         executeBodies.push(body);
         const txHash = response.status === 'Success' && body.signedTransaction
@@ -2020,7 +2066,9 @@ describe('EVM swap gas zero fallback (execute)', () => {
           : response.txHash;
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ ...response, txHash })),
+          text: () => Promise.resolve(JSON.stringify(
+            asRouteResponse({ ...response, txHash }, isStandardExecutePath(urlStr)),
+          )),
         });
       }
       if (urlStr.includes('trading-api') && urlStr.includes('/bridge/status')) {
@@ -2729,6 +2777,11 @@ describe('EVM swap gas zero fallback (execute)', () => {
 // ============= Privy execute support =============
 
 describe('Privy execute support', () => {
+  // Pinned to the deprecated route: Privy signing happens before the broadcast POST, so it is identical on both
+  // routes and this stub is written against the legacy response shape.
+  // Route-dependent behaviour is covered in 'standard execution route — swap command flow'.
+  beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
+  afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
   let originalEnv;
   let origSolanaSimRpc;
 
@@ -4635,6 +4688,11 @@ describe('Relay aggregator: native SOL system mint', () => {
 });
 
 describe('Relay aggregator: empty approvalAddress', () => {
+  // Pinned to the deprecated route: the allowance/approval decision is pre-broadcast, so it is identical on both
+  // routes and this stub is written against the legacy response shape.
+  // Route-dependent behaviour is covered in 'standard execution route — swap command flow'.
+  beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
+  afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
   it('formatQuote skips approval line when approvalAddress is empty string', () => {
     const output = formatQuote({
       aggregator: 'relay',
@@ -4728,6 +4786,11 @@ describe('Relay aggregator: empty approvalAddress', () => {
 });
 
 describe('confirmEvmBroadcast: binds receipt confirmation to the locally-derived tx hash', () => {
+  // Pinned to the deprecated route: these assert the deprecated route's broadcaster/txHash contract, so it is identical on both
+  // routes and this stub is written against the legacy response shape.
+  // Route-dependent behaviour is covered in 'standard execution route — swap command flow'.
+  beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
+  afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
   it('rejects a broadcaster txHash that does not match the signed transaction', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
@@ -5562,6 +5625,11 @@ describe('Swap target validation blocks a poisoned quote (security hardening)', 
 });
 
 describe('ERC-20 excessive allowance handling', () => {
+  // Pinned to the deprecated route: approvals and revokes never leave the deprecated route, so it is identical on both
+  // routes and this stub is written against the legacy response shape.
+  // Route-dependent behaviour is covered in 'standard execution route — swap command flow'.
+  beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
+  afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
   const approveSelector = '095ea7b3';
   const amountWord = (amount) => BigInt(amount).toString(16).padStart(64, '0');
   const hexResult = (amount) => '0x' + amountWord(amount);
@@ -6536,6 +6604,11 @@ describe('Path traversal protection', () => {
 });
 
 describe('Relay aggregator: EVM execute forwards requestId', () => {
+  // Pinned to the deprecated route: this pins the deprecated route's request body, so it is identical on both
+  // routes and this stub is written against the legacy response shape.
+  // Route-dependent behaviour is covered in 'standard execution route — swap command flow'.
+  beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
+  afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
   it('non-gasless EVM Relay execute omits requestId/aggregator (backend rejects them on EVM)', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
@@ -6739,6 +6812,11 @@ describe('Relay aggregator: --aggregator override on bridge-status', () => {
 });
 
 describe('Relay aggregator: Solana non-gasless omits requestId', () => {
+  // Pinned to the deprecated route: this pins the deprecated route's request body, so it is identical on both
+  // routes and this stub is written against the legacy response shape.
+  // Route-dependent behaviour is covered in 'standard execution route — swap command flow'.
+  beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
+  afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
   let origSolanaSimRpc;
   beforeEach(() => { origSolanaSimRpc = SIMULATION_RPCS.solana; SIMULATION_RPCS.solana = null; });
   afterEach(() => { SIMULATION_RPCS.solana = origSolanaSimRpc; });
@@ -6864,6 +6942,9 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
   it('falls back to aggregator metadata quoteId when saved response metadata is missing', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    // Legacy-only behaviour: the standard route refuses a quote with no backend
+    // quote id outright rather than falling back to the aggregator's.
+    process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy';
 
     const executeBodies = [];
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
@@ -6883,7 +6964,9 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
     const message = Buffer.from([0x01, 0x00, 0x01, 0x02, ...Buffer.alloc(32), ...Buffer.alloc(32), ...Buffer.alloc(32), 0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00]);
     const txBase64 = Buffer.concat([sigCount, emptySig, message]).toString('base64');
 
-    const quoteId = saveQuote({
+    // saveQuoteRaw: this test is specifically about a response whose own
+    // metadata is missing, so the injecting wrapper must not supply one.
+    const quoteId = saveQuoteRaw({
       success: true,
       quotes: [{
         aggregator: 'jupiter',
@@ -6904,6 +6987,7 @@ describe('Relay aggregator: Solana non-gasless omits requestId', () => {
     expect(executeBodies.length).toBeGreaterThanOrEqual(1);
     expect(executeBodies[0].quoteId).toBe('aggregator-jupiter-quote-id');
 
+    delete process.env.NANSEN_TRADING_EXECUTION_ROUTE;
     delete process.env.NANSEN_WALLET_PASSWORD;
     vi.unstubAllGlobals();
   });
@@ -7419,6 +7503,11 @@ describe('verifySwapOutcome (execute-path wiring)', () => {
 // across all three Solana signing paths (local, Privy, WalletConnect).
 // ===========================================================================
 describe('Solana intent binding (adversarial)', () => {
+  // Pinned to the deprecated route: intent binding runs before signing, so it is identical on both
+  // routes and this stub is written against the legacy response shape.
+  // Route-dependent behaviour is covered in 'standard execution route — swap command flow'.
+  beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
+  afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
   const BONK = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
   const stubRpcFetch = (calls) => vi.fn().mockImplementation((url) => {
     calls.push(typeof url === 'string' ? url : url.toString());
@@ -7924,6 +8013,11 @@ describe('verifySolanaSwapOutcome (execute-path wiring)', () => {
 });
 
 describe('Solana execute: swap-outcome verification blocks signing (adversarial)', () => {
+  // Pinned to the deprecated route: outcome verification runs before signing, so it is identical on both
+  // routes and this stub is written against the legacy response shape.
+  // Route-dependent behaviour is covered in 'standard execution route — swap command flow'.
+  beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
+  afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
   const mintOut = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'; // SOL_USDT
   afterEach(() => {
     delete process.env.NANSEN_WALLET_PASSWORD;
@@ -8137,6 +8231,11 @@ describe('Solana exactOut ceiling — requires an explicit --max-input', () => {
 });
 
 describe('Relay Solana-source bridge: raw-instruction transaction shape', () => {
+  // Pinned to the deprecated route: compiling and signing happen before the broadcast POST, so it is identical on both
+  // routes and this stub is written against the legacy response shape.
+  // Route-dependent behaviour is covered in 'standard execution route — swap command flow'.
+  beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
+  afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -8634,6 +8733,13 @@ describe('executeTransaction: response classification', () => {
 // ============= Execute: the quote claim and terminal failures =============
 
 describe('trade execute: claim handling and terminal failures', () => {
+  // Pinned to the deprecated route on purpose: these cases are about *its*
+  // response contract — a missing `status`, a stray Solana `signature` on an EVM
+  // body, a raw unparseable text body. None of those shapes exist on the standard
+  // route, which answers `{ success, txHash }`. The equivalent fail-closed cases
+  // for the standard route live in 'standard execution route — swap command flow'.
+  beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
+  afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
   // Mirrors the RPC surface a local-wallet EVM swap touches, so the run reaches
@@ -9429,7 +9535,10 @@ describe('standard execution route — swap command flow', () => {
   // `metadata: null` to build the shape-drift quote that gets refused.
   function saveNativeEthQuote(quotes, extra = {}) {
     const metadata = extra.metadata === undefined ? { quoteId: 'backend-quote-id' } : extra.metadata;
-    return saveQuote(
+    // saveQuoteRaw, not the injecting wrapper: `metadata: null` here must reach
+    // storage as a response with no quote id, which is the whole point of the
+    // MISSING_QUOTE_ID cases below.
+    return saveQuoteRaw(
       { success: true, quotes, ...(metadata ? { metadata } : {}) },
       'base',
       'local',

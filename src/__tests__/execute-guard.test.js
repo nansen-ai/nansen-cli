@@ -168,6 +168,12 @@ describe('guardExecution', () => {
 // dry run or a declined confirmation cannot pass by accident.
 
 describe('trade execute --dry-run / --yes', () => {
+  // Pinned to the deprecated route: the confirmation gate runs before the broadcast POST,
+  // so it is identical on both routes and this stub answers the legacy
+  // response shape. Route-dependent behaviour is covered in trading.test.js,
+  // 'standard execution route — swap command flow'.
+  beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
+  afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
   let tmpHome;
   let prevHome;
   let executeBodies;
@@ -214,6 +220,7 @@ describe('trade execute --dry-run / --yes', () => {
   function nativeQuote(walletAddress) {
     return saveQuote({
       success: true,
+      metadata: { quoteId: 'backend-quote-id' },
       quotes: [{
         aggregator: 'lifi',
         inputMint: BASE_ETH,
@@ -251,6 +258,7 @@ describe('trade execute --dry-run / --yes', () => {
   function erc20Quote(walletAddress) {
     return saveQuote({
       success: true,
+      metadata: { quoteId: 'backend-quote-id' },
       quotes: [{
         aggregator: 'lifi',
         inputMint: BASE_USDC,
@@ -399,6 +407,7 @@ describe('trade execute --dry-run / --yes', () => {
     const walletAddress = 'Wallet1111111111111111111111111111111111';
     const quoteId = saveQuote({
       success: true,
+      metadata: { quoteId: 'backend-quote-id' },
       quotes: [{
         aggregator: 'jupiter',
         inputMint: 'So11111111111111111111111111111111111111112',

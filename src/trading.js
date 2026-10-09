@@ -32,18 +32,20 @@ const TRADING_API_URL = process.env.NANSEN_TRADING_API_URL || 'https://trading-a
 const CLIENT_USER_AGENT = `nansen-cli/${packageVersion}`;
 // Swap broadcast route. 'standard' posts the signed swap to the receipt-watching
 // execution endpoint (server-side outcome tracking); 'legacy' keeps the original
-// broadcast-only endpoint. Defaults to 'legacy' until the standard route is
-// verified end to end on live funds; flip via env var rather than a code change.
+// broadcast-only endpoint, kept as an escape hatch. Defaults to 'standard' now
+// that the route is verified end to end on live funds (both routes, all three
+// swap groups, including both bridge directions).
 // Read at call time (not frozen at import) so the route can be selected per run.
-// Validated rather than defaulted: a typo ('Standard', a stray space) silently
-// running the legacy route is the worst failure mode during a staged rollout —
-// you believe you exercised the new route and you did not.
+// Validated rather than defaulted: a typo ('Legacy', a stray space) silently
+// running the standard route is the worst failure mode now that standard is the
+// default — someone reaching for the escape hatch would believe they had left it
+// and would not have.
 function executionRoute() {
   const route = process.env.NANSEN_TRADING_EXECUTION_ROUTE;
-  if (!route) return 'legacy';
+  if (!route) return 'standard';
   if (route !== 'legacy' && route !== 'standard') {
     throw new CommandError(
-      `Unknown NANSEN_TRADING_EXECUTION_ROUTE "${route}". Use "standard" or "legacy" (unset means legacy).`,
+      `Unknown NANSEN_TRADING_EXECUTION_ROUTE "${route}". Use "standard" or "legacy" (unset means standard).`,
       'INVALID_EXECUTION_ROUTE',
     );
   }
@@ -397,6 +399,12 @@ function hashBearingFailure(result, label, chainType) {
   return error;
 }
 
+// `route` defaults to 'legacy' independently of executionRoute(), which now
+// resolves to 'standard' when unset. That is deliberate and must stay: the six
+// approval and allowance-revoke call sites omit `route` on purpose, and the
+// standard route is swap-only — toStandardBody() builds a swap-shaped body
+// (quoteId, aggregator, isCrossChain), so routing an approval there would submit
+// it stripped of its own framing. Only the swap call site passes `route`.
 export async function executeTransaction(params, { retries = 2, retryDelayMs = 1500, attemptId, route = 'legacy' } = {}) {
   const isStandard = route === 'standard';
   const requestPath = isStandard ? '/execution/standard' : '/execute';
@@ -3487,7 +3495,7 @@ EXAMPLES:
         const backendQuoteId = quoteData.response?.metadata?.quoteId;
         if (swapRoute === 'standard' && !backendQuoteId) {
           throw new CommandError(
-            `Quote "${quoteId}" carries no backend quote id, which the standard execution route requires for its duplicate-submission lock. Request a fresh quote with "nansen trade quote", or unset NANSEN_TRADING_EXECUTION_ROUTE to broadcast on the legacy route.`,
+            `Quote "${quoteId}" carries no backend quote id, which the standard execution route requires for its duplicate-submission lock. Request a fresh quote with "nansen trade quote", or set NANSEN_TRADING_EXECUTION_ROUTE=legacy to broadcast on the deprecated route.`,
             'MISSING_QUOTE_ID',
           );
         }

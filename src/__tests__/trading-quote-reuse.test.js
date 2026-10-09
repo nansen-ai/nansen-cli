@@ -61,6 +61,12 @@ function evmIntent({ walletAddress, fromToken, toToken, amount, maxInputAmount =
 }
 
 describe('swap quote reuse guard (mirrors bridge quotes)', () => {
+  // Pinned to the deprecated route: these pin the deprecated /execute response contract by name,
+  // so it is identical on both routes and this stub answers the legacy
+  // response shape. Route-dependent behaviour is covered in trading.test.js,
+  // 'standard execution route — swap command flow'.
+  beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = 'legacy'; });
+  afterEach(() => { delete process.env.NANSEN_TRADING_EXECUTION_ROUTE; });
   let originalHome;
   let tempDir;
 
@@ -81,6 +87,7 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
   function saveEvmQuote(walletAddress) {
     return saveQuote({
       success: true,
+      metadata: { quoteId: 'backend-quote-id' },
       quotes: [{
         aggregator: 'lifi',
         inputMint: BASE_ETH,
@@ -318,6 +325,7 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
     // + broadcast the SECOND on top of a possibly-live first tx.
     const quoteId = saveQuote({
       success: true,
+      metadata: { quoteId: 'backend-quote-id' },
       quotes: [
         { aggregator: 'lifi', inputMint: BASE_ETH, outputMint: BASE_USDC, inAmount: '1000000000000000000', outAmount: '3000000000',
           transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000', maxFeePerGas: '1000000', maxPriorityFeePerGas: '1000000' } },
@@ -386,6 +394,7 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
     // Two candidates, so a regression would fall through and broadcast the 2nd.
     const quoteId = saveQuote({
       success: true,
+      metadata: { quoteId: 'backend-quote-id' },
       quotes: [
         { aggregator: 'lifi', inputMint: BASE_ETH, outputMint: BASE_USDC, inAmount: '1000000000000000000', outAmount: '3000000000',
           transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000', maxFeePerGas: '1000000', maxPriorityFeePerGas: '1000000' } },
@@ -443,6 +452,7 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
 
     const quoteId = saveQuote({
       success: true,
+      metadata: { quoteId: 'backend-quote-id' },
       quotes: [
         { aggregator: 'lifi', inputMint: BASE_ETH, outputMint: BASE_USDC, inAmount: '1000000000000000000', outAmount: '3000000000',
           transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000', maxFeePerGas: '1000000', maxPriorityFeePerGas: '1000000' } },
@@ -498,6 +508,7 @@ describe('swap quote reuse guard (mirrors bridge quotes)', () => {
 
     const quoteId = saveQuote({
       success: true,
+      metadata: { quoteId: 'backend-quote-id' },
       quotes: [
         { aggregator: 'lifi', inputMint: BASE_ETH, outputMint: BASE_USDC, inAmount: '1000000000000000000', outAmount: '3000000000',
           transaction: { to: LIFI_ROUTER, data: '0x12345678', value: '1000000000000000000', gas: '210000', maxFeePerGas: '1000000', maxPriorityFeePerGas: '1000000' } },
