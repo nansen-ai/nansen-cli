@@ -207,6 +207,17 @@ const NATIVE_SYMBOLS = { solana: 'SOL', base: 'ETH' };
 // maximum amount of a native token, so a wallet sitting on exactly that reserve
 // must not then be refused a quote. Solana's real cost is a 5000-lamport base
 // fee plus at most ~0.00204 SOL of ATA rent, so 0.005 is still a wide margin.
+//
+// Deliberately NOT sized against MAX_PRIORITY_FEE_LAMPORTS (0.01 SOL). That is
+// an anti-abuse ceiling we refuse to exceed, not a fee we expect to pay, and the
+// worst spend it permits (~0.012044 SOL with base fee and rent) was never
+// covered by this floor at any value it has held — 0.01 did not cover it either.
+// Sizing a minimum-balance gate off that ceiling would block real wallets to
+// defend against a fee level we only tolerate. This check is a best-effort
+// "can you afford a normal trade" gate that also passes on RPC failure; the
+// authority on "can you afford THIS trade" is the execute-time Solana
+// simulation (verifySolanaSwapOutcome), which reads live balances and skips the
+// quote rather than broadcasting an unpayable transaction.
 const MIN_GAS_AMOUNTS = { solana: 0.005, base: 0.000024 };
 const FEE_BUFFER = { solana: 0.005, base: 0.00004 };
 const HIGH_PERCENTAGE_THRESHOLD = 95;
