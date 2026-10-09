@@ -482,7 +482,9 @@ describe('createPaymentSignatures — policy guard integration', () => {
 
     // Real (non-zero) allowance is 0; a correct preflight against the
     // resolved $0.01 amount must reject this option.
-    mockFetch.mockResolvedValue({ json: async () => ({ result: '0x0' }) });
+    mockFetch.mockImplementation(async (_url, init) => ({
+      json: async () => ({ result: JSON.parse(init.body).params[0].data.startsWith('0x70a08231') ? '0x2710' : '0x0' }),
+    }));
 
     const createEvmSpy = vi.fn().mockReturnValue('fake-sig');
     vi.doMock('../x402-evm.js', () => ({

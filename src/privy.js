@@ -9,6 +9,7 @@
 import fs from "fs";
 import path from "path";
 import { parsePaymentRequirements } from "./x402.js";
+import { hasSufficientEvmPaymentBalance } from "./x402-payment-balance.js";
 import { isEvmNetwork } from "./x402-evm.js";
 import { mkdirPrivateSync, readWalletJson, writeWalletJsonAtomic } from "./wallet.js";
 import { evaluatePaymentRequirement, resolvePaymentAmount, resolvePayTo } from "./x402-policy.js";
@@ -304,6 +305,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
           continue;
         }
         try {
+          if (!await hasSufficientEvmPaymentBalance(requirement, evmWallet.address)) continue;
           const typedData = buildEIP712TypedData({
             fromAddress: evmWallet.address,
             requirement,
