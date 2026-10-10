@@ -459,10 +459,27 @@ export function formatValue(val) {
   return String(val);
 }
 
+// Perp positions wrap each row in `position`. Flatten only for tabular
+// presentation so JSON output retains the API payload and account summaries.
+function locateTabularRows(data) {
+  if (data?.success !== false) {
+    for (const payload of [data, data?.data, data?.data?.data]) {
+      const positions = payload?.asset_positions;
+      if (Array.isArray(positions) && positions.every(entry =>
+        entry?.position !== null && typeof entry?.position === 'object'
+        && !Array.isArray(entry.position),
+      )) {
+        return { rows: positions.map(({ position, ...fields }) => ({ ...position, ...fields })) };
+      }
+    }
+  }
+  return locateRows(data, { descriptive: true });
+}
+
 // Table formatter for human-readable output
 export function formatTable(data) {
   // Extract array of records from various response shapes
-  const located = locateRows(data, { descriptive: true });
+  const located = locateTabularRows(data);
   let records = located?.rows || [];
   if (!located && typeof data === 'object' && data !== null) {
     // Single object - convert to array
@@ -527,7 +544,7 @@ export function formatTable(data) {
  */
 export function formatCsv(data) {
   // Extract array of records from various response shapes
-  const located = locateRows(data, { descriptive: true });
+  const located = locateTabularRows(data);
   let records = located?.rows || [];
   if (!located && typeof data === 'object' && data !== null) {
     records = [Array.isArray(data) ? { data } : data];
