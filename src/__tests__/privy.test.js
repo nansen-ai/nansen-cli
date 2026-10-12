@@ -476,6 +476,49 @@ describe("createPrivyPaymentSignatures", () => {
     expect(results).toHaveLength(1);
     expect(results[0].network).toBe("eip155:196");
   });
+
+  it.each([
+    ["no token account", [], 0],
+    ["a short balance", "49999", 0],
+    ["an exact balance", "50000", 1],
+  ])("checks the Privy Solana balance before signing (%s)", async (_label, balance, expected) => {
+    const owner = "7UX2i7SucgLMQcfZ75s3VXmZZY4YRUyJN9X1RgfMoDUi";
+    const mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    const { deriveATA } = await import("../x402-svm.js");
+    const solRequirement = {
+      scheme: "exact",
+      network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+      asset: mint,
+      payTo: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+      amount: "50000",
+      extra: { feePayer: "11111111111111111111111111111111" },
+    };
+    const accounts = Array.isArray(balance) ? balance : [{
+      pubkey: deriveATA(owner, mint),
+      account: { data: { parsed: { info: { tokenAmount: { amount: balance } } } } },
+    }];
+    const fetchMock = vi.fn(async (url, options) => {
+      const body = typeof options?.body === "string" ? JSON.parse(options.body) : {};
+      if (body.method === "getTokenAccountsByOwner") {
+        expect(body.params.slice(0, 2)).toEqual([owner, { mint }]);
+        return { ok: true, json: async () => ({ result: { value: accounts } }) };
+      }
+      if (body.method === "getLatestBlockhash") {
+        return { ok: true, json: async () => ({ result: { value: { blockhash: "GHtXQBpokCUCJwhRAJbhGVPKp9VTVn65CWVRqFMJkFwh" } } }) };
+      }
+      if (url.includes("/wallets") && !url.includes("/rpc")) {
+        return { ok: true, json: async () => ({ data: [{ id: "wl_sol_1", address: owner, chain_type: "solana" }] }) };
+      }
+      return { ok: true, json: async () => ({ data: { signed_transaction: "signed-tx" } }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const results = [];
+    for await (const r of createPrivyPaymentSignatures(make402Response([solRequirement]), "https://api.nansen.ai/test")) results.push(r);
+    expect(results).toHaveLength(expected);
+    if (expected) expect(results[0].asset).toBe(mint);
+    const signingCalls = fetchMock.mock.calls.filter(([, options]) => typeof options?.body === "string" && JSON.parse(options.body).method === "signTransaction");
+    expect(signingCalls).toHaveLength(expected);
+  });
 });
 
 // ============= wallet.js provider guard =============

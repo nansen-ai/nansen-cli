@@ -7,7 +7,7 @@ import { sessionFixture } from './fixtures/auth-fixture.js';
 // custody, cryptographic signing, subprocesses and HTTP are test doubles.
 const mocks = vi.hoisted(() => ({
   localSign: vi.fn(), wcSign: vi.fn(), wcAddress: vi.fn(),
-  wallets: vi.fn(), provider: vi.fn(), privySign: vi.fn(),
+  wallets: vi.fn(), provider: vi.fn(), privySign: vi.fn(), balance: vi.fn(),
 }));
 vi.mock('../wallet.js', () => ({
   getWalletConfig: () => ({ defaultWallet: 'test' }),
@@ -16,8 +16,8 @@ vi.mock('../wallet.js', () => ({
   exportWallet: () => ({ name: 'test', evm: { privateKey: 'synthetic-key', address: '0x1111111111111111111111111111111111111111' } }),
 }));
 vi.mock('../x402-evm.js', async original => ({ ...await original(), createEvmPaymentPayload: mocks.localSign }));
-vi.mock('../x402-payment-balance.js', () => ({ hasSufficientEvmPaymentBalance: async () => true }));
-vi.mock('../x402.js', async original => ({ ...await original(), checkX402Balance: async () => null }));
+vi.mock('../x402-payment-balance.js', () => ({ hasSufficientEvmPaymentBalance: async () => true, hasSufficientSvmPaymentBalance: async () => true }));
+vi.mock('../x402.js', async original => ({ ...await original(), checkX402Balance: mocks.balance }));
 vi.mock('../walletconnect-exec.js', () => ({ wcExec: mocks.wcSign }));
 vi.mock('../walletconnect-trading.js', () => ({ getWalletConnectAddress: mocks.wcAddress, parseWcJson: JSON.parse }));
 vi.mock('../privy.js', () => ({ createPrivyPaymentSignatures: mocks.privySign }));
@@ -52,6 +52,7 @@ beforeEach(() => {
   mocks.localSign.mockResolvedValue('synthetic-local-signature');
   mocks.wcAddress.mockResolvedValue('0x1111111111111111111111111111111111111111');
   mocks.wcSign.mockResolvedValue(JSON.stringify({ signature: 'synthetic-wc-signature' }));
+  mocks.balance.mockResolvedValue(null);
   mocks.privySign.mockImplementation(async function* () { yield { signature: 'synthetic-privy-signature', network: 'eip155:8453' }; });
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
@@ -175,4 +176,30 @@ it('keeps malformed browser payment challenges and wallet errors out of diagnost
   expect(error.message).not.toContain('No API key');
   expect(JSON.stringify(error)).not.toContain(bundle.accessToken);
   expect(fetch).toHaveBeenCalledOnce();
+});
+
+it('tries the next WalletConnect option after the server cleanly rejects the first', async () => {
+  mocks.wallets.mockReturnValue({ wallets: [] });
+  const usd1 = { asset: '0x8d0d000ee44948fc98c9b98a4fa4921476f08b0d', network: 'eip155:56', amount: '10000000000000000', extra: { name: 'USD1', version: '1' } };
+  const u = { ...usd1, asset: '0xcE24439F2D9C6a2289F741120FE202248B666666', extra: { name: 'U', version: '1' } };
+  const requirements = { accepts: [{ ...requirement, ...u }, { ...requirement, ...usd1 }] };
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(paymentResponse(requirements))
+    .mockResolvedValueOnce(new Response('{"error":"invalid_exact_evm_insufficient_balance"}', { status: 402 }))
+    .mockResolvedValueOnce(new Response('{"paid":true}'));
+  vi.stubGlobal('fetch', fetch);
+  await expect(client('anonymous').api.request(endpoint)).resolves.toMatchObject({ paid: true });
+  const signed = mocks.wcSign.mock.calls.map(([, args]) => JSON.parse(args[1]).domain.verifyingContract);
+  expect(signed).toEqual([u.asset, usd1.asset]);
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it('checks the balance of the token a Privy wallet paid with', async () => {
+  mocks.provider.mockReturnValue('privy');
+  const usd1 = '0x8d0d000ee44948fc98c9b98a4fa4921476f08b0d';
+  mocks.privySign.mockImplementation(async function* () { yield { signature: 'synthetic-privy-signature', network: 'eip155:56', asset: usd1 }; });
+  const fetch = vi.fn().mockResolvedValueOnce(paymentResponse()).mockResolvedValueOnce(new Response('{"paid":true}'));
+  vi.stubGlobal('fetch', fetch);
+  await client('anonymous').api.request(endpoint);
+  expect(mocks.balance).toHaveBeenCalledWith('eip155:56', usd1);
 });

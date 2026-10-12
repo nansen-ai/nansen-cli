@@ -2,7 +2,7 @@
  * Tests for walletconnect-x402.js — policy guard wiring in handleX402Payment.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../x402-policy.js', () => ({
   evaluatePaymentRequirement: vi.fn(),
@@ -20,9 +20,18 @@ vi.mock('../walletconnect-exec.js', () => ({
   wcExec: vi.fn(),
 }));
 
+vi.mock('../x402-payment-balance.js', () => ({
+  hasSufficientEvmPaymentBalance: vi.fn(),
+}));
+
 import { evaluatePaymentRequirement } from '../x402-policy.js';
 import { wcExec } from '../walletconnect-exec.js';
-import { handleX402Payment, buildEIP712TypedData } from '../walletconnect-x402.js';
+import { hasSufficientEvmPaymentBalance } from '../x402-payment-balance.js';
+import {
+  handleX402Payment,
+  buildEIP712TypedData,
+  createWalletConnectPaymentSignatures,
+} from '../walletconnect-x402.js';
 import { ErrorCode } from '../api.js';
 
 // Session approved for Base (eip155:8453) only -- the account entry carries
@@ -48,6 +57,7 @@ const PAYMENT_REQUIREMENTS = { accepts: [REQUIREMENT] };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  hasSufficientEvmPaymentBalance.mockResolvedValue(true);
   // Default: wallet connected, wcExec returns whoami then sign result
   wcExec.mockImplementation((_cmd, args) => {
     if (args[0] === 'whoami') {
@@ -213,6 +223,112 @@ describe('handleX402Payment — WalletConnect chain scoping', () => {
     const result = await handleX402Payment(PAYMENT_REQUIREMENTS);
     const decoded = JSON.parse(Buffer.from(result, 'base64').toString('utf8'));
     expect(decoded.payload.authorization.from).toBe('0xBaseAddress');
+  });
+});
+
+describe('createWalletConnectPaymentSignatures — option fallback', () => {
+  const BSC_SESSION = {
+    connected: true,
+    accounts: [{ chain: 'eip155:56', address: '0xBscAddress' }],
+  };
+  const U = '0xcE24439F2D9C6a2289F741120FE202248B666666';
+  const USD1 = '0x8d0d000ee44948fc98c9b98a4fa4921476f08b0d';
+  const bsc = (asset, extra = {}) => ({
+    scheme: 'exact',
+    network: 'eip155:56',
+    asset,
+    payTo: '0xRecipient',
+    amount: '10000000000000000',
+    maxTimeoutSeconds: 120,
+    extra: { name: 'Token', version: '1', ...extra },
+  });
+  const signCalls = () => wcExec.mock.calls.filter(c => c[1]?.[0] === 'sign-typed-data');
+  const signedAssets = () => signCalls().map(c => JSON.parse(c[1][1]).domain.verifyingContract);
+  async function collect(requirements) {
+    const items = [];
+    for await (const item of createWalletConnectPaymentSignatures({ accepts: requirements })) items.push(item);
+    return items;
+  }
+
+  let errorLog;
+  beforeEach(() => {
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USD' });
+    wcExec.mockImplementation((_cmd, args) => Promise.resolve(JSON.stringify(
+      args[0] === 'whoami' ? BSC_SESSION : { signature: '0xfakesig' },
+    )));
+    errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('skips an unfunded first option without prompting and signs the funded one', async () => {
+    hasSufficientEvmPaymentBalance.mockImplementation(async req => req.asset !== U);
+
+    const items = await collect([bsc(U), bsc(USD1)]);
+
+    expect(items.map(i => i.asset)).toEqual([USD1]);
+    expect(signedAssets()).toEqual([USD1]);
+    expect(hasSufficientEvmPaymentBalance).toHaveBeenCalledWith(expect.objectContaining({ asset: U }), '0xBscAddress');
+  });
+
+  it('offers the next option after the server rejects the first', async () => {
+    const generator = createWalletConnectPaymentSignatures({ accepts: [bsc(U), bsc(USD1)] });
+    expect((await generator.next()).value.asset).toBe(U);
+    expect(signCalls()).toHaveLength(1);
+    expect((await generator.next()).value.asset).toBe(USD1);
+    expect((await generator.next()).done).toBe(true);
+  });
+
+  it('throws without prompting when every option is unfunded', async () => {
+    hasSufficientEvmPaymentBalance.mockResolvedValue(false);
+
+    await expect(collect([bsc(U), bsc(USD1)])).rejects.toMatchObject({
+      code: ErrorCode.PAYMENT_REQUIRED,
+      message: expect.stringMatching(/insufficient token balance on eip155:56/),
+    });
+    expect(signCalls()).toHaveLength(0);
+  });
+
+  it('tries the next option when policy refuses the first', async () => {
+    evaluatePaymentRequirement.mockImplementation(req => (req.asset === U
+      ? { ok: false, reason: 'Refusing to auto-pay: test refusal' }
+      : { ok: true, usd: 0.01, symbol: 'USD1' }));
+
+    const items = await collect([bsc(U), bsc(USD1)]);
+
+    expect(items.map(i => i.asset)).toEqual([USD1]);
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('test refusal'));
+  });
+
+  it('signs the cheapest option first, not the server order', async () => {
+    evaluatePaymentRequirement.mockImplementation(req => ({ ok: true, usd: req.asset === U ? 0.05 : 0.01 }));
+
+    const items = await collect([bsc(U), bsc(USD1)]);
+
+    expect(items.map(i => i.asset)).toEqual([USD1, U]);
+  });
+
+  it('does not sign an EIP-3009 authorization for a Permit2 option', async () => {
+    const items = await collect([bsc(U, { assetTransferMethod: 'permit2-exact' }), bsc(USD1)]);
+
+    expect(items.map(i => i.asset)).toEqual([USD1]);
+    expect(signedAssets()).toEqual([USD1]);
+  });
+
+  it('skips a malformed option instead of abandoning the rest', async () => {
+    const items = await collect([bsc(U, { chainId: 1 }), bsc(USD1)]);
+
+    expect(items.map(i => i.asset)).toEqual([USD1]);
+    expect(errorLog).toHaveBeenCalledWith(expect.stringMatching(/extra\.chainId 1 conflicts/));
+  });
+
+  it('does not prompt again after the user rejects a signature', async () => {
+    wcExec.mockImplementation((_cmd, args) => Promise.resolve(
+      args[0] === 'whoami' ? JSON.stringify(BSC_SESSION) : 'Request rejected by wallet',
+    ));
+
+    await expect(collect([bsc(U), bsc(USD1)])).rejects.toThrow(/x402 payment signing failed/);
+    expect(signCalls()).toHaveLength(1);
   });
 });
 

@@ -9,7 +9,7 @@
 import fs from "fs";
 import path from "path";
 import { parsePaymentRequirements } from "./x402.js";
-import { hasSufficientEvmPaymentBalance } from "./x402-payment-balance.js";
+import { hasSufficientEvmPaymentBalance, hasSufficientSvmPaymentBalance } from "./x402-payment-balance.js";
 import { isEvmNetwork } from "./x402-evm.js";
 import { mkdirPrivateSync, readWalletJson, writeWalletJsonAtomic } from "./wallet.js";
 import { evaluatePaymentRequirement, resolvePaymentAmount, resolvePayTo } from "./x402-policy.js";
@@ -281,11 +281,11 @@ async function getPrivySolanaWallet(client) {
 
 /**
  * Generate payment signatures for x402 using Privy server wallets.
- * Same yield contract as createPaymentSignatures() in x402.js: { signature, network }
+ * Same yield contract as createPaymentSignatures() in x402.js: { signature, network, asset }
  *
  * @param {Response} response - The 402 HTTP response
  * @param {string} url - The original request URL
- * @returns {AsyncGenerator<{ signature: string, network: string }>}
+ * @returns {AsyncGenerator<{ signature: string, network: string, asset: string }>}
  */
 export async function* createPrivyPaymentSignatures(response, url) {
   const requirements = parsePaymentRequirements(response);
@@ -333,7 +333,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
             accepted: requirement,
           });
 
-          yield { signature: header, network: requirement.network };
+          yield { signature: header, network: requirement.network, asset: requirement.asset };
         } catch (err) {
           console.error(`[x402] Privy EVM signing failed for ${requirement.network}: ${err.message}`);
           continue;
@@ -356,6 +356,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
           continue;
         }
         try {
+          if (!await hasSufficientSvmPaymentBalance(requirement, solWallet.address)) continue;
           const rpcUrl = getSolanaRpcUrl(requirement.network);
           const recentBlockhash = await fetchRecentBlockhash(rpcUrl);
 
@@ -378,7 +379,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
           }
 
           const header = Buffer.from(JSON.stringify(payload)).toString("base64");
-          yield { signature: header, network: requirement.network };
+          yield { signature: header, network: requirement.network, asset: requirement.asset };
         } catch (err) {
           console.error(`[x402] Privy Solana signing failed for ${requirement.network}: ${err.message}`);
           continue;

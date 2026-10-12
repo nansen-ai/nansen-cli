@@ -1105,8 +1105,8 @@ export class NansenAPI {
               // Default wallet is Privy: sign via Privy
               try {
                 const { createPrivyPaymentSignatures } = await import('./privy.js');
-                for await (const { signature, network } of createPrivyPaymentSignatures(response, url)) {
-                  const result = await this._x402Retry(signature, `Privy wallet ${defaultWalletName}`, network, url, body, options);
+                for await (const { signature, network, asset } of createPrivyPaymentSignatures(response, url)) {
+                  const result = await this._x402Retry(signature, `Privy wallet ${defaultWalletName}`, network, url, body, options, asset);
                   if (result !== X402_PAYMENT_REJECTED) return result;
                 }
               } catch (privyErr) {
@@ -1153,10 +1153,14 @@ export class NansenAPI {
 
                 if (paymentRequirements) {
                   try {
-                    const { handleX402Payment } = await import('./walletconnect-x402.js');
-                    const paymentSignature = await handleX402Payment(paymentRequirements);
-                    const result = await this._x402Retry(paymentSignature, 'WalletConnect', null, url, body, options);
-                    if (result !== X402_PAYMENT_REJECTED) return result;
+                    const { createWalletConnectPaymentSignatures } = await import('./walletconnect-x402.js');
+                    for await (const { signature } of createWalletConnectPaymentSignatures(paymentRequirements)) {
+                      // No network: the post-payment balance warning reads the
+                      // local default wallet, not the WalletConnect account.
+                      const result = await this._x402Retry(signature, 'WalletConnect', null, url, body, options);
+                      if (result !== X402_PAYMENT_REJECTED) return result;
+                      // Cleanly rejected without settling, try the next option
+                    }
                   } catch (x402Err) {
                     // WalletConnect is the last resort in this chain — an
                     // ambiguous outcome here still must not be reported as an

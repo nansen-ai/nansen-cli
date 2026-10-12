@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createPaymentSignatures } from '../x402.js';
-import { hasSufficientEvmPaymentBalance, EVM_X402_RPCS } from '../x402-payment-balance.js';
+import { hasSufficientEvmPaymentBalance, hasSufficientSvmPaymentBalance, EVM_X402_RPCS } from '../x402-payment-balance.js';
+import { createSvmPaymentPayload, deriveATA } from '../x402-svm.js';
+import { SOLANA_MAINNET_NETWORK } from '../x402-tokens.js';
 import { createEvmPaymentPayload } from '../x402-evm.js';
 
 const OWNER = '0x' + '11'.repeat(20);
@@ -8,11 +10,23 @@ const OTHER_OWNER = '0x' + '33'.repeat(20);
 const U = '0xcE24439F2D9C6a2289F741120FE202248B666666';
 const USD1 = '0x8d0d000ee44948fc98c9b98a4fa4921476f08b0d';
 const AMOUNT = 50_000_000_000_000_000n;
+const SOL_OWNER = '7UX2i7SucgLMQcfZ75s3VXmZZY4YRUyJN9X1RgfMoDUi';
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
-vi.mock('../wallet.js', () => ({
+vi.mock('../wallet.js', async importOriginal => ({
+  ...await importOriginal(),
   getWalletConfig: () => ({}),
   listWallets: () => ({ defaultWallet: 'test', wallets: [{ name: 'test', evm: OWNER }] }),
-  exportWallet: name => ({ name, evm: { address: name === 'other' ? OTHER_OWNER : OWNER, privateKey: 'test-key' } }),
+  exportWallet: name => ({
+    name,
+    evm: { address: name === 'other' ? OTHER_OWNER : OWNER, privateKey: 'test-key' },
+    solana: { address: SOL_OWNER, privateKey: 'test-key' },
+  }),
+}));
+vi.mock('../x402-svm.js', async importOriginal => ({
+  ...await importOriginal(),
+  fetchRecentBlockhash: vi.fn(async () => 'GHtXQBpokCUCJwhRAJbhGVPKp9VTVn65CWVRqFMJkFwh'),
+  createSvmPaymentPayload: vi.fn(req => `signature:${req.asset}`),
 }));
 vi.mock('../x402-evm.js', async importOriginal => ({
   ...await importOriginal(),
@@ -45,6 +59,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
   log = vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.mocked(createEvmPaymentPayload).mockClear();
+  vi.mocked(createSvmPaymentPayload).mockClear();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -110,5 +125,61 @@ describe('automatic EVM payment balance checks', () => {
   it('does not trust an HTTP error body as a balance', async () => {
     fetchMock.mockResolvedValue({ ok: false, json: async () => ({ result: '0x0' }) });
     expect(await hasSufficientEvmPaymentBalance(requirement(), OWNER)).toBe(true);
+  });
+});
+
+describe('automatic Solana payment balance checks', () => {
+  const svmRequirement = (amount = 10_000n) => ({
+    scheme: 'exact', network: SOLANA_MAINNET_NETWORK, asset: USDC_MINT, amount: String(amount),
+    payTo: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', maxTimeoutSeconds: 300,
+    extra: { feePayer: '11111111111111111111111111111111' },
+  });
+  const tokenAccount = (pubkey, amount) => ({
+    pubkey, account: { data: { parsed: { info: { tokenAmount: { amount } } } } },
+  });
+  const accountsResult = value => ({ ok: true, json: async () => ({ result: { value } }) });
+
+  it('skips an unfunded Solana option and signs the funded EVM option', async () => {
+    fetchMock.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return body.method === 'getTokenAccountsByOwner' ? accountsResult([]) : rpcResult(AMOUNT);
+    });
+    // Solana is cheaper, so it is tried first.
+    const items = await signatures([requirement(USD1), svmRequirement()]);
+    expect(items.map(item => item.asset)).toEqual([USD1]);
+    expect(createSvmPaymentPayload).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Skipping USDC on solana:'));
+  });
+
+  it.each([9_999n, 10_000n, 10_001n])('compares an associated token account balance of %s exactly', async balance => {
+    fetchMock.mockResolvedValue(accountsResult([tokenAccount(deriveATA(SOL_OWNER, USDC_MINT), String(balance))]));
+    expect(await hasSufficientSvmPaymentBalance(svmRequirement(), SOL_OWNER)).toBe(balance >= 10_000n);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toMatchObject({
+      method: 'getTokenAccountsByOwner',
+      params: [SOL_OWNER, { mint: USDC_MINT }, { encoding: 'jsonParsed' }],
+    });
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('ignores a funded token account that the payment does not transfer from', async () => {
+    fetchMock.mockResolvedValue(accountsResult([tokenAccount('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', '1000000')]));
+    expect(await hasSufficientSvmPaymentBalance(svmRequirement(), SOL_OWNER)).toBe(false);
+  });
+
+  it.each([
+    { error: { code: -32000 } }, { result: null }, { result: { value: null } },
+    { result: { value: [{ pubkey: 'ATA', account: { data: { parsed: { info: { tokenAmount: { amount: 'x' } } } } } }] } },
+  ])('does not treat an unavailable Solana balance as zero: %j', async data => {
+    const ata = deriveATA(SOL_OWNER, USDC_MINT);
+    const body = JSON.parse(JSON.stringify(data).replace('"ATA"', JSON.stringify(ata)));
+    fetchMock.mockResolvedValue({ ok: true, json: async () => body });
+    expect(await hasSufficientSvmPaymentBalance(svmRequirement(), SOL_OWNER)).toBe(true);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('deferring to server verification'));
+  });
+
+  it('retains server verification after a Solana RPC failure', async () => {
+    fetchMock.mockRejectedValue(new Error('timeout'));
+    expect(await signatures([svmRequirement()])).toHaveLength(1);
   });
 });

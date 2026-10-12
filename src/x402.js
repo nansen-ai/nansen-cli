@@ -12,7 +12,7 @@ import {
   getSolanaRpcUrl,
 } from './x402-svm.js';
 import { resolvePassword } from './keychain.js';
-import { EVM_X402_RPCS, hasSufficientEvmPaymentBalance } from './x402-payment-balance.js';
+import { EVM_X402_RPCS, hasSufficientEvmPaymentBalance, hasSufficientSvmPaymentBalance } from './x402-payment-balance.js';
 export { EVM_X402_RPCS } from './x402-payment-balance.js';
 import { evaluatePaymentRequirement, resolvePaymentAmount } from './x402-policy.js';
 import { EVM_X402_TOKENS } from './x402-tokens.js';
@@ -60,7 +60,7 @@ export function parsePaymentRequirements(response) {
  * Ties keep the previous behaviour — EVM before Solana, then the server's own
  * order — so a response whose options cost the same is unaffected.
  */
-function rankRequirements(requirements) {
+export function rankRequirements(requirements) {
   return requirements
     .filter(r => isEvmNetwork(r.network) || isSvmNetwork(r.network))
     .map((requirement, index) => {
@@ -162,6 +162,7 @@ async function buildPaymentForRequirement(requirement, exported, url) {
   }
 
   if (isSvmNetwork(requirement.network)) {
+    if (!await hasSufficientSvmPaymentBalance(requirement, exported.solana.address)) return null;
     const rpcUrl = getSolanaRpcUrl(requirement.network);
     const blockhash = await fetchRecentBlockhash(rpcUrl);
     return createSvmPaymentPayload(
