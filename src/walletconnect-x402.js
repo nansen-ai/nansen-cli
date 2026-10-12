@@ -16,15 +16,17 @@ import { hasSufficientEvmPaymentBalance } from './x402-payment-balance.js';
 
 /**
  * True for an option this path can sign: scheme=exact with EIP-3009
- * TransferWithAuthorization support (extra.name + extra.version). Permit2
- * options need a different typed-data shape, so they are not compatible.
+ * TransferWithAuthorization support (extra.name + extra.version). Like the
+ * local EVM signer, only an absent or "eip3009" transfer method is signed as
+ * EIP-3009; Permit2 and unknown methods are not compatible.
  */
 function isCompatible(req) {
+  const method = req?.extra?.assetTransferMethod;
   return Boolean(
     req?.scheme === 'exact' &&
     req.extra?.name &&
     req.extra?.version &&
-    req.extra.assetTransferMethod !== 'permit2-exact'
+    (!method || method === 'eip3009')
   );
 }
 

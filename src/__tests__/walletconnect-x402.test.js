@@ -308,8 +308,8 @@ describe('createWalletConnectPaymentSignatures — option fallback', () => {
     expect(items.map(i => i.asset)).toEqual([USD1, U]);
   });
 
-  it('does not sign an EIP-3009 authorization for a Permit2 option', async () => {
-    const items = await collect([bsc(U, { assetTransferMethod: 'permit2-exact' }), bsc(USD1)]);
+  it.each(['permit2-exact', 'foo'])('does not sign an EIP-3009 authorization for a %s option', async method => {
+    const items = await collect([bsc(U, { assetTransferMethod: method }), bsc(USD1, { assetTransferMethod: 'eip3009' })]);
 
     expect(items.map(i => i.asset)).toEqual([USD1]);
     expect(signedAssets()).toEqual([USD1]);
