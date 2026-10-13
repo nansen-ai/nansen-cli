@@ -112,6 +112,25 @@ describe('assertCumulativeSpendAllowed — daily cap', () => {
 });
 
 describe('recordPaymentAttempt and audit log', () => {
+  it('fails closed when the signed audit entry cannot be written', async () => {
+    const { recordPaymentAttempt } = await import('../x402-ledger.js');
+    const append = vi.spyOn(fs, 'appendFileSync').mockImplementation(() => {
+      throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+    });
+    try {
+      let failure;
+      try {
+        recordPaymentAttempt({ provider: 'local', amountUsd: 0.01 });
+      } catch (err) {
+        failure = err;
+      }
+      expect(failure).toMatchObject({ failClosedX402: true });
+      expect(failure.message).toMatch(/Cannot record x402 payment.*disk full/);
+    } finally {
+      append.mockRestore();
+    }
+  });
+
   it('writes a signed entry to the audit log without secrets', async () => {
     const { recordPaymentAttempt } = await import('../x402-ledger.js');
     const id = recordPaymentAttempt({

@@ -556,6 +556,47 @@ describe('createPaymentSignatures — cumulative cap enforcement', () => {
     vi.unstubAllGlobals();
   });
 
+  it('releases the reservation and stops when recording a signed payment fails', async () => {
+    vi.doMock('../wallet.js', () => ({
+      listWallets: () => ({ defaultWallet: 'test', wallets: [{ name: 'test' }] }),
+      exportWallet: () => ({ evm: { address: '0xAddr', privateKey: '0xkey' } }),
+      getWalletConfig: () => ({ passwordHash: null }),
+    }));
+    const releasePaymentReservation = vi.fn();
+    const recordPaymentAttempt = vi.fn(() => {
+      throw Object.assign(new Error('audit write failed'), { failClosedX402: true });
+    });
+    vi.doMock('../x402-ledger.js', () => ({
+      assertCumulativeSpendAllowed: () => ({ ok: true, authorizedAt: new Date(), reservationId: 'resv-audit' }),
+      recordPaymentAttempt,
+      releasePaymentReservation,
+    }));
+    vi.doMock('../x402-evm.js', () => ({
+      createEvmPaymentPayload: vi.fn().mockResolvedValue('fake-sig'),
+      isEvmNetwork: (n) => n.startsWith('eip155:'),
+      PERMIT2_ADDRESS: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
+    }));
+    const requirement = {
+      scheme: 'exact', network: 'eip155:8453',
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      amount: '10000', pay_to: '0xRecipient',
+    };
+    const paymentHeader = Buffer.from(JSON.stringify({ accepts: [requirement, requirement] })).toString('base64');
+    const response = { headers: { get: (h) => h === 'payment-required' ? paymentHeader : null } };
+    const { createPaymentSignatures } = await import('../x402.js');
+    try {
+      await expect(async () => {
+        for await (const _item of createPaymentSignatures(response, 'https://api.nansen.ai/test')) {
+          // no payment may be yielded
+        }
+      }).rejects.toThrow('audit write failed');
+      expect(releasePaymentReservation).toHaveBeenCalledExactlyOnceWith('resv-audit');
+      expect(recordPaymentAttempt).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.doUnmock('../x402-evm.js');
+    }
+  });
+
   it('yields no signature when the daily cap would be exceeded', async () => {
     vi.doMock('../wallet.js', () => ({
       listWallets: () => ({ defaultWallet: 'test', wallets: [{ name: 'test', evm: '0xAddr', solana: 'SolAddr' }] }),

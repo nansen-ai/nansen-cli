@@ -200,19 +200,25 @@ async function buildPaymentForRequirement(requirement, exported, url, walletLabe
     return null;
   }
 
-  const paymentId = recordPaymentAttempt({
-    provider: 'local',
-    walletLabel: walletLabel || 'local wallet',
-    authorizedAt: capCheck.authorizedAt,
-    reservationId,
-    network: decision.network,
-    asset: decision.asset,
-    symbol: decision.symbol,
-    amountUsd: decision.usd,
-    amountRaw: decision.amountRaw,
-    payTo: decision.payTo,
-    requestUrl: url,
-  });
+  let paymentId;
+  try {
+    paymentId = recordPaymentAttempt({
+      provider: 'local',
+      walletLabel: walletLabel || 'local wallet',
+      authorizedAt: capCheck.authorizedAt,
+      reservationId,
+      network: decision.network,
+      asset: decision.asset,
+      symbol: decision.symbol,
+      amountUsd: decision.usd,
+      amountRaw: decision.amountRaw,
+      payTo: decision.payTo,
+      requestUrl: url,
+    });
+  } catch (err) {
+    releasePaymentReservation(reservationId);
+    throw err;
+  }
 
   return { sig, paymentId };
 }

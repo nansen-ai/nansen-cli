@@ -378,6 +378,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
           // Nothing was signed, so the budget this cap check reserved goes back
           // instead of sitting held until its TTL.
           releasePaymentReservation(capCheck.reservationId);
+          if (err?.failClosedX402) throw err;
           console.error(`[x402] Privy EVM signing failed for ${requirement.network}: ${err.message}`);
           continue;
         } finally {
@@ -476,6 +477,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
             throw err;
           }
           releasePaymentReservation(svmCapCheck.reservationId);
+          if (err?.failClosedX402) throw err;
           console.error(`[x402] Privy Solana signing failed for ${requirement.network}: ${err.message}`);
           continue;
         } finally {

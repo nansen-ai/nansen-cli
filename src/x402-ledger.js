@@ -573,7 +573,14 @@ export function recordPaymentAttempt(entry) {
   try {
     ensureLedgerDir();
     appendAuditLine(record);
-  } catch { /* best-effort audit */ }
+  } catch (err) {
+    // No payment may be sent without a durable signed-attempt record. The
+    // caller still owns the cap reservation and must release it on this error.
+    throw new X402LedgerError(
+      `Cannot record x402 payment in the audit log: ${err.message} ` +
+      '(fail-closed: not sending this payment)',
+    );
+  }
 
   // Carry the authorization day through to the ledger increment so the spend is
   // attributed to the UTC day whose cap allowed it. Signing and the server
