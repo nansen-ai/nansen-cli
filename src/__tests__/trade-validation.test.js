@@ -3203,8 +3203,11 @@ describe('checkSolanaFeeBalance', () => {
   }
 
   // `fee` is what getFeeForMessage returns: undefined fails the call, null
-  // means the cluster could not price the message.
-  function mockRpc({ balance, existingAccounts = [], fail = false, fee }) {
+  // means the cluster could not price the message. `rent` maps an account size
+  // to getMinimumBalanceForRentExemption's answer (null fails the call).
+  // `mints` maps a mint address to its account data.
+  const clusterRent = (size) => (128 + size) * 6_960;
+  function mockRpc({ balance, existingAccounts = [], fail = false, fee, rent = clusterRent, mints = {} }) {
     global.fetch = vi.fn(async (_url, init) => {
       const { method, params } = JSON.parse(init.body);
       if (fail) return { json: async () => ({ error: { message: 'rpc down' } }) };
@@ -3213,8 +3216,21 @@ describe('checkSolanaFeeBalance', () => {
         if (fee === undefined) return { json: async () => ({ error: { message: 'method not found' } }) };
         return { json: async () => ({ result: { value: fee } }) };
       }
+      if (method === 'getMinimumBalanceForRentExemption') {
+        if (rent === null) return { json: async () => ({ error: { message: 'method not found' } }) };
+        return { json: async () => ({ result: rent(params[0]) }) };
+      }
       if (method === 'getMultipleAccounts') {
-        return { json: async () => ({ result: { value: params[0].map(a => (existingAccounts.includes(a) ? { lamports: 1 } : null)) } }) };
+        return {
+          json: async () => ({
+            result: {
+              value: params[0].map((a) => {
+                if (mints[a]) return { lamports: 1, data: [mints[a].toString('base64'), 'base64'] };
+                return existingAccounts.includes(a) ? { lamports: 1 } : null;
+              }),
+            },
+          }),
+        };
       }
       throw new Error(`unexpected method ${method}`);
     });
@@ -3373,6 +3389,109 @@ describe('checkSolanaFeeBalance', () => {
       const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
       expect(result.proceed).toBe(false);
       expect(result.reason).toContain('0.004 SOL account rent');
+    });
+  });
+
+  describe('ATA rent by token program', () => {
+    const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+    const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+
+    // A full-account ATA create (funder, ATA, owner, mint, System, token
+    // program) with no compute-budget instructions, so the fee is 5,000.
+    function ataTx({ wallet, ata, mint, tokenProgram }) {
+      const keys = [wallet, ata, mint, ATA_PROGRAM, SYSTEM_PROGRAM, tokenProgram];
+      const idx = (k) => keys.indexOf(k);
+      return buildTransaction({
+        accountKeys: keys,
+        instructions: [{
+          programIdIndex: idx(ATA_PROGRAM),
+          accountIndexes: [idx(wallet), idx(ata), idx(wallet), idx(mint), idx(SYSTEM_PROGRAM), idx(tokenProgram)],
+          data: Buffer.from([1]),
+        }],
+      });
+    }
+
+    // Token-2022 mint data: the 82-byte mint padded to 165, the Mint account
+    // type, then one TLV entry per [type, length].
+    function token2022Mint(extensions) {
+      const tlvs = extensions.map(([type, len]) => {
+        const entry = Buffer.alloc(4 + len);
+        entry.writeUInt16LE(type, 0);
+        entry.writeUInt16LE(len, 2);
+        return entry;
+      });
+      return Buffer.concat([Buffer.alloc(165), Buffer.from([1]), ...tlvs]);
+    }
+
+    function rentRequests() {
+      return global.fetch.mock.calls
+        .map(([, init]) => JSON.parse(init.body))
+        .filter(r => r.method === 'getMinimumBalanceForRentExemption')
+        .map(r => r.params[0]);
+    }
+
+    it('prices an SPL Token ATA at 165 bytes', async () => {
+      const wallet = generateSolanaWallet().address;
+      const ata = generateSolanaWallet().address;
+      const mint = generateSolanaWallet().address;
+      mockRpc({ balance: 5_000 + clusterRent(165), fee: null });
+      const tx = ataTx({ wallet, ata, mint, tokenProgram: TOKEN_PROGRAM });
+      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+      expect(result).toEqual({ proceed: true });
+      expect(rentRequests()).toEqual([165]);
+    });
+
+    it('sizes a Token-2022 ATA from the account extensions its mint requires', async () => {
+      const wallet = generateSolanaWallet().address;
+      const ata = generateSolanaWallet().address;
+      const mint = generateSolanaWallet().address;
+      // TransferFeeConfig (108 bytes) forces TransferFeeAmount (8); MetadataPointer
+      // (64) forces nothing. 165 + 1 + ImmutableOwner (4) + TransferFeeAmount (12) = 182.
+      const mints = { [mint]: token2022Mint([[1, 108], [18, 64]]) };
+      const tx = ataTx({ wallet, ata, mint, tokenProgram: TOKEN_2022 });
+
+      mockRpc({ balance: 5_000 + clusterRent(182) - 1, fee: null, mints });
+      const short = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+      expect(short.proceed).toBe(false);
+      expect(short.reason).toContain('0.0021576 SOL account rent');
+      expect(rentRequests()).toEqual([182]);
+
+      mockRpc({ balance: 5_000 + clusterRent(182), fee: null, mints });
+      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
+    });
+
+    it('uses the Token-2022 floor (ImmutableOwner only) when the mint cannot be read', async () => {
+      const wallet = generateSolanaWallet().address;
+      const ata = generateSolanaWallet().address;
+      const mint = generateSolanaWallet().address;
+      mockRpc({ balance: 5_000 + clusterRent(170) - 1, fee: null });
+      const tx = ataTx({ wallet, ata, mint, tokenProgram: TOKEN_2022 });
+      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+      expect(result.proceed).toBe(false);
+      expect(rentRequests()).toEqual([170]);
+    });
+
+    it("uses the cluster's rent-exempt minimum rather than a fixed figure", async () => {
+      const wallet = generateSolanaWallet().address;
+      const ata = generateSolanaWallet().address;
+      const mint = generateSolanaWallet().address;
+      // The cluster's rent is double the current schedule.
+      mockRpc({ balance: 5_000 + clusterRent(165), fee: null, rent: (size) => 2 * clusterRent(size) });
+      const tx = ataTx({ wallet, ata, mint, tokenProgram: TOKEN_PROGRAM });
+      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+      expect(result.proceed).toBe(false);
+      expect(result.reason).toContain('0.00407856 SOL account rent');
+    });
+
+    it('falls back to the rent formula when the cluster cannot return the rent', async () => {
+      const wallet = generateSolanaWallet().address;
+      const ata = generateSolanaWallet().address;
+      const mint = generateSolanaWallet().address;
+      mockRpc({ balance: 5_000 + ATA_RENT - 1, fee: null, rent: null });
+      const tx = ataTx({ wallet, ata, mint, tokenProgram: TOKEN_PROGRAM });
+      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+      expect(result.proceed).toBe(false);
+      expect(result.reason).toContain('0.00203928 SOL account rent');
     });
   });
 

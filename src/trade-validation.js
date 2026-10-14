@@ -1918,12 +1918,30 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
 // the blockhash is unknown to that node). The live figure comes from the
 // cluster below.
 const SOLANA_LAMPORTS_PER_SIGNATURE = 5_000n;
-// Rent-exempt minimum of a 165-byte SPL token account. A Token-2022 account
-// with extensions needs a little more, so this can under-count an ATA's rent
-// but never over-count it: the check below may let a marginal transaction
-// through (simulation and the network still reject it), but it never refuses
-// one the wallet could have paid for.
-const SPL_TOKEN_ACCOUNT_RENT_LAMPORTS = 2_039_280n;
+const TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+// An SPL token account is 165 bytes. A Token-2022 account with extensions adds
+// an account-type byte and a TLV entry (2-byte type, 2-byte length, data) per
+// extension. The ATA program always gives a Token-2022 account ImmutableOwner
+// (no data), so 170 bytes is the floor.
+const SPL_TOKEN_ACCOUNT_SIZE = 165;
+const TOKEN_2022_ATA_MIN_SIZE = SPL_TOKEN_ACCOUNT_SIZE + 1 + 4;
+const TOKEN_2022_MULTISIG_SIZE = 355; // a size Token-2022 pads by 2 so it can't be mistaken for a multisig
+const TOKEN_2022_MINT_ACCOUNT_TYPE = 1;
+// Mint extension type → data length of the account extension it forces on
+// every token account of that mint (spl-token-2022
+// get_required_init_account_extensions). An unknown mint extension adds
+// nothing, so the size stays a floor.
+const TOKEN_2022_REQUIRED_ACCOUNT_EXTENSION_LEN = new Map([
+  [1, 8], // TransferFeeConfig → TransferFeeAmount
+  [9, 0], // NonTransferable → NonTransferableAccount
+  [14, 1], // TransferHook → TransferHookAccount
+  [16, 64], // ConfidentialTransferFeeConfig → ConfidentialTransferFeeAmount
+  [26, 0], // Pausable → PausableAccount
+]);
+// Fallback only, for when the cluster can't return the rent-exempt minimum:
+// (128-byte account overhead + data size) × 3,480 lamports per byte-year × 2 years.
+const SOLANA_RENT_EXEMPT_LAMPORTS_PER_BYTE = 6_960n;
+const SOLANA_ACCOUNT_STORAGE_OVERHEAD = 128;
 
 function formatLamports(lamports) {
   const whole = lamports / 1_000_000_000n;
@@ -1948,7 +1966,9 @@ async function solanaRpc(rpcUrl, method, params) {
  * Check, before signing, that the wallet holds enough SOL to pay for THIS
  * transaction: its network fee and the rent of every account the wallet funds
  * (System CreateAccount/CreateAccountWithSeed, and Associated Token Account
- * creation unless that ATA already exists).
+ * creation unless that ATA already exists). An ATA's rent is the cluster's
+ * rent-exempt minimum for its size, which for Token-2022 depends on the
+ * extensions its mint forces onto every token account.
  *
  * The network fee comes from the cluster (getFeeForMessage), so it follows the
  * current fee schedule and includes the priority fee and any precompile
@@ -1987,11 +2007,13 @@ export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () =>
   // sponsored transaction), the fees are not the wallet's to cover.
   const walletPaysFee = parsed.staticAccountKeys[0] === walletAddress;
 
-  const ataTargets = []; // ATA addresses the wallet funds; null when only ALT-resolvable
+  // ATAs the wallet funds. Any address may be null when only ALT-resolvable.
+  // Accounts: funder, ATA, owner, mint, System program, token program.
+  const ataCreates = [];
   for (const ix of parsed.instructions) {
     if (accountAt(ix, 0) !== walletAddress) continue;
     if (resolveStaticAccount(parsed, ix.programIdIndex) === ASSOCIATED_TOKEN_PROGRAM && isAtaCreate(ix)) {
-      ataTargets.push(accountAt(ix, 1));
+      ataCreates.push({ ata: accountAt(ix, 1), mint: accountAt(ix, 3), tokenProgram: accountAt(ix, 5) });
     }
   }
 
@@ -2002,15 +2024,22 @@ export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () =>
   const rpcUrl = CHAIN_RPCS.solana;
   if (!rpcUrl) return skip('no Solana RPC endpoint');
 
-  const knownAtas = [...new Set(ataTargets.filter(Boolean))];
+  const knownAtas = [...new Set(ataCreates.map(c => c.ata).filter(Boolean))];
+  const token2022Mints = [...new Set(ataCreates.filter(c => c.tokenProgram === TOKEN_2022_PROGRAM && c.mint).map(c => c.mint))];
   let balance;
   let existingAtas;
   let clusterFee = null;
+  const mintData = new Map();
   try {
-    const [balanceResult, accountsResult, feeResult] = await Promise.all([
+    const [balanceResult, accountsResult, mintsResult, feeResult] = await Promise.all([
       solanaRpc(rpcUrl, 'getBalance', [walletAddress]),
       knownAtas.length > 0
         ? solanaRpc(rpcUrl, 'getMultipleAccounts', [knownAtas, { encoding: 'base64', dataSlice: { offset: 0, length: 0 } }])
+        : null,
+      // A failed mint read sizes the account at the Token-2022 floor rather
+      // than skipping the whole check.
+      token2022Mints.length > 0
+        ? solanaRpc(rpcUrl, 'getMultipleAccounts', [token2022Mints, { encoding: 'base64' }]).catch(() => null)
         : null,
       // A failed fee lookup falls back to the static estimate rather than
       // skipping the whole check.
@@ -2021,9 +2050,29 @@ export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () =>
     balance = BigInt(balanceResult.value);
     existingAtas = new Set(knownAtas.filter((_, i) => accountsResult?.value?.[i] != null));
     if (feeResult?.value != null) clusterFee = BigInt(feeResult.value);
+    token2022Mints.forEach((mint, i) => {
+      const data = mintsResult?.value?.[i]?.data?.[0];
+      if (data) mintData.set(mint, Buffer.from(data, 'base64'));
+    });
   } catch (e) {
     return skip(e.message);
   }
+
+  // Size of each ATA this transaction must pay rent for, then its rent-exempt
+  // minimum from the cluster, so a changed rent schedule is followed. An SPL
+  // Token ATA (or one whose token program is only ALT-resolvable) is 165
+  // bytes; a Token-2022 one is sized from its mint, or at the Token-2022 floor
+  // when the mint can't be read. Either way it never over-counts.
+  const ataSize = ({ mint, tokenProgram }) => (tokenProgram === TOKEN_2022_PROGRAM
+    ? token2022AtaSize(mint ? mintData.get(mint) ?? null : null)
+    : SPL_TOKEN_ACCOUNT_SIZE);
+  const rentSizes = [...new Set(ataCreates.filter(c => !existingAtas.has(c.ata)).map(ataSize))];
+  const rentBySize = new Map(await Promise.all(rentSizes.map(async (size) => {
+    const clusterRent = await solanaRpc(rpcUrl, 'getMinimumBalanceForRentExemption', [size]).catch(() => null);
+    return [size, typeof clusterRent === 'number'
+      ? BigInt(clusterRent)
+      : BigInt(SOLANA_ACCOUNT_STORAGE_OVERHEAD + size) * SOLANA_RENT_EXEMPT_LAMPORTS_PER_BYTE];
+  })));
 
   let feeLamports = 0n;
   if (walletPaysFee) {
@@ -2067,10 +2116,11 @@ export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () =>
       }
     } else if (programId === ASSOCIATED_TOKEN_PROGRAM && isAtaCreate(ix)) {
       created = accountAt(ix, 1);
+      const create = { mint: accountAt(ix, 3), tokenProgram: accountAt(ix, 5) };
       // An ATA that already exists, or that this transaction already created,
       // costs no rent. An ALT-resolved one can't be looked up, so it is counted.
       if (created === null || (!existingAtas.has(created) && !funded.has(created))) {
-        lamports = SPL_TOKEN_ACCOUNT_RENT_LAMPORTS;
+        lamports = rentBySize.get(ataSize(create));
       }
     }
     if (lamports === 0n) continue;
@@ -2088,6 +2138,27 @@ export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () =>
       `(${formatLamports(feeLamports)} SOL network fee + ${formatLamports(rentLamports)} SOL account rent). ` +
       `Fund ${walletAddress} with SOL and retry.`,
   };
+}
+
+// Size of the token account the ATA program creates for `mintData` under
+// Token-2022: ImmutableOwner plus every account extension the mint's
+// extensions require. `mintData` null (unreadable) gives the floor.
+function token2022AtaSize(mintData) {
+  let size = TOKEN_2022_ATA_MIN_SIZE;
+  if (mintData && mintData.length > SPL_TOKEN_ACCOUNT_SIZE + 1 && mintData[SPL_TOKEN_ACCOUNT_SIZE] === TOKEN_2022_MINT_ACCOUNT_TYPE) {
+    const seen = new Set();
+    for (let offset = SPL_TOKEN_ACCOUNT_SIZE + 1; offset + 4 <= mintData.length;) {
+      const type = mintData.readUInt16LE(offset);
+      if (type === 0) break; // Uninitialized: the rest is padding
+      const extensionLen = TOKEN_2022_REQUIRED_ACCOUNT_EXTENSION_LEN.get(type);
+      if (extensionLen !== undefined && !seen.has(type)) {
+        seen.add(type);
+        size += 4 + extensionLen;
+      }
+      offset += 4 + mintData.readUInt16LE(offset + 2);
+    }
+  }
+  return size === TOKEN_2022_MULTISIG_SIZE ? size + 2 : size;
 }
 
 // Associated Token Account Create carries either no data or a 0 discriminator;
