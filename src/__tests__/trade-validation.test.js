@@ -3202,11 +3202,17 @@ describe('checkSolanaFeeBalance', () => {
     };
   }
 
-  function mockRpc({ balance, existingAccounts = [], fail = false }) {
+  // `fee` is what getFeeForMessage returns: undefined fails the call, null
+  // means the cluster could not price the message.
+  function mockRpc({ balance, existingAccounts = [], fail = false, fee }) {
     global.fetch = vi.fn(async (_url, init) => {
       const { method, params } = JSON.parse(init.body);
       if (fail) return { json: async () => ({ error: { message: 'rpc down' } }) };
       if (method === 'getBalance') return { json: async () => ({ result: { value: balance } }) };
+      if (method === 'getFeeForMessage') {
+        if (fee === undefined) return { json: async () => ({ error: { message: 'method not found' } }) };
+        return { json: async () => ({ result: { value: fee } }) };
+      }
       if (method === 'getMultipleAccounts') {
         return { json: async () => ({ result: { value: params[0].map(a => (existingAccounts.includes(a) ? { lamports: 1 } : null)) } }) };
       }
@@ -3285,6 +3291,89 @@ describe('checkSolanaFeeBalance', () => {
     const { tx } = swapTx({ wallet, feePayer: sponsor, funder: sponsor, ata });
     const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
     expect(result).toEqual({ proceed: true });
+  });
+
+  it("uses the cluster's fee for the message when it can price it", async () => {
+    const wallet = generateSolanaWallet().address;
+    const ata = generateSolanaWallet().address;
+    // The cluster charges more than the static 5,000 + 1,000,000 estimate.
+    mockRpc({ balance: REQUIRED_WITH_ATA, fee: 1_010_000 });
+    const parsed = parse(swapTx({ wallet, ata }).tx, wallet);
+    const result = await checkSolanaFeeBalance({ parsed, walletAddress: wallet });
+    expect(result.proceed).toBe(false);
+    expect(result.reason).toContain('0.00101 SOL network fee');
+    const feeRequest = global.fetch.mock.calls
+      .map(([, init]) => JSON.parse(init.body))
+      .find(r => r.method === 'getFeeForMessage');
+    expect(feeRequest.params[0]).toBe(parsed.messageBase64);
+  });
+
+  it('falls back to the static fee estimate when the cluster cannot price the message', async () => {
+    const wallet = generateSolanaWallet().address;
+    const ata = generateSolanaWallet().address;
+    mockRpc({ balance: REQUIRED_WITH_ATA - 1, fee: null });
+    const result = await checkSolanaFeeBalance({ parsed: parse(swapTx({ wallet, ata }).tx, wallet), walletAddress: wallet });
+    expect(result.proceed).toBe(false);
+    expect(result.reason).toContain('0.001005 SOL network fee');
+  });
+
+  it('does not ask the cluster for a fee another account pays', async () => {
+    const wallet = generateSolanaWallet().address;
+    const sponsor = generateSolanaWallet().address;
+    const ata = generateSolanaWallet().address;
+    mockRpc({ balance: 0, fee: 5_000 });
+    const { tx } = swapTx({ wallet, feePayer: sponsor, funder: sponsor, ata });
+    await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+    const methods = global.fetch.mock.calls.map(([, init]) => JSON.parse(init.body).method);
+    expect(methods).not.toContain('getFeeForMessage');
+  });
+
+  describe('accounts closed in the same transaction', () => {
+    const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+    const CLOSE = Buffer.from([9]);
+
+    // Two wallet-funded CreateAccounts (2,000,000 each) with an SPL CloseAccount
+    // of the first one between them, sending its lamports to `closeTo`.
+    function transientTx({ wallet, closeTo = wallet, authority = wallet }) {
+      const first = generateSolanaWallet().address;
+      const second = generateSolanaWallet().address;
+      const keys = [...new Set([wallet, first, second, closeTo, authority, SYSTEM_PROGRAM, TOKEN_PROGRAM])];
+      const idx = (k) => keys.indexOf(k);
+      return buildTransaction({
+        accountKeys: keys,
+        instructions: [
+          { programIdIndex: idx(SYSTEM_PROGRAM), accountIndexes: [idx(wallet), idx(first)], data: createAccountData(2_000_000) },
+          { programIdIndex: idx(TOKEN_PROGRAM), accountIndexes: [idx(first), idx(closeTo), idx(authority)], data: CLOSE },
+          { programIdIndex: idx(SYSTEM_PROGRAM), accountIndexes: [idx(wallet), idx(second)], data: createAccountData(2_000_000) },
+        ],
+      });
+    }
+
+    it('counts only the peak rent when an account is closed back to the wallet before the next is created', async () => {
+      const wallet = generateSolanaWallet().address;
+      mockRpc({ balance: 5_000 + 2_000_000, fee: null });
+      const result = await checkSolanaFeeBalance({ parsed: parse(transientTx({ wallet }), wallet), walletAddress: wallet });
+      expect(result).toEqual({ proceed: true });
+    });
+
+    it('still requires the rent the wallet must front before the close', async () => {
+      const wallet = generateSolanaWallet().address;
+      mockRpc({ balance: 5_000 + 2_000_000 - 1, fee: null });
+      const result = await checkSolanaFeeBalance({ parsed: parse(transientTx({ wallet }), wallet), walletAddress: wallet });
+      expect(result.proceed).toBe(false);
+      expect(result.reason).toContain('0.002 SOL account rent');
+    });
+
+    it('does not credit rent a close sends to another address', async () => {
+      const wallet = generateSolanaWallet().address;
+      const stranger = generateSolanaWallet().address;
+      mockRpc({ balance: 5_000 + 4_000_000 - 1, fee: null });
+      // The stranger authorizes the close, so the static safety check allows it.
+      const tx = transientTx({ wallet, closeTo: stranger, authority: stranger });
+      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+      expect(result.proceed).toBe(false);
+      expect(result.reason).toContain('0.004 SOL account rent');
+    });
   });
 
   it('warns and proceeds when the balance RPC fails', async () => {

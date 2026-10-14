@@ -1913,6 +1913,10 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
   return { ...parsed, priorityFeeLamports };
 }
 
+// Fallback only: the protocol's per-signature base fee, used when the cluster
+// can't price the message (getFeeForMessage failed or returned null because
+// the blockhash is unknown to that node). The live figure comes from the
+// cluster below.
 const SOLANA_LAMPORTS_PER_SIGNATURE = 5_000n;
 // Rent-exempt minimum of a 165-byte SPL token account. A Token-2022 account
 // with extensions needs a little more, so this can under-count an ATA's rent
@@ -1942,17 +1946,29 @@ async function solanaRpc(rpcUrl, method, params) {
 
 /**
  * Check, before signing, that the wallet holds enough SOL to pay for THIS
- * transaction: the base fee, the priority fee assertSolanaInstructionsSafe
- * parsed out of its ComputeBudget instructions, and the rent of every account
- * the wallet funds (System CreateAccount/CreateAccountWithSeed, and Associated
- * Token Account creation unless that ATA already exists).
+ * transaction: its network fee and the rent of every account the wallet funds
+ * (System CreateAccount/CreateAccountWithSeed, and Associated Token Account
+ * creation unless that ATA already exists).
+ *
+ * The network fee comes from the cluster (getFeeForMessage), so it follows the
+ * current fee schedule and includes the priority fee and any precompile
+ * signatures. When the cluster can't price the message, it falls back to the
+ * protocol base fee (5,000 lamports per signature) plus the priority fee
+ * assertSolanaInstructionsSafe parsed out of the ComputeBudget instructions.
+ *
+ * Rent is the peak the wallet has out at once, walked in instruction order: a
+ * CloseAccount that returns an account created earlier in this transaction to
+ * the wallet gives that rent back, so a transient account (a WSOL account
+ * opened and closed around the swap) does not add to the rent of an account
+ * created after it. Lamports the wallet must front before the close still
+ * count, because instructions run in order.
  *
  * The quote-time gate (validateGasBalance) can only apply a fixed floor because
  * the transaction does not exist yet. Simulation (verifySolanaSwapOutcome)
  * also catches an unpayable transaction, but it is skipped by
  * --no-verify-outcome and degrades when no simulation RPC is reachable. This
- * check is static plus one balance read, so it runs on every path regardless
- * of that flag.
+ * check is static plus a few reads, so it runs on every path regardless of
+ * that flag.
  *
  * It does not count the swap's own SOL input (System transfers): quote-time
  * validateBalance already holds back FEE_BUFFER for that, and a transfer can be
@@ -1960,7 +1976,7 @@ async function solanaRpc(rpcUrl, method, params) {
  * could refuse a payable transaction.
  *
  * REQUIRES `parsed` to be the return value of assertSolanaInstructionsSafe.
- * Best-effort: on RPC failure it warns and returns { proceed: true }.
+ * Best-effort: on balance RPC failure it warns and returns { proceed: true }.
  *
  * @returns {Promise<{ proceed: boolean, reason?: string }>}
  */
@@ -1969,33 +1985,13 @@ export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () =>
 
   // The fee payer is the first static account. When another account pays (a
   // sponsored transaction), the fees are not the wallet's to cover.
-  const feeLamports = parsed.staticAccountKeys[0] === walletAddress
-    ? SOLANA_LAMPORTS_PER_SIGNATURE * BigInt(parsed.header.numRequiredSignatures) + parsed.priorityFeeLamports
-    : 0n;
+  const walletPaysFee = parsed.staticAccountKeys[0] === walletAddress;
 
-  let createdAccountLamports = 0n;
   const ataTargets = []; // ATA addresses the wallet funds; null when only ALT-resolvable
   for (const ix of parsed.instructions) {
-    // Account 0 is the funder for every instruction counted below.
     if (accountAt(ix, 0) !== walletAddress) continue;
-    const programId = resolveStaticAccount(parsed, ix.programIdIndex);
-    if (programId === SYSTEM_PROGRAM && ix.data.length >= 4) {
-      const kind = ix.data.readUInt32LE(0);
-      if (kind === SYSTEM_INSTR_CREATE_ACCOUNT && ix.data.length >= 12) {
-        // Layout: u32 index | u64 lamports | u64 space | 32 owner
-        createdAccountLamports += ix.data.readBigUInt64LE(4);
-      } else if (kind === SYSTEM_INSTR_CREATE_ACCOUNT_WITH_SEED && ix.data.length >= 44) {
-        // Layout: u32 index | 32 base | u64 seedLen | seed | u64 lamports | u64 space | 32 owner
-        const lamportsOffset = 44 + Number(ix.data.readBigUInt64LE(36));
-        if (ix.data.length >= lamportsOffset + 8) {
-          createdAccountLamports += ix.data.readBigUInt64LE(lamportsOffset);
-        }
-      }
-    } else if (programId === ASSOCIATED_TOKEN_PROGRAM) {
-      // Create carries either no data or a 0 discriminator. RecoverNested (2) creates nothing.
-      if (ix.data.length === 0 || ix.data[0] === ATA_CREATE || ix.data[0] === ATA_CREATE_IDEMPOTENT) {
-        ataTargets.push(accountAt(ix, 1));
-      }
+    if (resolveStaticAccount(parsed, ix.programIdIndex) === ASSOCIATED_TOKEN_PROGRAM && isAtaCreate(ix)) {
+      ataTargets.push(accountAt(ix, 1));
     }
   }
 
@@ -2008,24 +2004,81 @@ export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () =>
 
   const knownAtas = [...new Set(ataTargets.filter(Boolean))];
   let balance;
-  let newAtaCount;
+  let existingAtas;
+  let clusterFee = null;
   try {
-    const [balanceResult, accountsResult] = await Promise.all([
+    const [balanceResult, accountsResult, feeResult] = await Promise.all([
       solanaRpc(rpcUrl, 'getBalance', [walletAddress]),
       knownAtas.length > 0
         ? solanaRpc(rpcUrl, 'getMultipleAccounts', [knownAtas, { encoding: 'base64', dataSlice: { offset: 0, length: 0 } }])
         : null,
+      // A failed fee lookup falls back to the static estimate rather than
+      // skipping the whole check.
+      walletPaysFee
+        ? solanaRpc(rpcUrl, 'getFeeForMessage', [parsed.messageBase64, { commitment: 'processed' }]).catch(() => null)
+        : null,
     ]);
     balance = BigInt(balanceResult.value);
-    // An ATA that already exists costs no rent; an ALT-resolved one can't be
-    // looked up, so it is counted.
-    const existing = accountsResult ? accountsResult.value.filter(account => account !== null).length : 0;
-    newAtaCount = BigInt(knownAtas.length - existing + ataTargets.filter(a => a === null).length);
+    existingAtas = new Set(knownAtas.filter((_, i) => accountsResult?.value?.[i] != null));
+    if (feeResult?.value != null) clusterFee = BigInt(feeResult.value);
   } catch (e) {
     return skip(e.message);
   }
 
-  const rentLamports = createdAccountLamports + newAtaCount * SPL_TOKEN_ACCOUNT_RENT_LAMPORTS;
+  let feeLamports = 0n;
+  if (walletPaysFee) {
+    feeLamports = clusterFee
+      ?? SOLANA_LAMPORTS_PER_SIGNATURE * BigInt(parsed.header.numRequiredSignatures) + parsed.priorityFeeLamports;
+  }
+
+  // Walk the instructions in order, tracking rent the wallet has out and the
+  // peak of it. Only rent this transaction funded is credited back on close;
+  // an ALT-resolved new account can't be matched to its close, so it stays out.
+  const funded = new Map(); // account → lamports the wallet put into it in this transaction
+  let rentOut = 0n;
+  let rentLamports = 0n;
+  for (const ix of parsed.instructions) {
+    const programId = resolveStaticAccount(parsed, ix.programIdIndex);
+    if (SPL_TOKEN_PROGRAMS.has(programId) && ix.data.length > 0 && ix.data[0] === SPL_CLOSE_ACCOUNT) {
+      const closed = accountAt(ix, 0);
+      if (accountAt(ix, 1) === walletAddress && funded.has(closed)) {
+        rentOut -= funded.get(closed);
+        funded.delete(closed);
+      }
+      continue;
+    }
+    // Account 0 is the funder for every creation counted below.
+    if (accountAt(ix, 0) !== walletAddress) continue;
+    let created = null;
+    let lamports = 0n;
+    if (programId === SYSTEM_PROGRAM && ix.data.length >= 4) {
+      const kind = ix.data.readUInt32LE(0);
+      if (kind === SYSTEM_INSTR_CREATE_ACCOUNT && ix.data.length >= 12) {
+        // Layout: u32 index | u64 lamports | u64 space | 32 owner
+        lamports = ix.data.readBigUInt64LE(4);
+        created = accountAt(ix, 1);
+      } else if (kind === SYSTEM_INSTR_CREATE_ACCOUNT_WITH_SEED && ix.data.length >= 44) {
+        // Layout: u32 index | 32 base | u64 seedLen | seed | u64 lamports | u64 space | 32 owner
+        const lamportsOffset = 44 + Number(ix.data.readBigUInt64LE(36));
+        if (ix.data.length >= lamportsOffset + 8) {
+          lamports = ix.data.readBigUInt64LE(lamportsOffset);
+          created = accountAt(ix, 1);
+        }
+      }
+    } else if (programId === ASSOCIATED_TOKEN_PROGRAM && isAtaCreate(ix)) {
+      created = accountAt(ix, 1);
+      // An ATA that already exists, or that this transaction already created,
+      // costs no rent. An ALT-resolved one can't be looked up, so it is counted.
+      if (created === null || (!existingAtas.has(created) && !funded.has(created))) {
+        lamports = SPL_TOKEN_ACCOUNT_RENT_LAMPORTS;
+      }
+    }
+    if (lamports === 0n) continue;
+    rentOut += lamports;
+    if (created !== null) funded.set(created, (funded.get(created) ?? 0n) + lamports);
+    if (rentOut > rentLamports) rentLamports = rentOut;
+  }
+
   const required = feeLamports + rentLamports;
   if (balance >= required) return { proceed: true };
 
@@ -2035,6 +2088,12 @@ export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () =>
       `(${formatLamports(feeLamports)} SOL network fee + ${formatLamports(rentLamports)} SOL account rent). ` +
       `Fund ${walletAddress} with SOL and retry.`,
   };
+}
+
+// Associated Token Account Create carries either no data or a 0 discriminator;
+// CreateIdempotent is 1. RecoverNested (2) creates nothing.
+function isAtaCreate(ix) {
+  return ix.data.length === 0 || ix.data[0] === ATA_CREATE || ix.data[0] === ATA_CREATE_IDEMPOTENT;
 }
 
 /**
