@@ -6464,6 +6464,105 @@ describe('Relay aggregator: --aggregator override on bridge-status', () => {
   });
 });
 
+describe('Solana execute: SOL fee balance check', () => {
+  function encodeCompactU16(value) {
+    if (value < 0x80) return Buffer.from([value]);
+    return Buffer.from([(value & 0x7f) | 0x80, (value >> 7) & 0x7f]);
+  }
+
+  // A Jupiter-shaped transaction that pays a 1,000,000-lamport priority fee
+  // (1,000,000 micro-lamports x 1,000,000 units) and nothing else.
+  function buildPriorityFeeTransaction(walletAddress) {
+    const COMPUTE_BUDGET = 'ComputeBudget111111111111111111111111111111';
+    const accountKeys = [walletAddress, COMPUTE_BUDGET];
+    const limit = Buffer.alloc(5);
+    limit[0] = 2;
+    limit.writeUInt32LE(1_000_000, 1);
+    const price = Buffer.alloc(9);
+    price[0] = 3;
+    price.writeBigUInt64LE(1_000_000n, 1);
+    const parts = [Buffer.from([1, 0, 1])];
+    parts.push(encodeCompactU16(accountKeys.length));
+    for (const k of accountKeys) parts.push(base58Decode(k));
+    parts.push(base58Decode(walletAddress)); // recentBlockhash placeholder
+    parts.push(encodeCompactU16(2));
+    for (const data of [limit, price]) {
+      parts.push(Buffer.from([1]), encodeCompactU16(0), encodeCompactU16(data.length), data);
+    }
+    return Buffer.concat([Buffer.from([1]), Buffer.alloc(64), Buffer.concat(parts)]).toString('base64');
+  }
+
+  async function runExecute(balanceLamports) {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    const wallet = showWallet('default');
+
+    const executeCalls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.includes('trading-api') && isExecutePath(urlStr)) {
+        executeCalls.push(JSON.parse(opts.body));
+        const response = asRouteResponse(
+          { status: 'Success', signature: '4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj', chainType: 'solana' },
+          isStandardExecutePath(urlStr),
+        );
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(response)) });
+      }
+      const method = opts?.body ? JSON.parse(opts.body).method : undefined;
+      const body = method === 'getBalance'
+        ? { jsonrpc: '2.0', id: 1, result: { value: balanceLamports } }
+        : { jsonrpc: '2.0', id: 1, result: null };
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(body),
+        text: () => Promise.resolve(JSON.stringify(body)),
+      });
+    }));
+
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{
+        aggregator: 'jupiter',
+        inputMint: SOL_MINT,
+        outputMint: SOL_USDC,
+        inAmount: '1000000000',
+        outAmount: '50000000',
+        transaction: buildPriorityFeeTransaction(wallet.solana),
+      }],
+    }, 'solana', 'local', null, null, { swapMode: 'exactIn', request: solanaIntent({ walletAddress: wallet.solana }) });
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    // --no-verify-outcome: the simulation that would otherwise catch an
+    // unpayable transaction is off, so only the fee balance check stands.
+    const result = await cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId })
+      .then(() => null, (err) => err);
+
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    vi.unstubAllGlobals();
+    return { executeCalls, logs, error: result };
+  }
+
+  it('refuses to sign under --no-verify-outcome when the wallet cannot pay the priority fee', async () => {
+    // 5,000 base fee + 1,000,000 priority fee, one lamport short.
+    const { executeCalls, logs, error } = await runExecute(1_004_999);
+
+    expect(error).toBeTruthy();
+    expect(executeCalls).toHaveLength(0);
+    expect(logs.some(l => l.includes('cannot be paid for') && l.includes('needs at least 0.001005 SOL'))).toBe(true);
+  });
+
+  it('signs and broadcasts when the wallet covers the fee exactly', async () => {
+    const { executeCalls, logs, error } = await runExecute(1_005_000);
+
+    expect(error).toBeNull();
+
+    expect(executeCalls).toHaveLength(1);
+    expect(logs.some(l => l.includes('cannot be paid for'))).toBe(false);
+  });
+});
+
 describe('Relay aggregator: Solana omits requestId', () => {
   // Pinned to the deprecated route: this pins the deprecated route's request body, so it is identical on both
   // routes and this stub is written against the legacy response shape.

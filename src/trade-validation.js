@@ -33,8 +33,12 @@ const SPL_INITIALIZE_ACCOUNT2 = 16;
 const SPL_INITIALIZE_ACCOUNT3 = 18;
 
 const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+const SYSTEM_INSTR_CREATE_ACCOUNT = 0;
 const SYSTEM_INSTR_TRANSFER = 2;
 const SYSTEM_INSTR_CREATE_ACCOUNT_WITH_SEED = 3;
+const ASSOCIATED_TOKEN_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+const ATA_CREATE = 0;
+const ATA_CREATE_IDEMPOTENT = 1;
 const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 
 const COMPUTE_BUDGET_PROGRAM = 'ComputeBudget111111111111111111111111111111';
@@ -1800,7 +1804,9 @@ export function assertLimitOrderCancelOutcome(sim, { inputMint, amount } = {}) {
  * against SPL_TOKEN_PROGRAMS/COMPUTE_BUDGET_PROGRAM, so it's rejected outright
  * rather than silently skipped.
  *
- * Throws on any of those patterns. Returns the parsed transaction otherwise.
+ * Throws on any of those patterns. Otherwise returns the parsed transaction
+ * plus `priorityFeeLamports` (0n when no compute-unit price is set), which
+ * checkSolanaFeeBalance compares against the wallet's balance.
  */
 export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
   // Fail closed on a missing wallet address: every authority check below
@@ -1893,17 +1899,142 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
     }
   }
 
+  let priorityFeeLamports = 0n;
   if (computeUnitPriceMicroLamports != null) {
     const units = BigInt(computeUnitLimit ?? SOLANA_MAX_COMPUTE_UNITS);
-    const feeLamports = (computeUnitPriceMicroLamports * units) / 1_000_000n;
-    if (feeLamports > MAX_PRIORITY_FEE_LAMPORTS) {
+    priorityFeeLamports = (computeUnitPriceMicroLamports * units) / 1_000_000n;
+    if (priorityFeeLamports > MAX_PRIORITY_FEE_LAMPORTS) {
       throw new Error(
-        `Solana transaction sets an excessive priority fee (~${feeLamports} lamports, cap ${MAX_PRIORITY_FEE_LAMPORTS}). Refusing to sign.`,
+        `Solana transaction sets an excessive priority fee (~${priorityFeeLamports} lamports, cap ${MAX_PRIORITY_FEE_LAMPORTS}). Refusing to sign.`,
       );
     }
   }
 
-  return parsed;
+  return { ...parsed, priorityFeeLamports };
+}
+
+const SOLANA_LAMPORTS_PER_SIGNATURE = 5_000n;
+// Rent-exempt minimum of a 165-byte SPL token account. A Token-2022 account
+// with extensions needs a little more, so this can under-count an ATA's rent
+// but never over-count it: the check below may let a marginal transaction
+// through (simulation and the network still reject it), but it never refuses
+// one the wallet could have paid for.
+const SPL_TOKEN_ACCOUNT_RENT_LAMPORTS = 2_039_280n;
+
+function formatLamports(lamports) {
+  const whole = lamports / 1_000_000_000n;
+  const frac = (lamports % 1_000_000_000n).toString().padStart(9, '0').replace(/0+$/, '');
+  return frac ? `${whole}.${frac}` : `${whole}`;
+}
+
+async function solanaRpc(rpcUrl, method, params) {
+  const res = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  });
+  const body = await res.json();
+  if (body.error || body.result === undefined) {
+    throw new Error(`${method} failed: ${body.error?.message || 'no result'}`);
+  }
+  return body.result;
+}
+
+/**
+ * Check, before signing, that the wallet holds enough SOL to pay for THIS
+ * transaction: the base fee, the priority fee assertSolanaInstructionsSafe
+ * parsed out of its ComputeBudget instructions, and the rent of every account
+ * the wallet funds (System CreateAccount/CreateAccountWithSeed, and Associated
+ * Token Account creation unless that ATA already exists).
+ *
+ * The quote-time gate (validateGasBalance) can only apply a fixed floor because
+ * the transaction does not exist yet. Simulation (verifySolanaSwapOutcome)
+ * also catches an unpayable transaction, but it is skipped by
+ * --no-verify-outcome and degrades when no simulation RPC is reachable. This
+ * check is static plus one balance read, so it runs on every path regardless
+ * of that flag.
+ *
+ * It does not count the swap's own SOL input (System transfers): quote-time
+ * validateBalance already holds back FEE_BUFFER for that, and a transfer can be
+ * funded by SOL the same transaction receives earlier, so counting it here
+ * could refuse a payable transaction.
+ *
+ * REQUIRES `parsed` to be the return value of assertSolanaInstructionsSafe.
+ * Best-effort: on RPC failure it warns and returns { proceed: true }.
+ *
+ * @returns {Promise<{ proceed: boolean, reason?: string }>}
+ */
+export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () => {} }) {
+  const accountAt = (ix, position) => resolveStaticAccount(parsed, ix.accountIndexes[position]);
+
+  // The fee payer is the first static account. When another account pays (a
+  // sponsored transaction), the fees are not the wallet's to cover.
+  const feeLamports = parsed.staticAccountKeys[0] === walletAddress
+    ? SOLANA_LAMPORTS_PER_SIGNATURE * BigInt(parsed.header.numRequiredSignatures) + parsed.priorityFeeLamports
+    : 0n;
+
+  let createdAccountLamports = 0n;
+  const ataTargets = []; // ATA addresses the wallet funds; null when only ALT-resolvable
+  for (const ix of parsed.instructions) {
+    // Account 0 is the funder for every instruction counted below.
+    if (accountAt(ix, 0) !== walletAddress) continue;
+    const programId = resolveStaticAccount(parsed, ix.programIdIndex);
+    if (programId === SYSTEM_PROGRAM && ix.data.length >= 4) {
+      const kind = ix.data.readUInt32LE(0);
+      if (kind === SYSTEM_INSTR_CREATE_ACCOUNT && ix.data.length >= 12) {
+        // Layout: u32 index | u64 lamports | u64 space | 32 owner
+        createdAccountLamports += ix.data.readBigUInt64LE(4);
+      } else if (kind === SYSTEM_INSTR_CREATE_ACCOUNT_WITH_SEED && ix.data.length >= 44) {
+        // Layout: u32 index | 32 base | u64 seedLen | seed | u64 lamports | u64 space | 32 owner
+        const lamportsOffset = 44 + Number(ix.data.readBigUInt64LE(36));
+        if (ix.data.length >= lamportsOffset + 8) {
+          createdAccountLamports += ix.data.readBigUInt64LE(lamportsOffset);
+        }
+      }
+    } else if (programId === ASSOCIATED_TOKEN_PROGRAM) {
+      // Create carries either no data or a 0 discriminator. RecoverNested (2) creates nothing.
+      if (ix.data.length === 0 || ix.data[0] === ATA_CREATE || ix.data[0] === ATA_CREATE_IDEMPOTENT) {
+        ataTargets.push(accountAt(ix, 1));
+      }
+    }
+  }
+
+  const skip = (why) => {
+    log(`  ⚠ SOL fee balance check could not run (${why}); proceeding without it.`);
+    return { proceed: true };
+  };
+  const rpcUrl = CHAIN_RPCS.solana;
+  if (!rpcUrl) return skip('no Solana RPC endpoint');
+
+  const knownAtas = [...new Set(ataTargets.filter(Boolean))];
+  let balance;
+  let newAtaCount;
+  try {
+    const [balanceResult, accountsResult] = await Promise.all([
+      solanaRpc(rpcUrl, 'getBalance', [walletAddress]),
+      knownAtas.length > 0
+        ? solanaRpc(rpcUrl, 'getMultipleAccounts', [knownAtas, { encoding: 'base64', dataSlice: { offset: 0, length: 0 } }])
+        : null,
+    ]);
+    balance = BigInt(balanceResult.value);
+    // An ATA that already exists costs no rent; an ALT-resolved one can't be
+    // looked up, so it is counted.
+    const existing = accountsResult ? accountsResult.value.filter(account => account !== null).length : 0;
+    newAtaCount = BigInt(knownAtas.length - existing + ataTargets.filter(a => a === null).length);
+  } catch (e) {
+    return skip(e.message);
+  }
+
+  const rentLamports = createdAccountLamports + newAtaCount * SPL_TOKEN_ACCOUNT_RENT_LAMPORTS;
+  const required = feeLamports + rentLamports;
+  if (balance >= required) return { proceed: true };
+
+  return {
+    proceed: false,
+    reason: `wallet has ${formatLamports(balance)} SOL but this transaction needs at least ${formatLamports(required)} SOL ` +
+      `(${formatLamports(feeLamports)} SOL network fee + ${formatLamports(rentLamports)} SOL account rent). ` +
+      `Fund ${walletAddress} with SOL and retry.`,
+  };
 }
 
 /**

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { validateQuoteInput, fetchNativeBalance, fetchTokenBalance, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertInputWithinMax, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, assertSolanaSwapOutcome, assertLimitOrderDepositOutcome, assertLimitOrderCancelOutcome, assertLimitOrderDepositDestination, MAX_UINT256, needsAllowanceRevoke } from '../trade-validation.js';
+import { validateQuoteInput, fetchNativeBalance, fetchTokenBalance, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertInputWithinMax, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, checkSolanaFeeBalance, assertSolanaSwapOutcome, assertLimitOrderDepositOutcome, assertLimitOrderCancelOutcome, assertLimitOrderDepositDestination, MAX_UINT256, needsAllowanceRevoke } from '../trade-validation.js';
 import { SOL_SENTINEL } from '../solana-simulation.js';
 import crypto from 'crypto';
 import { base58Decode, base58Encode, generateSolanaWallet } from '../wallet.js';
@@ -3124,5 +3124,176 @@ describe('assertSolanaInstructionsSafe', () => {
     });
     expect(() => assertSolanaInstructionsSafe(tx, { walletAddress: wallet }))
       .toThrow(/only resolvable via an address-lookup-table entry/);
+  });
+});
+
+describe('checkSolanaFeeBalance', () => {
+  const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+  const ATA_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+  const COMPUTE_BUDGET = 'ComputeBudget111111111111111111111111111111';
+  const ATA_RENT = 2_039_280;
+  let originalFetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function encodeCompactU16(value) {
+    if (value < 0x80) return Buffer.from([value]);
+    return Buffer.from([(value & 0x7f) | 0x80, (value >> 7) & 0x7f]);
+  }
+
+  // Minimal legacy message with one signer: accountKeys[0] is the fee payer.
+  function buildTransaction({ accountKeys, instructions }) {
+    const parts = [Buffer.from([1, 0, 0])];
+    parts.push(encodeCompactU16(accountKeys.length));
+    for (const k of accountKeys) parts.push(base58Decode(k));
+    parts.push(base58Decode(accountKeys[0]));
+    parts.push(encodeCompactU16(instructions.length));
+    for (const ix of instructions) {
+      parts.push(Buffer.from([ix.programIdIndex]));
+      parts.push(encodeCompactU16(ix.accountIndexes.length));
+      for (const idx of ix.accountIndexes) parts.push(Buffer.from([idx]));
+      parts.push(encodeCompactU16(ix.data.length));
+      parts.push(ix.data);
+    }
+    return Buffer.concat([Buffer.from([1]), Buffer.alloc(64), Buffer.concat(parts)]).toString('base64');
+  }
+
+  function setLimit(units) {
+    const data = Buffer.alloc(5);
+    data[0] = 2;
+    data.writeUInt32LE(units, 1);
+    return data;
+  }
+  function setPrice(microLamports) {
+    const data = Buffer.alloc(9);
+    data[0] = 3;
+    data.writeBigUInt64LE(BigInt(microLamports), 1);
+    return data;
+  }
+  function createAccountData(lamports) {
+    const data = Buffer.alloc(52);
+    data.writeUInt32LE(0, 0);
+    data.writeBigUInt64LE(BigInt(lamports), 4);
+    data.writeBigUInt64LE(165n, 12);
+    return data;
+  }
+
+  // A swap-shaped transaction: a 1,000,000-lamport priority fee (1,000,000
+  // micro-lamports x 1,000,000 units), plus a CreateIdempotent ATA funded by `funder`.
+  function swapTx({ wallet, feePayer = wallet, funder = wallet, ata, extra = [] }) {
+    const keys = [feePayer, ...(feePayer === wallet ? [] : [wallet]), ata, COMPUTE_BUDGET, ATA_PROGRAM, SYSTEM_PROGRAM];
+    const idx = (k) => keys.indexOf(k);
+    return {
+      tx: buildTransaction({
+        accountKeys: keys,
+        instructions: [
+          { programIdIndex: idx(COMPUTE_BUDGET), accountIndexes: [], data: setLimit(1_000_000) },
+          { programIdIndex: idx(COMPUTE_BUDGET), accountIndexes: [], data: setPrice(1_000_000) },
+          { programIdIndex: idx(ATA_PROGRAM), accountIndexes: [idx(funder), idx(ata), idx(wallet)], data: Buffer.from([1]) },
+          ...extra.map(e => ({ programIdIndex: idx(SYSTEM_PROGRAM), accountIndexes: [idx(wallet), idx(ata)], data: e })),
+        ],
+      }),
+    };
+  }
+
+  function mockRpc({ balance, existingAccounts = [], fail = false }) {
+    global.fetch = vi.fn(async (_url, init) => {
+      const { method, params } = JSON.parse(init.body);
+      if (fail) return { json: async () => ({ error: { message: 'rpc down' } }) };
+      if (method === 'getBalance') return { json: async () => ({ result: { value: balance } }) };
+      if (method === 'getMultipleAccounts') {
+        return { json: async () => ({ result: { value: params[0].map(a => (existingAccounts.includes(a) ? { lamports: 1 } : null)) } }) };
+      }
+      throw new Error(`unexpected method ${method}`);
+    });
+  }
+
+  function parse(tx, wallet) {
+    return assertSolanaInstructionsSafe(tx, { walletAddress: wallet });
+  }
+
+  // 5,000 base fee + 1,000,000 priority fee + one new ATA's rent.
+  const REQUIRED_WITH_ATA = 5_000 + 1_000_000 + ATA_RENT;
+
+  it('returns the parsed priority fee from assertSolanaInstructionsSafe', () => {
+    const wallet = generateSolanaWallet().address;
+    const ata = generateSolanaWallet().address;
+    expect(parse(swapTx({ wallet, ata }).tx, wallet).priorityFeeLamports).toBe(1_000_000n);
+  });
+
+  it('passes when the balance covers base fee, priority fee and new ATA rent exactly', async () => {
+    const wallet = generateSolanaWallet().address;
+    const ata = generateSolanaWallet().address;
+    mockRpc({ balance: REQUIRED_WITH_ATA });
+    const result = await checkSolanaFeeBalance({ parsed: parse(swapTx({ wallet, ata }).tx, wallet), walletAddress: wallet });
+    expect(result).toEqual({ proceed: true });
+  });
+
+  it('refuses one lamport short, with an actionable reason', async () => {
+    const wallet = generateSolanaWallet().address;
+    const ata = generateSolanaWallet().address;
+    mockRpc({ balance: REQUIRED_WITH_ATA - 1 });
+    const result = await checkSolanaFeeBalance({ parsed: parse(swapTx({ wallet, ata }).tx, wallet), walletAddress: wallet });
+    expect(result.proceed).toBe(false);
+    expect(result.reason).toContain('wallet has 0.003044279 SOL but this transaction needs at least 0.00304428 SOL');
+    expect(result.reason).toContain('0.001005 SOL network fee + 0.00203928 SOL account rent');
+    expect(result.reason).toContain(`Fund ${wallet} with SOL`);
+  });
+
+  it('does not charge rent for an ATA that already exists', async () => {
+    const wallet = generateSolanaWallet().address;
+    const ata = generateSolanaWallet().address;
+    mockRpc({ balance: 5_000 + 1_000_000, existingAccounts: [ata] });
+    const result = await checkSolanaFeeBalance({ parsed: parse(swapTx({ wallet, ata }).tx, wallet), walletAddress: wallet });
+    expect(result).toEqual({ proceed: true });
+  });
+
+  it('counts lamports the wallet puts into a System CreateAccount', async () => {
+    const wallet = generateSolanaWallet().address;
+    const ata = generateSolanaWallet().address;
+    mockRpc({ balance: 5_000 + 1_000_000 + 2_000_000 - 1, existingAccounts: [ata] });
+    const { tx } = swapTx({ wallet, ata, extra: [createAccountData(2_000_000)] });
+    const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+    expect(result.proceed).toBe(false);
+    expect(result.reason).toContain('0.002 SOL account rent');
+  });
+
+  it('does not count a System transfer (the swap input) against the balance', async () => {
+    const wallet = generateSolanaWallet().address;
+    const ata = generateSolanaWallet().address;
+    const transfer = Buffer.alloc(12);
+    transfer.writeUInt32LE(2, 0);
+    transfer.writeBigUInt64LE(5_000_000_000n, 4);
+    mockRpc({ balance: 5_000 + 1_000_000, existingAccounts: [ata] });
+    const { tx } = swapTx({ wallet, ata, extra: [transfer] });
+    const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+    expect(result).toEqual({ proceed: true });
+  });
+
+  it('ignores ATA rent that another account funds', async () => {
+    const wallet = generateSolanaWallet().address;
+    const sponsor = generateSolanaWallet().address;
+    const ata = generateSolanaWallet().address;
+    mockRpc({ balance: 0 });
+    // The sponsor is fee payer and ATA funder, so the wallet owes nothing.
+    const { tx } = swapTx({ wallet, feePayer: sponsor, funder: sponsor, ata });
+    const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+    expect(result).toEqual({ proceed: true });
+  });
+
+  it('warns and proceeds when the balance RPC fails', async () => {
+    const wallet = generateSolanaWallet().address;
+    const ata = generateSolanaWallet().address;
+    mockRpc({ fail: true });
+    const log = vi.fn();
+    const result = await checkSolanaFeeBalance({ parsed: parse(swapTx({ wallet, ata }).tx, wallet), walletAddress: wallet, log });
+    expect(result).toEqual({ proceed: true });
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/SOL fee balance check could not run \(getBalance failed: rpc down\)/));
   });
 });
