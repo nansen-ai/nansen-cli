@@ -83,9 +83,12 @@ async function requestFeedback(api, endpoint, body, submissionId) {
     details.request_id ??= redact(response.headers.get('x-request-id'));
     if (submissionId) details.submission_id = submissionId;
     const unavailable = response.status === 402 || data.code === 'insufficient_credits' || response.status === 501 ||
-      (response.status === 404 && (body !== undefined || data.detail === 'Not Found'));
+      (response.status === 404 && body !== undefined);
     if (unavailable) {
       throw new NansenError('Feedback is unavailable on this backend. Retry after feedback support is deployed; no payment or account switch was attempted.', 'feedback_unavailable', response.status, details);
+    }
+    if (response.status === 404) {
+      throw new NansenError('Receipt not found, or this backend does not support feedback yet. Check the feedback ID, active account and NANSEN_BASE_URL. Do not resubmit as a new report.', details.code || 'not_found', response.status, details);
     }
     lastError = new NansenError(details.message || 'Feedback request failed.', details.code || ErrorCode.UNKNOWN, response.status, details);
     const weekly = data.reason === 'feedback_weekly_quota_exhausted';
@@ -123,6 +126,7 @@ export function buildFeedbackCommands({ log = console.log } = {}) {
     feedback: async (args, api, flags, options) => {
       let receipt;
       if (args[0] === 'submit') {
+        if (args.length !== 1) throw new NansenError('Use: nansen feedback submit --file feedback.json --submission-id <new-id> [--json]', ErrorCode.INVALID_PARAMS);
         const id = required(options['submission-id'], '--submission-id');
         if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw new NansenError('--submission-id must contain 1 to 128 ASCII letters, digits, underscores or hyphens.', ErrorCode.INVALID_PARAMS);
         const file = required(options.file, '--file');

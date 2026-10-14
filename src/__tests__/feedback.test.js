@@ -98,7 +98,7 @@ it('honors temporary Retry-After without changing payload or ID', async () => {
   expect(new Set(h.requests.map(r => r.headers['idempotency-key'])).size).toBe(1);
 });
 
-it.each(['weekly_limit', 'conflict', 'denied', 'not_found'])('preserves structured %s errors and exits once', async scenario => {
+it.each(['weekly_limit', 'conflict', 'denied'])('preserves structured %s errors and exits once', async scenario => {
   const h = await harness([examples[scenario]]);
   const result = await h.run([...h.submit, '--json']);
   expect(result.code).toBe(1); expect(result.stderr).toBe(''); expect(h.requests).toHaveLength(1);
@@ -115,11 +115,28 @@ it('stops promptly on weekly exhaustion and shows reset and request/submission I
   for (const value of [examples.weekly_limit.body.quota.resets_at, examples.weekly_limit.body.request_id, examples.accepted.body.submission_id]) expect(result.stdout).toContain(value);
 });
 
-it.each([examples.route_unavailable_zero_credit, { status: 402, body: { paymentRequirements: { accepts: [] } } }, { status: 404, body: { detail: 'Not Found' } }])('reports unavailable capability without fallback for HTTP $status', async response => {
+it.each([examples.route_unavailable_zero_credit, { status: 402, body: { paymentRequirements: { accepts: [] } } }, { ...examples.not_found, body: { ...examples.not_found.body, message: 'Not Found' } }])('reports unavailable capability without fallback for HTTP $status', async response => {
   const h = await harness([response]);
   const result = await h.run([...h.submit, '--json']);
   expect(result.code).toBe(1); expect(JSON.parse(result.stdout).code).toBe('feedback_unavailable');
   expect(h.requests).toHaveLength(1); expect(result.stdout).not.toMatch(/top up|fund|wallet create/);
+});
+
+// The real wrapper's not_found_handler emits problem(message='Not Found'),
+// without detail. Source: nansen-api cc0b5c593 wrapper/error_handlers.py:1383.
+it.each(['Not Found', examples.not_found.body.message])('gives actionable GET 404 guidance for the real producer message %s', async message => {
+  const response = { ...examples.not_found, body: { ...examples.not_found.body, message } };
+  const h = await harness([response]);
+  for (const flags of [[], ['--json']]) {
+    const result = await h.run(['get', examples.accepted.body.feedback_id, ...flags]);
+    expect(result.code).toBe(1); expect(result.stderr).toBe('');
+    expect(result.stdout).toContain('this backend does not support feedback yet');
+    expect(result.stdout).toContain('active account'); expect(result.stdout).toContain('Do not resubmit as a new report');
+    expect(result.stdout).toContain(response.body.request_id);
+    if (flags.length) expect(JSON.parse(result.stdout)).toMatchObject({ code: 'not_found', status: 404, details: response.body });
+  }
+  expect(h.requests).toHaveLength(2);
+  expect(h.requests.every(r => r.method === 'GET')).toBe(true);
 });
 
 it('reports outcome uncertainty after retries and never echoes unreadable response bodies', async () => {
@@ -159,6 +176,13 @@ it('rejects payment signatures and anonymous access before sending', async () =>
   const h = await harness([examples.accepted]);
   expect((await h.run([...h.submit, '--json', '--x402-payment-signature', 'synthetic-signature'])).code).toBe(1);
   expect((await h.run([...h.submit, '--json'], { NANSEN_API_KEY: '' })).code).toBe(1);
+  expect(h.requests).toHaveLength(0);
+});
+
+it('rejects extra submit arguments with a valid file and ID before sending', async () => {
+  const h = await harness([examples.accepted]);
+  const result = await h.run([...h.submit, 'accidental-report.json', '--json']);
+  expect(result.code).toBe(1); expect(JSON.parse(result.stdout).code).toBe('INVALID_PARAMS');
   expect(h.requests).toHaveLength(0);
 });
 
