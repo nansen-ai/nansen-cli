@@ -14,6 +14,36 @@ npm install -g nansen-cli
 npx skills add nansen-ai/nansen-cli  # load agent skill files
 ```
 
+## Feedback
+
+Send product feedback to Nansen with your configured API key or login session:
+
+```json
+{
+  "category": "missing_capability",
+  "description": "I need to compare labels across 50 wallets but cannot find a bulk lookup.",
+  "goal": "Compare labels across a wallet list."
+}
+```
+
+Save the report as `feedback.json`, then use a new submission ID:
+
+```bash
+nansen feedback submit --file feedback.json --submission-id report-123 --json
+nansen feedback get fb_123 --json
+```
+
+Keep the same ID and unchanged file when retrying an uncertain submission. This
+version requires an explicit ID. Remove `--json` for human output. `received` means
+saved, `reviewed` means triaged, and `closed` means review is complete. Review does
+not promise a fix or a date.
+
+Feedback is free, with seven accepted reports per account each week, resetting
+Monday at 00:00 UTC. An exhausted allowance exits with its reset time; accepted
+IDs can still be replayed. Feedback bypasses caching and payment fallback.
+Remove secrets and unnecessary personal details from your report. A backend
+without feedback support reports an unavailable capability.
+
 ## Auth
 
 Plain `nansen login` requests fresh browser approval and saves a session automatically. No API-key copying or PEM setup is needed. Selected sessions renew automatically; rejected or uncertain renewal requires fresh login.

@@ -1,5 +1,70 @@
 {
   "commands": {
+    "feedback": {
+      "description": "Send product feedback to Nansen or read an account-scoped receipt. Free; seven reports per account per week, resetting Monday 00:00 UTC.",
+      "notes": "Use the configured API key or login session. Keep the same submission ID and unchanged report after an uncertain result. No caching or payment fallback. Remove credentials and unnecessary personal context from reports. Backend validates shared report fields; automatic ID persistence is not available in this slice.",
+      "subcommands": {
+        "submit": {
+          "description": "Submit a JSON report. Received means saved; human review may still be pending.",
+          "endpoint": "/api/v1/feedback",
+          "options": {
+            "file": {
+              "type": "string",
+              "required": true,
+              "description": "JSON report file, with category and description; optional fields follow the shared REST contract."
+            },
+            "submission-id": {
+              "type": "string",
+              "required": true,
+              "description": "New opaque ID: 1 to 128 ASCII letters, digits, underscores or hyphens. Reuse with unchanged file on retries."
+            },
+            "json": {
+              "type": "boolean",
+              "description": "Return the standard JSON receipt or error envelope."
+            }
+          },
+          "returns": [
+            "feedback_id",
+            "submission_id",
+            "status",
+            "disposition",
+            "received_at",
+            "updated_at",
+            "expires_at",
+            "replayed",
+            "quota"
+          ],
+          "examples": [
+            "nansen feedback submit --file feedback.json --submission-id report-123 --json"
+          ]
+        },
+        "get": {
+          "description": "Read the current receipt. Reviewed means triaged; closed means review complete. Neither promises a fix date.",
+          "endpoint": "/api/v1/feedback/{feedback_id}",
+          "args": [
+            "feedback-id"
+          ],
+          "options": {
+            "json": {
+              "type": "boolean",
+              "description": "Return the standard JSON receipt or error envelope."
+            }
+          },
+          "returns": [
+            "feedback_id",
+            "submission_id",
+            "status",
+            "disposition",
+            "received_at",
+            "updated_at",
+            "expires_at"
+          ],
+          "examples": [
+            "nansen feedback get fb_123 --json"
+          ]
+        }
+      }
+    },
     "perp": {
       "description": "Hyperliquid perpetual trading commands",
       "subcommands": {

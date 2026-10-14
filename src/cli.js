@@ -13,6 +13,7 @@ import { buildPerpCommands } from './perp.js';
 import { buildTradingCommands } from './trading.js';
 import { buildLimitOrderCommands } from './limit-order.js';
 import { formatAlertsTable, buildAlertsCommands } from './commands/alerts.js';
+import { buildFeedbackCommands, feedbackErrorText } from './commands/feedback.js';
 import { buildAgentCommands } from './commands/agent.js';
 import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
@@ -1135,6 +1136,7 @@ COMMANDS:
   wallet      ${WALLET_SUBCOMMANDS.join(', ')}
   agent       Ask the Nansen AI research agent (fast/expert modes)
   alerts      list, create, update, toggle, delete
+  feedback    submit a report, get a receipt (--json for structured output)
   web         search, fetch
   mcp         install/uninstall/verify the Nansen MCP server
   account     Check the effective credential, plan, and remaining credits (free)
@@ -1226,7 +1228,7 @@ WHAT CACHES:
   written to the response cache — that is all of "nansen research ...", plus
   "alerts list" and "alerts get".
   Never cached: account, web search, web fetch, alerts create/update/toggle/delete,
-  agent (streamed), every trade, bridge, wallet and mcp command, and perp trading.
+  agent (streamed), feedback, every trade, bridge, wallet and mcp command, and perp trading.
   The analytics commands "perp screener" and "perp leaderboard" are cached.
 
 CACHE OPTIONS (for any command):
@@ -2642,7 +2644,7 @@ export async function runCLI(rawArgs, deps = {}) {
   // modules retain their existing deps: notably wallet export interprets
   // `isTTY` as stdout visibility when deciding whether to warn about printing
   // private keys, so substituting the stdin signal there changes its semantics.
-  const commands = { ...buildCommands(inputInteractiveDeps), ...buildWalletCommands(deps), ...buildTradingCommands(topLevelTradingDeps), ...buildAlertsCommands(deps), ...buildAgentCommands(deps), ...buildMcpCommands({ ...deps, log: deps.log ?? output }), ...buildCompletionCommands({ ...deps, log: deps.log ?? output }), ...commandOverrides };
+  const commands = { ...buildCommands(inputInteractiveDeps), ...buildWalletCommands(deps), ...buildTradingCommands(topLevelTradingDeps), ...buildAlertsCommands(deps), ...buildAgentCommands(deps), ...buildFeedbackCommands({ ...deps, log: deps.log ?? output }), ...buildMcpCommands({ ...deps, log: deps.log ?? output }), ...buildCompletionCommands({ ...deps, log: deps.log ?? output }), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);
@@ -2856,6 +2858,13 @@ export async function runCLI(rawArgs, deps = {}) {
       return { type: 'no-output', command };
     }
 
+    // Feedback JSON is a complete receipt, even alongside list-format flags.
+    if (command === 'feedback') {
+      output(formatOutput({ success: true, data: result }, { pretty }).text);
+      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: false, flags: usedFlags, chain });
+      return { type: 'success', data: result };
+    }
+
     // Schema returns data directly (not wrapped in { success, data })
     if (command === 'schema') {
       const formatted = formatOutput(result, { pretty, table: false });
@@ -2903,7 +2912,11 @@ export async function runCLI(rawArgs, deps = {}) {
     // data (e.g. PASSWORD_REQUIRED resolution steps) is preserved under `details`,
     // so agents get one consistent shape to branch on regardless of command.
     const errorData = formatError(error);
-    if (error.reported) {
+    if (command === 'feedback' && !flags.json && !pretty) {
+      output(feedbackErrorText(error));
+    } else if (command === 'feedback') {
+      output(formatOutput(errorData, { pretty }).text);
+    } else if (error.reported) {
       // The command already printed its full human-readable failure output;
       // emitting the envelope too would produce two output shapes on stdout.
     } else if (isUsageError(errorData, { pretty, table, csv, stream, isTTY })) {
