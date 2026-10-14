@@ -2727,7 +2727,9 @@ async function preflightTradeExecutionCandidate({
     const safeTx = assertSolanaInstructionsSafe(txBase64, { walletAddress });
     const feeCheck = await checkSolanaFeeBalance({ parsed: safeTx, walletAddress, log });
     if (!feeCheck.proceed) {
-      throw new CommandError(`Insufficient SOL for this transaction: ${feeCheck.reason}`, 'INSUFFICIENT_GAS');
+      throw feeCheck.undetermined
+        ? new CommandError(`Cannot check this transaction's SOL cost: ${feeCheck.reason}`, 'FEE_CHECK_FAILED')
+        : new CommandError(`Insufficient SOL for this transaction: ${feeCheck.reason}`, 'INSUFFICIENT_GAS');
     }
     if (!noVerifyOutcome) {
       const outcome = await verifySolanaSwapOutcome({
@@ -3811,9 +3813,9 @@ EXAMPLES:
               // degraded. Warns and proceeds if the balance read fails.
               const feeCheck = await checkSolanaFeeBalance({ parsed: safeTx, walletAddress, log });
               if (!feeCheck.proceed) {
-                log(`  ❌ ${quoteName} cannot be paid for: ${feeCheck.reason}`);
+                log(`  ❌ ${quoteName} ${feeCheck.undetermined ? 'cost could not be checked' : 'cannot be paid for'}: ${feeCheck.reason}`);
                 if (qi + 1 < endIndex) log('  Trying next quote...');
-                lastQuoteError = `${quoteName} insufficient SOL: ${feeCheck.reason}`;
+                lastQuoteError = `${quoteName} ${feeCheck.undetermined ? 'SOL cost unknown' : 'insufficient SOL'}: ${feeCheck.reason}`;
                 continue;
               }
 
@@ -4149,9 +4151,9 @@ EXAMPLES:
               // degraded. Warns and proceeds if the balance read fails.
               const feeCheck = await checkSolanaFeeBalance({ parsed: safeTx, walletAddress: solanaWalletAddress, log });
               if (!feeCheck.proceed) {
-                log(`  ❌ ${quoteName} cannot be paid for: ${feeCheck.reason}`);
+                log(`  ❌ ${quoteName} ${feeCheck.undetermined ? 'cost could not be checked' : 'cannot be paid for'}: ${feeCheck.reason}`);
                 if (qi + 1 < endIndex) log('  Trying next quote...');
-                lastQuoteError = `${quoteName} insufficient SOL: ${feeCheck.reason}`;
+                lastQuoteError = `${quoteName} ${feeCheck.undetermined ? 'SOL cost unknown' : 'insufficient SOL'}: ${feeCheck.reason}`;
                 continue;
               }
 

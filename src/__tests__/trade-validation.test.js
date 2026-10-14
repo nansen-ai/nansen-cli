@@ -3131,6 +3131,8 @@ describe('checkSolanaFeeBalance', () => {
   const SYSTEM_PROGRAM = '11111111111111111111111111111111';
   const ATA_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
   const COMPUTE_BUDGET = 'ComputeBudget111111111111111111111111111111';
+  const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+  const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
   const ATA_RENT = 2_039_280;
   let originalFetch;
 
@@ -3187,7 +3189,8 @@ describe('checkSolanaFeeBalance', () => {
   // A swap-shaped transaction: a 1,000,000-lamport priority fee (1,000,000
   // micro-lamports x 1,000,000 units), plus a CreateIdempotent ATA funded by `funder`.
   function swapTx({ wallet, feePayer = wallet, funder = wallet, ata, extra = [] }) {
-    const keys = [feePayer, ...(feePayer === wallet ? [] : [wallet]), ata, COMPUTE_BUDGET, ATA_PROGRAM, SYSTEM_PROGRAM];
+    const mint = generateSolanaWallet().address;
+    const keys = [feePayer, ...(feePayer === wallet ? [] : [wallet]), ata, mint, COMPUTE_BUDGET, ATA_PROGRAM, SYSTEM_PROGRAM, TOKEN_PROGRAM];
     const idx = (k) => keys.indexOf(k);
     return {
       tx: buildTransaction({
@@ -3195,7 +3198,11 @@ describe('checkSolanaFeeBalance', () => {
         instructions: [
           { programIdIndex: idx(COMPUTE_BUDGET), accountIndexes: [], data: setLimit(1_000_000) },
           { programIdIndex: idx(COMPUTE_BUDGET), accountIndexes: [], data: setPrice(1_000_000) },
-          { programIdIndex: idx(ATA_PROGRAM), accountIndexes: [idx(funder), idx(ata), idx(wallet)], data: Buffer.from([1]) },
+          {
+            programIdIndex: idx(ATA_PROGRAM),
+            accountIndexes: [idx(funder), idx(ata), idx(wallet), idx(mint), idx(SYSTEM_PROGRAM), idx(TOKEN_PROGRAM)],
+            data: Buffer.from([1]),
+          },
           ...extra.map(e => ({ programIdIndex: idx(SYSTEM_PROGRAM), accountIndexes: [idx(wallet), idx(ata)], data: e })),
         ],
       }),
@@ -3207,7 +3214,8 @@ describe('checkSolanaFeeBalance', () => {
   // to getMinimumBalanceForRentExemption's answer (null fails the call).
   // `mints` maps a mint address to its account data.
   const clusterRent = (size) => (128 + size) * 6_960;
-  function mockRpc({ balance, existingAccounts = [], fail = false, fee, rent = clusterRent, mints = {} }) {
+  // `tables` maps a lookup-table address to its account data.
+  function mockRpc({ balance, existingAccounts = [], fail = false, fee, rent = clusterRent, mints = {}, tables = {} }) {
     global.fetch = vi.fn(async (_url, init) => {
       const { method, params } = JSON.parse(init.body);
       if (fail) return { json: async () => ({ error: { message: 'rpc down' } }) };
@@ -3225,7 +3233,8 @@ describe('checkSolanaFeeBalance', () => {
           json: async () => ({
             result: {
               value: params[0].map((a) => {
-                if (mints[a]) return { lamports: 1, data: [mints[a].toString('base64'), 'base64'] };
+                const data = mints[a] ?? tables[a];
+                if (data) return { lamports: 1, data: [data.toString('base64'), 'base64'] };
                 return existingAccounts.includes(a) ? { lamports: 1 } : null;
               }),
             },
@@ -3345,7 +3354,6 @@ describe('checkSolanaFeeBalance', () => {
   });
 
   describe('accounts closed in the same transaction', () => {
-    const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
     const CLOSE = Buffer.from([9]);
 
     // Two wallet-funded CreateAccounts (2,000,000 each) with an SPL CloseAccount
@@ -3393,8 +3401,6 @@ describe('checkSolanaFeeBalance', () => {
   });
 
   describe('ATA rent by token program', () => {
-    const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
-    const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 
     // A full-account ATA create (funder, ATA, owner, mint, System, token
     // program) with no compute-budget instructions, so the fee is 5,000.
@@ -3460,15 +3466,92 @@ describe('checkSolanaFeeBalance', () => {
       expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
     });
 
-    it('uses the Token-2022 floor (ImmutableOwner only) when the mint cannot be read', async () => {
+    it('refuses when a Token-2022 mint cannot be read, rather than guessing its size', async () => {
       const wallet = generateSolanaWallet().address;
       const ata = generateSolanaWallet().address;
       const mint = generateSolanaWallet().address;
-      mockRpc({ balance: 5_000 + clusterRent(170) - 1, fee: null });
+      mockRpc({ balance: 10_000_000_000, fee: null });
       const tx = ataTx({ wallet, ata, mint, tokenProgram: TOKEN_2022 });
       const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
       expect(result.proceed).toBe(false);
+      expect(result.reason).toContain(`cannot determine the rent for the token account ${ata}`);
+      expect(result.reason).toContain(`its Token-2022 mint ${mint} could not be read`);
+    });
+
+    it('refuses when a Token-2022 mint carries an extension the check does not know', async () => {
+      const wallet = generateSolanaWallet().address;
+      const ata = generateSolanaWallet().address;
+      const mint = generateSolanaWallet().address;
+      mockRpc({ balance: 10_000_000_000, fee: null, mints: { [mint]: token2022Mint([[18, 64], [99, 16]]) } });
+      const tx = ataTx({ wallet, ata, mint, tokenProgram: TOKEN_2022 });
+      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+      expect(result.proceed).toBe(false);
+      expect(result.reason).toContain('has an extension this check does not know (type 99)');
+    });
+
+    it('sizes a Token-2022 mint with no extensions at the ImmutableOwner-only 170 bytes', async () => {
+      const wallet = generateSolanaWallet().address;
+      const ata = generateSolanaWallet().address;
+      const mint = generateSolanaWallet().address;
+      mockRpc({ balance: 5_000 + clusterRent(170), fee: null, mints: { [mint]: Buffer.alloc(82) } });
+      const tx = ataTx({ wallet, ata, mint, tokenProgram: TOKEN_2022 });
+      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
       expect(rentRequests()).toEqual([170]);
+    });
+
+    it('does not need the mint of an ATA that already exists', async () => {
+      const wallet = generateSolanaWallet().address;
+      const ata = generateSolanaWallet().address;
+      const mint = generateSolanaWallet().address;
+      mockRpc({ balance: 5_000, fee: null, existingAccounts: [ata] });
+      const tx = ataTx({ wallet, ata, mint, tokenProgram: TOKEN_2022 });
+      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
+    });
+
+    describe('accounts in an address lookup table', () => {
+      // A v0 ATA create whose mint and token program come from one lookup
+      // table's readonly entries 0 and 1.
+      function altAtaTx({ wallet, ata, table }) {
+        const keys = [wallet, ata, ATA_PROGRAM, SYSTEM_PROGRAM];
+        const parts = [Buffer.from([0x80, 1, 0, 2])]; // v0, 1 signer, ATA program and System readonly
+        parts.push(encodeCompactU16(keys.length));
+        for (const k of keys) parts.push(base58Decode(k));
+        parts.push(base58Decode(wallet)); // recentBlockhash placeholder
+        parts.push(encodeCompactU16(1));
+        // Indexes 4 and 5 are the table's readonly entries 0 and 1.
+        parts.push(Buffer.from([2]), encodeCompactU16(6), Buffer.from([0, 1, 0, 4, 3, 5]), encodeCompactU16(1), Buffer.from([1]));
+        parts.push(encodeCompactU16(1), base58Decode(table), encodeCompactU16(0), encodeCompactU16(2), Buffer.from([0, 1]));
+        return Buffer.concat([Buffer.from([1]), Buffer.alloc(64), ...parts]).toString('base64');
+      }
+      function lookupTable(addresses) {
+        const meta = Buffer.alloc(56);
+        meta.writeUInt32LE(1, 0);
+        meta.writeBigUInt64LE(0xffffffffffffffffn, 4);
+        return Buffer.concat([meta, ...addresses.map(a => base58Decode(a))]);
+      }
+
+      it('resolves the mint and token program from the table', async () => {
+        const wallet = generateSolanaWallet().address;
+        const ata = generateSolanaWallet().address;
+        const mint = generateSolanaWallet().address;
+        const table = generateSolanaWallet().address;
+        const mints = { [mint]: token2022Mint([[1, 108]]) };
+        mockRpc({ balance: 5_000 + clusterRent(182) - 1, fee: null, mints, tables: { [table]: lookupTable([mint, TOKEN_2022]) } });
+        const result = await checkSolanaFeeBalance({ parsed: parse(altAtaTx({ wallet, ata, table }), wallet), walletAddress: wallet });
+        expect(result.proceed).toBe(false);
+        expect(result.reason).toContain('0.0021576 SOL account rent');
+        expect(rentRequests()).toEqual([182]);
+      });
+
+      it('refuses when the table cannot be read', async () => {
+        const wallet = generateSolanaWallet().address;
+        const ata = generateSolanaWallet().address;
+        const table = generateSolanaWallet().address;
+        mockRpc({ balance: 10_000_000_000, fee: null });
+        const result = await checkSolanaFeeBalance({ parsed: parse(altAtaTx({ wallet, ata, table }), wallet), walletAddress: wallet });
+        expect(result.proceed).toBe(false);
+        expect(result.reason).toContain('its token program is in an address lookup table that could not be read');
+      });
     });
 
     it("uses the cluster's rent-exempt minimum rather than a fixed figure", async () => {

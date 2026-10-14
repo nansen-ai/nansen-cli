@@ -6471,10 +6471,20 @@ describe('Solana execute: SOL fee balance check', () => {
   }
 
   // A Jupiter-shaped transaction that pays a 1,000,000-lamport priority fee
-  // (1,000,000 micro-lamports x 1,000,000 units) and nothing else.
-  function buildPriorityFeeTransaction(walletAddress) {
+  // (1,000,000 micro-lamports x 1,000,000 units). With `token2022Ata`, it also
+  // creates a wallet-funded Token-2022 ATA.
+  function buildPriorityFeeTransaction(walletAddress, { token2022Ata = false } = {}) {
     const COMPUTE_BUDGET = 'ComputeBudget111111111111111111111111111111';
-    const accountKeys = [walletAddress, COMPUTE_BUDGET];
+    const ataKeys = token2022Ata
+      ? [
+        generateSolanaWallet().address, // ATA
+        generateSolanaWallet().address, // mint
+        'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',
+        '11111111111111111111111111111111',
+        'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
+      ]
+      : [];
+    const accountKeys = [walletAddress, COMPUTE_BUDGET, ...ataKeys];
     const limit = Buffer.alloc(5);
     limit[0] = 2;
     limit.writeUInt32LE(1_000_000, 1);
@@ -6485,14 +6495,18 @@ describe('Solana execute: SOL fee balance check', () => {
     parts.push(encodeCompactU16(accountKeys.length));
     for (const k of accountKeys) parts.push(base58Decode(k));
     parts.push(base58Decode(walletAddress)); // recentBlockhash placeholder
-    parts.push(encodeCompactU16(2));
+    parts.push(encodeCompactU16(token2022Ata ? 3 : 2));
     for (const data of [limit, price]) {
       parts.push(Buffer.from([1]), encodeCompactU16(0), encodeCompactU16(data.length), data);
+    }
+    if (token2022Ata) {
+      // CreateIdempotent: funder, ATA, owner, mint, System program, token program.
+      parts.push(Buffer.from([4]), encodeCompactU16(6), Buffer.from([0, 2, 0, 3, 5, 6]), encodeCompactU16(1), Buffer.from([1]));
     }
     return Buffer.concat([Buffer.from([1]), Buffer.alloc(64), Buffer.concat(parts)]).toString('base64');
   }
 
-  async function runExecute(balanceLamports) {
+  async function runExecute(balanceLamports, txOptions) {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
     const wallet = showWallet('default');
@@ -6528,7 +6542,7 @@ describe('Solana execute: SOL fee balance check', () => {
         outputMint: SOL_USDC,
         inAmount: '1000000000',
         outAmount: '50000000',
-        transaction: buildPriorityFeeTransaction(wallet.solana),
+        transaction: buildPriorityFeeTransaction(wallet.solana, txOptions),
       }],
     }, 'solana', 'local', null, null, { swapMode: 'exactIn', request: solanaIntent({ walletAddress: wallet.solana }) });
 
@@ -6551,6 +6565,15 @@ describe('Solana execute: SOL fee balance check', () => {
     expect(error).toBeTruthy();
     expect(executeCalls).toHaveLength(0);
     expect(logs.some(l => l.includes('cannot be paid for') && l.includes('needs at least 0.001005 SOL'))).toBe(true);
+  });
+
+  it('refuses to sign when it cannot size a Token-2022 ATA the transaction creates', async () => {
+    // The mock RPC returns no mint data, so the ATA's rent can't be determined.
+    const { executeCalls, logs, error } = await runExecute(10_000_000_000, { token2022Ata: true });
+
+    expect(error).toBeTruthy();
+    expect(executeCalls).toHaveLength(0);
+    expect(logs.some(l => l.includes('cost could not be checked') && l.includes('could not be read'))).toBe(true);
   });
 
   it('signs and broadcasts when the wallet covers the fee exactly', async () => {
