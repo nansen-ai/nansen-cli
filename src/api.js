@@ -1205,10 +1205,11 @@ export class NansenAPI {
 
                 if (paymentRequirements) {
                   try {
-                    const { handleX402Payment } = await import('./walletconnect-x402.js');
-                    const payment = await handleX402Payment(paymentRequirements);
-                    const result = await this._x402Retry(payment.signature, 'WalletConnect', payment.network, url, body, options, payment.asset, { paymentId: payment.paymentId });
-                    if (result !== X402_PAYMENT_REJECTED) return result;
+                    const { createWalletConnectPaymentSignatures } = await import('./walletconnect-x402.js');
+                    for await (const { signature, network, asset, paymentId } of createWalletConnectPaymentSignatures(paymentRequirements)) {
+                      const result = await this._x402Retry(signature, 'WalletConnect', network, url, body, options, asset, { paymentId });
+                      if (result !== X402_PAYMENT_REJECTED) return result;
+                    }
                   } catch (x402Err) {
                     // WalletConnect is the last resort in this chain — an
                     // ambiguous outcome here still must not be reported as an

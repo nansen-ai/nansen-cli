@@ -306,6 +306,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
           console.error(`[x402] ${decision.reason}`);
           continue;
         }
+        if (!await hasSufficientEvmPaymentBalance(requirement, evmWallet.address)) continue;
         let capCheck;
         let paymentId = null;
         let evmInterruptedBy = null;
@@ -320,7 +321,6 @@ export async function* createPrivyPaymentSignatures(response, url) {
           continue;
         }
         try {
-          if (!await hasSufficientEvmPaymentBalance(requirement, evmWallet.address)) continue;
           const typedData = buildEIP712TypedData({
             fromAddress: evmWallet.address,
             requirement,
@@ -412,6 +412,7 @@ export async function* createPrivyPaymentSignatures(response, url) {
           console.error(`[x402] ${svmDecision.reason}`);
           continue;
         }
+        if (!await hasSufficientSvmPaymentBalance(requirement, solWallet.address)) continue;
         let svmCapCheck;
         let paymentId = null;
         let svmInterruptedBy = null;
@@ -426,7 +427,6 @@ export async function* createPrivyPaymentSignatures(response, url) {
           continue;
         }
         try {
-          if (!await hasSufficientSvmPaymentBalance(requirement, solWallet.address)) continue;
           const rpcUrl = getSolanaRpcUrl(requirement.network);
           const recentBlockhash = await fetchRecentBlockhash(rpcUrl);
 

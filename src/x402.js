@@ -133,6 +133,10 @@ async function buildPaymentForRequirement(requirement, exported, url, walletLabe
     return null;
   }
 
+  // Skip an option the wallet cannot fund before holding spend-cap budget.
+  if (rail === 'evm' && !await hasSufficientEvmPaymentBalance(requirement, exported.evm.address)) return null;
+  if (rail === 'solana' && !await hasSufficientSvmPaymentBalance(requirement, exported.solana.address)) return null;
+
   const { assertCumulativeSpendAllowed, recordPaymentAttempt, releasePaymentReservation } = await import('./x402-ledger.js');
   let capCheck;
   try {
@@ -286,7 +290,8 @@ export async function* createPaymentSignatures(response, url, options = {}) {
         throw err;
       }
       if (err?.failClosedX402) throw err;
-      // This payment option failed to build, try next
+      // Explain why this option was skipped before trying another rail.
+      console.error(`[x402] Skipping ${req.network} option: ${err?.message || err}`);
       continue;
     } finally {
       // Runs on every way out of this option, which `catch` alone does not cover:

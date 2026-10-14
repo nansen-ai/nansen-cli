@@ -23,7 +23,8 @@ const LIVE_TEST = process.env.NANSEN_LIVE_TEST === '1';
 // Wrap a WalletConnect signer mock (resolves a signature or rejects) as the
 // createWalletConnectPaymentSignatures generator api.js iterates.
 const wcSignatures = sign => async function* (paymentRequirements) {
-  yield { signature: await sign(paymentRequirements) };
+  const payment = await sign(paymentRequirements);
+  yield typeof payment === 'string' ? { signature: payment } : payment;
 };
 const API_KEY = process.env.NANSEN_API_KEY || 'test-key';
 
@@ -4169,7 +4170,7 @@ describe('NansenAPI', () => {
           },
           checkX402Balance: vi.fn().mockResolvedValue(null),
         }));
-        vi.doMock('../walletconnect-x402.js', () => ({ handleX402Payment: mockHandleX402Payment }));
+        vi.doMock('../walletconnect-x402.js', () => ({ createWalletConnectPaymentSignatures: wcSignatures(mockHandleX402Payment) }));
 
         const autoPayApi = new NansenAPI('test-key', 'https://api.nansen.ai');
 
@@ -4214,11 +4215,11 @@ describe('NansenAPI', () => {
 
         // No local wallet configured (empty temp HOME) — falls straight through
         // to WalletConnect, whose spend-cap check reads a corrupt ledger and
-        // throws an X402LedgerError (failClosedX402) out of handleX402Payment.
+        // throws an X402LedgerError (failClosedX402) out of the signature generator.
         const ledgerError = Object.assign(new Error('ledger is corrupt'), { failClosedX402: true });
         const mockHandleX402Payment = vi.fn().mockRejectedValue(ledgerError);
         vi.resetModules();
-        vi.doMock('../walletconnect-x402.js', () => ({ handleX402Payment: mockHandleX402Payment }));
+        vi.doMock('../walletconnect-x402.js', () => ({ createWalletConnectPaymentSignatures: wcSignatures(mockHandleX402Payment) }));
 
         const autoPayApi = new NansenAPI('test-key', 'https://api.nansen.ai');
 

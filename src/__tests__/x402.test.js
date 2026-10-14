@@ -336,6 +336,12 @@ describe('createPaymentSignatures — policy guard integration', () => {
   // A Solana option the CLI cannot sign (here: a self-sponsored feePayer) must
   // be skipped with its reason, and the next option still yields.
   it('12c. skips a Solana option that fails to build and signs the next option', async () => {
+    // Exercise the malformed-payment path after the funding preflight.
+    vi.doMock('../x402-payment-balance.js', async (importOriginal) => ({
+      ...(await importOriginal()),
+      hasSufficientEvmPaymentBalance: vi.fn().mockResolvedValue(true),
+      hasSufficientSvmPaymentBalance: vi.fn().mockResolvedValue(true),
+    }));
     const crypto = (await import('crypto')).default;
     const wallet = await vi.importActual('../wallet.js');
     const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519', {
@@ -347,6 +353,7 @@ describe('createPaymentSignatures — policy guard integration', () => {
       address: wallet.base58Encode(rawPublic),
       privateKey: Buffer.concat([privateKey.subarray(privateKey.length - 32), rawPublic]).toString('hex'),
     };
+    vi.resetModules();
     vi.doMock('../wallet.js', async (importOriginal) => ({
       ...(await importOriginal()),
       listWallets: () => ({
@@ -379,7 +386,11 @@ describe('createPaymentSignatures — policy guard integration', () => {
       isEvmNetwork: (n) => n.startsWith('eip155:'),
       PERMIT2_ADDRESS: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
     }));
-    vi.doUnmock('../x402-svm.js');
+    vi.doMock('../x402-svm.js', async (importOriginal) => ({
+      ...(await importOriginal()),
+      isSvmNetwork: (network) => network.startsWith('solana:'),
+      createSvmPaymentPayload: vi.fn(() => { throw new Error('feePayer is the paying wallet'); }),
+    }));
 
     const { createPaymentSignatures } = await import('../x402.js');
     const payload = { accepts: [evm, selfSponsored] };
@@ -391,7 +402,7 @@ describe('createPaymentSignatures — policy guard integration', () => {
       results.push(item);
     }
 
-    expect(results).toEqual([{ signature: 'fake-sig-ok', network: 'eip155:8453', asset: evm.asset }]);
+    expect(results).toEqual([expect.objectContaining({ signature: 'fake-sig-ok', network: 'eip155:8453', asset: evm.asset, paymentId: expect.any(String) })]);
     const skipIndex = consoleErrorSpy.mock.calls.findIndex(([line]) =>
       String(line).startsWith('[x402] Skipping solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp option: ')
       && String(line).includes('feePayer is the paying wallet'));
@@ -401,6 +412,8 @@ describe('createPaymentSignatures — policy guard integration', () => {
       .toBeLessThan(createEvmSpy.mock.invocationCallOrder[0]);
 
     vi.doUnmock('../x402-evm.js');
+    vi.doUnmock('../x402-svm.js');
+    vi.doUnmock('../x402-payment-balance.js');
   });
 
   // A wallet without a Solana key used to reach the SVM builder and surface a
@@ -454,7 +467,7 @@ describe('createPaymentSignatures — policy guard integration', () => {
       results.push(item);
     }
 
-    expect(results).toEqual([{ signature: 'fake-sig-ok', network: 'eip155:8453', asset: evm.asset }]);
+    expect(results).toEqual([expect.objectContaining({ signature: 'fake-sig-ok', network: 'eip155:8453', asset: evm.asset, paymentId: expect.any(String) })]);
     expect(createSvmSpy).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       expect.stringMatching(/^\[x402\] Skipping solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp option: wallet "test" has no Solana key\. .*nansen wallet create/),

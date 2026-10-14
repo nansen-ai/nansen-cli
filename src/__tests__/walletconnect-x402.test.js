@@ -20,16 +20,22 @@ vi.mock('../walletconnect-exec.js', () => ({
   wcExec: vi.fn(),
 }));
 
+vi.mock('../x402-payment-balance.js', () => ({
+  hasSufficientEvmPaymentBalance: vi.fn(),
+}));
+
 vi.mock('../x402-ledger.js', () => ({
   assertCumulativeSpendAllowed: vi.fn(() => ({ ok: true, reservationId: 'mock-reservation-id' })),
   recordPaymentAttempt: vi.fn(() => 'mock-payment-id'),
   releasePaymentReservation: vi.fn(),
+  finalizeIfPending: vi.fn(),
 }));
 
 import { evaluatePaymentRequirement } from '../x402-policy.js';
 import { wcExec } from '../walletconnect-exec.js';
+import { hasSufficientEvmPaymentBalance } from '../x402-payment-balance.js';
 import { assertCumulativeSpendAllowed, recordPaymentAttempt, releasePaymentReservation } from '../x402-ledger.js';
-import { handleX402Payment, buildEIP712TypedData } from '../walletconnect-x402.js';
+import { handleX402Payment, createWalletConnectPaymentSignatures, buildEIP712TypedData } from '../walletconnect-x402.js';
 import { ErrorCode } from '../api.js';
 
 // Session approved for Base (eip155:8453) only -- the account entry carries
@@ -463,7 +469,7 @@ describe('handleX402Payment — cumulative cap enforcement', () => {
     expect(recordPaymentAttempt).not.toHaveBeenCalled();
   });
 
-  it('releases the reservation when no session is approved for the target chain', async () => {
+  it('does not reserve budget when no session is approved for the target chain', async () => {
     evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USDC', network: 'eip155:8453', asset: '0xtoken', payTo: '0xrec', amountRaw: '10000' });
     wcExec.mockImplementation((_cmd, args) => {
       if (args[0] === 'whoami') {
@@ -473,7 +479,8 @@ describe('handleX402Payment — cumulative cap enforcement', () => {
     });
 
     await expect(handleX402Payment(PAYMENT_REQUIREMENTS)).rejects.toThrow(/no WalletConnect session is active/);
-    expect(releasePaymentReservation).toHaveBeenCalledWith('mock-reservation-id');
+    expect(assertCumulativeSpendAllowed).not.toHaveBeenCalled();
+    expect(releasePaymentReservation).not.toHaveBeenCalled();
   });
 
   it('logs an [x402] line and re-throws when the cap check throws (corrupt/unreadable ledger)', async () => {

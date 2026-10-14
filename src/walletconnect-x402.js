@@ -160,120 +160,104 @@ async function prepareRequirement(requirement) {
   const decision = evaluatePaymentRequirement(requirement);
   if (!decision.ok) return { error: new Error(decision.reason) };
 
-  const { assertCumulativeSpendAllowed, recordPaymentAttempt, releasePaymentReservation } = await import('./x402-ledger.js');
-  let capCheck;
-  try {
-    capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
-  } catch (err) {
-    // Surface a [x402] stderr line before the error propagates, consistent
-    // with the local-wallet (x402.js) and Privy (privy.js) paths.
-    console.error(`[x402] ${err.message}`);
-    throw err;
+  // Resolve the WalletConnect signer scoped to this exact chain. EVM
+  // addresses are identical across chains, so "some account exists in the
+  // session" can't prove the session was actually approved for THIS chain --
+  // only the CAIP-2 chain tag can (mirrors getWalletConnectAddress's chainId
+  // param, used the same way before signing/broadcasting in trading.js and
+  // transfer.js). Without this, a session connected only to, say, Base would
+  // be silently accepted to authorize a payment on BNB Chain or X Layer --
+  // the same defect class fixed in #615, just unguarded here because this
+  // path never reused getWalletConnectAddress and instead took accounts[0]
+  // with no chain filter at all.
+  const chainId = parseChainId(requirement.network);
+  if (chainId === null) {
+    return { error: new Error(`Refusing to auto-pay: unsupported or missing EVM network ${requirement.network}.`) };
   }
-  if (!capCheck.ok) {
-    // Emit the actionable cap reason to stderr before throwing: for x402-only
-    // users (no API key) api.js replaces the thrown message with a generic
-    // "No API key configured" note, so this is the user's only explanation.
-    console.error(`[x402] ${capCheck.reason}`);
-    throw new NansenError(capCheck.reason, ErrorCode.PAYMENT_REQUIRED, 402);
-  }
-
-  // Budget is held from the cap check onward. Signing below waits on a human
-  // in a wallet app and can fail at several points — no session for this
-  // chain, a rejected approval, a walletconnect error — and an attempt that
-  // walks away holding its reservation parks the amount for the full TTL.
-  try {
-    // 3. Resolve the WalletConnect signer scoped to this exact chain. EVM
-    // addresses are identical across chains, so "some account exists in the
-    // session" can't prove the session was actually approved for THIS chain --
-    // only the CAIP-2 chain tag can (mirrors getWalletConnectAddress's chainId
-    // param, used the same way before signing/broadcasting in trading.js and
-    // transfer.js). Without this, a session connected only to, say, Base would
-    // be silently accepted to authorize a payment on BNB Chain or X Layer --
-    // the same defect class fixed in #615, just unguarded here because this
-    // path never reused getWalletConnectAddress and instead took accounts[0]
-    // with no chain filter at all.
-    const chainId = parseChainId(requirement.network);
-    if (chainId === null) {
-      throw new Error(`Refusing to auto-pay: unsupported or missing EVM network ${requirement.network}.`);
-    }
-    const fromAddress = await getWalletConnectAddress('evm', chainId);
-    if (!fromAddress) {
-      throw new NansenError(
+  const fromAddress = await getWalletConnectAddress('evm', chainId);
+  if (!fromAddress) {
+    return {
+      error: new NansenError(
         `x402 payment required but no WalletConnect session is active for chain ${requirement.network}. ` +
           'To pay automatically: create a local wallet with `nansen wallet create` (then set NANSEN_WALLET_PASSWORD), ' +
           'or connect an external wallet approved for this chain via the `walletconnect` CLI (`walletconnect connect`).',
         ErrorCode.PAYMENT_REQUIRED,
         402
-      );
-    }
+      ),
+    };
+  }
 
-    // 4. Build EIP-712 typed data
-    const typedData = buildEIP712TypedData({ fromAddress, requirement });
-    const typedDataJson = JSON.stringify(typedData);
-
-    // 5. Log payment info to stderr (stdout is for JSON output)
-    const amountStr = formatPaymentAmount(requirement);
-    process.stderr.write(`x402: Requesting payment approval (${amountStr})...\n`);
-
-    // 6. Sign via walletconnect CLI (120s timeout for user approval)
-    let signResult;
-    try {
-      const output = await wcExec('walletconnect', ['sign-typed-data', typedDataJson], 120000);
-      // walletconnect may print status messages before the result and may
-      // pretty-print it over several lines. Reading only the first line that
-      // starts with "{" used to throw on a multi-line result — after the user
-      // had already approved and signed the payment in their wallet.
-      signResult = parseWcJson(output);
-      if (typeof signResult?.signature !== 'string' || signResult.signature.length === 0) {
-        throw new Error('walletconnect sign-typed-data returned no signature');
-      }
-    } catch (err) {
-      throw new NansenError(
-        `x402 payment signing failed: ${err.message}`,
+  // Don't ask the user to approve a payment the wallet can't cover.
+  if (!await hasSufficientEvmPaymentBalance(requirement, fromAddress)) {
+    return {
+      logged: true,
+      error: new NansenError(
+        `x402 payment required but the WalletConnect wallet has an insufficient token balance on ${requirement.network}. ` +
+          'Fund the token on this network or use another funded payment option.',
         ErrorCode.PAYMENT_REQUIRED,
         402
-      );
-    }
-
-    // 7. Build Payment-Signature header (authorization values must be strings per x402 spec)
-    const authorization = {
-      from: fromAddress,
-      to: resolvePayTo(requirement),
-      value: resolvePaymentAmount(requirement).toString(),
-      validAfter: typedData.message.validAfter.toString(),
-      validBefore: typedData.message.validBefore.toString(),
-      nonce: typedData.message.nonce,
+      ),
     };
-
-    const headerValue = buildPaymentSignatureHeader({
-      signature: signResult.signature,
-      authorization,
-      resource: paymentRequirements.resource || { url: '', description: '', mimeType: '' },
-      accepted: requirement,
-    });
-
-    const paymentId = recordPaymentAttempt({
-      provider: 'walletconnect',
-      walletLabel: 'WalletConnect',
-      // Up to 120s of wallet approval sits between the cap check and this line.
-      authorizedAt: capCheck.authorizedAt,
-      reservationId: capCheck.reservationId,
-      network: decision.network,
-      asset: decision.asset,
-      symbol: decision.symbol,
-      amountUsd: decision.usd,
-      amountRaw: decision.amountRaw,
-      payTo: decision.payTo,
-      requestUrl: (paymentRequirements.resource || {}).url || null,
-    });
-
-    process.stderr.write(`x402: Payment signed successfully.\n`);
-    return { signature: headerValue, paymentId, network: requirement.network, asset: requirement.asset };
-  } catch (err) {
-    releasePaymentReservation(capCheck.reservationId);
-    throw err;
   }
+
+  try {
+    return { fromAddress, typedData: buildEIP712TypedData({ fromAddress, requirement }), decision };
+  } catch (error) {
+    return { error };
+  }
+}
+
+/**
+ * Ask the connected wallet to sign one option and build its header.
+ * A rejected, timed-out, or malformed signature throws: the user was already
+ * prompted, so the caller must not prompt again for another option.
+ */
+async function signRequirement(requirement, fromAddress, typedData, resource) {
+  const typedDataJson = JSON.stringify(typedData);
+
+  // Log payment info to stderr (stdout is for JSON output)
+  const amountStr = formatPaymentAmount(requirement);
+  process.stderr.write(`x402: Requesting payment approval (${amountStr})...\n`);
+
+  // Sign via walletconnect CLI (120s timeout for user approval)
+  let signResult;
+  try {
+    const output = await wcExec('walletconnect', ['sign-typed-data', typedDataJson], 120000);
+    // walletconnect may print status messages before the result and may
+    // pretty-print it over several lines. Reading only the first line that
+    // starts with "{" used to throw on a multi-line result — after the user
+    // had already approved and signed the payment in their wallet.
+    signResult = parseWcJson(output);
+    if (typeof signResult?.signature !== 'string' || signResult.signature.length === 0) {
+      throw new Error('walletconnect sign-typed-data returned no signature');
+    }
+  } catch (err) {
+    throw new NansenError(
+      `x402 payment signing failed: ${err.message}`,
+      ErrorCode.PAYMENT_REQUIRED,
+      402
+    );
+  }
+
+  // Build Payment-Signature header (authorization values must be strings per x402 spec)
+  const authorization = {
+    from: fromAddress,
+    to: resolvePayTo(requirement),
+    value: resolvePaymentAmount(requirement).toString(),
+    validAfter: typedData.message.validAfter.toString(),
+    validBefore: typedData.message.validBefore.toString(),
+    nonce: typedData.message.nonce,
+  };
+
+  const headerValue = buildPaymentSignatureHeader({
+    signature: signResult.signature,
+    authorization,
+    resource,
+    accepted: requirement,
+  });
+
+  process.stderr.write(`x402: Payment signed successfully.\n`);
+  return headerValue;
 }
 
 /**
@@ -286,7 +270,7 @@ async function prepareRequirement(requirement) {
  * itself fails.
  *
  * @param {Object} paymentRequirements - Decoded payment requirements from 402 response
- * @returns {AsyncGenerator<{ signature: string, network: string, asset: string }>}
+ * @returns {AsyncGenerator<{ signature: string, network: string, asset: string, paymentId: string }>}
  */
 export async function* createWalletConnectPaymentSignatures(paymentRequirements) {
   const accepts = paymentRequirements.accepts || paymentRequirements;
@@ -303,33 +287,72 @@ export async function* createWalletConnectPaymentSignatures(paymentRequirements)
   }
 
   const resource = paymentRequirements.resource || { url: '', description: '', mimeType: '' };
+  const { assertCumulativeSpendAllowed, recordPaymentAttempt, releasePaymentReservation, finalizeIfPending } = await import('./x402-ledger.js');
   let lastError = null;
   let yielded = false;
   for (const requirement of compatible) {
-    const { fromAddress, typedData, error, logged } = await prepareRequirement(requirement);
+    const { fromAddress, typedData, decision, error, logged } = await prepareRequirement(requirement);
     if (error) {
       if (compatible.length > 1 && !logged) console.error(`[x402] Skipping ${requirement.network} WalletConnect option: ${error.message}`);
       lastError = error;
       continue;
     }
-    const signature = await signRequirement(requirement, fromAddress, typedData, resource);
-    yielded = true;
-    yield { signature, network: requirement.network, asset: requirement.asset };
+    let capCheck;
+    try {
+      capCheck = assertCumulativeSpendAllowed({ amountUsd: decision.usd });
+    } catch (err) {
+      console.error(`[x402] ${err.message}`);
+      throw err;
+    }
+    if (!capCheck.ok) {
+      console.error(`[x402] ${capCheck.reason}`);
+      throw new NansenError(capCheck.reason, ErrorCode.PAYMENT_REQUIRED, 402);
+    }
+
+    let paymentId = null;
+    try {
+      const signature = await signRequirement(requirement, fromAddress, typedData, resource);
+      paymentId = recordPaymentAttempt({
+        provider: 'walletconnect',
+        walletLabel: 'WalletConnect',
+        authorizedAt: capCheck.authorizedAt,
+        reservationId: capCheck.reservationId,
+        network: decision.network,
+        asset: decision.asset,
+        symbol: decision.symbol,
+        amountUsd: decision.usd,
+        amountRaw: decision.amountRaw,
+        payTo: decision.payTo,
+        requestUrl: resource.url || null,
+      });
+      yielded = true;
+      yield { signature, network: requirement.network, asset: requirement.asset, paymentId };
+    } catch (err) {
+      if (!paymentId) releasePaymentReservation(capCheck.reservationId);
+      throw err;
+    } finally {
+      // A consumer may cancel the generator after signing. Count that outcome
+      // conservatively unless the API retry already finalized the attempt.
+      if (paymentId) finalizeIfPending(paymentId, {
+        status: 'ambiguous',
+        reason: 'consumer abandoned the payment after signing; outcome unknown',
+      });
+    }
   }
   if (!yielded && lastError) throw lastError;
 }
 
 /**
- * Handle x402 payment: return the first viable Payment-Signature header.
+ * Handle x402 payment: return the first viable signed payment.
  * For fallback across options, use createWalletConnectPaymentSignatures().
  *
  * @param {Object} paymentRequirements - Decoded payment requirements from 402 response
- * @returns {string} Base64-encoded Payment-Signature header value
+ * @returns {{ signature: string, network: string, asset: string, paymentId: string }}
  * @throws {NansenError} On failure
  */
 export async function handleX402Payment(paymentRequirements) {
-  for await (const { signature } of createWalletConnectPaymentSignatures(paymentRequirements)) {
-    return signature;
+  for await (const payment of createWalletConnectPaymentSignatures(paymentRequirements)) {
+    return payment;
   }
   throw new NansenError('x402 payment required but no WalletConnect payment option could be signed.', ErrorCode.PAYMENT_REQUIRED, 402);
 }
