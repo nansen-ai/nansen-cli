@@ -1676,7 +1676,7 @@
           }
         },
         "historical-dex-trades": {
-          "endpoint": "/api/v1beta1/tgm/historical-dex-trades",
+          "endpoint": "/api/v1/tgm/historical-dex-trades",
           "description": "Historical DEX trades for a token at a point in time",
           "options": {
             "token-address": {
@@ -1698,7 +1698,7 @@
           }
         },
         "historical-pnl-leaderboard": {
-          "endpoint": "/api/v1beta1/tgm/historical-pnl-leaderboard",
+          "endpoint": "/api/v1/tgm/historical-pnl-leaderboard",
           "description": "Historical PnL leaderboard for a token",
           "options": {
             "token-address": {
@@ -1720,7 +1720,7 @@
           }
         },
         "historical-token-flow-summary": {
-          "endpoint": "/api/v1beta1/tgm/historical-token-flow-summary",
+          "endpoint": "/api/v1/tgm/historical-token-flow-summary",
           "description": "Historical token flow summary (no pagination)",
           "options": {
             "token-address": {
@@ -1742,7 +1742,7 @@
           }
         },
         "historical-token-quant-scores": {
-          "endpoint": "/api/v1beta1/tgm/historical-token-quant-scores",
+          "endpoint": "/api/v1/tgm/historical-token-quant-scores",
           "description": "Historical token quantitative scores at a snapshot date",
           "options": {
             "token-address": {
@@ -1760,7 +1760,7 @@
           }
         },
         "historical-top-holders": {
-          "endpoint": "/api/v1beta1/tgm/historical-top-holders",
+          "endpoint": "/api/v1/tgm/historical-top-holders",
           "description": "Historical top holders of a token at a snapshot date",
           "options": {
             "token-address": {
@@ -1778,7 +1778,7 @@
           }
         },
         "historical-who-bought-sold": {
-          "endpoint": "/api/v1beta1/tgm/historical-who-bought-sold",
+          "endpoint": "/api/v1/tgm/historical-who-bought-sold",
           "description": "Historical buyers/sellers of a token",
           "options": {
             "token-address": {
@@ -1804,7 +1804,7 @@
           }
         },
         "historical-smart-money-balances": {
-          "endpoint": "/api/v1beta1/smart-money/historical-token-balances",
+          "endpoint": "/api/v1/smart-money/historical-token-balances",
           "description": "Historical smart money token balances at a snapshot date (no order_by)",
           "options": {
             "as-of-date": {
@@ -1837,7 +1837,7 @@
           }
         },
         "historical-wallet-balances": {
-          "endpoint": "/api/v1beta1/profiler/address/historical-token-balances",
+          "endpoint": "/api/v1/profiler/address/historical-token-balances",
           "description": "Historical token balances for a wallet at a snapshot date",
           "options": {
             "address": {
@@ -1855,7 +1855,7 @@
           }
         },
         "historical-tx-lookup": {
-          "endpoint": "/api/v1beta1/profiler/historical-transaction-lookup",
+          "endpoint": "/api/v1/profiler/historical-transaction-lookup",
           "description": "Lookup a historical transaction by hash",
           "options": {
             "transaction-hash": {
@@ -1876,7 +1876,7 @@
           }
         },
         "historical-wallet-transactions": {
-          "endpoint": "/api/v1beta1/profiler/address/historical-transactions",
+          "endpoint": "/api/v1/profiler/address/historical-transactions",
           "description": "Historical transactions for a wallet at a snapshot date",
           "options": {
             "address": {

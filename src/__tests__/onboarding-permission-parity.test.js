@@ -32,7 +32,7 @@ it.each(['api-key','session'])('public commands share transport permissions for 
   await api.webSearch({ queries: ['synthetic'] }); await api.webFetch({ urls: ['https://example.test'], question: 'synthetic' }); await api.researchDexTrades();
   const agent = buildAgentCommands({ log: () => {}, errorLog: () => {}, write: () => {} }).agent;
   for (const expert of [false,true]) await agent(['synthetic'], api, { expert, json: true }, {});
-  for (const route of ['GET /api/v1/account','POST /api/v1/portfolio/defi-holdings','GET /api/v1/smart-alert/list','POST /api/v1/smart-alert','PATCH /api/v1/smart-alert','DELETE /api/v1/smart-alert/synthetic','POST /api/v1/search/web-search','POST /api/v1/search/web-fetch','POST /api/v1beta1/tgm/historical-dex-trades','POST /api/v1/agent/fast','POST /api/v1/agent/expert']) expect(calls).toContain(route);
+  for (const route of ['GET /api/v1/account','POST /api/v1/portfolio/defi-holdings','GET /api/v1/smart-alert/list','POST /api/v1/smart-alert','PATCH /api/v1/smart-alert','DELETE /api/v1/smart-alert/synthetic','POST /api/v1/search/web-search','POST /api/v1/search/web-fetch','POST /api/v1/tgm/historical-dex-trades','POST /api/v1/agent/fast','POST /api/v1/agent/expert']) expect(calls).toContain(route);
 });
 it.each([401,402,403,404,405,429])('preserves endpoint HTTP%s refusal without payment fallback for either credential', async status => {
   for (const kind of ['api-key','session']) {

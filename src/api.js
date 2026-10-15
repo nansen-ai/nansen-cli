@@ -2055,7 +2055,7 @@ export class NansenAPI {
   async researchDexTrades(params = {}) {
     const { tokenAddress, chain = 'solana', fromDate, toDate, filters = {}, orderBy, pagination } = params;
     if (tokenAddress) requireValidToken(tokenAddress, chain);
-    return this.request('/api/v1beta1/tgm/historical-dex-trades', {
+    return this.request('/api/v1/tgm/historical-dex-trades', {
       token_address: tokenAddress,
       chain,
       date_range: { from: fromDate, to: toDate },
@@ -2068,7 +2068,7 @@ export class NansenAPI {
   async researchPnlLeaderboard(params = {}) {
     const { tokenAddress, chain = 'solana', fromDate, toDate, filters = {}, orderBy, pagination } = params;
     if (tokenAddress) requireValidToken(tokenAddress, chain);
-    return this.request('/api/v1beta1/tgm/historical-pnl-leaderboard', {
+    return this.request('/api/v1/tgm/historical-pnl-leaderboard', {
       token_address: tokenAddress,
       chain,
       date_range: { from: fromDate, to: toDate },
@@ -2082,7 +2082,7 @@ export class NansenAPI {
     // API does not support pagination on this endpoint.
     const { tokenAddress, chain = 'solana', fromDate, toDate, filters = {}, orderBy } = params;
     if (tokenAddress) requireValidToken(tokenAddress, chain);
-    return this.request('/api/v1beta1/tgm/historical-token-flow-summary', {
+    return this.request('/api/v1/tgm/historical-token-flow-summary', {
       token_address: tokenAddress,
       chain,
       date_range: { from: fromDate, to: toDate },
@@ -2094,7 +2094,7 @@ export class NansenAPI {
   async researchTokenQuantScores(params = {}) {
     const { tokenAddress, chain = 'solana', asOfDate, filters = {}, orderBy, pagination } = params;
     if (tokenAddress) requireValidToken(tokenAddress, chain);
-    return this.request('/api/v1beta1/tgm/historical-token-quant-scores', {
+    return this.request('/api/v1/tgm/historical-token-quant-scores', {
       token_address: tokenAddress,
       chain,
       as_of_date: asOfDate,
@@ -2107,7 +2107,7 @@ export class NansenAPI {
   async researchTopHolders(params = {}) {
     const { tokenAddress, chain = 'solana', asOfDate, filters = {}, orderBy, pagination } = params;
     if (tokenAddress) requireValidToken(tokenAddress, chain);
-    return this.request('/api/v1beta1/tgm/historical-top-holders', {
+    return this.request('/api/v1/tgm/historical-top-holders', {
       token_address: tokenAddress,
       chain,
       as_of_date: asOfDate,
@@ -2120,7 +2120,7 @@ export class NansenAPI {
   async researchWhoBoughtSold(params = {}) {
     const { tokenAddress, chain = 'solana', fromDate, toDate, buyOrSell = 'BUY', filters = {}, orderBy, pagination } = params;
     if (tokenAddress) requireValidToken(tokenAddress, chain);
-    return this.request('/api/v1beta1/tgm/historical-who-bought-sold', {
+    return this.request('/api/v1/tgm/historical-who-bought-sold', {
       token_address: tokenAddress,
       chain,
       buy_or_sell: buyOrSell,
@@ -2134,7 +2134,7 @@ export class NansenAPI {
   async researchSmartMoneyBalances(params = {}) {
     // API does not support order_by on this endpoint.
     const { chains = ['solana'], asOfDate, filters = {}, pagination } = params;
-    return this.request('/api/v1beta1/smart-money/historical-token-balances', {
+    return this.request('/api/v1/smart-money/historical-token-balances', {
       chains,
       as_of_date: asOfDate,
       filters,
@@ -2157,7 +2157,7 @@ export class NansenAPI {
   async researchWalletBalances(params = {}) {
     const { address, chain = 'ethereum', asOfDate, filters = {}, orderBy, pagination } = params;
     if (address) requireValidAddress(address, chain);
-    return this.request('/api/v1beta1/profiler/address/historical-token-balances', {
+    return this.request('/api/v1/profiler/address/historical-token-balances', {
       address,
       chain,
       as_of_date: asOfDate,
@@ -2175,13 +2175,13 @@ export class NansenAPI {
       as_of_date: asOfDate,
     };
     if (blockTimestamp) body.block_timestamp = blockTimestamp;
-    return this.request('/api/v1beta1/profiler/historical-transaction-lookup', body);
+    return this.request('/api/v1/profiler/historical-transaction-lookup', body);
   }
 
   async researchWalletTransactions(params = {}) {
     const { address, chain = 'ethereum', asOfDate, filters = {}, orderBy, pagination } = params;
     if (address) requireValidAddress(address, chain);
-    return this.request('/api/v1beta1/profiler/address/historical-transactions', {
+    return this.request('/api/v1/profiler/address/historical-transactions', {
       address,
       chain,
       as_of_date: asOfDate,

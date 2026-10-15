@@ -219,7 +219,7 @@ describe('NansenAPI research (historical) methods', () => {
         fromDate: FROM,
         toDate: TO,
       });
-      const body = lastCall('/api/v1beta1/tgm/historical-dex-trades');
+      const body = lastCall('/api/v1/tgm/historical-dex-trades');
       expect(body.token_address).toBe(TOKENS.solana);
       expect(body.chain).toBe('solana');
       expect(body.date_range).toEqual({ from: FROM, to: TO });
@@ -234,7 +234,7 @@ describe('NansenAPI research (historical) methods', () => {
         fromDate: FROM,
         toDate: TO,
       });
-      const body = lastCall('/api/v1beta1/tgm/historical-pnl-leaderboard');
+      const body = lastCall('/api/v1/tgm/historical-pnl-leaderboard');
       expect(body.token_address).toBe(TOKENS.solana);
       expect(body.chain).toBe('solana');
       expect(body.date_range).toEqual({ from: FROM, to: TO });
@@ -250,7 +250,7 @@ describe('NansenAPI research (historical) methods', () => {
         toDate: TO,
         pagination: { page: 1, per_page: 50 }, // caller-provided pagination must be dropped
       });
-      const body = lastCall('/api/v1beta1/tgm/historical-token-flow-summary');
+      const body = lastCall('/api/v1/tgm/historical-token-flow-summary');
       expect(body.token_address).toBe(TOKENS.solana);
       expect(body.date_range).toEqual({ from: FROM, to: TO });
       expect(body.pagination).toBeUndefined();
@@ -264,7 +264,7 @@ describe('NansenAPI research (historical) methods', () => {
         tokenAddress: TOKENS.solana,
         asOfDate: AS_OF,
       });
-      const body = lastCall('/api/v1beta1/tgm/historical-token-quant-scores');
+      const body = lastCall('/api/v1/tgm/historical-token-quant-scores');
       expect(body.token_address).toBe(TOKENS.solana);
       expect(body.as_of_date).toBe(AS_OF);
       expect(body.date_range).toBeUndefined();
@@ -278,7 +278,7 @@ describe('NansenAPI research (historical) methods', () => {
         tokenAddress: TOKENS.solana,
         asOfDate: AS_OF,
       });
-      const body = lastCall('/api/v1beta1/tgm/historical-top-holders');
+      const body = lastCall('/api/v1/tgm/historical-top-holders');
       expect(body.token_address).toBe(TOKENS.solana);
       expect(body.as_of_date).toBe(AS_OF);
       expect(body.date_range).toBeUndefined();
@@ -293,7 +293,7 @@ describe('NansenAPI research (historical) methods', () => {
         fromDate: FROM,
         toDate: TO,
       });
-      const body = lastCall('/api/v1beta1/tgm/historical-who-bought-sold');
+      const body = lastCall('/api/v1/tgm/historical-who-bought-sold');
       expect(body.token_address).toBe(TOKENS.solana);
       expect(body.buy_or_sell).toBe('BUY');
       expect(body.date_range).toEqual({ from: FROM, to: TO });
@@ -307,7 +307,7 @@ describe('NansenAPI research (historical) methods', () => {
         toDate: TO,
         buyOrSell: 'SELL',
       });
-      const body = lastCall('/api/v1beta1/tgm/historical-who-bought-sold');
+      const body = lastCall('/api/v1/tgm/historical-who-bought-sold');
       expect(body.buy_or_sell).toBe('SELL');
     });
   });
@@ -320,7 +320,7 @@ describe('NansenAPI research (historical) methods', () => {
         asOfDate: AS_OF,
         orderBy: [{ field: 'value_usd', direction: 'DESC' }], // caller-provided order_by must be dropped
       });
-      const body = lastCall('/api/v1beta1/smart-money/historical-token-balances');
+      const body = lastCall('/api/v1/smart-money/historical-token-balances');
       expect(body.chains).toEqual(['solana', 'ethereum']);
       expect(body.as_of_date).toBe(AS_OF);
       expect(body.order_by).toBeUndefined();
@@ -362,7 +362,7 @@ describe('NansenAPI research (historical) methods', () => {
         chain: 'ethereum',
         asOfDate: AS_OF,
       });
-      const body = lastCall('/api/v1beta1/profiler/address/historical-token-balances');
+      const body = lastCall('/api/v1/profiler/address/historical-token-balances');
       expect(body.address).toBe(ADDRESSES.ethereum);
       expect(body.chain).toBe('ethereum');
       expect(body.as_of_date).toBe(AS_OF);
@@ -378,7 +378,7 @@ describe('NansenAPI research (historical) methods', () => {
         chain: 'ethereum',
         asOfDate: AS_OF,
       });
-      const body = lastCall('/api/v1beta1/profiler/historical-transaction-lookup');
+      const body = lastCall('/api/v1/profiler/historical-transaction-lookup');
       expect(body.transaction_hash).toBe('0xabc123');
       expect(body.tx_hash).toBeUndefined();
       expect(body.chain).toBe('ethereum');
@@ -395,7 +395,7 @@ describe('NansenAPI research (historical) methods', () => {
         chain: 'ethereum',
         asOfDate: AS_OF,
       });
-      const body = lastCall('/api/v1beta1/profiler/address/historical-transactions');
+      const body = lastCall('/api/v1/profiler/address/historical-transactions');
       expect(body.address).toBe(ADDRESSES.ethereum);
       expect(body.chain).toBe('ethereum');
       expect(body.as_of_date).toBe(AS_OF);
