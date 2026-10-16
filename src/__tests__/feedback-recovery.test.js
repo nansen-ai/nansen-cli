@@ -332,3 +332,27 @@ it.skipIf(process.platform === 'win32')('preserves the old entry if killed befor
   expect(JSON.parse((await h.run(h.submit)).stdout).code).toBe('feedback_recovery_unavailable');
   expect(posts(h)).toHaveLength(1);
 });
+
+it.skipIf(process.platform === 'win32').each(['json', 'human'])('reports quota rejection in %s output and resumes the same saved report after reset', async format => {
+  const h = await harness();
+  h.post((_req, res) => reply(res, examples.weekly_limit.status, examples.weekly_limit.body));
+  const result = await h.run(format === 'json' ? h.submit : h.submit.filter(arg => arg !== '--json'));
+  expect(result.code).toBe(1); expect(result.stdout).toContain('Wait for the weekly reset');
+  expect(result.stdout).toContain(examples.weekly_limit.body.quota.resets_at);
+  expect(result.stdout).not.toContain('may have been accepted');
+  if (format === 'json') expect(JSON.parse(result.stdout).details).toMatchObject({
+    reason: 'feedback_weekly_quota_exhausted', outcome: 'rejected', retry_command: 'nansen feedback resume',
+    retry_not_before: examples.weekly_limit.body.quota.resets_at,
+  });
+  const saved = h.read(); expect(saved).toMatchObject({ state: 'pending', body: h.body });
+  expect(posts(h)).toHaveLength(1);
+  const again = await h.run(['resume', '--json']);
+  expect(JSON.parse(again.stdout).details.outcome).toBe('rejected'); expect(h.read()).toEqual(saved);
+  expect(posts(h)).toHaveLength(2);
+  fs.unlinkSync(h.file); h.post((req, res) => reply(res, 201, receipt(req)));
+  const afterReset = h.hook(`Date.now = () => ${Date.parse(examples.weekly_limit.body.quota.resets_at)};`);
+  expect((await h.run(['resume', '--json'], afterReset)).code).toBe(0);
+  expect(posts(h).map(req => req.body)).toEqual([h.body, h.body, h.body]);
+  expect(new Set(posts(h).map(req => req.headers['idempotency-key']))).toEqual(new Set([saved.submission_id]));
+  expect(h.read()).toMatchObject({ state: 'confirmed', submission_id: saved.submission_id });
+});

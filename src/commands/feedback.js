@@ -177,6 +177,11 @@ async function managedFeedback(api, { body, newSubmission = false, forget = fals
         throw new NansenError(`${error.message} This attempt was rejected. Local retry data was erased. Correct the report and use --new with the corrected --file.`,
           error.code, error.status, { ...error.details, submission_id: entry.submission_id, outcome: 'rejected' });
       }
+      if (error.status === 429 && error.details?.reason === 'feedback_weekly_quota_exhausted') {
+        throw new NansenError(`${error.message} This submission was not accepted. Wait for the weekly reset before running: nansen feedback resume.`,
+          error.code, error.status, { ...error.details, submission_id: entry.submission_id, outcome: 'rejected',
+            retry_command: 'nansen feedback resume', retry_not_before: error.details.quota?.resets_at ?? null });
+      }
       throw new NansenError(`${error.message} The saved submission may have been accepted. Retry safely with: nansen feedback resume`,
         error.code, error.status, { ...error.details, submission_id: entry.submission_id, retry_command: 'nansen feedback resume', outcome: 'unknown' });
     }
