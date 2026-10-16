@@ -1,9 +1,18 @@
 import fs from 'node:fs';
-import { NansenError, ErrorCode, packageVersion, telemetryHeaders, sleep } from '../api.js';
+import { NansenError, ErrorCode, packageVersion, telemetryHeaders, sleep, statusToErrorCode } from '../api.js';
 
 const PATH = '/api/v1/feedback';
 const TEMPORARY = new Set([429, 500, 502, 503, 504]);
-const ERROR_FIELDS = ['error', 'message', 'code', 'status', 'request_id', 'doc_url', 'param', 'reason', 'retry_after', 'quota'];
+const ERROR_FIELDS = ['error', 'message', 'code', 'status', 'request_id', 'doc_url', 'param', 'reason', 'retry_after', 'quota', 'errors'];
+
+function requestId(response) {
+  return response?.headers.get('x-request-id') ?? response?.headers.get('x-kong-request-id') ?? null;
+}
+
+function preserveUncertainSubmission(error, pending) {
+  return new NansenError(`${error.message} ${pending.message}`, pending.code, error.status ?? pending.status,
+    { ...error.details, ...pending.details, request_id: error.details?.request_id ?? pending.details.request_id });
+}
 
 function required(value, name, usage = 'nansen feedback submit --file feedback.json --submission-id <new-id>') {
   if (typeof value !== 'string' || !value.trim()) {
@@ -30,8 +39,13 @@ async function requestFeedback(api, endpoint, body, submissionId) {
   const retry = api.retryOptions;
   const maxRetries = Math.min(retry.maxRetries, 3);
   let lastError;
+  let uncertainSubmission;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const credentials = await api.requestCredentials({});
+    let credentials;
+    try { credentials = await api.requestCredentials({}); } catch (error) {
+      if (!uncertainSubmission) throw error;
+      throw preserveUncertainSubmission(error, uncertainSubmission);
+    }
     if (!Object.keys(credentials).length) {
       throw new NansenError('Not logged in. Run: nansen login, or set NANSEN_API_KEY.', ErrorCode.UNAUTHORIZED);
     }
@@ -65,14 +79,15 @@ async function requestFeedback(api, endpoint, body, submissionId) {
     } catch {
       if (response && [402, 404, 501].includes(response.status)) {
         throw new NansenError('Feedback is unavailable on this backend. Retry after feedback support is deployed.', 'feedback_unavailable', response.status,
-          { submission_id: submissionId ?? null, request_id: redact(response.headers.get('x-request-id')) });
+          { submission_id: submissionId ?? null, request_id: redact(requestId(response)) });
       }
       const unknown = body !== undefined;
       lastError = new NansenError(
         unknown ? 'The submission may have been saved. Retry the same --submission-id with the unchanged --file.' : 'Receipt lookup failed. Retry nansen feedback get with the same feedback ID.',
         unknown ? 'submission_outcome_unknown' : ErrorCode.NETWORK_ERROR, response?.status ?? null,
-        { reason: unknown ? 'submission_outcome_unknown' : 'receipt_unavailable', submission_id: submissionId ?? null, request_id: redact(response?.headers.get('x-request-id') ?? null) },
+        { reason: unknown ? 'submission_outcome_unknown' : 'receipt_unavailable', submission_id: submissionId ?? null, request_id: redact(requestId(response)) },
       );
+      if (unknown) uncertainSubmission = lastError;
       if (attempt < maxRetries && (!response || response.ok || TEMPORARY.has(response.status))) {
         const delay = retryDelay(response, null, attempt, retry);
         if (delay <= retry.maxRetryAfterMs) { await sleep(delay); continue; }
@@ -80,7 +95,7 @@ async function requestFeedback(api, endpoint, body, submissionId) {
       throw lastError;
     }
     const details = redact(Object.fromEntries(ERROR_FIELDS.filter(key => key in data).map(key => [key, data[key]])));
-    details.request_id ??= redact(response.headers.get('x-request-id'));
+    details.request_id ??= redact(requestId(response));
     if (submissionId) details.submission_id = submissionId;
     const unavailable = response.status === 402 || data.code === 'insufficient_credits' || response.status === 501 ||
       (response.status === 404 && body !== undefined);
@@ -90,7 +105,8 @@ async function requestFeedback(api, endpoint, body, submissionId) {
     if (response.status === 404) {
       throw new NansenError('Receipt not found, or this backend does not support feedback yet. Check the feedback ID, active account and NANSEN_BASE_URL. Do not resubmit as a new report.', details.code || 'not_found', response.status, details);
     }
-    lastError = new NansenError(details.message || 'Feedback request failed.', details.code || ErrorCode.UNKNOWN, response.status, details);
+    lastError = new NansenError(details.message || 'Feedback request failed.', details.code || statusToErrorCode(response.status, data), response.status, details);
+    if (uncertainSubmission && [401, 403].includes(response.status)) throw preserveUncertainSubmission(lastError, uncertainSubmission);
     const weekly = data.reason === 'feedback_weekly_quota_exhausted';
     const delay = retryDelay(response, data, attempt, retry);
     if (!weekly && TEMPORARY.has(response.status) && attempt < maxRetries && delay <= retry.maxRetryAfterMs) {
@@ -116,6 +132,8 @@ function receiptText(receipt) {
 export function feedbackErrorText(error) {
   const details = error.details ?? {};
   return [error.message, ...(details.quota?.resets_at ? [`Quota resets: ${details.quota.resets_at}`] : []),
+    ...(Array.isArray(details.errors) ? details.errors.filter(item => typeof item?.field === 'string' && typeof item.code === 'string')
+      .map(item => `${item.field}: ${item.code}`) : []),
     ...(details.retry_after !== undefined ? [`Retry after: ${details.retry_after} seconds`] : []),
     ...(details.submission_id ? [`Submission ID: ${details.submission_id}`] : []),
     ...(details.request_id ? [`Request ID: ${details.request_id}`] : [])].join('\n');

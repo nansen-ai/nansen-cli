@@ -6,10 +6,10 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { NansenAPI } from '../api.js';
-import { buildFeedbackCommands } from '../commands/feedback.js';
+import { buildFeedbackCommands, feedbackErrorText } from '../commands/feedback.js';
 import { createAuthState } from '../auth-state.js';
 import { createAuthStore } from '../auth-store.js';
-import { resolveCredential } from '../auth-credentials.js';
+import { resolveCredential, AuthError } from '../auth-credentials.js';
 import { memoryOperation, sessionFixture } from './fixtures/auth-fixture.js';
 
 const examples = JSON.parse(fs.readFileSync(new URL('./fixtures/feedback-v1.json', import.meta.url)));
@@ -107,6 +107,38 @@ it.each(['weekly_limit', 'conflict', 'denied'])('preserves structured %s errors 
   expect(result.stdout).not.toContain('synthetic-key');
 });
 
+it('preserves every sanitized field error from the real validation envelope', async () => {
+  const errors = [{ field: 'body.endpoint', code: 'value_out_of_range' }, { field: 'body.severity', code: 'unknown_field' }];
+  const h = await harness([{ status: 422, body: { error: 'Validation Error', message: 'Invalid value for endpoint.',
+    code: 'value_out_of_range', status: 422, param: 'endpoint', errors } }]);
+  const result = await h.run([...h.submit, '--json']);
+  expect(result.code).toBe(1); expect(JSON.parse(result.stdout).details.errors).toEqual(errors);
+  const human = await h.run(h.submit);
+  expect(human.code).toBe(1);
+  for (const { field, code } of errors) expect(human.stdout).toContain(`${field}: ${code}`);
+});
+
+it('recognizes the gateway message-only auth error and its request ID', async () => {
+  const h = await harness([{ status: 401, headers: { 'X-Kong-Request-Id': 'gateway-request-id' },
+    body: { message: 'Invalid API key. Manage your keys at https://app.nansen.ai/api?tab=api' } }]);
+  const result = await h.run([...h.submit, '--json']);
+  expect(result.code).toBe(1);
+  expect(JSON.parse(result.stdout)).toMatchObject({ code: 'UNAUTHORIZED', status: 401,
+    details: { request_id: 'gateway-request-id', submission_id: examples.accepted.body.submission_id } });
+  expect(h.requests).toHaveLength(1);
+});
+
+it('keeps the pending submission ID when the gateway rejects a retry after a lost response', async () => {
+  const h = await harness(['disconnect', { status: 401, headers: { 'X-Kong-Request-Id': 'retry-auth-id' }, body: { message: 'Invalid API key.' } }]);
+  const result = await h.run([...h.submit, '--json']);
+  expect(result.code).toBe(1);
+  expect(JSON.parse(result.stdout)).toMatchObject({ code: 'submission_outcome_unknown', status: 401,
+    details: { submission_id: examples.accepted.body.submission_id, reason: 'submission_outcome_unknown', request_id: 'retry-auth-id' } });
+  expect(result.stdout).toContain('may have been saved');
+  expect(h.requests).toHaveLength(2);
+  expect(h.requests[1].body).toBe(h.requests[0].body);
+});
+
 it('stops promptly on weekly exhaustion and shows reset and request/submission IDs', async () => {
   const h = await harness([examples.weekly_limit]);
   const started = Date.now(); const result = await h.run(h.submit);
@@ -197,6 +229,42 @@ it('keeps command telemetry truthful without report content, IDs or credentials'
   expect(events[1].properties).toMatchObject({ error_code: 'rate_limit_exceeded', status: 429 });
   for (const event of events) expect(event.path).toBe('/feedback/submit');
   for (const secret of ['synthetic-key', examples.accepted.body.submission_id, examples.accepted.request.body.description, h.file]) expect(JSON.stringify(events)).not.toContain(secret);
+});
+
+it.each(['Private report text about wallet 0xabc123', 'fb_private_receipt_id', '/private/reports/feedback.json'])('keeps malformed feedback argument %s out of telemetry', async argument => {
+  const h = await harness([examples.accepted]);
+  const result = await h.run([argument, '--json'], { NANSEN_NO_TELEMETRY: '0', NODE_OPTIONS: `--require=${h.capture}` });
+  expect(result.code).toBe(1); expect(h.requests).toHaveLength(0);
+  const events = fs.readFileSync(h.eventFile, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({ event: 'cli_command_failed', path: '/feedback' });
+  expect(JSON.stringify(events)).not.toContain(argument);
+});
+
+it.each([false, true])('preserves authentication guidance and uncertain outcome after a lost response: %s', async lostResponse => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'feedback-session-retry-')); dirs.push(home);
+  let now = Date.now();
+  const bundle = sessionFixture({ now: now - 3500000 });
+  if (!lostResponse) now = bundle.expiresAt - 30000;
+  const refresh = vi.fn(async () => {
+    throw Object.assign(new AuthError('SESSION_REFRESH_RETRYABLE', 'Session renewal was refused. Run nansen login.'), { retryNotBefore: now + 1000 });
+  });
+  const state = createAuthState({ directory: path.join(home, '.nansen'), store: createAuthStore(memoryOperation()), now: () => now, refresh });
+  const attempt = await state.begin(); await state.install(attempt, { bundle, baseUrl: bundle.audience }); await state.finish(attempt);
+  const api = new NansenAPI(undefined, bundle.audience, { credential: resolveCredential({ env: { HOME: home } }), authState: state, retry: { baseDelayMs: 0 } });
+  const file = path.join(home, 'report.json'); fs.writeFileSync(file, JSON.stringify(examples.accepted.request.body));
+  const fetch = vi.fn(async () => { now = bundle.expiresAt - 30000; throw new TypeError('Lost response'); });
+  vi.stubGlobal('fetch', fetch);
+  let error;
+  try { await buildFeedbackCommands().feedback(['submit'], api, { json: true }, { file, 'submission-id': 'retry-after-login' }); } catch (caught) { error = caught; }
+  expect(refresh).toHaveBeenCalledOnce(); expect(fetch).toHaveBeenCalledTimes(lostResponse ? 1 : 0);
+  expect(error.message).toContain('nansen login');
+  if (lostResponse) {
+    expect(error).toMatchObject({ code: 'submission_outcome_unknown', details: { reason: 'submission_outcome_unknown', submission_id: 'retry-after-login' } });
+    expect(feedbackErrorText(error)).toContain('may have been saved');
+    expect(feedbackErrorText(error)).toContain('unchanged --file');
+  } else expect(error.code).toBe('SESSION_REFRESH_RETRYABLE');
+  for (const secret of [bundle.accessToken, bundle.refreshToken, bundle.privateJwk.d]) expect(JSON.stringify(error)).not.toContain(secret);
 });
 
 it('uses the saved browser account on retries and preserves structured quota errors without exposing custody', async () => {
