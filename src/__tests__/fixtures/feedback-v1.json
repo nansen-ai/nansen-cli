@@ -311,5 +311,42 @@
       "reason": "feedback_admissions_paused",
       "retry_after": 10
     }
+  },
+  "invalid_unknown_field": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/feedback",
+      "headers": {
+        "Idempotency-Key": "0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f"
+      },
+      "body": {
+        "category": "missing_capability",
+        "description": "I need to compare labels across 50 wallets, but could not find a bulk lookup.",
+        "goal": "Compare labels across a wallet list.",
+        "attachments": [
+          "screenshot.png"
+        ]
+      }
+    },
+    "status": 422,
+    "headers": {
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "error": "Unknown field",
+      "message": "Field 'attachments' is not recognized. Please check the API documentation for valid request fields.",
+      "code": "unknown_field",
+      "status": 422,
+      "request_id": "req_attempt_3",
+      "doc_url": "https://docs.nansen.ai/getting-started/error-handling#unknown_field",
+      "param": "attachments",
+      "errors": [
+        {
+          "field": "body.attachments",
+          "code": "unknown_field",
+          "message": "Field 'attachments' is not recognized. Please check the API documentation for valid request fields."
+        }
+      ]
+    }
   }
 }

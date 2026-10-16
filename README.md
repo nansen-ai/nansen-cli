@@ -43,10 +43,13 @@ One recovery entry lives in `~/.nansen/feedback/recovery.json`, with private
 permissions and a process lock. Confirmed receipts remove report content and keep
 only the submission ID, feedback ID, account, environment and expiry. Feedback
 recovery operations erase expired data when they next open the journal. Pending
-reports expire after one calendar year. No cleanup runs while the CLI is closed. `nansen feedback forget` erases local recovery data
+reports expire after one calendar year. No cleanup runs while the CLI is closed.
+`nansen feedback forget` erases local recovery data
 offline, leaving a content-free marker that prevents accidental replay. It does
 not delete your input file or a report on the server. A missing or erased server
-receipt also clears the local entry. Do not back up pending report content.
+receipt also clears the local entry. Validation rejections erase the saved payload;
+correct the input and use --new to submit again. Forget also erases damaged journals.
+Do not back up pending report content.
 
 Automatic IDs require POSIX private storage and the optional native locking
 binding. On Windows or when storage cannot be secured, supply a caller-managed

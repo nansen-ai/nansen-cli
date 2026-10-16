@@ -17,7 +17,7 @@ export function feedbackExpiry(now) {
 
 // One active submission. The cleared marker contains no report or identity and
 // prevents expiry/erasure from turning a later retry into a new submission.
-export async function withFeedbackJournal(operation) {
+export async function withFeedbackJournal(operation, { erase = false } = {}) {
   let fd, native, locked = false;
   const root = authDirectory(), directory = path.join(root, 'feedback');
   const file = path.join(directory, 'recovery.json'), temp = path.join(directory, 'recovery.tmp');
@@ -56,8 +56,13 @@ export async function withFeedbackJournal(operation) {
     locked = native.tryLock(fd);
     if (!locked) throw new NansenError('Another feedback command is running. Retry after it finishes.', 'feedback_busy');
     // A killed writer may leave an uncommitted temp file. It was never sent.
-    if (fs.lstatSync(temp, { throwIfNoEntry: false })) { privatePath(temp, false); fs.unlinkSync(temp); syncDirectory(); }
-    if (fs.lstatSync(file, { throwIfNoEntry: false })) {
+    if (fs.lstatSync(temp, { throwIfNoEntry: false })) {
+      if (!erase) privatePath(temp, false);
+      fs.unlinkSync(temp); syncDirectory();
+    }
+    // Erasure atomically replaces even a damaged or insecure journal without
+    // reading it. Never unlink it first: a crash in that gap could look new.
+    if (!erase && fs.lstatSync(file, { throwIfNoEntry: false })) {
       privatePath(file, false);
       entry = JSON.parse(readLocalFile(file, { root, privateFile: true, maxBytes: 100000 }));
       const keys = entry.state === 'pending' ? ['version', 'state', 'submission_id', 'account', 'environment', 'expires_at', 'body'] :

@@ -146,7 +146,7 @@ async function managedFeedback(api, { body, newSubmission = false, forget = fals
     if ((!entry && body === undefined) || (entry?.state === 'cleared' && !newSubmission)) throw new NansenError('No replayable feedback remains. Expired or erased submissions are never replayed. Use --new only for a deliberate new report.', 'feedback_recovery_unavailable');
     if (entry?.state === 'confirmed' && body !== undefined && !newSubmission) throw new NansenError('The previous submission has a confirmed receipt. Run: nansen feedback resume. Use --new only for a deliberate new report.', 'feedback_already_confirmed');
     if (entry && !newSubmission && new URL(api.baseUrl).href.replace(/\/$/, '') !== entry.environment) throw new NansenError('The API environment changed. Restore the original NANSEN_BASE_URL, then run: nansen feedback resume.', 'feedback_identity_mismatch');
-    if (entry?.state === 'pending' && body !== undefined && body !== entry.body) throw new NansenError('The report changed. Run: nansen feedback resume to retry the saved, unchanged report.', 'feedback_report_changed');
+    if (entry?.state === 'pending' && body !== undefined && body !== entry.body) throw new NansenError('The report changed. Run: nansen feedback resume to retry the saved, unchanged report, or nansen feedback forget to erase its local retry data before a deliberate --new submission.', 'feedback_report_changed');
     const identity = await feedbackIdentity(api);
     if (entry && !newSubmission && identity.account !== entry.account) throw new NansenError('The Nansen account changed. Log in to the original account, then run: nansen feedback resume.', 'feedback_identity_mismatch');
     if (!entry || newSubmission) {
@@ -172,10 +172,15 @@ async function managedFeedback(api, { body, newSubmission = false, forget = fals
     } catch (error) {
       if (error.details?.reason === 'feedback_erased' || (entry.state === 'confirmed' && error.status === 404)) { journal.clear(); throw error; }
       if (entry.state !== 'pending' || error.code === 'feedback_recovery_unavailable') throw error;
+      if ([400, 413, 422].includes(error.status) || (error.status === 409 && error.details?.reason === 'idempotency_key_reused')) {
+        journal.clear();
+        throw new NansenError(`${error.message} This attempt was rejected. Local retry data was erased. Correct the report and use --new with the corrected --file.`,
+          error.code, error.status, { ...error.details, submission_id: entry.submission_id, outcome: 'rejected' });
+      }
       throw new NansenError(`${error.message} The saved submission may have been accepted. Retry safely with: nansen feedback resume`,
         error.code, error.status, { ...error.details, submission_id: entry.submission_id, retry_command: 'nansen feedback resume', outcome: 'unknown' });
     }
-  });
+  }, { erase: forget });
 }
 
 function receiptText(receipt) {

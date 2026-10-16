@@ -274,3 +274,61 @@ it('rejects malformed explicit IDs and valued --new without generating a submiss
     expect(posts(h)).toHaveLength(0); expect(fs.existsSync(h.journal)).toBe(false);
   }
 });
+
+it.skipIf(process.platform === 'win32').each(['json', 'human'])('erases definitively rejected report bytes and explains correction in %s output', async format => {
+  const h = await harness();
+  fs.writeFileSync(h.file, JSON.stringify(examples.invalid_unknown_field.request.body));
+  h.post((_req, res) => reply(res, examples.invalid_unknown_field.status, examples.invalid_unknown_field.body));
+  const result = await h.run(format === 'json' ? h.submit : h.submit.filter(arg => arg !== '--json'));
+  expect(result.code).toBe(1); expect(result.stdout).toContain('This attempt was rejected');
+  expect(result.stdout).not.toContain('may have been accepted');
+  if (format === 'json') expect(JSON.parse(result.stdout).details).toMatchObject({ outcome: 'rejected' });
+  expect(h.read()).toEqual({ version: 1, state: 'cleared' });
+  const oldId = posts(h)[0].headers['idempotency-key'];
+  expect(JSON.parse((await h.run(['resume', '--json'])).stdout).code).toBe('feedback_recovery_unavailable');
+  fs.writeFileSync(h.file, h.body); h.post((req, res) => reply(res, 201, receipt(req)));
+  expect((await h.run([...h.submit, '--new'])).code).toBe(0);
+  expect(posts(h)[1].headers['idempotency-key']).not.toBe(oldId);
+});
+
+it.skipIf(process.platform === 'win32').each([
+  [400, { code: 'invalid_json', message: 'Invalid JSON' }],
+  [413, { code: 'payload_too_large', message: 'Report too large' }],
+  [422, { code: 'invalid_value', message: "Field 'description' appears to contain a credential. Remove secrets and resubmit." }],
+  [409, examples.conflict.body],
+])('clears rejected pending content on HTTP %s without an unknown-outcome label', async (status, error) => {
+  const h = await harness(); fs.writeFileSync(h.file, JSON.stringify({ category: 'bug', description: '?api_key=SYNTHCRED123' }));
+  h.post((_req, res) => reply(res, status, error));
+  const result = await h.run(h.submit);
+  expect(JSON.parse(result.stdout).details.outcome).toBe('rejected');
+  expect(result.stdout).not.toContain('SYNTHCRED123');
+  expect(h.read()).toEqual({ version: 1, state: 'cleared' });
+});
+
+it.skipIf(process.platform === 'win32').each(['0644', 'damaged', 'symlink'])('erases a %s journal offline without reading or following it', async damage => {
+  const h = await harness(); await killedPending(h);
+  if (damage === '0644') fs.chmodSync(h.journal, 0o644);
+  if (damage === 'damaged') fs.writeFileSync(h.journal, '{"broken":"raw report text');
+  if (damage === 'symlink') { fs.unlinkSync(h.journal); fs.symlinkSync(h.file, h.journal); }
+  const count = h.requests.length;
+  const result = await h.run(['forget', '--json'], h.hook(`globalThis.fetch = () => {
+    require('node:fs').writeFileSync(${JSON.stringify(path.join(h.home, 'unexpected-network'))}, 'called');
+    throw new Error('Forget must stay offline');
+  };`));
+  expect(result.code).toBe(0); expect(JSON.parse(result.stdout).data).toEqual({ forgotten: true });
+  expect(fs.existsSync(path.join(h.home, 'unexpected-network'))).toBe(false);
+  expect(h.read()).toEqual({ version: 1, state: 'cleared' });
+  expect(fs.statSync(h.journal).mode & 0o777).toBe(0o600);
+  expect(h.requests).toHaveLength(count); expect(fs.readFileSync(h.file, 'utf8')).toBe(h.body);
+});
+
+it.skipIf(process.platform === 'win32')('preserves the old entry if killed before local erasure commits', async () => {
+  const h = await harness(); await killedPending(h); const saved = h.read();
+  const result = await h.run(['forget', '--json'], h.hook(`const fs = require('node:fs'); const rename = fs.renameSync;
+    fs.renameSync = (a, b) => { if (b.endsWith('/feedback/recovery.json')) process.kill(process.pid, 'SIGKILL'); return rename(a, b); };`));
+  expect(result.signal).toBe('SIGKILL'); expect(h.read()).toEqual(saved);
+  expect((await h.run(['forget', '--json'])).code).toBe(0);
+  expect(h.read()).toEqual({ version: 1, state: 'cleared' });
+  expect(JSON.parse((await h.run(h.submit)).stdout).code).toBe('feedback_recovery_unavailable');
+  expect(posts(h)).toHaveLength(1);
+});
