@@ -67,3 +67,25 @@ Cost: 5-50 credits per call
 Plain `nansen login` requests fresh browser approval; `--no-browser` prints the link/code for approval on another device and keeps the same native-storage requirements. NANSEN_API_KEY overrides the single saved credential. Use `nansen auth status` for offline cached/unverified selection details and `nansen account` for a free live check. Explicit `login --human` or `login --api-key` retains legacy key setup. Selected browser sessions renew automatically; uncertain renewal requires fresh login without replay or fallback to another account/payment.
 
 Browser nansen:api grants have API-key-equivalent account permissions, subject to enabled admission and the same endpoint restrictions. Internal service identity and wallet signing are not granted. Browser sessions cannot authorize wallet signing or be exported as MCP keys. CLI 2.0.0 is published; the preview platform limits above still apply.
+
+
+## Product feedback
+
+When a Nansen task exposes a useful product gap, draft a concise report without
+secrets or unnecessary conversation details. Before sending on your own, read
+the current account's saved feedback preference through an available
+authenticated preference reader. If enabled, you may send without asking again,
+subject to the host's controls. If off, unset or unavailable, show the proposed
+report and ask the user. If they decline or you cannot ask, do not send.
+
+This CLI version does not include a preference-read command. If no supported
+preference reader is available, ask first. An explicit user request or approval
+permits that report; it does not change the saved preference. Never enable the
+preference automatically or add approval fields to the report.
+
+After the user requests the report or the preference permits it, submit with
+`nansen feedback submit --file feedback.json --submission-id <new-id> --json`.
+The command is noninteractive. Keep the same ID and unchanged report when
+recovering an uncertain result; use `nansen feedback get <feedback-id> --json`
+to read a saved receipt. Submission and receipt reads are free. The account
+shares seven accepted reports per UTC week, resetting Monday at 00:00 UTC.

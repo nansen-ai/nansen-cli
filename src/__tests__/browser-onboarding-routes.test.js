@@ -23,7 +23,7 @@ function credentialMetadata(text) {
 }
 // Command families classify workflows, not server permissions. Unknown additions
 // require an explicit transport/authorization assessment, never a key-only fallback.
-const apiFamilies = new Set(['research', 'login', 'auth', 'account', 'agent', 'alerts', 'web']);
+const apiFamilies = new Set(['research', 'login', 'auth', 'account', 'agent', 'alerts', 'web', 'feedback']);
 const walletFamilies = new Set(['trade', 'bridge', 'wallet', 'perp', 'doctor']);
 function assertSkillScope(rows, docs) {
   const groups = { accountApi: [], walletWorkflow: [], standalonePayment: [] };

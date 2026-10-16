@@ -2,7 +2,7 @@
   "commands": {
     "feedback": {
       "description": "Send product feedback to Nansen or read an account-scoped receipt. Free; seven reports per account per week, resetting Monday 00:00 UTC.",
-      "notes": "Use the configured API key or login session. Keep the same submission ID and unchanged report after an uncertain result. No caching or payment fallback. Remove credentials and unnecessary personal context from reports. Backend validates shared report fields; automatic ID persistence is not available in this slice.",
+      "notes": "Use the configured API key or login session. Keep the same submission ID and unchanged report after an uncertain result. No caching or payment fallback. Remove credentials and unnecessary personal context from reports. Backend validates shared report fields; automatic ID persistence is not available in this slice. Agents: send on your own only after an authenticated read shows the account preference is enabled and host controls permit it. Otherwise show the report and ask first; a direct user request permits that report. This CLI version has no preference-read command. Never enable the preference automatically. Submit is noninteractive and does not verify approval.",
       "subcommands": {
         "submit": {
           "description": "Submit a JSON report. Received means saved; human review may still be pending.",

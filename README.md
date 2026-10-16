@@ -44,6 +44,15 @@ IDs can still be replayed. Feedback bypasses caching and payment fallback.
 Remove secrets and unnecessary personal details from your report. A backend
 without feedback support reports an unavailable capability.
 
+Agents should check the saved account preference before sending feedback on their
+own. If enabled, they may send without asking again, subject to their host's
+controls. If off, unset or unavailable, show the proposed report and ask first.
+Approval for one report does not change the preference. Never enable it
+automatically. This CLI version has no preference-read command, so ask first
+unless an authenticated preference read is available through another supported
+tool. An explicit user request to send the report needs no additional preference
+check. The submit command sends the report without an interactive prompt.
+
 ## Auth
 
 Plain `nansen login` requests fresh browser approval and saves a session automatically. No API-key copying or PEM setup is needed. Selected sessions renew automatically; rejected or uncertain renewal requires fresh login.
