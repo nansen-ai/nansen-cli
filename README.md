@@ -44,6 +44,13 @@ IDs can still be replayed. Feedback bypasses caching and payment fallback.
 Remove secrets and unnecessary personal details from your report. A backend
 without feedback support reports an unavailable capability.
 
+New submissions may be paused before release or during an outage. HTTP 503 with
+`reason: feedback_admissions_paused` means this attempt accepted no new report
+and used no weekly allowance. Tell the user feedback is unavailable, then stop;
+do not keep retrying or ask for approval again in the same session. Keep the ID
+and unchanged file for a later retry. Accepted-ID replays and receipt reads
+remain available during a pause.
+
 Agents should check the saved account preference before sending feedback on their
 own. If enabled, they may send without asking again, subject to their host's
 controls. If off, unset or unavailable, show the proposed report and ask first.

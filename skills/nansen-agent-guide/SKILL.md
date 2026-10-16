@@ -89,3 +89,11 @@ The command is noninteractive. Keep the same ID and unchanged report when
 recovering an uncertain result; use `nansen feedback get <feedback-id> --json`
 to read a saved receipt. Submission and receipt reads are free. The account
 shares seven accepted reports per UTC week, resetting Monday at 00:00 UTC.
+
+New submissions may be paused before release or during an outage. A 503 with
+`reason: feedback_admissions_paused` means this attempt accepted no new report
+and used no weekly allowance. Tell the user feedback is unavailable and stop;
+do not keep retrying or ask for approval again in the same session. Preserve
+the ID and unchanged report for a later retry. If this CLI version lacks the
+feedback command, report that it is unavailable and stop. Accepted-ID replays
+and receipt reads remain available during a pause.
