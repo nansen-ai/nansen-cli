@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { validateQuoteInput, fetchNativeBalance, fetchTokenBalance, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertInputWithinMax, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, assertSolanaSwapOutcome, assertLimitOrderDepositOutcome, assertLimitOrderCancelOutcome, assertLimitOrderDepositDestination, MAX_UINT256, needsAllowanceRevoke } from '../trade-validation.js';
+import { validateQuoteInput, fetchNativeBalance, fetchTokenBalance, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertInputWithinMax, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, checkSolanaFeeBalance, assertSolanaSwapOutcome, assertLimitOrderDepositOutcome, assertLimitOrderCancelOutcome, assertLimitOrderDepositDestination, MAX_UINT256, needsAllowanceRevoke } from '../trade-validation.js';
 import { SOL_SENTINEL } from '../solana-simulation.js';
 import crypto from 'crypto';
 import { base58Decode, base58Encode, generateSolanaWallet } from '../wallet.js';
@@ -3124,5 +3124,208 @@ describe('assertSolanaInstructionsSafe', () => {
     });
     expect(() => assertSolanaInstructionsSafe(tx, { walletAddress: wallet }))
       .toThrow(/only resolvable via an address-lookup-table entry/);
+  });
+});
+
+describe('checkSolanaFeeBalance', () => {
+  const COMPUTE_BUDGET = 'ComputeBudget111111111111111111111111111111';
+  let originalFetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function encodeCompactU16(value) {
+    if (value < 0x80) return Buffer.from([value]);
+    return Buffer.from([(value & 0x7f) | 0x80, (value >> 7) & 0x7f]);
+  }
+
+  // Minimal legacy message with one signer: accountKeys[0] is the fee payer.
+  function buildTransaction({ accountKeys, instructions }) {
+    const parts = [Buffer.from([1, 0, 0])];
+    parts.push(encodeCompactU16(accountKeys.length));
+    for (const k of accountKeys) parts.push(base58Decode(k));
+    parts.push(base58Decode(accountKeys[0]));
+    parts.push(encodeCompactU16(instructions.length));
+    for (const ix of instructions) {
+      parts.push(Buffer.from([ix.programIdIndex]));
+      parts.push(encodeCompactU16(ix.accountIndexes.length));
+      for (const idx of ix.accountIndexes) parts.push(Buffer.from([idx]));
+      parts.push(encodeCompactU16(ix.data.length));
+      parts.push(ix.data);
+    }
+    return Buffer.concat([Buffer.from([1]), Buffer.alloc(64), Buffer.concat(parts)]).toString('base64');
+  }
+
+  function setLimit(units) {
+    const data = Buffer.alloc(5);
+    data[0] = 2;
+    data.writeUInt32LE(units, 1);
+    return data;
+  }
+  function setPrice(microLamports) {
+    const data = Buffer.alloc(9);
+    data[0] = 3;
+    data.writeBigUInt64LE(BigInt(microLamports), 1);
+    return data;
+  }
+
+  // A transaction paid by `feePayer` that sets a 1,000,000-lamport priority
+  // fee (1,000,000 micro-lamports x 1,000,000 units).
+  function priorityFeeTx({ wallet, feePayer = wallet }) {
+    const keys = [feePayer, ...(feePayer === wallet ? [] : [wallet]), COMPUTE_BUDGET];
+    const idx = (k) => keys.indexOf(k);
+    return buildTransaction({
+      accountKeys: keys,
+      instructions: [
+        { programIdIndex: idx(COMPUTE_BUDGET), accountIndexes: [], data: setLimit(1_000_000) },
+        { programIdIndex: idx(COMPUTE_BUDGET), accountIndexes: [], data: setPrice(1_000_000) },
+      ],
+    });
+  }
+
+  // `fee` is what getFeeForMessage returns: undefined fails the call, null
+  // means the cluster could not price the message.
+  function mockRpc({ balance, fail = false, fee }) {
+    const reply = (body) => ({ ok: true, json: async () => body });
+    global.fetch = vi.fn(async (_url, init) => {
+      const { method } = JSON.parse(init.body);
+      if (fail) return reply({ error: { message: 'rpc down' } });
+      if (method === 'getBalance') return reply({ result: { value: balance } });
+      if (method === 'getFeeForMessage') {
+        if (fee === undefined) return reply({ error: { message: 'method not found' } });
+        return reply({ result: { value: fee } });
+      }
+      throw new Error(`unexpected method ${method}`);
+    });
+  }
+
+  function parse(tx, wallet) {
+    return assertSolanaInstructionsSafe(tx, { walletAddress: wallet });
+  }
+
+  // 5,000 base fee + 1,000,000 priority fee.
+  const STATIC_FEE = 5_000 + 1_000_000;
+
+  it('returns the parsed priority fee from assertSolanaInstructionsSafe', () => {
+    const wallet = generateSolanaWallet().address;
+    expect(parse(priorityFeeTx({ wallet }), wallet).priorityFeeLamports).toBe(1_000_000n);
+  });
+
+  it('passes when the balance covers the base and priority fee exactly', async () => {
+    const wallet = generateSolanaWallet().address;
+    mockRpc({ balance: STATIC_FEE });
+    const result = await checkSolanaFeeBalance({ parsed: parse(priorityFeeTx({ wallet }), wallet), walletAddress: wallet });
+    expect(result).toEqual({ proceed: true });
+  });
+
+  it('refuses one lamport short, with an actionable reason', async () => {
+    const wallet = generateSolanaWallet().address;
+    mockRpc({ balance: STATIC_FEE - 1 });
+    const result = await checkSolanaFeeBalance({ parsed: parse(priorityFeeTx({ wallet }), wallet), walletAddress: wallet });
+    expect(result.proceed).toBe(false);
+    expect(result.reason).toContain('wallet has 0.001004999 SOL but this transaction needs at least 0.001005 SOL');
+    expect(result.reason).toContain('0.001005 SOL network fee');
+    expect(result.reason).toContain(`Fund ${wallet} with SOL`);
+  });
+
+  it("uses the cluster's fee for the message when it can price it", async () => {
+    const wallet = generateSolanaWallet().address;
+    // The cluster charges more than the static 5,000 + 1,000,000 estimate.
+    mockRpc({ balance: STATIC_FEE, fee: 1_010_000 });
+    const parsed = parse(priorityFeeTx({ wallet }), wallet);
+    const result = await checkSolanaFeeBalance({ parsed, walletAddress: wallet });
+    expect(result.proceed).toBe(false);
+    expect(result.reason).toContain('0.00101 SOL network fee');
+    const feeRequest = global.fetch.mock.calls
+      .map(([, init]) => JSON.parse(init.body))
+      .find(r => r.method === 'getFeeForMessage');
+    expect(feeRequest.params[0]).toBe(parsed.messageBase64);
+  });
+
+  it('falls back to the static fee estimate when the cluster cannot price the message', async () => {
+    const wallet = generateSolanaWallet().address;
+    mockRpc({ balance: STATIC_FEE - 1, fee: null });
+    const result = await checkSolanaFeeBalance({ parsed: parse(priorityFeeTx({ wallet }), wallet), walletAddress: wallet });
+    expect(result.proceed).toBe(false);
+    expect(result.reason).toContain('0.001005 SOL network fee');
+  });
+
+  it('falls back to the static fee estimate when the cluster returns a malformed fee', async () => {
+    const wallet = generateSolanaWallet().address;
+    mockRpc({ balance: STATIC_FEE - 1, fee: '1.5' });
+    const result = await checkSolanaFeeBalance({ parsed: parse(priorityFeeTx({ wallet }), wallet), walletAddress: wallet });
+    expect(result.proceed).toBe(false);
+    expect(result.reason).toContain('0.001005 SOL network fee');
+  });
+
+  it('does not check a fee another account pays', async () => {
+    const wallet = generateSolanaWallet().address;
+    const sponsor = generateSolanaWallet().address;
+    mockRpc({ balance: 0, fee: 5_000 });
+    const result = await checkSolanaFeeBalance({ parsed: parse(priorityFeeTx({ wallet, feePayer: sponsor }), wallet), walletAddress: wallet });
+    expect(result).toEqual({ proceed: true });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  describe('RPC handling', () => {
+    it('reads the balance at confirmed commitment, with a timeout', async () => {
+      const wallet = generateSolanaWallet().address;
+      mockRpc({ balance: STATIC_FEE });
+      await checkSolanaFeeBalance({ parsed: parse(priorityFeeTx({ wallet }), wallet), walletAddress: wallet });
+      const calls = global.fetch.mock.calls.map(([, init]) => ({ ...JSON.parse(init.body), signal: init.signal }));
+      expect(calls.find(c => c.method === 'getBalance').params.at(-1).commitment).toBe('confirmed');
+      expect(calls.every(c => c.signal instanceof AbortSignal)).toBe(true);
+    });
+
+    it('skips the check (warns) on an HTTP error from the RPC', async () => {
+      const wallet = generateSolanaWallet().address;
+      global.fetch = vi.fn(async () => ({ ok: false, status: 429, json: async () => { throw new Error('not JSON'); } }));
+      const log = vi.fn();
+      const result = await checkSolanaFeeBalance({ parsed: parse(priorityFeeTx({ wallet }), wallet), walletAddress: wallet, log });
+      expect(result).toEqual({ proceed: true });
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('getBalance failed: HTTP 429'));
+    });
+  });
+
+  describe('fallback fee', () => {
+    it('rounds the priority fee up to a whole lamport', () => {
+      const wallet = generateSolanaWallet().address;
+      const keys = [wallet, COMPUTE_BUDGET];
+      const tx = buildTransaction({
+        accountKeys: keys,
+        instructions: [
+          { programIdIndex: 1, accountIndexes: [], data: setLimit(1_000) },
+          { programIdIndex: 1, accountIndexes: [], data: setPrice(1_500) }, // 1.5 lamports
+        ],
+      });
+      expect(parse(tx, wallet).priorityFeeLamports).toBe(2n);
+    });
+
+    it('charges signatures a precompile verifies', async () => {
+      const wallet = generateSolanaWallet().address;
+      const ED25519 = 'Ed25519SigVerify111111111111111111111111111';
+      const tx = buildTransaction({
+        accountKeys: [wallet, ED25519],
+        instructions: [{ programIdIndex: 1, accountIndexes: [], data: Buffer.from([2, 0]) }],
+      });
+      mockRpc({ balance: 15_000 - 1, fee: null });
+      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+      expect(result.proceed).toBe(false);
+      expect(result.reason).toContain('0.000015 SOL network fee');
+    });
+  });
+
+  it('warns and proceeds when the balance RPC fails', async () => {
+    const wallet = generateSolanaWallet().address;
+    mockRpc({ fail: true });
+    const log = vi.fn();
+    const result = await checkSolanaFeeBalance({ parsed: parse(priorityFeeTx({ wallet }), wallet), walletAddress: wallet, log });
+    expect(result).toEqual({ proceed: true });
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/SOL fee balance check could not run \(getBalance failed: rpc down\)/));
   });
 });
