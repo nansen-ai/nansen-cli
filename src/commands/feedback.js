@@ -1,4 +1,8 @@
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
+import { authDirectory } from '../auth-credentials.js';
+import { feedbackExpiry, withFeedbackJournal } from '../feedback-journal.js';
 import { NansenError, ErrorCode, packageVersion, telemetryHeaders, sleep, statusToErrorCode } from '../api.js';
 
 const PATH = '/api/v1/feedback';
@@ -57,6 +61,7 @@ async function requestFeedback(api, endpoint, body, submissionId) {
       return value;
     };
     let response, data;
+    api.beforeFeedbackRequest?.();
     try {
       response = await fetch(`${api.baseUrl}${endpoint}`, {
         method: body === undefined ? 'GET' : 'POST', redirect: 'error', cache: 'no-store',
@@ -118,6 +123,61 @@ async function requestFeedback(api, endpoint, body, submissionId) {
   throw lastError;
 }
 
+// Resolve the account from the server, then freeze those exact credentials for
+// the entire operation. Re-login in another process cannot redirect a replay.
+async function feedbackIdentity(api) {
+  if (Object.keys(api.defaultHeaders).length) throw new NansenError('Feedback uses account authentication only. Remove --x402-payment-signature.', ErrorCode.INVALID_PARAMS);
+  const credentials = await api.requestCredentials({});
+  if (!Object.keys(credentials).length) throw new NansenError('Not logged in. Run: nansen login, or set NANSEN_API_KEY.', ErrorCode.UNAUTHORIZED);
+  try {
+    const environment = new URL(api.baseUrl).href.replace(/\/$/, '');
+    const response = await fetch(`${environment}/api/v1/account`, { headers: credentials, redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(15000) });
+    const data = await response.json();
+    if (!response.ok || typeof data.user_id !== 'string' || !data.user_id || data.user_id.length > 255 || [...data.user_id].some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)) throw new Error();
+    return { account: data.user_id, environment, api: { ...api, baseUrl: environment, requestCredentials: async () => credentials } };
+  } catch { throw new NansenError('Could not verify the feedback account. No report was sent. Retry with the original account and NANSEN_BASE_URL.', 'feedback_identity_unverified'); }
+}
+
+async function managedFeedback(api, { body, newSubmission = false, forget = false } = {}) {
+  return withFeedbackJournal(async journal => {
+    let entry = journal.entry;
+    if (forget) { journal.clear(); return { forgotten: true }; }
+    if (newSubmission && entry?.state === 'pending') throw new NansenError('A submission is still pending. Run: nansen feedback resume. To erase its local retry data, run: nansen feedback forget.', 'feedback_pending');
+    if ((!entry && body === undefined) || (entry?.state === 'cleared' && !newSubmission)) throw new NansenError('No replayable feedback remains. Expired or erased submissions are never replayed. Use --new only for a deliberate new report.', 'feedback_recovery_unavailable');
+    if (entry?.state === 'confirmed' && body !== undefined && !newSubmission) throw new NansenError('The previous submission has a confirmed receipt. Run: nansen feedback resume. Use --new only for a deliberate new report.', 'feedback_already_confirmed');
+    if (entry && !newSubmission && new URL(api.baseUrl).href.replace(/\/$/, '') !== entry.environment) throw new NansenError('The API environment changed. Restore the original NANSEN_BASE_URL, then run: nansen feedback resume.', 'feedback_identity_mismatch');
+    if (entry?.state === 'pending' && body !== undefined && body !== entry.body) throw new NansenError('The report changed. Run: nansen feedback resume to retry the saved, unchanged report.', 'feedback_report_changed');
+    const identity = await feedbackIdentity(api);
+    if (entry && !newSubmission && identity.account !== entry.account) throw new NansenError('The Nansen account changed. Log in to the original account, then run: nansen feedback resume.', 'feedback_identity_mismatch');
+    if (!entry || newSubmission) {
+      entry = { version: 1, state: 'pending', submission_id: randomUUID(), account: identity.account, environment: identity.environment, expires_at: feedbackExpiry(Date.now()), body };
+      journal.save(entry);
+    }
+    identity.api.beforeFeedbackRequest = () => {
+      if (Date.parse(entry.expires_at) <= Date.now()) {
+        journal.clear();
+        throw new NansenError('Saved feedback expired and was erased. It will not be replayed.', 'feedback_recovery_unavailable');
+      }
+    };
+    try {
+      const receipt = entry.state === 'confirmed'
+        ? await requestFeedback(identity.api, `${PATH}/${encodeURIComponent(entry.feedback_id)}`, undefined, entry.submission_id)
+        : await requestFeedback(identity.api, PATH, entry.body, entry.submission_id);
+      const expiry = Date.parse(receipt.expires_at);
+      if (!Number.isFinite(expiry)) throw new NansenError('The receipt expiry could not be confirmed.', 'submission_outcome_unknown');
+      // Never retain the body, its digest, or any free-text receipt fields.
+      journal.save({ version: 1, state: 'confirmed', submission_id: entry.submission_id, account: entry.account, environment: entry.environment,
+        expires_at: new Date(Math.min(expiry, Date.parse(entry.expires_at))).toISOString(), feedback_id: receipt.feedback_id });
+      return receipt;
+    } catch (error) {
+      if (error.details?.reason === 'feedback_erased' || (entry.state === 'confirmed' && error.status === 404)) { journal.clear(); throw error; }
+      if (entry.state !== 'pending' || error.code === 'feedback_recovery_unavailable') throw error;
+      throw new NansenError(`${error.message} The saved submission may have been accepted. Retry safely with: nansen feedback resume`,
+        error.code, error.status, { ...error.details, submission_id: entry.submission_id, retry_command: 'nansen feedback resume', outcome: 'unknown' });
+    }
+  });
+}
+
 function receiptText(receipt) {
   const wording = {
     received: 'Received. Your report is saved; human review may still be pending.',
@@ -143,26 +203,41 @@ export function buildFeedbackCommands({ log = console.log } = {}) {
   return {
     feedback: async (args, api, flags, options) => {
       let receipt;
+      if (flags['submission-id']) throw new NansenError('--submission-id requires a value.', ErrorCode.INVALID_PARAMS);
       if (args[0] === 'submit') {
-        if (args.length !== 1) throw new NansenError('Use: nansen feedback submit --file feedback.json --submission-id <new-id> [--json]', ErrorCode.INVALID_PARAMS);
-        const id = required(options['submission-id'], '--submission-id');
-        if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw new NansenError('--submission-id must contain 1 to 128 ASCII letters, digits, underscores or hyphens.', ErrorCode.INVALID_PARAMS);
+        if (args.length !== 1) throw new NansenError('Use: nansen feedback submit --file feedback.json [--submission-id <new-id> | --new] [--json]', ErrorCode.INVALID_PARAMS);
+        const id = options['submission-id'];
+        if (id !== undefined && flags.new) throw new NansenError('Use either --new or --submission-id.', ErrorCode.INVALID_PARAMS);
+        if (id !== undefined && (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(id))) throw new NansenError('--submission-id must contain 1 to 128 ASCII letters, digits, underscores or hyphens.', ErrorCode.INVALID_PARAMS);
         const file = required(options.file, '--file');
         let body;
         try { body = fs.readFileSync(file, 'utf8'); } catch { throw new NansenError('Cannot read --file. Supply a readable JSON report file.', ErrorCode.INVALID_PARAMS); }
         let report;
         try { report = JSON.parse(body); } catch { throw new NansenError('--file must contain valid JSON.', ErrorCode.INVALID_PARAMS); }
         if (!report || typeof report !== 'object' || Array.isArray(report)) throw new NansenError('--file must contain a JSON report object.', ErrorCode.INVALID_PARAMS);
-        receipt = await requestFeedback(api, PATH, body, id);
+        if (Buffer.byteLength(body) > 16384) throw new NansenError('The report exceeds 16 KiB.', ErrorCode.INVALID_PARAMS);
+        receipt = id !== undefined ? await requestFeedback(api, PATH, body, id) : await managedFeedback(api, { body, newSubmission: flags.new === true });
+      } else if (args[0] === 'resume' || args[0] === 'forget') {
+        if (args.length !== 1 || options.file || options['submission-id'] || flags.new) throw new NansenError(`Use: nansen feedback ${args[0]} [--json]`, ErrorCode.INVALID_PARAMS);
+        receipt = await managedFeedback(api, { forget: args[0] === 'forget' });
       } else if (args[0] === 'get') {
         const id = required(args[1], 'Feedback ID', 'nansen feedback get <feedback-id> [--json]');
         if (args.length !== 2) throw new NansenError('Use: nansen feedback get <feedback-id> [--json]', ErrorCode.INVALID_PARAMS);
-        receipt = await requestFeedback(api, `${PATH}/${encodeURIComponent(id)}`);
+        const local = path.join(authDirectory(), 'feedback', 'recovery.json');
+        if (fs.lstatSync(local, { throwIfNoEntry: false })) {
+          receipt = await withFeedbackJournal(async journal => {
+            if (journal.entry?.state !== 'confirmed' || journal.entry.feedback_id !== id) return requestFeedback(api, `${PATH}/${encodeURIComponent(id)}`);
+            const identity = await feedbackIdentity(api);
+            if (identity.account !== journal.entry.account || identity.environment !== journal.entry.environment) throw new NansenError('Use the original account and NANSEN_BASE_URL to read the saved receipt.', 'feedback_identity_mismatch');
+            try { return await requestFeedback(identity.api, `${PATH}/${encodeURIComponent(id)}`, undefined, journal.entry.submission_id); }
+            catch (error) { if (error.status === 404 || error.details?.reason === 'feedback_erased') journal.clear(); throw error; }
+          });
+        } else receipt = await requestFeedback(api, `${PATH}/${encodeURIComponent(id)}`);
       } else {
-        throw new NansenError('Use: nansen feedback submit --file feedback.json --submission-id <new-id>, or nansen feedback get <feedback-id>. Add --json for structured output.', ErrorCode.INVALID_PARAMS);
+        throw new NansenError('Use: nansen feedback submit --file feedback.json, nansen feedback resume, nansen feedback forget, or nansen feedback get <feedback-id>. Add --json for structured output.', ErrorCode.INVALID_PARAMS);
       }
       if (flags.json || flags.pretty || flags.p) return receipt;
-      log(receiptText(receipt));
+      log(receipt.forgotten ? 'Local feedback retry data erased. This does not delete a report already saved by Nansen. Your original input file is unchanged.' : receiptText(receipt));
     },
   };
 }

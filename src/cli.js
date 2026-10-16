@@ -206,7 +206,7 @@ export const VALUELESS_FLAGS = new Set([
   'enrich', 'full', 'human', 'no-browser', 'api-key-stdin', 'enabled', 'disabled', 'expert', 'json', 'offline',
   'no-simulate', 'no-verify-outcome', 'no-revoke-excessive-allowance', 'dry-run',
   'send-api-key', 'all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password',
-  'reveal', 'yes', 'paginate', 'debug',
+  'reveal', 'yes', 'paginate', 'debug', 'new',
 ]);
 
 export function parseArgs(args) {
@@ -1136,7 +1136,7 @@ COMMANDS:
   wallet      ${WALLET_SUBCOMMANDS.join(', ')}
   agent       Ask the Nansen AI research agent (fast/expert modes)
   alerts      list, create, update, toggle, delete
-  feedback    submit a report, get a receipt (--json for structured output)
+  feedback    submit, resume, forget local data, or get a receipt (--json for structured output)
   web         search, fetch
   mcp         install/uninstall/verify the Nansen MCP server
   account     Check the effective credential, plan, and remaining credits (free)
@@ -2618,7 +2618,8 @@ export async function runCLI(rawArgs, deps = {}) {
     || (command === 'doctor' && flags.offline)
     || isMcpUsage
     || command === 'completion'
-    || command === 'cache';
+    || command === 'cache'
+    || (command === 'feedback' && subcommand === 'forget');
   const trackSucceeded = isOfflineCommand ? async () => {} : isAuthMutation ? metadata => trackAuthCommand({ ...metadata, command }) : trackCommandSucceeded;
   const trackFailed = isOfflineCommand ? async () => {} : isAuthMutation ? metadata => trackAuthCommand({ ...metadata, command, failed: true }) : trackCommandFailed;
 

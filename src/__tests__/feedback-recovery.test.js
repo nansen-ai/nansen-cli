@@ -1,0 +1,276 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { afterEach, expect, it, vi } from 'vitest';
+import { feedbackExpiry } from '../feedback-journal.js';
+import { NansenAPI } from '../api.js';
+import { buildFeedbackCommands } from '../commands/feedback.js';
+import { createAuthState } from '../auth-state.js';
+import { createAuthStore } from '../auth-store.js';
+import { resolveCredential } from '../auth-credentials.js';
+import { memoryOperation, sessionFixture } from './fixtures/auth-fixture.js';
+
+const root = fileURLToPath(new URL('../../', import.meta.url));
+const examples = JSON.parse(fs.readFileSync(new URL('./fixtures/feedback-v1.json', import.meta.url)));
+const dirs = [], servers = [], children = [];
+afterEach(async () => {
+  vi.unstubAllGlobals(); vi.unstubAllEnvs();
+  for (const child of children.splice(0)) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  await Promise.all(servers.splice(0).map(server => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); }));
+  for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+async function harness() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'feedback-recovery-')); dirs.push(home);
+  const file = path.join(home, 'report.json');
+  const body = JSON.stringify(examples.accepted.request.body, null, 2) + '\n';
+  fs.writeFileSync(file, body);
+  const journal = path.join(home, '.nansen/feedback/recovery.json');
+  const requests = [];
+  let onPost = (_req, res, _body) => res.destroy();
+  let onGet = (_req, res) => reply(res, 200, examples.accepted.body);
+  const server = http.createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const data = { path: req.url, method: req.method, headers: req.headers, body };
+    requests.push(data);
+    if (req.url === '/api/v1/account') return reply(res, 200, { user_id: req.headers.apikey === 'different-account' ? 'account-B' : 'account-A', plan: 'Free', credits_remaining: 0 });
+    if (req.method === 'POST') onPost(req, res, body);
+    else onGet(req, res);
+  });
+  servers.push(server); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const start = (args, extraEnv = {}) => {
+    const child = spawn(process.execPath, [path.join(root, 'src/index.js'), 'feedback', ...args], {
+      cwd: root, env: { PATH: process.env.PATH, HOME: home, NANSEN_API_KEY: 'synthetic-key', NANSEN_BASE_URL: baseUrl,
+        NANSEN_NO_TELEMETRY: '1', NO_UPDATE_NOTIFIER: '1', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    children.push(child);
+    let stdout = '', stderr = '';
+    child.stdout.on('data', value => stdout += value); child.stderr.on('data', value => stderr += value);
+    const done = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('Real CLI timed out')); }, 15000);
+      child.on('error', reject);
+      child.on('close', (code, signal) => { clearTimeout(timer); resolve({ code, signal, stdout, stderr }); });
+    });
+    return { child, done };
+  };
+  return { home, file, body, journal, requests, baseUrl, start, run: (args, env) => start(args, env).done,
+    post: fn => { onPost = fn; }, get: fn => { onGet = fn; },
+    read: () => JSON.parse(fs.readFileSync(journal, 'utf8')),
+    submit: ['submit', '--file', file, '--json'],
+    hook: code => { const p = path.join(home, 'hook.cjs'); fs.writeFileSync(p, code); return { NODE_OPTIONS: `--require=${p}` }; },
+  };
+}
+function reply(res, status, body) { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); }
+function receipt(req, fields = {}) { return { ...examples.accepted.body, submission_id: req.headers['idempotency-key'], expires_at: feedbackExpiry(Date.now()), ...fields }; }
+function posts(h) { return h.requests.filter(r => r.method === 'POST'); }
+function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
+async function killedPending(h) {
+  const sent = deferred(); h.post((req, res) => sent.resolve({ req, res }));
+  const process = h.start(h.submit); const request = await sent.promise;
+  process.child.kill('SIGKILL'); await process.done;
+  return request;
+}
+
+it.skipIf(process.platform === 'win32')('persists exact account, environment, ID and bytes before POST; resumes after SIGKILL and quota exhaustion', async () => {
+  const h = await harness(); let captured;
+  const sent = deferred();
+  h.post((req, res, body) => {
+    captured = h.read();
+    expect(captured).toMatchObject({ version: 1, state: 'pending', account: 'account-A', environment: h.baseUrl, body });
+    expect(captured.submission_id).toBe(req.headers['idempotency-key']);
+    expect(fs.statSync(h.journal).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(path.dirname(h.journal)).mode & 0o777).toBe(0o700);
+    sent.resolve();
+  });
+  const first = h.start(h.submit); await sent.promise; first.child.kill('SIGKILL'); await first.done;
+  fs.unlinkSync(h.file);
+  h.post((req, res, body) => {
+    expect(body).toBe(h.body);
+    reply(res, 200, receipt(req, { replayed: true, quota: { ...examples.replayed.body.quota, remaining: 0 } }));
+  });
+  const result = await h.run(['resume', '--json', '--cache', '--paginate']);
+  expect(result.code).toBe(0); expect(result.stderr).toBe('');
+  expect(JSON.parse(result.stdout).data).toMatchObject({ submission_id: captured.submission_id, replayed: true, quota: { remaining: 0 } });
+  expect(posts(h).map(r => r.headers['idempotency-key'])).toEqual([captured.submission_id, captured.submission_id]);
+  expect(h.read()).toEqual({ version: 1, state: 'confirmed', submission_id: captured.submission_id, account: 'account-A', environment: h.baseUrl, expires_at: captured.expires_at, feedback_id: examples.accepted.body.feedback_id });
+  expect(fs.readFileSync(h.journal, 'utf8')).not.toContain('description');
+  expect(fs.existsSync(path.join(h.home, '.nansen/cache'))).toBe(false);
+});
+
+it.skipIf(process.platform === 'win32')('retains the same journal when killed before dispatch', async () => {
+  const h = await harness();
+  const env = h.hook(`const real = globalThis.fetch; globalThis.fetch = (url, opts) => {
+    if (opts.method === 'POST' && url.endsWith('/feedback')) { process.kill(process.pid, 'SIGKILL'); return new Promise(() => {}); }
+    return real(url, opts);
+  };`);
+  expect((await h.run(h.submit, env)).signal).toBe('SIGKILL');
+  const saved = h.read(); expect(posts(h)).toHaveLength(0);
+  h.post((req, res) => reply(res, 201, receipt(req)));
+  expect((await h.run(['resume', '--json'])).code).toBe(0);
+  expect(posts(h)[0]).toMatchObject({ body: h.body, headers: { 'idempotency-key': saved.submission_id } });
+});
+
+it.skipIf(process.platform === 'win32')('stops changed account, environment and report, but accepts a rotated key for the same canonical account', async () => {
+  const h = await harness(); await killedPending(h);
+  for (const args of [['resume', '--json'], h.submit]) {
+    const result = await h.run(args, { NANSEN_API_KEY: 'different-account' });
+    expect(JSON.parse(result.stdout).code).toBe('feedback_identity_mismatch');
+  }
+  expect(JSON.parse((await h.run(['resume', '--json'], { NANSEN_BASE_URL: 'http://127.0.0.1:1' })).stdout).code).toBe('feedback_identity_mismatch');
+  fs.writeFileSync(h.file, JSON.stringify({ description: 'changed' }));
+  expect(JSON.parse((await h.run(h.submit)).stdout).code).toBe('feedback_report_changed');
+  expect(posts(h)).toHaveLength(1);
+  h.post((req, res) => reply(res, 200, receipt(req, { replayed: true })));
+  expect((await h.run(['resume', '--json'], { NANSEN_API_KEY: 'rotated-same-account' })).code).toBe(0);
+  expect(posts(h)[1].headers.apikey).toBe('rotated-same-account');
+});
+
+it.skipIf(process.platform === 'win32')('excludes a concurrent process and recovers its OS lock after a hard kill', async () => {
+  const h = await harness(); const sent = deferred(); h.post(() => sent.resolve());
+  const first = h.start(h.submit); await sent.promise;
+  const result = await h.run(h.submit);
+  expect(JSON.parse(result.stdout).code).toBe('feedback_busy'); expect(posts(h)).toHaveLength(1);
+  const id = h.read().submission_id;
+  first.child.kill('SIGKILL'); await first.done;
+  h.post((req, res) => reply(res, 200, receipt(req, { replayed: true })));
+  expect((await h.run(['resume', '--json'])).code).toBe(0); expect(posts(h)[1].headers['idempotency-key']).toBe(id);
+});
+
+it.skipIf(process.platform === 'win32')('prints safe unknown-outcome recovery in JSON and human output without report content or credentials', async () => {
+  const h = await harness(); h.post((_req, res) => res.destroy());
+  const json = await h.run([...h.submit, '--no-retry']);
+  const error = JSON.parse(json.stdout);
+  expect(error.code).toBe('submission_outcome_unknown');
+  expect(error.details).toMatchObject({ outcome: 'unknown', retry_command: 'nansen feedback resume', submission_id: h.read().submission_id });
+  const human = await h.run(['resume', '--no-retry']);
+  expect(human.stdout).toContain('nansen feedback resume');
+  for (const result of [json, human]) {
+    expect(result.stdout + result.stderr).not.toContain('synthetic-key');
+    expect(result.stdout + result.stderr).not.toContain(examples.accepted.request.body.description);
+  }
+});
+
+it.skipIf(process.platform === 'win32')('fails before POST on disk failure and preserves explicit-ID submission', async () => {
+  const h = await harness();
+  const env = h.hook(`const fs = require('node:fs'); const rename = fs.renameSync; fs.renameSync = (a, b) => {
+    if (b.endsWith('/feedback/recovery.json')) throw Object.assign(new Error('synthetic disk failure'), { code: 'ENOSPC' });
+    return rename(a, b);
+  };`);
+  const result = await h.run(h.submit, env);
+  expect(JSON.parse(result.stdout).code).toBe('feedback_storage_unavailable'); expect(posts(h)).toHaveLength(0);
+  h.post((req, res) => reply(res, 201, receipt(req)));
+  expect((await h.run([...h.submit, '--submission-id', 'caller-managed'], env)).code).toBe(0);
+  expect(posts(h)[0].headers['idempotency-key']).toBe('caller-managed');
+});
+
+it.skipIf(process.platform === 'win32')('expires pending data before replay and keeps no identifying metadata; explicit --new starts a deliberate report', async () => {
+  const h = await harness(); await killedPending(h);
+  const deadline = Date.parse(h.read().expires_at);
+  const env = h.hook(`Date.now = () => ${deadline};`);
+  const result = await h.run(['resume', '--json'], env);
+  expect(JSON.parse(result.stdout).code).toBe('feedback_recovery_unavailable');
+  expect(h.read()).toEqual({ version: 1, state: 'cleared' }); expect(posts(h)).toHaveLength(1);
+  expect(JSON.parse((await h.run(h.submit)).stdout).code).toBe('feedback_recovery_unavailable');
+  h.post((req, res) => reply(res, 201, receipt(req)));
+  expect((await h.run([...h.submit, '--new'])).code).toBe(0);
+  expect(posts(h)).toHaveLength(2);
+});
+
+it.skipIf(process.platform === 'win32')('erases offline, blocks replay, and refuses --new while an entry is pending', async () => {
+  const h = await harness(); await killedPending(h);
+  expect(JSON.parse((await h.run([...h.submit, '--new'])).stdout).code).toBe('feedback_pending');
+  const count = h.requests.length;
+  const result = await h.run(['forget', '--json'], { NANSEN_API_KEY: '', NANSEN_BASE_URL: 'http://127.0.0.1:1' });
+  expect(JSON.parse(result.stdout).data).toEqual({ forgotten: true });
+  expect(h.requests).toHaveLength(count); expect(fs.readFileSync(h.file, 'utf8')).toBe(h.body);
+  expect(h.read()).toEqual({ version: 1, state: 'cleared' });
+  expect(JSON.parse((await h.run(['resume', '--json'])).stdout).code).toBe('feedback_recovery_unavailable');
+});
+
+it.skipIf(process.platform === 'win32')('clears local state after feedback_erased, then never replays it', async () => {
+  const h = await harness(); await killedPending(h);
+  h.post((_req, res) => reply(res, 409, { code: 'conflict', reason: 'feedback_erased', message: 'Erased' }));
+  expect((await h.run(['resume', '--json'])).code).toBe(1);
+  expect(h.read()).toEqual({ version: 1, state: 'cleared' });
+  expect(JSON.parse((await h.run(h.submit)).stdout).code).toBe('feedback_recovery_unavailable');
+  expect(posts(h)).toHaveLength(2);
+});
+
+it.skipIf(process.platform === 'win32')('reads a confirmed receipt on resume and clears it on a missing get receipt', async () => {
+  const h = await harness(); h.post((req, res) => reply(res, 201, receipt(req)));
+  expect((await h.run(h.submit)).code).toBe(0);
+  const saved = h.read(); h.get((_req, res) => reply(res, 200, { ...examples.accepted.body, submission_id: saved.submission_id }));
+  expect((await h.run(['resume', '--json'])).code).toBe(0); expect(posts(h)).toHaveLength(1);
+  expect(JSON.parse((await h.run(h.submit)).stdout).code).toBe('feedback_already_confirmed');
+  h.get((_req, res) => reply(res, 404, examples.not_found.body));
+  expect((await h.run(['get', saved.feedback_id, '--json'])).code).toBe(1);
+  expect(h.read()).toEqual({ version: 1, state: 'cleared' });
+});
+
+it.skipIf(process.platform === 'win32')('rejects unknown journal versions, world-readable data, and symlinks without POST', async () => {
+  const h = await harness(); await killedPending(h); const saved = h.read();
+  fs.writeFileSync(h.journal, JSON.stringify({ ...saved, version: 2 }));
+  expect(JSON.parse((await h.run(['resume', '--json'])).stdout).code).toBe('feedback_storage_unavailable');
+  fs.writeFileSync(h.journal, JSON.stringify(saved)); fs.chmodSync(h.journal, 0o644);
+  expect(JSON.parse((await h.run(['resume', '--json'])).stdout).code).toBe('feedback_storage_unavailable');
+  fs.unlinkSync(h.journal); fs.symlinkSync(h.file, h.journal);
+  expect(JSON.parse((await h.run(['resume', '--json'])).stdout).code).toBe('feedback_storage_unavailable');
+  expect(posts(h)).toHaveLength(1);
+});
+
+it('clamps leap-day pending expiry to February 28 of the following year', () => {
+  expect(feedbackExpiry(Date.parse('2028-02-29T12:34:56Z'))).toBe('2029-02-28T12:34:56.000Z');
+});
+
+it.skipIf(process.platform === 'win32')('binds browser recovery to the canonical account and freezes credentials across retries', async () => {
+  const h = await harness(); vi.stubEnv('HOME', h.home);
+  const state = createAuthState({ directory: path.join(h.home, '.nansen'), store: createAuthStore(memoryOperation()) });
+  const bundle = sessionFixture(); const attempt = await state.begin();
+  await state.install(attempt, { bundle, baseUrl: bundle.audience }); await state.finish(attempt);
+  const api = new NansenAPI(undefined, bundle.audience, { credential: resolveCredential({ env: { HOME: h.home } }), authState: state, retry: { baseDelayMs: 0 } });
+  const original = api.requestCredentials.bind(api);
+  const credentials = vi.spyOn(api, 'requestCredentials').mockImplementation(original);
+  let sends = 0;
+  const calls = [];
+  vi.stubGlobal('fetch', async (url, options) => {
+    calls.push(options);
+    if (url.endsWith('/account')) return new Response(JSON.stringify({ user_id: bundle.accountId }));
+    expect(h.read()).toMatchObject({ account: bundle.accountId, environment: bundle.audience, body: h.body });
+    if (++sends === 1) throw new Error('lost response');
+    return new Response(JSON.stringify({ ...examples.accepted.body, submission_id: options.headers['Idempotency-Key'], expires_at: feedbackExpiry(Date.now()) }));
+  });
+  const result = await buildFeedbackCommands().feedback(['submit'], api, { json: true }, { file: h.file });
+  expect(result.submission_id).toBe(h.read().submission_id);
+  expect(credentials).toHaveBeenCalledTimes(1);
+  for (const options of calls) expect(options.headers.Authorization).toBe(`Bearer ${bundle.accessToken}`);
+  for (const secret of [bundle.accessToken, bundle.refreshToken, bundle.privateJwk.d]) expect(fs.readFileSync(h.journal, 'utf8')).not.toContain(secret);
+});
+
+it.skipIf(process.platform === 'win32')('stops replay when expiry occurs during a network retry', async () => {
+  const h = await harness();
+  const env = h.hook(`const real = globalThis.fetch; const now = Date.now; let expired;
+    Date.now = () => expired || now();
+    globalThis.fetch = (url, options) => real(url, options).finally(() => {
+      if (options.method === 'POST' && url.endsWith('/feedback')) expired = Date.parse(JSON.parse(require('node:fs').readFileSync(${JSON.stringify(h.journal)}, 'utf8')).expires_at);
+    });`);
+  h.post((_req, res) => res.destroy());
+  const result = await h.run([...h.submit, '--retries', '1'], env);
+  expect(JSON.parse(result.stdout).code).toBe('feedback_recovery_unavailable');
+  expect(posts(h)).toHaveLength(1); expect(h.read()).toEqual({ version: 1, state: 'cleared' });
+});
+
+it('rejects malformed explicit IDs and valued --new without generating a submission', async () => {
+  const h = await harness();
+  for (const args of [
+    [...h.submit, '--submission-id'],
+    [...h.submit, '--submission-id', 'a', '--submission-id', 'b'],
+    [...h.submit, '--new=false'],
+  ]) {
+    expect((await h.run(args)).code).toBe(1);
+    expect(posts(h)).toHaveLength(0); expect(fs.existsSync(h.journal)).toBe(false);
+  }
+});

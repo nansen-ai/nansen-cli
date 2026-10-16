@@ -2,7 +2,7 @@
   "commands": {
     "feedback": {
       "description": "Send product feedback to Nansen or read an account-scoped receipt. Free; seven reports per account per week, resetting Monday 00:00 UTC. New submissions may be paused; the CLI returns an unavailable error.",
-      "notes": "Use the configured API key or login session. Keep the same submission ID and unchanged report after an uncertain result. No caching or payment fallback. Remove credentials and unnecessary personal context from reports. Backend validates shared report fields; automatic ID persistence is not available in this slice. Agents: send on your own only after an authenticated read shows the account preference is enabled and host controls permit it. Otherwise show the report and ask first; a direct user request permits that report. This CLI version has no preference-read command. Never enable the preference automatically. Submit is noninteractive and does not verify approval. New submissions may be paused before release or during an outage. A 503 with reason feedback_admissions_paused means this attempt accepted no new report and used no weekly allowance. Tell the user feedback is unavailable and stop; do not keep retrying or ask for approval again in the same session. Preserve the ID and unchanged file for a later retry. Accepted-ID replays and receipt reads remain available during a pause.",
+      "notes": "Use the configured API key or login session. Keep the same submission ID and unchanged report after an uncertain result. No caching or payment fallback. Remove credentials and unnecessary personal context from reports. Without --submission-id, save one private submission before sending. Resume with nansen feedback resume. Use --new for a deliberate new report after confirmation or local erasure. Pending data expires after one calendar year; feedback commands enforce cleanup. Automatic IDs require POSIX private storage and native locking; otherwise supply an explicit ID. Backend validates shared report fields. Agents: send on your own only after an authenticated read shows the account preference is enabled and host controls permit it. Otherwise show the report and ask first; a direct user request permits that report. This CLI version has no preference-read command. Never enable the preference automatically. Submit is noninteractive and does not verify approval. New submissions may be paused before release or during an outage. A 503 with reason feedback_admissions_paused means this attempt accepted no new report and used no weekly allowance. Tell the user feedback is unavailable and stop; do not keep retrying or ask for approval again in the same session. Preserve the ID and unchanged file for a later retry. Accepted-ID replays and receipt reads remain available during a pause.",
       "subcommands": {
         "submit": {
           "description": "Submit a JSON report. Received means saved; human review may still be pending.",
@@ -15,12 +15,16 @@
             },
             "submission-id": {
               "type": "string",
-              "required": true,
+              "required": false,
               "description": "New opaque ID: 1 to 128 ASCII letters, digits, underscores or hyphens. Reuse with unchanged file on retries."
             },
             "json": {
               "type": "boolean",
               "description": "Return the standard JSON receipt or error envelope."
+            },
+            "new": {
+              "type": "boolean",
+              "description": "Deliberately start a new generated submission after confirmation or local erasure. Never replaces pending data."
             }
           },
           "returns": [
@@ -35,6 +39,7 @@
             "quota"
           ],
           "examples": [
+            "nansen feedback submit --file feedback.json --json",
             "nansen feedback submit --file feedback.json --submission-id report-123 --json"
           ]
         },
@@ -61,6 +66,30 @@
           ],
           "examples": [
             "nansen feedback get fb_123 --json"
+          ]
+        },
+        "resume": {
+          "description": "Retry the saved report and ID with the original account and API environment, or read its confirmed receipt. Does not need the original file.",
+          "options": {
+            "json": {
+              "type": "boolean",
+              "description": "Return structured output."
+            }
+          },
+          "examples": [
+            "nansen feedback resume --json"
+          ]
+        },
+        "forget": {
+          "description": "Erase local recovery data offline. Does not delete a server report or the original input file. Stops replay until a deliberate --new submission.",
+          "options": {
+            "json": {
+              "type": "boolean",
+              "description": "Return structured output."
+            }
+          },
+          "examples": [
+            "nansen feedback forget --json"
           ]
         }
       }

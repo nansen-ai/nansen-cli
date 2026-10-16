@@ -26,15 +26,37 @@ Send product feedback to Nansen with your configured API key or login session:
 }
 ```
 
-Save the report as `feedback.json`, then use a new submission ID:
+Save the report as `feedback.json`. Omit the ID to save private recovery data before sending:
 
 ```bash
-nansen feedback submit --file feedback.json --submission-id report-123 --json
+nansen feedback submit --file feedback.json --json
+nansen feedback resume --json
 nansen feedback get fb_123 --json
 ```
 
-Keep the same ID and unchanged file when retrying an uncertain submission. This
-version requires an explicit ID. Remove `--json` for human output. `received` means
+`resume` uses the saved ID and exact report bytes, even if the input file is gone.
+Changing the account, API environment or report stops replay. After confirmation,
+`resume` reads the receipt without sending another report. To deliberately start
+another report, use `feedback submit --new --file feedback.json`.
+
+One recovery entry lives in `~/.nansen/feedback/recovery.json`, with private
+permissions and a process lock. Confirmed receipts remove report content and keep
+only the submission ID, feedback ID, account, environment and expiry. Feedback
+recovery operations erase expired data when they next open the journal. Pending
+reports expire after one calendar year. No cleanup runs while the CLI is closed. `nansen feedback forget` erases local recovery data
+offline, leaving a content-free marker that prevents accidental replay. It does
+not delete your input file or a report on the server. A missing or erased server
+receipt also clears the local entry. Do not back up pending report content.
+
+Automatic IDs require POSIX private storage and the optional native locking
+binding. On Windows or when storage cannot be secured, supply a caller-managed
+`--submission-id report-123` and keep that ID and the unchanged file for retries.
+This explicit-ID path does not save a local report. Recovery format version 1
+survives upgrades; unsupported or damaged journals stop rather than start fresh.
+Older explicit-ID-only CLI releases do not read recovery journals; finish recovery
+with a supporting version before rolling back.
+
+Remove `--json` for human output. `received` means
 saved, `reviewed` means triaged, and `closed` means review is complete. Review does
 not promise a fix or a date.
 
