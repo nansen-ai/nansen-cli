@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../x402-policy.js', () => ({
   evaluatePaymentRequirement: vi.fn(),
-  signWithSessionCharge: vi.fn(),
+  signWithSpendCharge: vi.fn(),
   resolvePaymentAmount: (requirement) =>
     requirement.amount !== undefined && requirement.amount !== null && requirement.amount !== ''
       ? requirement.amount
@@ -25,7 +25,7 @@ vi.mock('../x402-payment-balance.js', () => ({
   hasSufficientEvmPaymentBalance: vi.fn(),
 }));
 
-import { evaluatePaymentRequirement, signWithSessionCharge } from '../x402-policy.js';
+import { evaluatePaymentRequirement, signWithSpendCharge } from '../x402-policy.js';
 import { wcExec } from '../walletconnect-exec.js';
 import { hasSufficientEvmPaymentBalance } from '../x402-payment-balance.js';
 import {
@@ -61,7 +61,7 @@ const releaseCharge = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   // The real helper charges the cap, then signs; x402-policy.test.js covers it.
-  signWithSessionCharge.mockImplementation(async (_decision, sign) => ({ ok: true, value: await sign(), release: releaseCharge }));
+  signWithSpendCharge.mockImplementation(async (_decision, sign) => ({ ok: true, value: await sign(), release: releaseCharge }));
   hasSufficientEvmPaymentBalance.mockResolvedValue(true);
   // Default: wallet connected, wcExec returns whoami then sign result
   wcExec.mockImplementation((_cmd, args) => {
@@ -339,12 +339,29 @@ describe('createWalletConnectPaymentSignatures — option fallback', () => {
 
   it('refuses an option over the session cap without prompting, and reports why', async () => {
     const reason = 'Refusing to auto-pay $0.01 USD: ... session cap.';
-    signWithSessionCharge.mockResolvedValue({ ok: false, reason });
+    signWithSpendCharge.mockResolvedValue({ ok: false, reason });
     const onCapRefusal = vi.fn();
 
     await expect(collect([bsc(U)], { onCapRefusal })).rejects.toThrow(reason);
     expect(signCalls()).toHaveLength(0);
     expect(onCapRefusal).toHaveBeenCalledWith(reason);
+  });
+
+  it('refuses an option over the daily cap without prompting', async () => {
+    const actual = await vi.importActual('../x402-policy.js');
+    actual.resetSpendCapsForTests();
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '0';
+    evaluatePaymentRequirement.mockImplementation(actual.evaluatePaymentRequirement);
+    signWithSpendCharge.mockImplementation(actual.signWithSpendCharge);
+    const onCapRefusal = vi.fn();
+    try {
+      await expect(collect([bsc(U)], { onCapRefusal })).rejects.toThrow(/exceed the \$0\.00 daily cap/);
+      expect(signCalls()).toHaveLength(0);
+      expect(onCapRefusal).toHaveBeenCalledWith(expect.stringContaining('NANSEN_X402_DAILY_MAX_AMOUNT'));
+    } finally {
+      delete process.env.NANSEN_X402_DAILY_MAX_AMOUNT;
+      actual.resetSpendCapsForTests();
+    }
   });
 
   it('charges the session cap only for an option that reaches the prompt', async () => {
@@ -354,8 +371,8 @@ describe('createWalletConnectPaymentSignatures — option fallback', () => {
 
     await collect([bsc(U), bsc(USD1)]);
 
-    expect(signWithSessionCharge).toHaveBeenCalledTimes(1);
-    expect(signWithSessionCharge).toHaveBeenCalledWith(decision, expect.any(Function));
+    expect(signWithSpendCharge).toHaveBeenCalledTimes(1);
+    expect(signWithSpendCharge).toHaveBeenCalledWith(decision, expect.any(Function));
   });
 
   it('yields the release for the session charge with each signature', async () => {

@@ -14,7 +14,7 @@ import {
 import { resolvePassword } from './keychain.js';
 import { EVM_X402_RPCS, hasSufficientEvmPaymentBalance, hasSufficientSvmPaymentBalance } from './x402-payment-balance.js';
 export { EVM_X402_RPCS } from './x402-payment-balance.js';
-import { evaluatePaymentRequirement, resolvePaymentAmount, signWithSessionCharge } from './x402-policy.js';
+import { evaluatePaymentRequirement, resolvePaymentAmount, signWithSpendCharge } from './x402-policy.js';
 import { EVM_X402_TOKENS } from './x402-tokens.js';
 export { EVM_X402_TOKENS } from './x402-tokens.js';
 
@@ -127,11 +127,11 @@ async function buildPaymentForRequirement(requirement, exported, url, onCapRefus
 }
 
 /**
- * Charge the session cap and run the local signer. Called right before
+ * Charge the spend caps and run the local signer. Called right before
  * signing, after every async check that could still skip the option.
  */
 async function chargeAndSign(decision, onCapRefusal, sign) {
-  const signed = await signWithSessionCharge(decision, sign);
+  const signed = await signWithSpendCharge(decision, sign);
   if (!signed.ok) {
     console.error(`[x402] ${signed.reason}`);
     onCapRefusal?.(signed.reason);
@@ -212,7 +212,7 @@ async function signApprovedRequirement(requirement, exported, url, decision, onC
  * @param {Response} response - The 402 HTTP response
  * @param {string} url - The original request URL
  * @param {object} options - { password, walletName, onCapRefusal }, where
- *   onCapRefusal(reason) is called when the session cap refuses an option
+ *   onCapRefusal(reason) is called when a spend cap refuses an option
  * @returns {AsyncGenerator<{ signature: string, network: string, asset: string, payment: object, releaseCharge: Function }>}
  */
 export async function* createPaymentSignatures(response, url, options = {}) {

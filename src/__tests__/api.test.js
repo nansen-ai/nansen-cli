@@ -4208,6 +4208,7 @@ describe('NansenAPI', () => {
 
       afterEach(() => {
         delete process.env.NANSEN_X402_SESSION_MAX_AMOUNT;
+        delete process.env.NANSEN_X402_DAILY_MAX_AMOUNT;
         vi.doUnmock('../x402.js');
         vi.doUnmock('../walletconnect-x402.js');
       });
@@ -4241,9 +4242,12 @@ describe('NansenAPI', () => {
         expect(err.message).toBe(reason);
       });
 
-      it('reports an invalid session cap once, before any wallet or network work', async () => {
+      it.each([
+        ['NANSEN_X402_SESSION_MAX_AMOUNT', 'session'],
+        ['NANSEN_X402_DAILY_MAX_AMOUNT', 'daily'],
+      ])('reports an invalid %s once, before any wallet or network work', async (name) => {
         if (LIVE_TEST) return;
-        process.env.NANSEN_X402_SESSION_MAX_AMOUNT = '0x10';
+        process.env[name] = '0x10';
         mockFetch.mockResolvedValueOnce(paymentRequired());
         const localSignatures = vi.fn();
         const wcSignaturesSpy = vi.fn();
@@ -4254,7 +4258,7 @@ describe('NansenAPI', () => {
 
         const err = await requestError(new FreshAPI(null, 'https://api.nansen.ai'));
 
-        expect(err.message).toContain('NANSEN_X402_SESSION_MAX_AMOUNT="0x10" is not a valid USD amount');
+        expect(err.message).toContain(`${name}="0x10" is not a valid USD amount`);
         expect(localSignatures).not.toHaveBeenCalled();
         expect(wcSignaturesSpy).not.toHaveBeenCalled();
         expect(mockFetch).toHaveBeenCalledTimes(1);

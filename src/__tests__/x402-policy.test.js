@@ -1,8 +1,12 @@
 /**
  * Tests for src/x402-policy.js
- * Covers the known-asset allowlist, per-payment USD cap, and payTo allowlist.
+ * Covers the known-asset allowlist, per-payment USD cap, payTo allowlist, and
+ * the session and daily cumulative caps.
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock wallet.js so getWalletConfig doesn't touch the filesystem.
@@ -21,12 +25,15 @@ const {
   DEFAULT_X402_MAX_AMOUNT_USD,
   SUPPORTED_X402_SCHEMES,
   chargeSessionSpend,
+  chargeDailySpend,
   resolveSessionMaxMicroUsd,
-  sessionCapConfigError,
-  signWithSessionCharge,
-  resetSessionSpendForTests,
+  resolveDailyMaxMicroUsd,
+  spendCapConfigError,
+  signWithSpendCharge,
+  resetSpendCapsForTests,
 } = await import('../x402-policy.js');
 const { SOLANA_MAINNET_NETWORK } = await import('../x402-tokens.js');
+const { x402SpendLedgerPath } = await import('../x402-spend-ledger.js');
 
 // Canonical Base USDC requirement for reuse across tests.
 const BASE_USDC_REQUIREMENT = {
@@ -536,21 +543,21 @@ describe('resolveSessionMaxMicroUsd', () => {
   });
 });
 
-describe('sessionCapConfigError', () => {
-  beforeEach(() => resetSessionSpendForTests());
+describe('spendCapConfigError', () => {
+  beforeEach(() => resetSpendCapsForTests());
   afterEach(() => {
     delete process.env.NANSEN_X402_SESSION_MAX_AMOUNT;
-    resetSessionSpendForTests();
+    resetSpendCapsForTests();
   });
 
   it.each([undefined, 'unlimited', '0', '5.00'])('is null for %j', (value) => {
     if (value !== undefined) process.env.NANSEN_X402_SESSION_MAX_AMOUNT = value;
-    expect(sessionCapConfigError()).toBeNull();
+    expect(spendCapConfigError()).toBeNull();
   });
 
   it('returns the refusal reason for an invalid value', () => {
     process.env.NANSEN_X402_SESSION_MAX_AMOUNT = '1e3';
-    expect(sessionCapConfigError()).toBe(
+    expect(spendCapConfigError()).toBe(
       'Refusing to auto-pay: NANSEN_X402_SESSION_MAX_AMOUNT="1e3" is not a valid USD amount. ' +
       'Set it to a number such as 5.00, or unset it to disable the session cap. No signature was produced.',
     );
@@ -564,10 +571,10 @@ describe('chargeSessionSpend', () => {
     return decision;
   };
 
-  beforeEach(() => resetSessionSpendForTests());
+  beforeEach(() => resetSpendCapsForTests());
   afterEach(() => {
     delete process.env.NANSEN_X402_SESSION_MAX_AMOUNT;
-    resetSessionSpendForTests();
+    resetSpendCapsForTests();
   });
 
   it('always passes when the cap is unset', () => {
@@ -656,20 +663,20 @@ describe('chargeSessionSpend', () => {
   });
 });
 
-describe('signWithSessionCharge', () => {
+describe('signWithSpendCharge', () => {
   const decision = () => evaluatePaymentRequirement({ ...BASE_USDC_REQUIREMENT, amount: '10000' });
 
   beforeEach(() => {
-    resetSessionSpendForTests();
+    resetSpendCapsForTests();
     process.env.NANSEN_X402_SESSION_MAX_AMOUNT = '0.01';
   });
   afterEach(() => {
     delete process.env.NANSEN_X402_SESSION_MAX_AMOUNT;
-    resetSessionSpendForTests();
+    resetSpendCapsForTests();
   });
 
   it('returns the signature with a release that frees the charge', async () => {
-    const signed = await signWithSessionCharge(decision(), async () => 'sig');
+    const signed = await signWithSpendCharge(decision(), async () => 'sig');
     expect(signed).toEqual({ ok: true, value: 'sig', release: expect.any(Function) });
     expect(chargeSessionSpend(decision()).ok).toBe(false);
 
@@ -680,24 +687,156 @@ describe('signWithSessionCharge', () => {
   it('refuses without calling the signer when the cap is reached', async () => {
     expect(chargeSessionSpend(decision()).ok).toBe(true);
     const sign = vi.fn();
-    const signed = await signWithSessionCharge(decision(), sign);
+    const signed = await signWithSpendCharge(decision(), sign);
     expect(signed.ok).toBe(false);
     expect(signed.reason).toContain('exceed the $0.01 session cap');
     expect(sign).not.toHaveBeenCalled();
   });
 
   it('releases the charge and rethrows when the signer fails', async () => {
-    await expect(signWithSessionCharge(decision(), async () => { throw new Error('rejected by wallet'); }))
+    await expect(signWithSpendCharge(decision(), async () => { throw new Error('rejected by wallet'); }))
       .rejects.toThrow('rejected by wallet');
     expect(chargeSessionSpend(decision()).ok).toBe(true);
   });
 
   it('charges before the signer starts, so a concurrent request sees the charge', async () => {
     let finish;
-    const first = signWithSessionCharge(decision(), () => new Promise((resolve) => { finish = resolve; }));
-    const second = await signWithSessionCharge(decision(), async () => 'sig');
+    const first = signWithSpendCharge(decision(), () => new Promise((resolve) => { finish = resolve; }));
+    const second = await signWithSpendCharge(decision(), async () => 'sig');
     expect(second.ok).toBe(false);
     finish('sig');
     expect((await first).ok).toBe(true);
+  });
+});
+
+describe('resolveDailyMaxMicroUsd', () => {
+  afterEach(() => {
+    delete process.env.NANSEN_X402_DAILY_MAX_AMOUNT;
+  });
+
+  it.each([undefined, '', '   '])('defaults to $50.00 for %j', (value) => {
+    if (value !== undefined) process.env.NANSEN_X402_DAILY_MAX_AMOUNT = value;
+    expect(resolveDailyMaxMicroUsd()).toBe(50_000_000n);
+  });
+
+  it.each(['unlimited', 'Unlimited'])('disables the cap for %j', (value) => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = value;
+    expect(resolveDailyMaxMicroUsd()).toBeNull();
+  });
+
+  it('parses a decimal exactly', () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '0.29';
+    expect(resolveDailyMaxMicroUsd()).toBe(290_000n);
+  });
+
+  it.each(['-1', '1e3', '0x10', 'ten'])('returns an error instead of falling back for %j', (value) => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = value;
+    expect(resolveDailyMaxMicroUsd().error).toBe(
+      `Refusing to auto-pay: NANSEN_X402_DAILY_MAX_AMOUNT="${value}" is not a valid USD amount. ` +
+      'Set it to a number such as 5.00, or set NANSEN_X402_DAILY_MAX_AMOUNT=unlimited to disable the daily cap. No signature was produced.',
+    );
+  });
+});
+
+describe('daily spend cap', () => {
+  const NOW = new Date('2026-10-16T12:00:00Z');
+  const approve = (amount) => {
+    const decision = evaluatePaymentRequirement({ ...BASE_USDC_REQUIREMENT, amount });
+    expect(decision.ok).toBe(true);
+    return decision;
+  };
+  let originalHome;
+  let home;
+
+  beforeEach(() => {
+    originalHome = process.env.HOME;
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'nansen-x402-daily-'));
+    process.env.HOME = home;
+    resetSpendCapsForTests();
+  });
+  afterEach(() => {
+    process.env.HOME = originalHome;
+    fs.rmSync(home, { recursive: true, force: true });
+    delete process.env.NANSEN_X402_SESSION_MAX_AMOUNT;
+    delete process.env.NANSEN_X402_DAILY_MAX_AMOUNT;
+    resetSpendCapsForTests();
+  });
+
+  it('applies the $50.00 default when the variable is unset', () => {
+    // $1 each, the per-payment cap.
+    for (let i = 0; i < 50; i++) expect(chargeDailySpend(approve('1000000'), NOW).ok).toBe(true);
+
+    expect(chargeDailySpend(approve('1'), NOW)).toEqual({
+      ok: false,
+      reason:
+        'Refusing to auto-pay $0.000001 USDC: x402 auto-payments today (UTC) already total $50.00, and the payment ' +
+        'would exceed the $50.00 daily cap. To authorize, raise it with NANSEN_X402_DAILY_MAX_AMOUNT=<usd> ' +
+        '(or NANSEN_X402_DAILY_MAX_AMOUNT=unlimited to disable). No signature was produced.',
+    });
+  });
+
+  it('counts payments made by earlier runs', () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '0.02';
+    expect(chargeDailySpend(approve('10000'), NOW).ok).toBe(true);
+    resetSpendCapsForTests(); // a new process
+    expect(chargeDailySpend(approve('10000'), NOW).ok).toBe(true);
+    resetSpendCapsForTests();
+    expect(chargeDailySpend(approve('10000'), NOW).reason).toContain('already total $0.02');
+  });
+
+  it('touches no file when the cap is unlimited', () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = 'unlimited';
+    for (let i = 0; i < 20; i++) expect(chargeDailySpend(approve('1000000'), NOW).ok).toBe(true);
+    expect(fs.existsSync(path.join(home, '.nansen'))).toBe(false);
+  });
+
+  it('turns a ledger problem into a refusal reason', () => {
+    expect(chargeDailySpend(approve('10000'), NOW).ok).toBe(true);
+    fs.writeFileSync(x402SpendLedgerPath(NOW), '{');
+    const refused = chargeDailySpend(approve('10000'), NOW);
+    expect(refused.ok).toBe(false);
+    expect(refused.reason).toContain(`the x402 daily spend ledger ${x402SpendLedgerPath(NOW)} is malformed`);
+  });
+
+  it('refuses a payment whose amount is unknown', () => {
+    expect(chargeDailySpend({ ...approve('10000'), amountMicroUsd: undefined }, NOW).reason)
+      .toContain('payment amount is unknown, so the daily cap cannot be applied');
+  });
+
+  it('is reported by spendCapConfigError when invalid', () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '5usd';
+    expect(spendCapConfigError()).toContain('NANSEN_X402_DAILY_MAX_AMOUNT="5usd" is not a valid USD amount');
+  });
+
+  describe('in signWithSpendCharge', () => {
+    it('refuses without calling the signer, and frees the session charge', async () => {
+      process.env.NANSEN_X402_SESSION_MAX_AMOUNT = '0.01';
+      process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '0';
+      const sign = vi.fn();
+
+      const signed = await signWithSpendCharge(approve('10000'), sign);
+      expect(signed.ok).toBe(false);
+      expect(signed.reason).toContain('exceed the $0.00 daily cap');
+      expect(sign).not.toHaveBeenCalled();
+      expect(chargeSessionSpend(approve('10000')).ok).toBe(true);
+    });
+
+    it('does not charge the daily total when the session cap refuses first', async () => {
+      process.env.NANSEN_X402_SESSION_MAX_AMOUNT = '0';
+      const signed = await signWithSpendCharge(approve('10000'), vi.fn());
+      expect(signed.reason).toContain('session cap');
+      expect(fs.existsSync(x402SpendLedgerPath())).toBe(false);
+    });
+
+    it('keeps the daily charge when the signer fails or the payment is released', async () => {
+      process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '0.02';
+      await expect(signWithSpendCharge(approve('10000'), async () => { throw new Error('rejected by wallet'); }))
+        .rejects.toThrow('rejected by wallet');
+      const signed = await signWithSpendCharge(approve('10000'), async () => 'sig');
+      signed.release();
+
+      const refused = await signWithSpendCharge(approve('10000'), vi.fn());
+      expect(refused.reason).toContain('already total $0.02');
+    });
   });
 });
