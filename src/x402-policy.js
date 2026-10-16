@@ -2,12 +2,14 @@
  * x402 payment policy guard.
  * Decides whether an auto-payment is safe to sign before any signature is produced.
  * Three layers: known-asset allowlist, optional payTo allowlist, per-payment USD cap.
- * An optional per-process cumulative cap is charged by each signer, through
- * signWithSessionCharge, immediately before it signs.
+ * Two cumulative caps, an optional per-process one and a persisted daily one,
+ * are charged by each signer, through signWithSpendCharge, immediately before
+ * it signs.
  */
 
 import { EVM_X402_TOKENS, SVM_X402_TOKENS } from './x402-tokens.js';
 import { getWalletConfig } from './wallet.js';
+import { addToDailySpend } from './x402-spend-ledger.js';
 
 // The only x402 scheme this client can honour. "exact" = a fixed-amount transfer
 // authorization (EIP-3009 / Permit2 on EVM, SPL TransferChecked on SVM). Any other
@@ -235,11 +237,13 @@ export function evaluatePaymentRequirement(requirement) {
 // It resets with every process: the cap bounds one invocation (its retries,
 // fallbacks and concurrent requests), not spending across separate runs.
 let sessionSpentMicroUsd = 0n;
-// The cap as first read, so it can't change partway through a run.
+// The caps as first read, so they can't change partway through a run.
 let sessionCap;
+let dailyCap;
 
 const MICRO_USD_PER_USD = 1_000_000n;
 const USD_AMOUNT = /^\d+(\.\d+)?$/;
+const DEFAULT_DAILY_MAX_MICRO_USD = 50n * MICRO_USD_PER_USD;
 
 /**
  * Token base units → micro-USD, rounded up so a fraction of a micro-dollar is
@@ -257,22 +261,22 @@ function formatMicroUsd(micro) {
 }
 
 /**
- * Parse NANSEN_X402_SESSION_MAX_AMOUNT as a cap in micro-USD.
- * Returns null when the cap is disabled (unset, empty or "unlimited"), or
- * { error } for a value that isn't a plain non-negative decimal: a safety cap
- * the user asked for must not silently turn off because of a typo.
+ * Parse a USD cap environment variable as micro-USD.
+ * Returns `fallback` when it is unset or empty, null when it is "unlimited",
+ * or { error } for a value that isn't a plain non-negative decimal: a safety
+ * cap the user asked for must not silently turn off because of a typo.
  */
-export function resolveSessionMaxMicroUsd() {
-  const env = process.env.NANSEN_X402_SESSION_MAX_AMOUNT;
-  if (env === undefined || env.trim() === '') return null;
+function resolveCapMicroUsd(name, fallback, label) {
+  const env = process.env[name];
+  if (env === undefined || env.trim() === '') return fallback;
   const value = env.trim();
   if (value.toLowerCase() === 'unlimited') return null;
   // Plain decimals only: Number() would read "0x10" as $16 and "1e3" as $1000.
   if (!USD_AMOUNT.test(value)) {
     return {
       error:
-        `Refusing to auto-pay: NANSEN_X402_SESSION_MAX_AMOUNT="${env}" is not a valid USD amount. ` +
-        'Set it to a number such as 5.00, or unset it to disable the session cap. No signature was produced.',
+        `Refusing to auto-pay: ${name}="${env}" is not a valid USD amount. ` +
+        `Set it to a number such as 5.00, or ${fallback === null ? 'unset it' : `set ${name}=unlimited`} to disable the ${label} cap. No signature was produced.`,
     };
   }
   const [whole, fraction = ''] = value.split('.');
@@ -280,24 +284,79 @@ export function resolveSessionMaxMicroUsd() {
   return BigInt(whole) * MICRO_USD_PER_USD + BigInt(fraction.slice(0, 6).padEnd(6, '0'));
 }
 
+/**
+ * NANSEN_X402_SESSION_MAX_AMOUNT in micro-USD: null when disabled (unset,
+ * empty or "unlimited"), or { error } when invalid.
+ */
+export function resolveSessionMaxMicroUsd() {
+  return resolveCapMicroUsd('NANSEN_X402_SESSION_MAX_AMOUNT', null, 'session');
+}
+
+/**
+ * NANSEN_X402_DAILY_MAX_AMOUNT in micro-USD: $50.00 when unset or empty, null
+ * for "unlimited", or { error } when invalid.
+ */
+export function resolveDailyMaxMicroUsd() {
+  return resolveCapMicroUsd('NANSEN_X402_DAILY_MAX_AMOUNT', DEFAULT_DAILY_MAX_MICRO_USD, 'daily');
+}
+
 function sessionMaxMicroUsd() {
   if (sessionCap === undefined) sessionCap = resolveSessionMaxMicroUsd();
   return sessionCap;
 }
 
+function dailyMaxMicroUsd() {
+  if (dailyCap === undefined) dailyCap = resolveDailyMaxMicroUsd();
+  return dailyCap;
+}
+
+const capError = cap => (cap !== null && typeof cap === 'object' ? cap.error : null);
+
 /**
- * The refusal reason when NANSEN_X402_SESSION_MAX_AMOUNT is invalid, else
- * null. Check it once before any payment work, so the error is reported once
- * and before any balance or blockhash request.
+ * The refusal reason when NANSEN_X402_SESSION_MAX_AMOUNT or
+ * NANSEN_X402_DAILY_MAX_AMOUNT is invalid, else null. Check it once before
+ * any payment work, so the error is reported once and before any balance or
+ * blockhash request.
  */
-export function sessionCapConfigError() {
-  const cap = sessionMaxMicroUsd();
-  return cap !== null && typeof cap === 'object' ? cap.error : null;
+export function spendCapConfigError() {
+  return capError(sessionMaxMicroUsd()) ?? capError(dailyMaxMicroUsd());
+}
+
+const unknownAmount = cap =>
+  `Refusing to auto-pay: payment amount is unknown, so the ${cap} cap cannot be applied. No signature was produced.`;
+const knownAmount = decision => typeof decision.amountMicroUsd === 'string' && /^\d+$/.test(decision.amountMicroUsd);
+
+/**
+ * Count an approved payment against the persisted daily cap. Never refunded.
+ * Returns { ok: true } or { ok: false, reason }.
+ */
+export function chargeDailySpend(decision, now = new Date()) {
+  const cap = dailyMaxMicroUsd();
+  if (cap === null) return { ok: true };
+  if (typeof cap === 'object') return { ok: false, reason: cap.error };
+  if (!knownAmount(decision)) return { ok: false, reason: unknownAmount('daily') };
+
+  const micro = BigInt(decision.amountMicroUsd);
+  let result;
+  try {
+    result = addToDailySpend(micro, cap, now);
+  } catch (err) {
+    return { ok: false, reason: err.message };
+  }
+  if (result.ok) return { ok: true };
+  return {
+    ok: false,
+    reason:
+      `Refusing to auto-pay ${formatMicroUsd(micro)} ${decision.symbol}: x402 auto-payments today (UTC) already total ` +
+      `${formatMicroUsd(result.spent)}, and the payment would exceed the ${formatMicroUsd(cap)} daily cap. ` +
+      'To authorize, raise it with NANSEN_X402_DAILY_MAX_AMOUNT=<usd> (or NANSEN_X402_DAILY_MAX_AMOUNT=unlimited to disable). ' +
+      'No signature was produced.',
+  };
 }
 
 /**
  * Charge an approved payment against the per-process cumulative cap.
- * Prefer signWithSessionCharge, which also runs the signer and releases the
+ * Prefer signWithSpendCharge, which also runs the signer and releases the
  * charge when signing fails.
  *
  * `decision` is the { ok: true } result of evaluatePaymentRequirement.
@@ -309,8 +368,8 @@ export function chargeSessionSpend(decision) {
   if (cap === null) return { ok: true, release: () => {} };
   if (typeof cap === 'object') return { ok: false, reason: cap.error };
 
-  if (typeof decision.amountMicroUsd !== 'string' || !/^\d+$/.test(decision.amountMicroUsd)) {
-    return { ok: false, reason: 'Refusing to auto-pay: payment amount is unknown, so the session cap cannot be applied. No signature was produced.' };
+  if (!knownAmount(decision)) {
+    return { ok: false, reason: unknownAmount('session') };
   }
 
   const micro = BigInt(decision.amountMicroUsd);
@@ -336,19 +395,26 @@ export function chargeSessionSpend(decision) {
 }
 
 /**
- * Charge the session cap for an approved payment, then run `sign`. The signer
- * starts in the same tick as the charge, so concurrent requests in one process
- * can't both pass the check. Call it after every async check that could still
- * skip the option.
+ * Charge the session and daily caps for an approved payment, then run `sign`.
+ * The charges and the start of the signer happen in the same tick, so
+ * concurrent requests in one process can't both pass the checks. Call it
+ * after every async check that could still skip the option.
  *
- * Returns { ok: false, reason } when the cap refuses, without calling `sign`,
- * or { ok: true, value, release }. The charge is released if `sign` throws.
- * The caller calls release() if the server cleanly rejects the payment; any
- * other outcome keeps the charge, so the cap can only over-count.
+ * Returns { ok: false, reason } when a cap refuses, without calling `sign`,
+ * or { ok: true, value, release }. The session charge is released if `sign`
+ * throws. The caller calls release() if the server cleanly rejects the
+ * payment; any other outcome keeps it, so the session cap can only
+ * over-count. The daily charge is never released.
  */
-export async function signWithSessionCharge(decision, sign) {
+export async function signWithSpendCharge(decision, sign) {
   const charge = chargeSessionSpend(decision);
   if (!charge.ok) return charge;
+  // The session check comes first: it can be undone, the daily charge can't.
+  const daily = chargeDailySpend(decision);
+  if (!daily.ok) {
+    charge.release();
+    return daily;
+  }
   try {
     return { ok: true, value: await sign(), release: charge.release };
   } catch (err) {
@@ -357,7 +423,8 @@ export async function signWithSessionCharge(decision, sign) {
   }
 }
 
-export function resetSessionSpendForTests() {
+export function resetSpendCapsForTests() {
   sessionSpentMicroUsd = 0n;
   sessionCap = undefined;
+  dailyCap = undefined;
 }
