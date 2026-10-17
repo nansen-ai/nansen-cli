@@ -333,6 +333,7 @@ it('stops on account rollout denial and preserves an earlier lost-response outco
   for (const lost of [false, true]) {
     const h = await harness(lost ? ['disconnect', denial] : [denial]);
     const r = await h.run([...h.submit, '--json']); const error = JSON.parse(r.stdout);
+    expect(error.code).toBe(lost ? 'submission_outcome_unknown' : 'forbidden');
     expect(error.details).toMatchObject({ reason: 'feedback_not_enabled', outcome: lost ? 'unknown' : 'rejected' });
     expect(r.stdout).toContain('Stop automatic retries'); expect(h.requests).toHaveLength(lost ? 2 : 1);
   }
@@ -343,4 +344,24 @@ it('keeps existing telemetry accurate for preference reads without recording pre
   const event = JSON.parse(fs.readFileSync(h.eventFile, 'utf8').trim());
   expect(event).toMatchObject({ event: 'cli_command_succeeded', path: '/feedback', properties: { from_cache: false } });
   expect(JSON.stringify(event)).not.toContain('automatic_reporting');
+});
+
+it('rejects a preference response when reading a receipt with the reserved ID', async () => {
+  const h = await harness([{ status: 200, body: preference }]);
+  for (const mode of [[], ['--json']]) {
+    const r = await h.run(['get', 'preferences', '--no-retry', ...mode]);
+    expect(r.code).toBe(1); expect(r.stdout).toContain('Receipt lookup failed');
+    expect(r.stdout).not.toContain('undefined'); expect(r.stdout).not.toContain('automatic_reporting');
+  }
+  expect(h.requests).toHaveLength(2);
+  expect(h.requests.every(r => r.method === 'GET' && r.path === '/api/v1/feedback/preferences')).toBe(true);
+});
+it('keeps the human uncertainty warning and original ID after a rollout denial on a retry', async () => {
+  const h = await harness(['disconnect', { status: 403, body: { code: 'forbidden', reason: 'feedback_not_enabled' } }]);
+  const r = await h.run(h.submit);
+  expect(r.code).toBe(1); expect(r.stdout).toContain('Stop automatic retries');
+  expect(r.stdout).toContain('may have been saved'); expect(r.stdout).toContain('unchanged --file');
+  expect(r.stdout).toContain(examples.accepted.body.submission_id);
+  expect(h.requests).toHaveLength(2);
+  expect(h.requests[0].headers['idempotency-key']).toBe(h.requests[1].headers['idempotency-key']);
 });
