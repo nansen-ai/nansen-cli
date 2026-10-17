@@ -80,10 +80,16 @@ Agents should check the saved account preference before sending feedback on thei
 own. If enabled, they may send without asking again, subject to their host's
 controls. If off, unset or unavailable, show the proposed report and ask first.
 Approval for one report does not change the preference. Never enable it
-automatically. This CLI version has no preference-read command, so ask first
-unless an authenticated preference read is available through another supported
-tool. An explicit user request to send the report needs no additional preference
+automatically. Use `nansen feedback preferences --json` for a fresh account read
+before each new automatic report. Without `--json`, it prints a human summary.
+Reads use no credits or report quota. Change the lasting choice in Superapp settings.
+An explicit user request to send the report needs no additional preference
 check. The submit command sends the report without an interactive prompt.
+
+HTTP 403 with `reason: feedback_not_enabled` means feedback is not enabled for
+this account. Stop automatic retries. Approval or an enabled preference does
+not override rollout. Keep the ID and unchanged report for recovery; an earlier
+uncertain attempt remains uncertain. Never switch accounts or pay to bypass denial.
 
 ## Auth
 

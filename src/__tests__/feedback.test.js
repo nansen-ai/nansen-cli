@@ -288,3 +288,59 @@ it('uses the saved browser account on retries and preserves structured quota err
   expect(fetch.mock.calls[0][1].body).toBe(fetch.mock.calls[1][1].body);
   for (const secret of [bundle.accessToken, bundle.refreshToken, bundle.privateJwk.d]) expect(JSON.stringify(error)).not.toContain(secret);
 });
+
+const preference = { automatic_reporting: 'enabled', configured: true, version: 1, updated_at: '2026-10-15T12:00:00Z', can_manage: true };
+it('reads fresh account preferences in human and JSON output without caching, payments, or submission', async () => {
+  const disabled = { ...preference, automatic_reporting: 'disabled', version: 2 };
+  const h = await harness([{ status: 200, body: preference }, { status: 200, body: disabled }]);
+  const first = await h.run(['preferences', '--json', '--cache', '--paginate']);
+  expect(first.code).toBe(0); expect(JSON.parse(first.stdout).data).toEqual(preference);
+  const next = await h.run(['preferences']);
+  expect(next.code).toBe(0); expect(next.stdout).toContain('disabled'); expect(next.stdout).toContain('ask before sending');
+  expect(h.requests).toHaveLength(2);
+  for (const req of h.requests) {
+    expect(req).toMatchObject({ path: '/api/v1/feedback/preferences', method: 'GET', body: '' });
+    expect(req.headers.apikey).toBe('synthetic-key'); expect(req.headers['idempotency-key']).toBeUndefined();
+    expect(req.headers['payment-signature']).toBeUndefined();
+  }
+  expect(fs.existsSync(path.join(h.home, '.nansen/cache'))).toBe(false);
+  expect(fs.existsSync(path.join(h.home, '.nansen/feedback'))).toBe(false);
+});
+it.each([
+  { automatic_reporting: 'disabled', configured: false, version: 0, updated_at: null, can_manage: false },
+  { ...preference, automatic_reporting: 'disabled' },
+])('reports disabled or unconfigured preferences without submitting', async body => {
+  const h = await harness([{ status: 200, body }]);
+  const r = await h.run(['preferences']); expect(r.code).toBe(0); expect(r.stdout).toContain('ask before sending');
+  expect(h.requests).toHaveLength(1);
+});
+it.each([
+  { status: 200, body: {} }, { status: 200, body: { ...preference, configured: false } },
+  { status: 200, body: { ...preference, automatic_reporting: 'unknown' } },
+  { status: 503, body: { code: 'upstream_unavailable', reason: 'preference_store_unavailable' } },
+  { status: 404, body: { code: 'not_found' } },
+])('fails closed on unavailable or invalid preference $status', async response => {
+  const h = await harness([response]); const r = await h.run(['preferences', '--json', '--no-retry']);
+  expect(r.code).toBe(1); expect(JSON.parse(r.stdout).success).toBe(false);
+  expect(h.requests).toHaveLength(1); expect(h.requests[0].method).toBe('GET');
+});
+it.each([['preferences', 'enable'], ['preferences', '--file', 'report.json'], ['preferences', '--new']])('rejects preference mutations %j before sending', async args => {
+  const h = await harness([{ status: 200, body: preference }]);
+  expect((await h.run([...args, '--json'])).code).toBe(1); expect(h.requests).toHaveLength(0);
+});
+it('stops on account rollout denial and preserves an earlier lost-response outcome', async () => {
+  const denial = { status: 403, body: { code: 'forbidden', reason: 'feedback_not_enabled', message: 'Feedback is not enabled.' } };
+  for (const lost of [false, true]) {
+    const h = await harness(lost ? ['disconnect', denial] : [denial]);
+    const r = await h.run([...h.submit, '--json']); const error = JSON.parse(r.stdout);
+    expect(error.details).toMatchObject({ reason: 'feedback_not_enabled', outcome: lost ? 'unknown' : 'rejected' });
+    expect(r.stdout).toContain('Stop automatic retries'); expect(h.requests).toHaveLength(lost ? 2 : 1);
+  }
+});
+it('keeps existing telemetry accurate for preference reads without recording preference values', async () => {
+  const h = await harness([{ status: 200, body: preference }]);
+  await h.run(['preferences', '--json', '--cache'], { NANSEN_NO_TELEMETRY: '0', NODE_OPTIONS: `--require=${h.capture}` });
+  const event = JSON.parse(fs.readFileSync(h.eventFile, 'utf8').trim());
+  expect(event).toMatchObject({ event: 'cli_command_succeeded', path: '/feedback', properties: { from_cache: false } });
+  expect(JSON.stringify(event)).not.toContain('automatic_reporting');
+});

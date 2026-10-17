@@ -1136,7 +1136,7 @@ COMMANDS:
   wallet      ${WALLET_SUBCOMMANDS.join(', ')}
   agent       Ask the Nansen AI research agent (fast/expert modes)
   alerts      list, create, update, toggle, delete
-  feedback    submit, resume, forget local data, or get a receipt (--json for structured output)
+  feedback    preferences, submit, resume, forget local data, or get a receipt (--json for structured output)
   web         search, fetch
   mcp         install/uninstall/verify the Nansen MCP server
   account     Check the effective credential, plan, and remaining credits (free)

@@ -1,8 +1,8 @@
 {
   "commands": {
     "feedback": {
-      "description": "Send product feedback to Nansen or read an account-scoped receipt. Free; seven reports per account per week, resetting Monday 00:00 UTC. New submissions may be paused; the CLI returns an unavailable error.",
-      "notes": "Use the configured API key or login session. Keep the same submission ID and unchanged report after an uncertain result. No caching or payment fallback. Remove credentials and unnecessary personal context from reports. Without --submission-id, save one private submission before sending. Resume with nansen feedback resume. Use --new for a deliberate new report after confirmation or local erasure. Pending data expires after one calendar year; feedback commands enforce cleanup. Automatic IDs require POSIX private storage and native locking; otherwise supply an explicit ID. Backend validates shared report fields. Agents: send on your own only after an authenticated read shows the account preference is enabled and host controls permit it. Otherwise show the report and ask first; a direct user request permits that report. This CLI version has no preference-read command. Never enable the preference automatically. Submit is noninteractive and does not verify approval. New submissions may be paused before release or during an outage. A 503 with reason feedback_admissions_paused means this attempt accepted no new report and used no weekly allowance. Tell the user feedback is unavailable and stop; do not keep retrying or ask for approval again in the same session. Preserve the ID and unchanged file for a later retry. Accepted-ID replays and receipt reads remain available during a pause.",
+      "description": "Read the account feedback preference, submit product feedback, or recover an account-scoped receipt. Free; seven new reports per account per UTC week.",
+      "notes": "Use the configured API key or login session. Keep the same submission ID and unchanged report after an uncertain result. No caching or payment fallback. Remove credentials and unnecessary personal context from reports. Without --submission-id, save one private submission before sending. Resume with nansen feedback resume. Use --new for a deliberate new report after confirmation or local erasure. Pending data expires after one calendar year; feedback commands enforce cleanup. Automatic IDs require POSIX private storage and native locking; otherwise supply an explicit ID. Backend validates shared report fields. Agents: send on your own only after an authenticated read shows the account preference is enabled and host controls permit it. Otherwise show the report and ask first; a direct user request permits that report. Use nansen feedback preferences --json for a fresh account preference before each new automatic report. If the read fails, show the report and ask. Host or local-deny controls still apply. Direct lasting choices to Superapp settings. Never enable the preference automatically. Submit is noninteractive and does not verify approval. New submissions may be paused before release or during an outage. A 503 with reason feedback_admissions_paused means this attempt accepted no new report and used no weekly allowance. Tell the user feedback is unavailable and stop; do not keep retrying or ask for approval again in the same session. Preserve the ID and unchanged file for a later retry. A 403 with reason feedback_not_enabled means this account is outside rollout. Stop automatic retries; approval and saved preferences do not override it. Preserve IDs and earlier uncertain outcomes. Accepted-ID replays and receipt reads remain available during a pause.",
       "subcommands": {
         "submit": {
           "description": "Submit a JSON report. Received means saved; human review may still be pending.",
@@ -90,6 +90,28 @@
           },
           "examples": [
             "nansen feedback forget --json"
+          ]
+        },
+        "preferences": {
+          "method": "GET",
+          "endpoint": "/api/v1/feedback/preferences",
+          "description": "Read the authenticated account preference fresh, with no credits or report quota. Does not change it.",
+          "options": {
+            "json": {
+              "type": "boolean",
+              "description": "Return the standard JSON preference or error envelope."
+            }
+          },
+          "returns": [
+            "automatic_reporting",
+            "configured",
+            "version",
+            "updated_at",
+            "can_manage"
+          ],
+          "examples": [
+            "nansen feedback preferences",
+            "nansen feedback preferences --json"
           ]
         }
       }

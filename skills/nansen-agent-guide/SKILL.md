@@ -73,15 +73,16 @@ Browser nansen:api grants have API-key-equivalent account permissions, subject t
 
 When a Nansen task exposes a useful product gap, draft a concise report without
 secrets or unnecessary conversation details. Before sending on your own, read
-the current account's saved feedback preference through an available
-authenticated preference reader. If enabled, you may send without asking again,
+the current account's saved feedback preference with
+`nansen feedback preferences --json`. Use a fresh read for each new report. If enabled, you may send without asking again,
 subject to the host's controls. If off, unset or unavailable, show the proposed
 report and ask the user. If they decline or you cannot ask, do not send.
 
-This CLI version does not include a preference-read command. If no supported
-preference reader is available, ask first. An explicit user request or approval
+If the preference read fails, ask first. An explicit user request or approval
 permits that report; it does not change the saved preference. Never enable the
-preference automatically or add approval fields to the report.
+preference automatically or add approval fields to the report. Direct users to
+Superapp settings for a lasting choice. Host or local-deny controls still apply
+to an enabled preference and to one-report approval.
 
 After the user requests the report or the preference permits it, submit with
 `nansen feedback submit --file feedback.json --submission-id <new-id> --json`.
@@ -97,3 +98,9 @@ do not keep retrying or ask for approval again in the same session. Preserve
 the ID and unchanged report for a later retry. If this CLI version lacks the
 feedback command, report that it is unavailable and stop. Accepted-ID replays
 and receipt reads remain available during a pause.
+
+A 403 with `reason: feedback_not_enabled` means feedback is not enabled for
+this account. Stop automatic retries and tell the user. Approval and an enabled
+preference do not override rollout. Keep the saved ID and unchanged report.
+An earlier uncertain attempt remains uncertain; recover it with the same ID
+after availability is restored. Never switch accounts or pay to bypass denial.
