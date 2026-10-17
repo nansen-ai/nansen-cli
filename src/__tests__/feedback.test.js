@@ -365,3 +365,27 @@ it('keeps the human uncertainty warning and original ID after a rollout denial o
   expect(h.requests).toHaveLength(2);
   expect(h.requests[0].headers['idempotency-key']).toBe(h.requests[1].headers['idempotency-key']);
 });
+
+it.each([
+  { status: 500, reason: 'internal_error', outcome: 'unknown' },
+  { status: 503, reason: 'feedback_store_unavailable', outcome: 'unknown' },
+  { status: 503, reason: 'feedback_admissions_paused', outcome: 'rejected' },
+])('preserves $outcome after HTTP $status $reason then rollout denial', async ({ status, reason, outcome }) => {
+  for (const flags of [[], ['--json']]) {
+    const h = await harness([
+      { status, headers: { 'Retry-After': '0' }, body: { code: 'upstream_unavailable', reason } },
+      { status: 403, body: { code: 'forbidden', reason: 'feedback_not_enabled' } },
+    ]);
+    const r = await h.run([...h.submit, ...flags]);
+    expect(r.code).toBe(1); expect(r.stdout).toContain('Stop automatic retries');
+    if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({
+      code: outcome === 'unknown' ? 'submission_outcome_unknown' : 'forbidden',
+      details: { outcome, reason: 'feedback_not_enabled', submission_id: examples.accepted.body.submission_id },
+    });
+    if (outcome === 'unknown') expect(r.stdout).toContain('may have been saved');
+    else expect(r.stdout).not.toContain('may have been saved');
+    expect(h.requests).toHaveLength(2);
+    expect(h.requests[0].body).toBe(h.requests[1].body);
+    expect(h.requests[0].headers['idempotency-key']).toBe(h.requests[1].headers['idempotency-key']);
+  }
+});

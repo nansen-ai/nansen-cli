@@ -126,6 +126,11 @@ async function requestFeedback(api, endpoint, body, submissionId, responseType =
       throw new NansenError('Receipt not found, or this backend does not support feedback yet. Check the feedback ID, active account and NANSEN_BASE_URL. Do not resubmit as a new report.', details.code || 'not_found', response.status, details);
     }
     lastError = new NansenError(details.message || 'Feedback request failed.', details.code || statusToErrorCode(response.status, data), response.status, details);
+    if (body !== undefined && response.status >= 500 && data.reason !== 'feedback_admissions_paused') {
+      uncertainSubmission ??= new NansenError('The submission may have been saved. Retry the same --submission-id with the unchanged --file.',
+        'submission_outcome_unknown', response.status,
+        { reason: 'submission_outcome_unknown', submission_id: submissionId, request_id: details.request_id });
+    }
     if (uncertainSubmission && [401, 403].includes(response.status)) throw preserveUncertainSubmission(lastError, uncertainSubmission);
     const weekly = data.reason === 'feedback_weekly_quota_exhausted';
     const delay = retryDelay(response, data, attempt, retry);

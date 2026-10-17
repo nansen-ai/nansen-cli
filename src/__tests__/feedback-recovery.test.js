@@ -372,3 +372,22 @@ it('preserves the saved ID on rollout denial and distinguishes prior uncertainty
     expect(h.read().submission_id).toBe(saved.submission_id);
   }
 });
+
+it.each([
+  { status: 500, reason: 'internal_error', outcome: 'unknown' },
+  { status: 503, reason: 'feedback_store_unavailable', outcome: 'unknown' },
+  { status: 503, reason: 'feedback_admissions_paused', outcome: 'rejected' },
+])('retains recoverable journal after $reason then rollout denial', async ({ status, reason, outcome }) => {
+  const h = await harness(); let attempts = 0;
+  h.post((_req, res) => reply(res, ++attempts === 1 ? status : 403, attempts === 1
+    ? { code: 'upstream_unavailable', reason }
+    : { code: 'forbidden', reason: 'feedback_not_enabled' }));
+  const result = await h.run(h.submit); const saved = h.read();
+  expect(JSON.parse(result.stdout)).toMatchObject({ details: { outcome, reason: 'feedback_not_enabled', submission_id: saved.submission_id } });
+  expect(saved).toMatchObject({ state: 'pending', body: h.body });
+  expect(posts(h)).toHaveLength(2); expect(posts(h)[0].body).toBe(posts(h)[1].body);
+  expect(posts(h)[0].headers['idempotency-key']).toBe(posts(h)[1].headers['idempotency-key']);
+  h.post((req, res) => reply(res, 200, receipt(req, { replayed: outcome === 'unknown' })));
+  expect((await h.run(['resume', '--json'])).code).toBe(0);
+  expect(h.read()).toMatchObject({ state: 'confirmed', submission_id: saved.submission_id });
+});
