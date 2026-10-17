@@ -389,3 +389,16 @@ it.each([
     expect(h.requests[0].headers['idempotency-key']).toBe(h.requests[1].headers['idempotency-key']);
   }
 });
+
+it.each([[], ['--no-retry']])('reports a terminal HTTP 5xx as unknown with retry flags %j', async flags => {
+  const h = await harness([{ status: 503, headers: { 'Retry-After': '0' },
+    body: { code: 'upstream_unavailable', reason: 'feedback_store_unavailable', request_id: 'uncertain-commit' } }]);
+  const r = await h.run([...h.submit, '--json', '--retries', '1', ...flags]);
+  expect(r.code).toBe(1);
+  expect(JSON.parse(r.stdout)).toMatchObject({ code: 'submission_outcome_unknown', status: 503,
+    details: { outcome: 'unknown', reason: 'feedback_store_unavailable', request_id: 'uncertain-commit', submission_id: examples.accepted.body.submission_id } });
+  expect(r.stdout).toContain('may have been saved');
+  expect(h.requests).toHaveLength(flags.length ? 1 : 2);
+  expect(new Set(h.requests.map(r => r.headers['idempotency-key'])).size).toBe(1);
+  expect(new Set(h.requests.map(r => r.body)).size).toBe(1);
+});

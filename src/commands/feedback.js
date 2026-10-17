@@ -138,6 +138,10 @@ async function requestFeedback(api, endpoint, body, submissionId, responseType =
       await sleep(delay);
       continue;
     }
+    if (uncertainSubmission && response.status >= 500) {
+      throw new NansenError(`${lastError.message} ${uncertainSubmission.message}`, uncertainSubmission.code,
+        response.status, { ...details, outcome: 'unknown' });
+    }
     throw lastError;
   }
   throw lastError;
