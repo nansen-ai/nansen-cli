@@ -390,7 +390,7 @@ it.each([
   }
 });
 
-it.each([[], ['--no-retry']])('reports a terminal HTTP 5xx as unknown with retry flags %j', async flags => {
+it.each([{ flags: [] }, { flags: ['--no-retry'] }])('reports a terminal HTTP 5xx as unknown with retry flags $flags', async ({ flags }) => {
   const h = await harness([{ status: 503, headers: { 'Retry-After': '0' },
     body: { code: 'upstream_unavailable', reason: 'feedback_store_unavailable', request_id: 'uncertain-commit' } }]);
   const r = await h.run([...h.submit, '--json', '--retries', '1', ...flags]);
