@@ -210,6 +210,19 @@ it.each([{ flags: [] }, { flags: ['--json'] }])('keeps the outcome unknown after
   if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ code: 'submission_outcome_unknown', details: { outcome: 'unknown' } });
 });
 
+it.each([{ flags: [] }, { flags: ['--json'] }])('removes uncertainty from erased caller-managed submissions %j', async ({ flags }) => {
+  const h = await harness(['disconnect', { status: 409, body: { code: 'conflict', reason: 'feedback_erased',
+    message: 'The report for this submission ID was erased and will not be saved again.' } }]);
+  const r = await h.run([...h.submit, '--retries', '1', ...flags]);
+  expect(r.code).toBe(1); expect(r.stdout).toContain('was erased');
+  expect(r.stdout).not.toMatch(/may have been (accepted|saved)/); expect(h.requests).toHaveLength(2);
+  if (flags.length) {
+    const error = JSON.parse(r.stdout);
+    expect(error).toMatchObject({ code: 'conflict', status: 409, details: { reason: 'feedback_erased' } });
+    expect(error.details.outcome).toBeUndefined();
+  }
+});
+
 it.each(['accepted', 'receipt_reviewed', 'receipt_closed'])('distinguishes %s in human output', async scenario => {
   const h = await harness([examples[scenario]]);
   const result = await h.run(scenario === 'accepted' ? h.submit : ['get', examples[scenario].body.feedback_id, '--cache']);

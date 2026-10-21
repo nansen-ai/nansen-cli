@@ -194,7 +194,8 @@ it.skipIf(process.platform === 'win32')('erases offline, blocks replay, and refu
 it.skipIf(process.platform === 'win32')('clears local state after feedback_erased, then never replays it', async () => {
   const h = await harness(); await killedPending(h);
   h.post((_req, res) => reply(res, 409, { code: 'conflict', reason: 'feedback_erased', message: 'Erased' }));
-  expect((await h.run(['resume', '--json'])).code).toBe(1);
+  const result = await h.run(['resume', '--json']);
+  expect(result.code).toBe(1); expect(JSON.parse(result.stdout).details.outcome).toBeUndefined();
   expect(h.read()).toEqual({ version: 1, state: 'cleared' });
   expect(JSON.parse((await h.run(h.submit)).stdout).code).toBe('feedback_recovery_unavailable');
   expect(posts(h)).toHaveLength(2);
@@ -511,6 +512,59 @@ it('keeps prior uncertainty when storage fails before a resumed dispatch', async
     details: { outcome: 'unknown', submission_id: id, retry_command: 'nansen feedback resume' } });
   expect(r.stdout).not.toContain('caller-managed'); expect(posts(h)).toHaveLength(1);
   expect(h.read()).toMatchObject({ state: 'pending', uncertain: true, submission_id: id });
+});
+
+it.each([
+  { status: 403, code: 'feedback_blocked', html: true },
+  { status: 422, code: 'invalid_value', reason: 'invalid_value' },
+  { status: 409, code: 'conflict', reason: 'feedback_erased' },
+])('keeps a definite rejection and forget guidance when its erase write fails: $status', async ({ status, code, html, reason }) => {
+  for (const flags of [[], ['--json']]) {
+    const h = await harness();
+    const resumed = reason === 'feedback_erased';
+    if (resumed) await killedPending(h);
+    h.post((_req, res) => {
+      if (html) { res.writeHead(status, { 'Content-Type': 'text/html' }); res.end('<html>Blocked</html>'); }
+      else reply(res, status, { code, reason, message: 'This submission was rejected.' });
+    });
+    const env = h.hook(`const fs = require('node:fs'); const rename = fs.renameSync; let writes = 0;
+      fs.renameSync = (a, b) => {
+        if (b.endsWith('/feedback/recovery.json') && ++writes === ${resumed ? 2 : 3}) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+        return rename(a, b);
+      };`);
+    const r = await h.run([...(resumed ? ['resume'] : ['submit', '--file', h.file]), ...flags], env);
+    const id = h.read().submission_id;
+    expect(r.code).toBe(1); expect(r.stdout).toContain('Local retry data could not be erased');
+    expect(r.stdout).toContain('nansen feedback forget'); expect(r.stdout).toContain('--new');
+    expect(r.stdout).not.toMatch(/caller-managed|may have been (accepted|saved)/);
+    if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ code, status,
+      details: { outcome: 'rejected', submission_id: id, retry_command: 'nansen feedback forget' } });
+    expect(h.read()).toMatchObject({ state: 'pending', body: h.body });
+    const count = posts(h).length;
+    expect(JSON.parse((await h.run([...h.submit, '--new'])).stdout).code).toBe('feedback_pending');
+    expect(posts(h)).toHaveLength(count);
+    expect((await h.run(['forget', '--json'])).code).toBe(0);
+    expect(h.read()).toEqual({ version: 1, state: 'cleared' });
+    fs.writeFileSync(h.file, JSON.stringify({ ...examples.accepted.request.body, description: 'Corrected report' }));
+    h.post((req, res) => reply(res, 201, receipt(req)));
+    expect((await h.run([...h.submit, '--new'])).code).toBe(0);
+    expect(h.read()).toMatchObject({ state: 'confirmed' }); expect(h.read().submission_id).not.toBe(id);
+  }
+});
+
+it.each(['resume', 'get'])('keeps confirmed-receipt recovery guidance if %s cannot clear a missing receipt', async command => {
+  const h = await harness(); h.post((req, res) => reply(res, 201, receipt(req)));
+  await h.run(h.submit); const saved = h.read();
+  h.get((_req, res) => reply(res, 404, { code: 'not_found' }));
+  const env = h.hook(`const fs = require('node:fs'); const rename = fs.renameSync;
+    fs.renameSync = (a, b) => { if (b.endsWith('/feedback/recovery.json')) throw new Error('disk full'); return rename(a, b); };`);
+  const args = command === 'get' ? ['get', saved.feedback_id, '--json'] : ['resume', '--json'];
+  const r = await h.run(args, env);
+  expect(JSON.parse(r.stdout)).toMatchObject({ code: 'feedback_storage_unavailable',
+    details: { submission_id: saved.submission_id, retry_command: 'nansen feedback resume' } });
+  expect(r.stdout).not.toContain('caller-managed'); expect(h.read()).toEqual(saved);
+  expect((await h.run(['resume', '--json'])).code).toBe(1);
+  expect(h.read()).toEqual({ version: 1, state: 'cleared' }); expect(posts(h)).toHaveLength(1);
 });
 
 it.each([401, 429, 501])('keeps the resume command after a definite retained HTTP %s rejection', async status => {

@@ -23,6 +23,15 @@ function storageRecoveryError(error, submissionId) {
     error.code, error.status, { ...error.details, submission_id: submissionId, retry_command: 'nansen feedback resume', outcome: 'unknown' });
 }
 
+function clearRejectedFeedback(journal, error, submissionId) {
+  try { journal.clear(); }
+  catch {
+    const message = error.code === 'feedback_blocked' ? 'The report was blocked before reaching Nansen. No report was saved.' : error.message;
+    throw new NansenError(`${message}${message.endsWith('.') ? '' : '.'} Local retry data could not be erased. Repair ~/.nansen/feedback, then run: nansen feedback forget before using --new with the corrected --file.`,
+      error.code, error.status, { ...error.details, submission_id: submissionId, outcome: 'rejected', retry_command: 'nansen feedback forget' });
+  }
+}
+
 function required(value, name, usage = 'nansen feedback submit --file feedback.json --submission-id <new-id>') {
   if (typeof value !== 'string' || !value.trim()) {
     throw new NansenError(`${name} is required. Use: ${usage}. Reuse the submission ID and unchanged file after an uncertain submission result.`, ErrorCode.MISSING_PARAM);
@@ -130,7 +139,7 @@ async function requestFeedback(api, endpoint, body, submissionId, responseType =
     const details = redact(Object.fromEntries(ERROR_FIELDS.filter(key => key in data).map(key => [key, data[key]])));
     details.request_id ??= redact(requestId(response));
     if (submissionId) details.submission_id = submissionId;
-    if (uncertainSubmission) details.outcome = 'unknown';
+    if (uncertainSubmission && data.reason !== 'feedback_erased') details.outcome = 'unknown';
     if (response.status === 403 && data.reason === 'feedback_not_enabled') {
       const uncertainty = uncertainSubmission ? ' An earlier attempt may have been saved. Keep the same --submission-id and unchanged --file for recovery.' : '';
       throw new NansenError(`Feedback is not enabled for this account. Stop automatic retries. User approval or an enabled preference does not override rollout.${uncertainty}`,
@@ -225,13 +234,17 @@ async function managedFeedback(api, { body, newSubmission = false, forget = fals
         expires_at: new Date(Math.min(expiry, Date.parse(entry.expires_at))).toISOString(), feedback_id: receipt.feedback_id });
       return receipt;
     } catch (error) {
-      if (error.details?.reason === 'feedback_erased' || (entry.state === 'confirmed' && error.status === 404)) { journal.clear(); throw error; }
+      if (error.details?.reason === 'feedback_erased') { clearRejectedFeedback(journal, error, entry.submission_id); throw error; }
+      if (entry.state === 'confirmed' && error.status === 404) {
+        try { journal.clear(); } catch (storageError) { throw storageRecoveryError(storageError, entry.submission_id); }
+        throw error;
+      }
       if (entry.state !== 'pending' || error.code === 'feedback_recovery_unavailable') throw error;
       if (error.code === 'feedback_storage_unavailable') throw dispatched || previouslyUncertain ? storageRecoveryError(error, entry.submission_id) : error;
       const unknown = previouslyUncertain || error.code === 'submission_outcome_unknown' || error.details?.outcome === 'unknown';
       if (!unknown && ([400, 413, 422].includes(error.status) || (error.status === 409 && error.details?.reason === 'idempotency_key_reused') ||
           error.code === 'feedback_blocked')) {
-        journal.clear();
+        clearRejectedFeedback(journal, error, entry.submission_id);
         throw new NansenError(`${error.message} This attempt was rejected. Local retry data was erased. Correct the report and use --new with the corrected --file.`,
           error.code, error.status, { ...error.details, submission_id: entry.submission_id, outcome: 'rejected' });
       }
@@ -316,7 +329,12 @@ export function buildFeedbackCommands({ log = console.log } = {}) {
             const identity = await feedbackIdentity(api);
             if (identity.account !== journal.entry.account || identity.environment !== journal.entry.environment) throw new NansenError('Use the original account and NANSEN_BASE_URL to read the saved receipt.', 'feedback_identity_mismatch');
             try { return await requestFeedback(identity.api, `${PATH}/${encodeURIComponent(id)}`, undefined, journal.entry.submission_id); }
-            catch (error) { if (error.status === 404 || error.details?.reason === 'feedback_erased') journal.clear(); throw error; }
+            catch (error) {
+              if (error.status === 404 || error.details?.reason === 'feedback_erased') {
+                try { journal.clear(); } catch (storageError) { throw storageRecoveryError(storageError, journal.entry.submission_id); }
+              }
+              throw error;
+            }
           });
         } else receipt = await requestFeedback(api, `${PATH}/${encodeURIComponent(id)}`);
       } else {
