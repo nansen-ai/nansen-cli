@@ -67,11 +67,12 @@ export async function withFeedbackJournal(operation, { erase = false } = {}) {
       entry = JSON.parse(readLocalFile(file, { root, privateFile: true, maxBytes: 100000 }));
       const keys = entry.state === 'pending' ? ['version', 'state', 'submission_id', 'account', 'environment', 'expires_at', 'body'] :
         entry.state === 'confirmed' ? ['version', 'state', 'submission_id', 'account', 'environment', 'expires_at', 'feedback_id'] : ['version', 'state'];
+      const optionalKeys = entry.state === 'pending' ? ['uncertain'] : [];
       if (entry.version !== 1 || !['pending', 'confirmed', 'cleared'].includes(entry.state) ||
-          Object.keys(entry).some(key => !keys.includes(key)) || keys.some(key => !(key in entry)) ||
+          Object.keys(entry).some(key => !keys.includes(key) && !optionalKeys.includes(key)) || keys.some(key => !(key in entry)) ||
           (entry.state !== 'cleared' && (!/^[A-Za-z0-9_-]{1,128}$/.test(entry.submission_id) ||
             typeof entry.account !== 'string' || !entry.account || typeof entry.environment !== 'string' || !timestamp(entry.expires_at))) ||
-          (entry.state === 'pending' && typeof entry.body !== 'string') ||
+          (entry.state === 'pending' && (typeof entry.body !== 'string' || ('uncertain' in entry && typeof entry.uncertain !== 'boolean'))) ||
           (entry.state === 'confirmed' && typeof entry.feedback_id !== 'string')) throw unavailable();
       if (entry.state !== 'cleared' && Date.parse(entry.expires_at) <= Date.now()) { save(cleared); entry = cleared; }
     }

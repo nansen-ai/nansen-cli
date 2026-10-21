@@ -373,6 +373,89 @@ it('preserves the saved ID on rollout denial and distinguishes prior uncertainty
   }
 });
 
+it.each([{ flags: [] }, { flags: ['--json'] }])('keeps repeated rollout denials rejected across process restarts %j', async ({ flags }) => {
+  const h = await harness();
+  h.post((_req, res) => reply(res, 403, { code: 'forbidden', reason: 'feedback_not_enabled' }));
+  for (const args of [['submit', '--file', h.file], ['resume'], ['resume']]) {
+    const r = await h.run([...args, ...flags]);
+    expect(r.code).toBe(1); expect(r.stdout).toContain('This report was not accepted');
+    expect(r.stdout).not.toMatch(/may have been (accepted|saved)/);
+    expect(h.read()).toMatchObject({ state: 'pending', uncertain: false, body: h.body });
+    if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ details: { outcome: 'rejected' } });
+  }
+  expect(posts(h)).toHaveLength(3);
+  expect(new Set(posts(h).map(r => r.headers['idempotency-key'])).size).toBe(1);
+});
+
+it.each([{ flags: [] }, { flags: ['--json'] }])('clears a generated submission after an edge block and requires --new %j', async ({ flags }) => {
+  const h = await harness();
+  h.post((_req, res) => { res.writeHead(403, { 'Content-Type': 'text/html' }); res.end('<html>Blocked</html>'); });
+  const r = await h.run(['submit', '--file', h.file, ...flags]);
+  expect(r.code).toBe(1); expect(r.stdout).toContain('blocked before reaching Nansen');
+  expect(r.stdout).toContain('use --new'); expect(r.stdout).not.toContain('may have been');
+  if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ code: 'feedback_blocked', details: { outcome: 'rejected' } });
+  expect(h.read()).toEqual({ version: 1, state: 'cleared' });
+  expect(JSON.parse((await h.run(['resume', '--json'])).stdout).code).toBe('feedback_recovery_unavailable');
+  expect(JSON.parse((await h.run(h.submit)).stdout).code).toBe('feedback_recovery_unavailable');
+  const oldId = posts(h)[0].headers['idempotency-key'];
+  fs.writeFileSync(h.file, JSON.stringify({ ...examples.accepted.request.body, description: 'Corrected report' }));
+  h.post((req, res) => reply(res, 201, receipt(req)));
+  expect((await h.run([...h.submit, '--new'])).code).toBe(0);
+  expect(posts(h)).toHaveLength(2); expect(posts(h)[1].headers['idempotency-key']).not.toBe(oldId);
+});
+
+it('keeps an uncertain generated submission recoverable after an edge block', async () => {
+  const h = await harness(); await killedPending(h);
+  const id = h.read().submission_id;
+  h.post((_req, res) => { res.writeHead(403, { 'Content-Type': 'text/html' }); res.end('<html>Blocked</html>'); });
+  const r = await h.run(['resume', '--json']);
+  expect(JSON.parse(r.stdout)).toMatchObject({ code: 'submission_outcome_unknown', details: { outcome: 'unknown' } });
+  expect(r.stdout).not.toContain('No report was saved');
+  expect(h.read()).toMatchObject({ state: 'pending', uncertain: true, submission_id: id, body: h.body });
+});
+
+it('records uncertainty when a retry is killed after a definite rollout denial', async () => {
+  const h = await harness();
+  const deny = (_req, res) => reply(res, 403, { code: 'forbidden', reason: 'feedback_not_enabled' });
+  h.post(deny); await h.run(h.submit);
+  expect(h.read().uncertain).toBe(false);
+  await killedPending(h);
+  expect(h.read().uncertain).toBe(true);
+  h.post(deny);
+  for (const args of [['resume', '--json'], ['resume']]) {
+    const r = await h.run(args);
+    expect(r.stdout).toContain('may have been saved'); expect(r.stdout).not.toContain('This report was not accepted');
+    if (args.includes('--json')) expect(JSON.parse(r.stdout).details.outcome).toBe('unknown');
+  }
+});
+
+it.each(['weekly_limit', 'invalid_unknown_field'])('retains prior uncertainty through a later %s rejection and rollout denial', async scenario => {
+  const h = await harness(); let attempts = 0;
+  h.post((_req, res) => {
+    if (++attempts === 1) { res.destroy(); return; }
+    reply(res, examples[scenario].status, examples[scenario].body);
+  });
+  const r = await h.run(h.submit);
+  expect(JSON.parse(r.stdout).details.outcome).toBe('unknown');
+  expect(h.read()).toMatchObject({ state: 'pending', uncertain: true, body: h.body });
+  const id = h.read().submission_id;
+  h.post((_req, res) => reply(res, 403, { code: 'forbidden', reason: 'feedback_not_enabled' }));
+  const next = await h.run(['resume', '--json']);
+  expect(JSON.parse(next.stdout)).toMatchObject({ details: { outcome: 'unknown', submission_id: id } });
+  expect(h.read().uncertain).toBe(true);
+});
+
+it('treats a legacy pending journal as uncertain and rejects malformed uncertainty', async () => {
+  const h = await harness(); await killedPending(h);
+  const legacy = h.read(); delete legacy.uncertain;
+  fs.writeFileSync(h.journal, JSON.stringify(legacy));
+  h.post((_req, res) => reply(res, 403, { code: 'forbidden', reason: 'feedback_not_enabled' }));
+  expect(JSON.parse((await h.run(['resume', '--json'])).stdout).details.outcome).toBe('unknown');
+  fs.writeFileSync(h.journal, JSON.stringify({ ...h.read(), uncertain: 'false' }));
+  expect(JSON.parse((await h.run(['resume', '--json'])).stdout).code).toBe('feedback_storage_unavailable');
+  expect(posts(h)).toHaveLength(2);
+});
+
 it.each([
   { status: 500, reason: 'internal_error', outcome: 'unknown' },
   { status: 503, reason: 'feedback_store_unavailable', outcome: 'unknown' },

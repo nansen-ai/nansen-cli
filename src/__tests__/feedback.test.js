@@ -179,6 +179,28 @@ it('reports outcome uncertainty after retries and never echoes unreadable respon
   expect(result.stdout).not.toContain('synthetic-key'); expect(result.stdout).not.toContain('secret report body');
 });
 
+it.each([{ flags: [] }, { flags: ['--json'] }])('reports an HTML edge block as a rejection in output %j', async ({ flags }) => {
+  const h = await harness([{ status: 403, headers: { 'Content-Type': 'text/html', Server: 'cloudflare' },
+    raw: '<html>Blocked synthetic-key secret report body</html>' }]);
+  const r = await h.run([...h.submit, ...flags]);
+  expect(r.code).toBe(1); expect(r.stderr).toBe(''); expect(h.requests).toHaveLength(1);
+  expect(r.stdout).toContain('blocked before reaching Nansen');
+  expect(r.stdout).toContain('No report was saved'); expect(r.stdout).toContain('new submission ID');
+  expect(r.stdout).not.toContain('may have been saved');
+  expect(r.stdout).not.toContain('synthetic-key'); expect(r.stdout).not.toContain('secret report body');
+  if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ code: 'feedback_blocked', status: 403,
+    details: { reason: 'feedback_blocked', outcome: 'rejected', submission_id: examples.accepted.body.submission_id } });
+});
+
+it.each([{ flags: [] }, { flags: ['--json'] }])('preserves uncertainty when an earlier response was lost before an edge block %j', async ({ flags }) => {
+  const h = await harness(['disconnect', { status: 403, headers: { 'Content-Type': 'text/html' }, raw: '<html>Blocked</html>' }]);
+  const r = await h.run([...h.submit, ...flags]);
+  expect(r.code).toBe(1); expect(h.requests).toHaveLength(2);
+  expect(r.stdout).toContain('may have been saved'); expect(r.stdout).not.toContain('No report was saved');
+  expect(r.stdout).not.toContain('new submission ID');
+  if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ code: 'submission_outcome_unknown', details: { outcome: 'unknown' } });
+});
+
 it.each(['accepted', 'receipt_reviewed', 'receipt_closed'])('distinguishes %s in human output', async scenario => {
   const h = await harness([examples[scenario]]);
   const result = await h.run(scenario === 'accepted' ? h.submit : ['get', examples[scenario].body.feedback_id, '--cache']);
@@ -219,14 +241,17 @@ it('rejects extra submit arguments with a valid file and ID before sending', asy
 });
 
 it('keeps command telemetry truthful without report content, IDs or credentials', async () => {
-  const h = await harness([examples.accepted, examples.weekly_limit]);
+  const h = await harness([examples.accepted, examples.weekly_limit,
+    { status: 403, headers: { 'Content-Type': 'text/html' }, raw: '<html>Blocked</html>' }]);
   const env = { NANSEN_NO_TELEMETRY: '0', NODE_OPTIONS: `--require=${h.capture}` };
   await h.run([...h.submit, '--json', '--cache'], env);
   await h.run([...h.submit, '--json'], env);
+  await h.run([...h.submit, '--json'], env);
   const events = fs.readFileSync(h.eventFile, 'utf8').trim().split('\n').map(line => JSON.parse(line));
-  expect(events.map(e => e.event)).toEqual(['cli_command_succeeded', 'cli_command_failed']);
+  expect(events.map(e => e.event)).toEqual(['cli_command_succeeded', 'cli_command_failed', 'cli_command_failed']);
   expect(events[0].properties.from_cache).toBe(false);
   expect(events[1].properties).toMatchObject({ error_code: 'rate_limit_exceeded', status: 429 });
+  expect(events[2].properties).toMatchObject({ error_code: 'feedback_blocked', status: 403 });
   for (const event of events) expect(event.path).toBe('/feedback/submit');
   for (const secret of ['synthetic-key', examples.accepted.body.submission_id, examples.accepted.request.body.description, h.file]) expect(JSON.stringify(events)).not.toContain(secret);
 });
@@ -320,9 +345,33 @@ it.each([
   { status: 503, body: { code: 'upstream_unavailable', reason: 'preference_store_unavailable' } },
   { status: 404, body: { code: 'not_found' } },
 ])('fails closed on unavailable or invalid preference $status', async response => {
-  const h = await harness([response]); const r = await h.run(['preferences', '--json', '--no-retry']);
-  expect(r.code).toBe(1); expect(JSON.parse(r.stdout).success).toBe(false);
-  expect(h.requests).toHaveLength(1); expect(h.requests[0].method).toBe('GET');
+  const h = await harness([response]);
+  for (const flags of [[], ['--json']]) {
+    const r = await h.run(['preferences', '--no-retry', ...flags]);
+    expect(r.code).toBe(1); expect(r.stdout).toContain('Feedback preference unavailable. Show the report and ask before sending.');
+    if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ success: false, details: { reason: 'preference_unavailable' } });
+  }
+  expect(h.requests).toHaveLength(2); expect(h.requests.every(r => r.method === 'GET')).toBe(true);
+});
+
+it.each([{ flags: [] }, { flags: ['--json'] }])('keeps ask-first guidance after all preference retries %j', async ({ flags }) => {
+  const h = await harness([{ status: 503, body: { message: 'Service Unavailable' } }]);
+  const r = await h.run(['preferences', ...flags]);
+  expect(r.code).toBe(1); expect(h.requests).toHaveLength(4);
+  expect(r.stdout).toContain('Feedback preference unavailable. Show the report and ask before sending.');
+  if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ code: 'SERVICE_UNAVAILABLE', status: 503,
+    details: { reason: 'preference_unavailable' } });
+});
+
+it.each([401, 403])('adds preference guidance while preserving HTTP %s diagnostics', async status => {
+  const h = await harness([{ status, headers: { 'X-Request-Id': 'preference-denied' }, body: { code: 'forbidden', message: 'Denied' } }]);
+  for (const flags of [[], ['--json']]) {
+    const r = await h.run(['preferences', ...flags]);
+    expect(r.code).toBe(1); expect(r.stdout).toContain('Show the report and ask before sending.');
+    if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ code: 'forbidden', status,
+      details: { reason: 'preference_unavailable', request_id: 'preference-denied' } });
+  }
+  expect(h.requests).toHaveLength(2);
 });
 it.each([['preferences', 'enable'], ['preferences', '--file', 'report.json'], ['preferences', '--new']])('rejects preference mutations %j before sending', async args => {
   const h = await harness([{ status: 200, body: preference }]);
