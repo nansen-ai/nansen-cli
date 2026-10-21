@@ -207,7 +207,12 @@ async function managedFeedback(api, { body, newSubmission = false, forget = fals
     if (entry && !newSubmission && identity.account !== entry.account) throw new NansenError('The Nansen account changed. Log in to the original account, then run: nansen feedback resume.', 'feedback_identity_mismatch');
     if (!entry || newSubmission) {
       entry = { version: 1, state: 'pending', submission_id: randomUUID(), account: identity.account, environment: identity.environment, expires_at: feedbackExpiry(Date.now()), body, uncertain: false };
-      journal.save(entry);
+      try { journal.save(entry); }
+      catch (error) {
+        // The journal may already exist even if its directory sync failed.
+        if (error.journalSaved) throw storageRecoveryError(error, entry.submission_id, false);
+        throw error;
+      }
     }
     // Older journals cannot distinguish a denial from a lost response.
     const previouslyUncertain = entry.state === 'pending' && entry.uncertain !== false;

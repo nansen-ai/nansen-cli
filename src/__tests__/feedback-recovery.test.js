@@ -154,14 +154,17 @@ it.skipIf(process.platform === 'win32')('prints safe unknown-outcome recovery in
   }
 });
 
-it.skipIf(process.platform === 'win32')('fails before POST on disk failure and preserves explicit-ID submission', async () => {
+it.skipIf(process.platform === 'win32').each(['file-sync', 'rename'])('fails before POST on %s failure and preserves explicit-ID submission', async stage => {
   const h = await harness();
-  const env = h.hook(`const fs = require('node:fs'); const rename = fs.renameSync; fs.renameSync = (a, b) => {
+  const env = h.hook(`const fs = require('node:fs'); const rename = fs.renameSync;
+  if (${stage === 'file-sync'}) fs.fsyncSync = () => { throw Object.assign(new Error('synthetic disk failure'), { code: 'ENOSPC' }); };
+  fs.renameSync = (a, b) => {
     if (b.endsWith('/feedback/recovery.json')) throw Object.assign(new Error('synthetic disk failure'), { code: 'ENOSPC' });
     return rename(a, b);
   };`);
   const result = await h.run(h.submit, env);
   expect(JSON.parse(result.stdout).code).toBe('feedback_storage_unavailable'); expect(posts(h)).toHaveLength(0);
+  expect(result.stdout).toContain('caller-managed'); expect(fs.existsSync(h.journal)).toBe(false);
   h.post((req, res) => reply(res, 201, receipt(req)));
   expect((await h.run([...h.submit, '--submission-id', 'caller-managed'], env)).code).toBe(0);
   expect(posts(h)[0].headers['idempotency-key']).toBe('caller-managed');
@@ -548,6 +551,39 @@ it.each(['fresh submit', 'rollout resume'])('keeps the saved unsent ID when the 
     expect(posts(h).slice(before)).toEqual([expect.objectContaining({ body: h.body,
       headers: expect.objectContaining({ 'idempotency-key': saved.submission_id }) })]);
     expect(h.read()).toMatchObject({ state: 'confirmed', submission_id: saved.submission_id });
+  }
+});
+
+it.each(['fresh', 'confirmed', 'cleared'])('keeps the saved unsent ID when initial directory sync fails after %s state', async state => {
+  for (const flags of [[], ['--json']]) {
+    const h = await harness(); h.post((req, res) => reply(res, 201, receipt(req)));
+    if (state === 'confirmed') expect((await h.run(h.submit)).code).toBe(0);
+    if (state === 'cleared') expect((await h.run(['forget', '--json'])).code).toBe(0);
+    const before = posts(h).length;
+    const previousId = state === 'confirmed' ? h.read().submission_id : undefined;
+    const env = h.hook(`const fs = require('node:fs'); const rename = fs.renameSync; const sync = fs.fsyncSync; let replaced = false;
+      fs.renameSync = (a, b) => { const result = rename(a, b); if (b.endsWith('/feedback/recovery.json')) replaced = true; return result; };
+      fs.fsyncSync = descriptor => { if (replaced) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); return sync(descriptor); };`);
+    const r = await h.run(['submit', '--file', h.file, ...(state === 'fresh' ? [] : ['--new']), ...flags], env);
+    const saved = h.read();
+    expect(r.code).toBe(1); expect(posts(h)).toHaveLength(before);
+    expect(saved).toMatchObject({ state: 'pending', uncertain: false, body: h.body });
+    if (previousId) expect(saved.submission_id).not.toBe(previousId);
+    expect(r.stdout).toContain('The report was not sent.');
+    expect(r.stdout).toContain('nansen feedback resume'); expect(r.stdout).toContain(saved.submission_id);
+    expect(r.stdout).not.toMatch(/caller-managed|may have been (accepted|saved)|journalSaved/);
+    expect(r.stdout + r.stderr).not.toContain('synthetic-key');
+    expect(r.stdout + r.stderr).not.toContain(examples.accepted.request.body.description);
+    if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ code: 'feedback_storage_unavailable',
+      details: { outcome: 'rejected', submission_id: saved.submission_id, retry_command: 'nansen feedback resume' } });
+    expect(JSON.parse((await h.run([...h.submit, '--new'])).stdout).code).toBe('feedback_pending');
+    expect(posts(h)).toHaveLength(before);
+    fs.unlinkSync(h.file);
+    expect((await h.run(['resume', '--json'])).code).toBe(0);
+    expect(posts(h).slice(before)).toEqual([expect.objectContaining({ body: h.body,
+      headers: expect.objectContaining({ 'idempotency-key': saved.submission_id }) })]);
+    expect(h.read()).toMatchObject({ state: 'confirmed', submission_id: saved.submission_id });
+    expect(fs.readFileSync(h.journal, 'utf8')).not.toContain('description');
   }
 });
 

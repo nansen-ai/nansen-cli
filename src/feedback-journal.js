@@ -31,14 +31,14 @@ export async function withFeedbackJournal(operation, { erase = false } = {}) {
     try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
   };
   const save = value => {
-    let descriptor;
+    let descriptor, journalSaved = false;
     try {
       privatePath(root, true); privatePath(directory, true);
       descriptor = openLocalFile(temp, { root, privateFile: true, flags: fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL });
       fs.writeFileSync(descriptor, JSON.stringify(value)); fs.fsyncSync(descriptor);
       fs.closeSync(descriptor); descriptor = undefined;
-      fs.renameSync(temp, file); syncDirectory();
-    } catch { throw unavailable(); }
+      fs.renameSync(temp, file); journalSaved = true; syncDirectory();
+    } catch { throw Object.assign(unavailable(), { journalSaved }); }
     finally {
       if (descriptor !== undefined) fs.closeSync(descriptor);
       if (fs.existsSync(temp)) fs.unlinkSync(temp);
