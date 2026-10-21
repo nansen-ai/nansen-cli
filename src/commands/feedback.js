@@ -18,9 +18,9 @@ function preserveUncertainSubmission(error, pending) {
     { ...error.details, ...pending.details, request_id: error.details?.request_id ?? pending.details.request_id, outcome: 'unknown' });
 }
 
-function storageRecoveryError(error, submissionId) {
-  return new NansenError('Private feedback recovery storage is unavailable. The submission may have been saved. Repair ~/.nansen/feedback, then retry safely with: nansen feedback resume.',
-    error.code, error.status, { ...error.details, submission_id: submissionId, retry_command: 'nansen feedback resume', outcome: 'unknown' });
+function storageRecoveryError(error, submissionId, unknown = true) {
+  return new NansenError(`Private feedback recovery storage is unavailable. ${unknown ? 'The submission may have been saved.' : 'The report was not sent.'} Repair ~/.nansen/feedback, then retry safely with: nansen feedback resume.`,
+    error.code, error.status, { ...error.details, submission_id: submissionId, retry_command: 'nansen feedback resume', outcome: unknown ? 'unknown' : 'rejected' });
 }
 
 function clearRejectedFeedback(journal, error, submissionId) {
@@ -240,7 +240,7 @@ async function managedFeedback(api, { body, newSubmission = false, forget = fals
         throw error;
       }
       if (entry.state !== 'pending' || error.code === 'feedback_recovery_unavailable') throw error;
-      if (error.code === 'feedback_storage_unavailable') throw dispatched || previouslyUncertain ? storageRecoveryError(error, entry.submission_id) : error;
+      if (error.code === 'feedback_storage_unavailable') throw storageRecoveryError(error, entry.submission_id, dispatched || previouslyUncertain);
       const unknown = previouslyUncertain || error.code === 'submission_outcome_unknown' || error.details?.outcome === 'unknown';
       if (!unknown && ([400, 413, 422].includes(error.status) || (error.status === 409 && error.details?.reason === 'idempotency_key_reused') ||
           error.code === 'feedback_blocked')) {
@@ -249,7 +249,7 @@ async function managedFeedback(api, { body, newSubmission = false, forget = fals
           error.code, error.status, { ...error.details, submission_id: entry.submission_id, outcome: 'rejected' });
       }
       try { journal.save({ ...entry, uncertain: unknown }); }
-      catch (error) { throw dispatched || previouslyUncertain ? storageRecoveryError(error, entry.submission_id) : error; }
+      catch (error) { throw storageRecoveryError(error, entry.submission_id, dispatched || previouslyUncertain); }
       if (error.status === 403 && error.details?.reason === 'feedback_not_enabled') {
         const outcomeText = unknown ? '' : ' This report was not accepted.';
         throw new NansenError(`${error.message}${outcomeText} The saved ID and report are retained for recovery.`,

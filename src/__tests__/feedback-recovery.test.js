@@ -514,6 +514,43 @@ it('keeps prior uncertainty when storage fails before a resumed dispatch', async
   expect(h.read()).toMatchObject({ state: 'pending', uncertain: true, submission_id: id });
 });
 
+it.each(['fresh submit', 'rollout resume'])('keeps the saved unsent ID when the dispatch-state write fails on %s', async scenario => {
+  for (const flags of [[], ['--json']]) {
+    const h = await harness();
+    const resumed = scenario === 'rollout resume';
+    if (resumed) {
+      h.post((_req, res) => reply(res, 403, { code: 'forbidden', reason: 'feedback_not_enabled' }));
+      expect((await h.run(h.submit)).code).toBe(1);
+    }
+    const before = posts(h).length;
+    const originalId = resumed ? h.read().submission_id : undefined;
+    const env = h.hook(`const fs = require('node:fs'); const rename = fs.renameSync; let writes = 0;
+      fs.renameSync = (a, b) => {
+        if (b.endsWith('/feedback/recovery.json') && ++writes === ${resumed ? 1 : 2}) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+        return rename(a, b);
+      };`);
+    const r = await h.run([...(resumed ? ['resume'] : ['submit', '--file', h.file]), ...flags], env);
+    const saved = h.read();
+    expect(r.code).toBe(1); expect(posts(h)).toHaveLength(before);
+    expect(saved).toMatchObject({ state: 'pending', uncertain: false, body: h.body });
+    if (resumed) expect(saved.submission_id).toBe(originalId);
+    expect(r.stdout).toContain('The report was not sent.');
+    expect(r.stdout).toContain('nansen feedback resume'); expect(r.stdout).toContain(saved.submission_id);
+    expect(r.stdout).not.toMatch(/caller-managed|may have been (accepted|saved)/);
+    expect(r.stdout + r.stderr).not.toContain('synthetic-key');
+    expect(r.stdout + r.stderr).not.toContain(examples.accepted.request.body.description);
+    if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ code: 'feedback_storage_unavailable',
+      details: { outcome: 'rejected', submission_id: saved.submission_id, retry_command: 'nansen feedback resume' } });
+    expect(JSON.parse((await h.run([...h.submit, '--new'])).stdout).code).toBe('feedback_pending');
+    expect(posts(h)).toHaveLength(before);
+    h.post((req, res) => reply(res, 201, receipt(req)));
+    expect((await h.run(['resume', '--json'])).code).toBe(0);
+    expect(posts(h).slice(before)).toEqual([expect.objectContaining({ body: h.body,
+      headers: expect.objectContaining({ 'idempotency-key': saved.submission_id }) })]);
+    expect(h.read()).toMatchObject({ state: 'confirmed', submission_id: saved.submission_id });
+  }
+});
+
 it.each([
   { status: 403, code: 'feedback_blocked', html: true },
   { status: 422, code: 'invalid_value', reason: 'invalid_value' },
