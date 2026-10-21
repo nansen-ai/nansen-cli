@@ -201,6 +201,15 @@ it.each([{ flags: [] }, { flags: ['--json'] }])('preserves uncertainty when an e
   if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ code: 'submission_outcome_unknown', details: { outcome: 'unknown' } });
 });
 
+it.each([{ flags: [] }, { flags: ['--json'] }])('keeps the outcome unknown after a JSON 500 then an edge block %j', async ({ flags }) => {
+  const h = await harness([{ status: 500, body: { code: 'internal_error', message: 'Storage unconfirmed' } },
+    { status: 403, headers: { 'Content-Type': 'text/html' }, raw: '<html>Blocked</html>' }]);
+  const r = await h.run([...h.submit, ...flags]);
+  expect(r.code).toBe(1); expect(r.stdout).toContain('may have been saved');
+  expect(r.stdout).not.toContain('No report was saved'); expect(h.requests).toHaveLength(2);
+  if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ code: 'submission_outcome_unknown', details: { outcome: 'unknown' } });
+});
+
 it.each(['accepted', 'receipt_reviewed', 'receipt_closed'])('distinguishes %s in human output', async scenario => {
   const h = await harness([examples[scenario]]);
   const result = await h.run(scenario === 'accepted' ? h.submit : ['get', examples[scenario].body.feedback_id, '--cache']);
@@ -372,6 +381,20 @@ it.each([401, 403])('adds preference guidance while preserving HTTP %s diagnosti
       details: { reason: 'preference_unavailable', request_id: 'preference-denied' } });
   }
   expect(h.requests).toHaveLength(2);
+});
+
+it.each([
+  { env: { NANSEN_API_KEY: '' }, args: [], guidance: 'nansen login' },
+  { env: {}, args: ['--x402-payment-signature', 'synthetic-signature'], guidance: 'Remove --x402-payment-signature' },
+])('keeps local preference recovery guidance: $guidance', async ({ env, args, guidance }) => {
+  const h = await harness([{ status: 200, body: preference }]);
+  for (const flags of [[], ['--json']]) {
+    const r = await h.run(['preferences', ...args, ...flags], env);
+    expect(r.code).toBe(1); expect(r.stdout).toContain('Show the report and ask before sending.');
+    expect(r.stdout).toContain(guidance);
+    if (flags.length) expect(JSON.parse(r.stdout).details.reason).toBe('preference_unavailable');
+  }
+  expect(h.requests).toHaveLength(0);
 });
 it.each([['preferences', 'enable'], ['preferences', '--file', 'report.json'], ['preferences', '--new']])('rejects preference mutations %j before sending', async args => {
   const h = await harness([{ status: 200, body: preference }]);

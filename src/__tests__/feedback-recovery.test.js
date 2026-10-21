@@ -456,6 +456,74 @@ it('treats a legacy pending journal as uncertain and rejects malformed uncertain
   expect(posts(h)).toHaveLength(2);
 });
 
+it.each(['confirmation', 'rejection-state'])('keeps safe recovery guidance when the %s journal write fails', async failure => {
+  for (const flags of [['--json'], []]) {
+    const h = await harness();
+    h.post((req, res) => failure === 'confirmation' ? reply(res, 201, receipt(req))
+      : reply(res, 403, { code: 'forbidden', reason: 'feedback_not_enabled' }));
+    const env = h.hook(`const fs = require('node:fs'); const rename = fs.renameSync; let writes = 0;
+      fs.renameSync = (a, b) => {
+        if (b.endsWith('/feedback/recovery.json') && ++writes === 3) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+        return rename(a, b);
+      };`);
+    const r = await h.run(['submit', '--file', h.file, ...flags], env);
+    expect(r.code).toBe(1); expect(r.stdout).toContain('may have been saved');
+    expect(r.stdout).toContain('nansen feedback resume'); expect(r.stdout).not.toContain('caller-managed');
+    expect(h.read()).toMatchObject({ state: 'pending', uncertain: true, body: h.body });
+    if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ code: 'feedback_storage_unavailable',
+      details: { outcome: 'unknown', submission_id: h.read().submission_id, retry_command: 'nansen feedback resume' } });
+    const id = h.read().submission_id;
+    h.post((req, res) => reply(res, 200, receipt(req, { replayed: failure === 'confirmation' })));
+    expect((await h.run(['resume', '--json'])).code).toBe(0);
+    expect(h.read()).toMatchObject({ state: 'confirmed', submission_id: id });
+  }
+});
+
+it.each([
+  { status: 402, json: false }, { status: 404, json: false }, { status: 501, json: false },
+  { status: 402, json: true }, { status: 404, json: true }, { status: 501, json: true },
+])('retains uncertainty after a lost reply then HTTP $status, JSON $json', async ({ status, json }) => {
+  const h = await harness(); let attempts = 0;
+  h.post((_req, res) => {
+    if (++attempts === 1) { res.destroy(); return; }
+    if (json) reply(res, status, { code: 'unavailable', message: 'Unavailable' });
+    else { res.writeHead(status, { 'Content-Type': 'text/html' }); res.end('<html>Unavailable</html>'); }
+  });
+  const r = await h.run([...h.submit, '--retries', '1']);
+  expect(JSON.parse(r.stdout)).toMatchObject({ code: 'submission_outcome_unknown', details: { outcome: 'unknown' } });
+  const saved = h.read(); expect(saved.uncertain).toBe(true);
+  h.post((_req, res) => { res.writeHead(403, { 'Content-Type': 'text/html' }); res.end('<html>Blocked</html>'); });
+  const again = await h.run(['resume']);
+  expect(again.stdout).toContain('may have been saved'); expect(again.stdout).not.toContain('No report was saved');
+  expect(h.read()).toMatchObject({ state: 'pending', uncertain: true, submission_id: saved.submission_id });
+});
+
+it('keeps prior uncertainty when storage fails before a resumed dispatch', async () => {
+  const h = await harness(); await killedPending(h);
+  const id = h.read().submission_id;
+  const env = h.hook(`const fs = require('node:fs'); const rename = fs.renameSync;
+    fs.renameSync = (a, b) => {
+      if (b.endsWith('/feedback/recovery.json')) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+      return rename(a, b);
+    };`);
+  const r = await h.run(['resume', '--json'], env);
+  expect(JSON.parse(r.stdout)).toMatchObject({ code: 'feedback_storage_unavailable',
+    details: { outcome: 'unknown', submission_id: id, retry_command: 'nansen feedback resume' } });
+  expect(r.stdout).not.toContain('caller-managed'); expect(posts(h)).toHaveLength(1);
+  expect(h.read()).toMatchObject({ state: 'pending', uncertain: true, submission_id: id });
+});
+
+it.each([401, 429, 501])('keeps the resume command after a definite retained HTTP %s rejection', async status => {
+  const h = await harness(); h.post((_req, res) => reply(res, status, { code: 'rejected', message: 'Unavailable' }));
+  for (const args of [[...h.submit, '--no-retry'], ['resume', '--no-retry']]) {
+    const r = await h.run(args);
+    expect(r.code).toBe(1); expect(r.stdout).toContain('nansen feedback resume');
+    expect(r.stdout).not.toContain('may have been accepted');
+    if (args.includes('--json')) expect(JSON.parse(r.stdout).details).toMatchObject({ outcome: 'rejected', retry_command: 'nansen feedback resume' });
+    expect(h.read()).toMatchObject({ state: 'pending', uncertain: false });
+  }
+});
+
 it.each([
   { status: 500, reason: 'internal_error', outcome: 'unknown' },
   { status: 503, reason: 'feedback_store_unavailable', outcome: 'unknown' },
