@@ -1,5 +1,49 @@
 # Changelog
 
+## 2.3.0
+
+### Minor Changes
+
+- [#747](https://github.com/nansen-ai/nansen-cli/pull/747) [`32a4ab2`](https://github.com/nansen-ai/nansen-cli/commit/32a4ab2bd9f9999a7ce9bd654af25c5783683ca2) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Add feedback submit and receipt lookup with explicit submission IDs, account authentication, safe retries, and JSON or human output.
+
+  Explain the agent preference rule in CLI guidance: ask before sending when the saved preference is off, unset or unavailable.
+
+  Explain paused submissions: report the unavailable feature, stop repeated attempts, and preserve the ID and report for a later retry.
+
+  Preserve field-level validation errors and uncertain submissions across session failures, recognize gateway authentication errors, and keep malformed feedback arguments out of telemetry.
+
+- [#755](https://github.com/nansen-ai/nansen-cli/pull/755) [`84ba0b0`](https://github.com/nansen-ai/nansen-cli/commit/84ba0b04a2920114417b19d640ed7aff158b3d5b) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Read account feedback preferences and stop automatic retries when feedback is not enabled for the account.
+
+- [#754](https://github.com/nansen-ai/nansen-cli/pull/754) [`4dddcec`](https://github.com/nansen-ai/nansen-cli/commit/4dddceccd500c3dff9641fcc4bea99d8909ccc20) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Save feedback submissions before sending when no ID is supplied. Resume the same report after a restart, with account and environment checks, private storage, concurrency protection, and local expiry and erasure.
+
+- [#744](https://github.com/nansen-ai/nansen-cli/pull/744) [`f56cdbb`](https://github.com/nansen-ai/nansen-cli/commit/f56cdbba8049dcf349dd0bb4ca94552334085762) Thanks [@kome12](https://github.com/kome12)! - **Removed `--gasless` from `trade execute`.** The flag never worked. The deprecated broadcast route it posted to validates its request body strictly and has never accepted the `gasless` or `steps` fields, so every gasless swap was rejected with `Unrecognized keys` before anything was broadcast — on Base and on Solana alike. Passing `--gasless` now fails fast with `GASLESS_REMOVED` instead of signing, posting and failing; re-run without it and the wallet pays its own gas as usual. There is no replacement flag.
+
+  This corrects the 2.2.0 release note, which said "Gasless swaps stay on the deprecated route". They did, but that route rejected them; there was no working gasless path to keep.
+
+  This removes a published option and its `schema.json` entry, so anything enumerating `trade execute`'s options will see it disappear and any wrapper still passing it will fail. It is released as a minor rather than a major because the flag never completed a swap on any chain: every call already ended in a failed execution, so no working integration can depend on it.
+
+  **Removed the `$10` gas-balance bypass.** `trade quote` skipped its native-balance pre-check for any trade worth $10 or more, on the theory that such trades could use a solver-paid route. It never checked whether one was actually in use, so a wallet with no native token passed validation and then failed at broadcast. Gas is now checked on every trade, and the error says to fund the wallet rather than suggesting the removed feature.
+
+  The Solana floor comes down from `0.01` SOL to `0.005` SOL in the same change. It had drifted above the `0.005` SOL the CLI itself holds back when you sell the maximum amount of SOL, so a wallet left sitting on exactly that reserve would have been refused its next quote — a contradiction the `$10` bypass had been hiding from every trade worth $10 or more. `0.005` SOL is still a wide margin over a real swap (a 5000-lamport base fee plus at most ~0.00204 SOL of account rent). The Base floor is unchanged.
+
+- [#751](https://github.com/nansen-ai/nansen-cli/pull/751) [`0a87eae`](https://github.com/nansen-ai/nansen-cli/commit/0a87eae89fadbadf0fa1869546f71f8d9afa5d80) Thanks [@kome12](https://github.com/kome12)! - Add `NANSEN_X402_SESSION_MAX_AMOUNT` to cap the total USD of x402 auto-payments one CLI process can sign
+
+### Patch Changes
+
+- [#757](https://github.com/nansen-ai/nansen-cli/pull/757) [`19b7cfc`](https://github.com/nansen-ai/nansen-cli/commit/19b7cfcb562bac2beb85775833fb8b87edfd0037) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Report feedback edge blocks as rejections, keep preference failures on the ask-before-sending path, and preserve the actual submission outcome when resuming saved reports.
+
+- [#732](https://github.com/nansen-ai/nansen-cli/pull/732) [`94815d4`](https://github.com/nansen-ai/nansen-cli/commit/94815d409cb67b6e93fe32bd5d5bbd9081084c57) Thanks [@Ahmett101](https://github.com/Ahmett101)! - Render profiler perp positions as individual rows in table and CSV output while preserving the original JSON response and account summaries. Table and CSV output also falls back to showing the payload when a response's rows carry no fields, instead of printing blank lines.
+
+- [#742](https://github.com/nansen-ai/nansen-cli/pull/742) [`facbb45`](https://github.com/nansen-ai/nansen-cli/commit/facbb4536b7bb6e2667f8272ada3a4b34a06dd79) Thanks [@gulshngill](https://github.com/gulshngill)! - Check EVM token balances before signing automatic x402 payments. Skip unfunded options for local and Privy wallets and continue to a funded token, using exact amounts and bounded RPC checks.
+
+- [#748](https://github.com/nansen-ai/nansen-cli/pull/748) [`fb96a5d`](https://github.com/nansen-ai/nansen-cli/commit/fb96a5d96d26e7610e7b580a000b1d85bd3fcfc4) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Use stable v1 API routes for ten historical research commands before their beta aliases are retired.
+
+- [#750](https://github.com/nansen-ai/nansen-cli/pull/750) [`2c38b44`](https://github.com/nansen-ai/nansen-cli/commit/2c38b44b10329eb3570b3c44566e198bd60b4693) Thanks [@kome12](https://github.com/kome12)! - Record x402 auto-payments in a local audit log at `~/.nansen/x402/payments.jsonl`: one line when a signed payment is sent and one for its outcome (accepted, rejected or ambiguous), with the amount, network, asset, recipient and request path. Signatures, request and response bodies, and query strings are never written, and a failed write warns without blocking the payment.
+
+- [#745](https://github.com/nansen-ai/nansen-cli/pull/745) [`5a77e0d`](https://github.com/nansen-ai/nansen-cli/commit/5a77e0d160507d97e67b50bfe38917a2005d13c5) Thanks [@gulshngill](https://github.com/gulshngill)! - Skip unfunded x402 payment options on every signing path. WalletConnect payments now try each compatible option cheapest first, check the connected wallet's token balance before asking for approval, and move on to the next option after a clean server rejection instead of failing on the first. Solana payments from local and Privy wallets check the USDC balance before signing. Privy payments now report the token they paid with, so the low-balance warning checks the right token.
+
+- [#749](https://github.com/nansen-ai/nansen-cli/pull/749) [`221371b`](https://github.com/nansen-ai/nansen-cli/commit/221371b055d08bd88ad9bf8da409e21f01baa85c) Thanks [@kome12](https://github.com/kome12)! - x402: report on stderr when the server rejects a payment because the wallet's token balance is too low, and include the network in the "Paid via WalletConnect" log line.
+
 ## 2.2.0
 
 ### Minor Changes
