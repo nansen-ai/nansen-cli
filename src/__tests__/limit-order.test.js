@@ -43,12 +43,16 @@ let originalHome;
 let tempDir;
 let originalFetch;
 let originalSolanaSimRpc;
+let originalPrivyAppId;
+let originalPrivyAppSecret;
 
 beforeEach(() => {
   originalHome = process.env.HOME;
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nansen-lo-test-'));
   process.env.HOME = tempDir;
   originalFetch = global.fetch;
+  originalPrivyAppId = process.env.PRIVY_APP_ID;
+  originalPrivyAppSecret = process.env.PRIVY_APP_SECRET;
   global.fetch = vi.fn();
   // Force limit-order outcome verification to gracefully degrade by default so
   // existing happy-path tests (which don't mock the sim RPC's own fetch calls)
@@ -62,6 +66,10 @@ afterEach(() => {
   process.env.HOME = originalHome;
   fs.rmSync(tempDir, { recursive: true, force: true });
   global.fetch = originalFetch;
+  if (originalPrivyAppId === undefined) delete process.env.PRIVY_APP_ID;
+  else process.env.PRIVY_APP_ID = originalPrivyAppId;
+  if (originalPrivyAppSecret === undefined) delete process.env.PRIVY_APP_SECRET;
+  else process.env.PRIVY_APP_SECRET = originalPrivyAppSecret;
   SIMULATION_RPCS.solana = originalSolanaSimRpc;
   vi.restoreAllMocks();
 });
@@ -515,8 +523,211 @@ describe('resolveSolanaWallet', () => {
 // ============= Command Handlers =============
 
 describe('buildLimitOrderCommands', () => {
+  function cachedWallet(name) {
+    const wallet = createTestWallet(name);
+    saveCachedToken(wallet.solana, 'jwt-cached');
+    return wallet;
+  }
+
+  function createOptions(wallet) {
+    return {
+      from: 'SOL', to: 'USDC', amount: '1',
+      'trigger-mint': 'SOL', 'trigger-condition': 'below', 'trigger-price': '80',
+      wallet,
+    };
+  }
+
+  function createPrivyWallet(name) {
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    fs.mkdirSync(walletsDir, { recursive: true });
+    fs.writeFileSync(path.join(walletsDir, `${name}.json`), JSON.stringify({
+      name,
+      provider: 'privy',
+      solana: { address: TEST_VAULT_PUBKEY, privyWalletId: `privy-${name}` },
+    }));
+    fs.writeFileSync(path.join(walletsDir, 'config.json'), JSON.stringify({ defaultWallet: name }));
+  }
+
+  function mockCachedCreate(wallet) {
+    mockFetchSequence([
+      { body: { vaultPubkey: TEST_VAULT_PUBKEY, userPubkey: wallet.solana } },
+      { body: { transaction: buildFakeBase64Tx({ walletPubkey: wallet.solana }), requestId: 'dep-guard' } },
+      { body: { id: 'order-guard', txSignature: 'sig-guard' }, status: 201 },
+    ]);
+  }
+
+  function mockCachedCancel() {
+    mockFetchSequence([
+      { body: { id: 'order-guard', transaction: buildFakeBase64Tx(), requestId: 'cancel-guard' } },
+      { body: { id: 'order-guard', txSignature: 'cancel-sig-guard' } },
+    ]);
+  }
+
   // ---- create ----
   describe('create', () => {
+    it('--dry-run prints a create intent and stops before authentication or transaction crafting', async () => {
+      createTestWallet('lo-create-dry-run');
+      const logs = [];
+      const promptFn = vi.fn();
+      const exit = vi.fn();
+      const cmds = buildLimitOrderCommands({
+        log: (m) => logs.push(m), exit, promptFn, isTTY: true, env: {},
+      });
+
+      await cmds.create([], null, { 'dry-run': true }, createOptions('lo-create-dry-run'));
+
+      expect(exit).not.toHaveBeenCalled();
+      expect(promptFn).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(logs.join('\n')).toMatch(/Create limit order plan[\s\S]*Sell:[\s\S]*Trigger:/);
+      expect(logs.join('\n')).toContain('no order was submitted');
+    });
+
+    it('--dry-run with a Privy wallet does not require Privy secrets', async () => {
+      createPrivyWallet('lo-create-privy-dry-run');
+      const previousId = process.env.PRIVY_APP_ID;
+      const previousSecret = process.env.PRIVY_APP_SECRET;
+      delete process.env.PRIVY_APP_ID;
+      delete process.env.PRIVY_APP_SECRET;
+      try {
+        const logs = [];
+        const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit: vi.fn(), isTTY: true, env: {} });
+
+        await cmds.create([], null, { 'dry-run': true }, createOptions('lo-create-privy-dry-run'));
+
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(logs.join('\n')).toContain('no order was submitted');
+      } finally {
+        if (previousId === undefined) delete process.env.PRIVY_APP_ID; else process.env.PRIVY_APP_ID = previousId;
+        if (previousSecret === undefined) delete process.env.PRIVY_APP_SECRET; else process.env.PRIVY_APP_SECRET = previousSecret;
+      }
+    });
+
+    it('--dry-run accepts valid custom-token decimal syntax without a decimals lookup', async () => {
+      createTestWallet('lo-create-custom-dry-run');
+      const logs = [];
+      const exit = vi.fn();
+      const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit, isTTY: true, env: {} });
+
+      await cmds.create([], null, { 'dry-run': true }, {
+        ...createOptions('lo-create-custom-dry-run'),
+        from: TEST_TOKEN_PROGRAM,
+        amount: '1.25',
+      });
+
+      expect(exit).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(logs.join('\n')).toContain('1.25');
+    });
+
+    it('interactive decline stops create before authentication or transaction crafting', async () => {
+      createTestWallet('lo-create-decline');
+      const logs = [];
+      const confirmations = [];
+      const promptFn = vi.fn(async () => 'no');
+      const exit = vi.fn();
+      const cmds = buildLimitOrderCommands({
+        log: (m) => logs.push(m), confirmationLog: (m) => confirmations.push(m),
+        exit, promptFn, isTTY: true, env: {},
+      });
+
+      await expect(cmds.create([], null, {}, createOptions('lo-create-decline')))
+        .rejects.toMatchObject({ code: 'CONFIRMATION_DECLINED', reported: true });
+
+      expect(promptFn).toHaveBeenCalledWith('Create this limit order? [y/N] ');
+      expect(exit).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(confirmations.join('\n')).toContain('Create limit order plan');
+      expect(confirmations.filter(message => message.includes('Aborted at the confirmation prompt'))).toHaveLength(1);
+    });
+
+    it('interactive decline with a Privy wallet does not require Privy secrets', async () => {
+      createPrivyWallet('lo-create-privy-decline');
+      delete process.env.PRIVY_APP_ID;
+      delete process.env.PRIVY_APP_SECRET;
+      const cmds = buildLimitOrderCommands({
+        log: () => {}, confirmationLog: () => {}, exit: vi.fn(),
+        promptFn: async () => 'no', isTTY: true, env: {},
+      });
+
+      await expect(cmds.create([], null, {}, createOptions('lo-create-privy-decline')))
+        .rejects.toMatchObject({ code: 'CONFIRMATION_DECLINED' });
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it.each(['1e3', '0x10', '+1', '.5', '1.', 'NaN', 'Infinity'])(
+      'rejects custom-token amount syntax %s before previewing or looking up decimals',
+      async (amount) => {
+        const logs = [];
+        const exit = vi.fn();
+        const promptFn = vi.fn();
+        const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit, promptFn, isTTY: true, env: {} });
+
+        await cmds.create([], null, { 'dry-run': true }, {
+          ...createOptions('unused-wallet'),
+          from: TEST_TOKEN_PROGRAM,
+          amount,
+        });
+
+        expect(exit).toHaveBeenCalledWith(1);
+        expect(promptFn).not.toHaveBeenCalled();
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(logs).toContain('Error: Amount must be a valid number');
+      },
+    );
+
+    it('interactive affirmative create proceeds after showing the intent', async () => {
+      const wallet = cachedWallet('lo-create-confirm');
+      mockCachedCreate(wallet);
+      const promptFn = vi.fn(async () => 'yes');
+      const exit = vi.fn();
+      const confirmations = [];
+      const cmds = buildLimitOrderCommands({
+        log: () => {}, confirmationLog: (m) => confirmations.push(m), exit,
+        promptFn, isTTY: true, env: {},
+      });
+
+      await cmds.create([], null, {}, createOptions('lo-create-confirm'));
+
+      expect(exit).not.toHaveBeenCalled();
+      expect(promptFn).toHaveBeenCalledOnce();
+      expect(confirmations.join('\n')).toContain('Create limit order plan');
+      expect(global.fetch).toHaveBeenCalledTimes(3);
+      expect(global.fetch.mock.calls[2][0]).toContain('/limit-order/v2/create');
+    });
+
+    it.each([
+      ['--yes', { yes: true }, {}],
+      ['NANSEN_YES=1', {}, { NANSEN_YES: '1' }],
+    ])('%s bypasses only the create confirmation prompt', async (_label, flags, env) => {
+      const name = `lo-create-yes-${Object.keys(flags)[0] || 'env'}`;
+      const wallet = cachedWallet(name);
+      mockCachedCreate(wallet);
+      const promptFn = vi.fn();
+      const exit = vi.fn();
+      const cmds = buildLimitOrderCommands({ log: () => {}, exit, promptFn, isTTY: true, env });
+
+      await cmds.create([], null, flags, createOptions(name));
+
+      expect(exit).not.toHaveBeenCalled();
+      expect(promptFn).not.toHaveBeenCalled();
+      expect(global.fetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('non-TTY create remains noninteractive and proceeds without --yes', async () => {
+      const wallet = cachedWallet('lo-create-nontty');
+      mockCachedCreate(wallet);
+      const promptFn = vi.fn();
+      const exit = vi.fn();
+      const cmds = buildLimitOrderCommands({ log: () => {}, exit, promptFn, isTTY: false, env: {} });
+
+      await cmds.create([], null, {}, createOptions('lo-create-nontty'));
+
+      expect(exit).not.toHaveBeenCalled();
+      expect(promptFn).not.toHaveBeenCalled();
+      expect(global.fetch).toHaveBeenCalledTimes(3);
+    });
+
     it('shows help when required params missing', async () => {
       const logs = [];
       const exit = vi.fn();
@@ -1065,6 +1276,120 @@ describe('buildLimitOrderCommands', () => {
 
   // ---- cancel ----
   describe('cancel', () => {
+    it('--dry-run prints a cancel intent without requesting a one-time cancellation transaction', async () => {
+      createTestWallet('lo-cancel-dry-run');
+      const logs = [];
+      const promptFn = vi.fn();
+      const exit = vi.fn();
+      const cmds = buildLimitOrderCommands({
+        log: (m) => logs.push(m), exit, promptFn, isTTY: true, env: {},
+      });
+
+      await cmds.cancel([], null, { 'dry-run': true }, { order: 'order-dry-run', wallet: 'lo-cancel-dry-run' });
+
+      expect(exit).not.toHaveBeenCalled();
+      expect(promptFn).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(logs.join('\n')).toMatch(/Cancel limit order plan[\s\S]*Order:[\s\S]*Wallet:/);
+      expect(logs.join('\n')).toContain('no cancellation request was created or consumed');
+    });
+
+    it('--dry-run cancel with a Privy wallet does not require Privy secrets', async () => {
+      createPrivyWallet('lo-cancel-privy-dry-run');
+      delete process.env.PRIVY_APP_ID;
+      delete process.env.PRIVY_APP_SECRET;
+      const logs = [];
+      const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit: vi.fn(), isTTY: true, env: {} });
+
+      await cmds.cancel([], null, { 'dry-run': true }, { order: 'order-dry-run', wallet: 'lo-cancel-privy-dry-run' });
+
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(logs.join('\n')).toContain('no cancellation request was created or consumed');
+    });
+
+    it('interactive decline stops cancel before requesting a one-time cancellation transaction', async () => {
+      createTestWallet('lo-cancel-decline');
+      const confirmations = [];
+      const promptFn = vi.fn(async () => 'no');
+      const exit = vi.fn();
+      const cmds = buildLimitOrderCommands({
+        log: () => {}, confirmationLog: (m) => confirmations.push(m), exit,
+        promptFn, isTTY: true, env: {},
+      });
+
+      await expect(cmds.cancel([], null, {}, { order: 'order-decline', wallet: 'lo-cancel-decline' }))
+        .rejects.toMatchObject({ code: 'CONFIRMATION_DECLINED', reported: true });
+
+      expect(promptFn).toHaveBeenCalledWith('Cancel this limit order? [y/N] ');
+      expect(exit).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(confirmations.join('\n')).toContain('Cancel limit order plan');
+      expect(confirmations.filter(message => message.includes('Aborted at the confirmation prompt'))).toHaveLength(1);
+    });
+
+    it('interactive cancel decline with a Privy wallet does not require Privy secrets', async () => {
+      createPrivyWallet('lo-cancel-privy-decline');
+      delete process.env.PRIVY_APP_ID;
+      delete process.env.PRIVY_APP_SECRET;
+      const cmds = buildLimitOrderCommands({
+        log: () => {}, confirmationLog: () => {}, exit: vi.fn(),
+        promptFn: async () => 'no', isTTY: true, env: {},
+      });
+
+      await expect(cmds.cancel([], null, {}, { order: 'order-decline', wallet: 'lo-cancel-privy-decline' }))
+        .rejects.toMatchObject({ code: 'CONFIRMATION_DECLINED' });
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('interactive affirmative cancel proceeds after showing the intent', async () => {
+      cachedWallet('lo-cancel-confirm');
+      mockCachedCancel();
+      const promptFn = vi.fn(async () => 'y');
+      const exit = vi.fn();
+      const confirmations = [];
+      const cmds = buildLimitOrderCommands({
+        log: () => {}, confirmationLog: (m) => confirmations.push(m), exit,
+        promptFn, isTTY: true, env: {},
+      });
+
+      await cmds.cancel([], null, {}, { order: 'order-guard', wallet: 'lo-cancel-confirm' });
+
+      expect(exit).not.toHaveBeenCalled();
+      expect(promptFn).toHaveBeenCalledOnce();
+      expect(confirmations.join('\n')).toContain('Cancel limit order plan');
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      expect(global.fetch.mock.calls[0][0]).toContain('/limit-order/v2/cancel/order-guard');
+      expect(global.fetch.mock.calls[1][0]).toContain('/limit-order/v2/cancel/order-guard/confirm');
+    });
+
+    it('-y bypasses only the cancel confirmation prompt', async () => {
+      cachedWallet('lo-cancel-yes');
+      mockCachedCancel();
+      const promptFn = vi.fn();
+      const exit = vi.fn();
+      const cmds = buildLimitOrderCommands({ log: () => {}, exit, promptFn, isTTY: true, env: {} });
+
+      await cmds.cancel([], null, { y: true }, { order: 'order-guard', wallet: 'lo-cancel-yes' });
+
+      expect(exit).not.toHaveBeenCalled();
+      expect(promptFn).not.toHaveBeenCalled();
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('non-TTY cancel remains noninteractive and proceeds without --yes', async () => {
+      cachedWallet('lo-cancel-nontty');
+      mockCachedCancel();
+      const promptFn = vi.fn();
+      const exit = vi.fn();
+      const cmds = buildLimitOrderCommands({ log: () => {}, exit, promptFn, isTTY: false, env: {} });
+
+      await cmds.cancel([], null, {}, { order: 'order-guard', wallet: 'lo-cancel-nontty' });
+
+      expect(exit).not.toHaveBeenCalled();
+      expect(promptFn).not.toHaveBeenCalled();
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
     it('shows help when order ID missing', async () => {
       const logs = [];
       const exit = vi.fn();

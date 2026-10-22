@@ -270,18 +270,22 @@ nansen trade bridge-status --tx-hash <hash> --from-chain base --to-chain solana
 
 ### Before broadcasting
 
-`trade execute` and `bridge execute` move funds irreversibly, so both accept:
+`trade execute`, `bridge execute`, and the signing limit-order operations (`limit-order create` and `limit-order cancel`) accept:
 
 ```bash
 nansen trade execute --quote <quoteId> --dry-run   # validate + print the plan, broadcast nothing
 nansen trade execute --quote <quoteId> --yes       # skip the confirmation prompt (also: -y)
+nansen trade limit-order create ... --dry-run      # preview intent; no API request or signature
+nansen trade limit-order cancel --order <id> --dry-run # does not request/consume a cancellation tx
 ```
 
 `--dry-run` runs every sign-free preflight available from the cached quote, its public signer address, and read-only RPC calls; prints what *would* be sent (chain, tokens, amounts, recipient, approvals, fees); and stops before wallet credentials, signing, or broadcast — no wallet password needed, the quote stays usable, exit code 0. Real execution still resolves and revalidates the live signer before signing.
 
 On EVM, both commands refuse a transaction whose worst-case gas cost (fee cap × gas limit) is above 1 ETH, before anything is signed, approvals included. That is a backstop against an anomalous quote, the same kind of cap geth and reth apply to `eth_sendTransaction`. `--max-tx-fee <eth>` changes it, and `--max-tx-fee 0` turns it off. WalletConnect transactions are not checked, since the wallet shows the fee before signing.
 
-When stdin is an interactive terminal, execute prints that plan and asks `Broadcast this transaction? [y/N]` first; anything but `y`/`yes` aborts with exit code 1 and nothing signed. `--yes`, or `NANSEN_YES=1`, skips the question. **When stdin is not a terminal — agents, CI, pipes — nothing changes: the command proceeds without prompting**, and `--yes` is accepted as a no-op so it is always safe to pass.
+For limit orders, `--dry-run` is a non-consuming intent preview built from locally validated arguments and the wallet's public address. It returns before limit-order authentication, custom-token metadata RPC lookups, transaction crafting, transaction signing, or final submission. Create preview does not submit an order; cancel preview does not request or consume the API's one-time cancellation transaction. Real execution performs the existing transaction and outcome validation after acknowledgement.
+
+When stdin is an interactive terminal, each guarded command prints its plan and asks for confirmation first (`Broadcast this transaction?`, `Create this limit order?`, or `Cancel this limit order?`); anything but `y`/`yes` aborts with exit code 1 and nothing signed. `--yes`, `-y`, or `NANSEN_YES=1` skips only the question. **When stdin is not a terminal — agents, CI, pipes — nothing changes: the command proceeds without prompting**, and `--yes` is accepted as a no-op so it is always safe to pass.
 
 | Exit code | Meaning |
 |-----------|---------|
@@ -309,6 +313,8 @@ nansen trade limit-order update --order <orderId> --trigger-price 85
 ```
 
 `--amount` is in token units (`1.5` = 1.5 SOL). `--slippage-bps` is basis points (`300` = 3%, `100` = 1%); omit for auto. Minimum order value ~$10 (server-enforced). Local, Privy, and WalletConnect wallets all work.
+
+Add `--dry-run` to `create` or `cancel` for a no-API, no-signature intent preview. In an interactive terminal these two commands otherwise ask for confirmation; pass `--yes`/`-y` (or set `NANSEN_YES=1`) to skip the prompt. Non-TTY automation remains unprompted.
 
 For EVM chains, there's no native limit-order surface — pair an external venue's resting order with a `common-token-transfer` smart alert on the settlement wallet as a best-effort fill signal. See the `nansen-limit-orders` skill for details.
 

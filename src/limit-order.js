@@ -28,6 +28,7 @@ import { validateTokenAddress, telemetryHeaders, packageVersion } from './api.js
 import { getWalletConnectAddress, sendSolanaTransactionViaWalletConnect, signSolanaMessageViaWalletConnect } from './walletconnect-trading.js';
 import { retrievePassword } from './keychain.js';
 import { CHAIN_RPCS } from './rpc-urls.js';
+import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 
 // ============= Constants =============
 
@@ -285,6 +286,9 @@ export async function authenticate(walletPubkey, walletType, walletInfo, log = (
  * Resolve a Solana wallet for limit orders.
  * Follows the same 3-way dispatch as trading.js: WalletConnect / named / default.
  *
+ * This phase resolves public identity only. Signer secrets/clients are hydrated
+ * separately after acknowledgement so previews and declines cannot require them.
+ *
  * @returns {{ pubkey, walletType, walletInfo, privyWalletIds }}
  */
 export async function resolveSolanaWallet(walletName, deps = {}) {
@@ -323,12 +327,10 @@ export async function resolveSolanaWallet(walletName, deps = {}) {
   }
 
   if (wallet.provider === 'privy') {
-    const { PrivyClient } = await import('./privy.js');
-    const privyClient = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);
     return {
       pubkey: wallet.solana,
       walletType: 'privy',
-      walletInfo: { privyClient, walletId: wallet.privyWalletIds?.solana },
+      walletInfo: {},
       privyWalletIds: wallet.privyWalletIds,
     };
   }
@@ -341,6 +343,19 @@ export async function resolveSolanaWallet(walletName, deps = {}) {
     walletName: wallet.name,
     privyWalletIds: null,
   };
+}
+
+/** Hydrate the signer only once a guarded operation is allowed to proceed. */
+async function hydrateSolanaWalletSigner(resolved) {
+  if (resolved.walletType === 'local') {
+    return { privateKeyHex: getLocalWalletPrivateKey(resolved.walletName) };
+  }
+  if (resolved.walletType === 'privy') {
+    const { PrivyClient } = await import('./privy.js');
+    const privyClient = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);
+    return { privyClient, walletId: resolved.privyWalletIds?.solana };
+  }
+  return resolved.walletInfo;
 }
 
 /**
@@ -621,7 +636,14 @@ function formatOrder(order, index) {
  * Build limit order command handlers for CLI integration.
  */
 export function buildLimitOrderCommands(deps = {}) {
-  const { log = console.log, exit = process.exit } = deps;
+  const {
+    log = console.log,
+    exit = process.exit,
+    promptFn,
+    confirmationLog = log,
+    isTTY = false,
+    env = process.env,
+  } = deps;
 
   return {
     'create': async (args, apiInstance, flags, options) => {
@@ -638,6 +660,7 @@ export function buildLimitOrderCommands(deps = {}) {
       const slippageBpsRaw = options['slippage-bps'];
       const expiresStr = options.expires || '30d';
       const walletName = options.wallet;
+      const guard = resolveExecuteGuard(flags, { env, isTTY });
 
       if (!from || !to || !amount || triggerPrice == null || !triggerMintRaw || !triggerCondition) {
         log(`
@@ -653,6 +676,8 @@ OPTIONS:
   --slippage-bps <bps>           Whole integer bps, 0-10000 (100 = 1%), omit for auto
   --expires <duration>           Expiry duration: "24h", "7d", "30d" (default: 30d)
   --wallet <name>                Wallet name (or "walletconnect"/"wc")
+  --dry-run                      Preview the validated intent without API calls or signing
+  --yes, -y                      Skip the interactive confirmation prompt
 
 EXAMPLES:
   # Sell 1 SOL for USDC when SOL drops below $80
@@ -693,49 +718,40 @@ EXAMPLES:
         return;
       }
 
-      // Amount is always in human-readable token units (e.g. 1.5 = 1.5 SOL)
-      // Converted to base units (lamports) internally
+      // Validate the human amount locally before showing an intent preview. Known
+      // tokens can also be converted exactly without I/O; custom-token metadata
+      // lookup remains deferred until after acknowledgement so dry-run performs
+      // no API/RPC work.
+      const amountString = String(amount).trim();
+      if (amountString.startsWith('-')) {
+        log('Error: Amount must be a positive number');
+        exit(1);
+        return;
+      }
+      if (!/^\d+(\.\d+)?$/.test(amountString)) {
+        log('Error: Amount must be a valid number');
+        exit(1);
+        return;
+      }
+      if (/^0+(\.0+)?$/.test(amountString)) {
+        log('Error: Amount must be greater than zero');
+        exit(1);
+        return;
+      }
       let amountBaseUnits;
-      try {
-        const num = Number(amount);
-        if (isNaN(num) || num <= 0) {
-          log('Error: --amount must be a positive number in token units (e.g. 1.5 for 1.5 SOL, 80 for 80 USDC).');
-          exit(1);
-          return;
-        }
-        const fromInfo = KNOWN_SOLANA_TOKENS[from];
-        let decimals;
-        if (fromInfo) {
-          decimals = fromInfo.decimals;
-        } else {
-          const tokenInfo = await getTokenInfo(CHAIN_RPCS.solana, from);
-          decimals = tokenInfo.decimals;
-        }
+      const knownFromInfo = KNOWN_SOLANA_TOKENS[from];
+      if (knownFromInfo) {
         try {
-          amountBaseUnits = String(parseAmount(String(amount), decimals));
+          amountBaseUnits = String(parseAmount(amountString, knownFromInfo.decimals));
         } catch (err) {
-          // parseAmount rejects an amount that truncates to zero base units at
-          // this token's precision — a decimals problem only in name.
           log(`Error: ${err.message}`);
           exit(1);
           return;
         }
-      } catch (err) {
-        log(`Error: Could not resolve decimals for ${from}: ${err.message}`);
-        exit(1);
-        return;
       }
 
-      // Fail fast on a native-SOL amount too small for outcome verification to bound by
-      // magnitude (see assertLimitOrderDepositOutcome's NATIVE_FEE_RENT_SLACK_LAMPORTS
-      // floor) — otherwise this would only surface as a LIMIT_ORDER_OUTCOME_MISMATCH
-      // after crafting and simulating the deposit transaction, well into the flow.
-      // Gated on hasSolanaSimulationRpc deliberately: the floor is a pre-empt of the
-      // magnitude check, so it only applies when that check would actually run. In a
-      // degraded (no-sim-RPC) environment there is no magnitude bound to pre-empt — the
-      // deposit falls back to the static gate alone (verifyLimitOrderOutcome already warns
-      // that outcome verification is unavailable), so blocking a small amount here would
-      // add a floor that the rest of that path doesn't enforce.
+      // This bound is local once SOL's fixed decimals are known, so retain the
+      // existing fail-fast behavior before wallet resolution or acknowledgement.
       if (from === WSOL_MINT && hasSolanaSimulationRpc('solana') && BigInt(amountBaseUnits) <= NATIVE_FEE_RENT_SLACK_LAMPORTS) {
         log(`Error: SOL deposit amount (${amountBaseUnits} lamports) is too small to verify against network fee/rent noise (${NATIVE_FEE_RENT_SLACK_LAMPORTS} lamports). Use a larger amount.`);
         exit(1);
@@ -776,11 +792,39 @@ EXAMPLES:
 
         let { pubkey, walletType, walletInfo } = resolved;
 
-        // For local wallets, load private key now
-        if (walletType === 'local') {
-          const privateKeyHex = getLocalWalletPrivateKey(resolved.walletName);
-          walletInfo = { privateKeyHex };
+        const createPlan = formatPlan('Create limit order plan', [
+          ['Wallet', pubkey],
+          ['Sell', `${amount} ${tokenLabel(from)}`],
+          ['Buy', tokenLabel(to)],
+          ['Trigger', `${tokenLabel(triggerMint)} ${triggerCondition} $${price}`],
+          ['Slippage', slippageBps != null ? `${slippageBps} bps` : 'auto'],
+          ['Expires', expiresAt == null ? 'never' : `${expiresStr} (${new Date(expiresAt).toISOString()})`],
+        ], ['Transaction validation and order submission run only after confirmation.']);
+        const proceed = await guardExecution({
+          plan: createPlan,
+          ...guard,
+          promptFn,
+          log,
+          confirmationLog,
+          question: 'Create this limit order? [y/N] ',
+          dryRunMessage: 'DRY RUN — no transaction was signed and no order was submitted.',
+          dryRunHint: 'Re-run without --dry-run to validate, sign, and submit this limit order.',
+        });
+        if (!proceed) return;
+
+        // Custom tokens need a read-only decimals lookup after acknowledgement.
+        // Known tokens were converted above without I/O.
+        if (amountBaseUnits === undefined) {
+          try {
+            const decimals = (await getTokenInfo(CHAIN_RPCS.solana, from)).decimals;
+            amountBaseUnits = String(parseAmount(amountString, decimals));
+          } catch (err) {
+            throw new Error(`Could not resolve decimals for ${from}: ${err.message}`, { cause: err });
+          }
         }
+
+        // Hydrate local/Privy signing material only after dry-run/prompt.
+        walletInfo = await hydrateSolanaWalletSigner(resolved);
 
         log(`\nCreating limit order on Solana...`);
         log(`  Wallet: ${pubkey}`);
@@ -888,6 +932,7 @@ EXAMPLES:
         log('');
 
       } catch (err) {
+        if (err.reported) throw err;
         log(`Error: ${err.message}`);
         if (err.details) log(`  Details: ${JSON.stringify(err.details)}`);
         if (err.cause) log(`  Cause: ${err.cause.message || err.cause}`);
@@ -924,11 +969,8 @@ EXAMPLES:
 
         let { pubkey, walletType, walletInfo } = resolved;
 
-        // For local wallets, load private key for auth
-        if (walletType === 'local') {
-          const privateKeyHex = getLocalWalletPrivateKey(resolved.walletName);
-          walletInfo = { privateKeyHex };
-        }
+        // List is authenticated, so hydrate the selected signer before auth.
+        walletInfo = await hydrateSolanaWalletSigner(resolved);
 
         const token = await authenticate(pubkey, walletType, walletInfo, log);
 
@@ -963,6 +1005,7 @@ EXAMPLES:
       rejectBlankOption(options.wallet, 'wallet', '<name>');
       const orderId = options.order || options['order-id'] || args[0];
       const walletName = options.wallet;
+      const guard = resolveExecuteGuard(flags, { env, isTTY });
 
       if (!orderId) {
         log(`
@@ -971,6 +1014,8 @@ Usage: nansen trade limit-order cancel --order <orderId>
 OPTIONS:
   --order <id>        Order ID to cancel
   --wallet <name>     Wallet name (or "walletconnect"/"wc")
+  --dry-run           Preview without requesting a cancellation transaction
+  --yes, -y           Skip the interactive confirmation prompt
 
 EXAMPLES:
   nansen trade limit-order cancel --order abc123`);
@@ -984,10 +1029,26 @@ EXAMPLES:
 
         let { pubkey, walletType, walletInfo } = resolved;
 
-        if (walletType === 'local') {
-          const privateKeyHex = getLocalWalletPrivateKey(resolved.walletName);
-          walletInfo = { privateKeyHex };
-        }
+        const cancelPlan = formatPlan('Cancel limit order plan', [
+          ['Order', orderId],
+          ['Wallet', pubkey],
+        ], [
+          'The active order and expected refund are verified after confirmation.',
+          'No cancellation transaction is requested while previewing this intent.',
+        ]);
+        const proceed = await guardExecution({
+          plan: cancelPlan,
+          ...guard,
+          promptFn,
+          log,
+          confirmationLog,
+          question: 'Cancel this limit order? [y/N] ',
+          dryRunMessage: 'DRY RUN — no transaction was signed and no cancellation request was created or consumed.',
+          dryRunHint: 'Re-run without --dry-run to verify and cancel this limit order.',
+        });
+        if (!proceed) return;
+
+        walletInfo = await hydrateSolanaWalletSigner(resolved);
 
         log(`\nCancelling order ${orderId}...`);
 
@@ -1084,6 +1145,7 @@ EXAMPLES:
         log('');
 
       } catch (err) {
+        if (err.reported) throw err;
         log(`Error: ${err.message}`);
         if (err.details) log(`  Details: ${JSON.stringify(err.details)}`);
         exit(1);
@@ -1149,10 +1211,7 @@ EXAMPLES:
 
         let { pubkey, walletType, walletInfo } = resolved;
 
-        if (walletType === 'local') {
-          const privateKeyHex = getLocalWalletPrivateKey(resolved.walletName);
-          walletInfo = { privateKeyHex };
-        }
+        walletInfo = await hydrateSolanaWalletSigner(resolved);
 
         log(`\nUpdating order ${orderId}...`);
 

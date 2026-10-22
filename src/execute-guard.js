@@ -1,6 +1,6 @@
 /**
  * Acknowledgement gate shared by the commands that move funds on-chain
- * (`trade execute`, `bridge execute`).
+ * (`trade execute`, `bridge execute`, and limit-order create/cancel).
  *
  * Two independent switches, both resolved in the command layer:
  *   --dry-run   run the validation the command normally runs, print the plan,
@@ -72,11 +72,13 @@ export async function guardExecution({
   log = () => {},
   confirmationLog = log,
   question = 'Broadcast this transaction? [y/N] ',
+  dryRunMessage = 'DRY RUN — nothing was broadcast. No transaction was signed and the quote was not consumed.',
+  dryRunHint = 'Re-run without --dry-run to sign and broadcast it.',
 }) {
   if (dryRun) {
     log(plan);
-    log('\n  DRY RUN — nothing was broadcast. No transaction was signed and the quote was not consumed.');
-    log('  Re-run without --dry-run to sign and broadcast it.\n');
+    log(`\n  ${dryRunMessage}`);
+    log(`  ${dryRunHint}\n`);
     return false;
   }
 
