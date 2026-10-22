@@ -152,6 +152,54 @@ export class PrivyClient {
 
 // ============= Helpers =============
 
+function extractPrivyWalletAddress(response) {
+  return response?.address
+    ?? response?.data?.address
+    ?? response?.wallet?.address
+    ?? response?.data?.wallet?.address
+    ?? null;
+}
+
+/**
+ * Resolve a Privy wallet ID and bind it to the address stored locally before
+ * any preview, screening, or signing can rely on that address.
+ */
+export async function assertPrivyWalletAddress(client, walletId, expectedAddress, chainType) {
+  if (chainType !== 'evm' && chainType !== 'solana') {
+    throw new Error(`Unsupported Privy wallet chain type: ${chainType}`);
+  }
+  const label = chainType === 'solana' ? 'Solana' : 'EVM';
+  if (!walletId) {
+    throw new Error(`No Privy ${label} wallet ID found. Re-create the wallet with: nansen wallet create --provider privy`);
+  }
+  if (!expectedAddress) {
+    throw new Error(`No ${label} address is stored for this Privy wallet. Re-create the wallet with: nansen wallet create --provider privy`);
+  }
+
+  const response = await client.getWallet(walletId);
+  const authoritativeAddress = extractPrivyWalletAddress(response);
+  const validAddress = chainType === 'evm'
+    ? /^0x[0-9a-f]{40}$/i
+    : /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+  if (typeof authoritativeAddress !== 'string' || !validAddress.test(authoritativeAddress)) {
+    throw new Error(`Privy returned no valid ${label} address for the selected wallet ID. Re-create the wallet with: nansen wallet create --provider privy`);
+  }
+  if (typeof expectedAddress !== 'string' || !validAddress.test(expectedAddress)) {
+    throw new Error(`The locally stored Privy ${label} address is invalid. Re-create the wallet with: nansen wallet create --provider privy`);
+  }
+
+  const matches = chainType === 'evm'
+    ? authoritativeAddress.toLowerCase() === String(expectedAddress).toLowerCase()
+    : authoritativeAddress === expectedAddress;
+  if (!matches) {
+    throw new Error(
+      `The selected Privy wallet ID does not match the locally stored ${label} address. Re-create the wallet with: nansen wallet create --provider privy`,
+    );
+  }
+
+  return authoritativeAddress;
+}
+
 function getClient() {
   return new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);
 }

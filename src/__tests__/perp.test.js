@@ -26,6 +26,18 @@ vi.mock('../telemetry.js', async (importActual) => ({
   trackPerpOrderCompleted: vi.fn(),
 }));
 
+const privyMocks = vi.hoisted(() => ({
+  getWallet: vi.fn(),
+  ethSignTypedDataV4: vi.fn(),
+}));
+vi.mock('../privy.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  PrivyClient: vi.fn().mockImplementation(function () {
+    this.getWallet = privyMocks.getWallet;
+    this.ethSignTypedDataV4 = privyMocks.ethSignTypedDataV4;
+  }),
+}));
+
 import { showWallet, getWalletConfig, exportWallet } from '../wallet.js';
 import { submitExchange } from '../hl-client.js';
 import { CommandError } from '../api.js';
@@ -603,6 +615,22 @@ describe('perp direct-to-HL flow (Chunk 3/4/5)', () => {
     showWallet.mockReturnValue({ name: 'x', evm: WALLET, provider: 'local' });
     getWalletConfig.mockReturnValue({});
     exportWallet.mockReturnValue({ evm: { privateKey: KEY } });
+    privyMocks.getWallet.mockReset().mockResolvedValue({ id: 'pw-1', address: WALLET });
+    privyMocks.ethSignTypedDataV4.mockReset().mockResolvedValue({ signature: '0x' + '11'.repeat(65) });
+  });
+
+  it('Privy path refuses an ID/address mismatch before screening or signing', async () => {
+    showWallet.mockReturnValue({
+      name: 'x', evm: WALLET, provider: 'privy', privyWalletIds: { evm: 'pw-1' },
+    });
+    privyMocks.getWallet.mockResolvedValue({ id: 'pw-1', address: '0x' + '2'.repeat(40) });
+    const api = mockApi({ screen: clean });
+
+    await expect(cmds.order([], api, {}, baseOrder)).rejects.toThrow(/does not match/);
+
+    expect(api.request.mock.calls.some(([endpoint]) => endpoint.startsWith('/api/v1/sanctions/screen'))).toBe(false);
+    expect(privyMocks.ethSignTypedDataV4).not.toHaveBeenCalled();
+    expect(submitExchange).not.toHaveBeenCalled();
   });
 
   it('aborts a sanctioned wallet before signing/submitting', async () => {

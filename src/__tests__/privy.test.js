@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { PrivyClient, createPrivyPaymentSignatures } from "../privy.js";
+import { PrivyClient, assertPrivyWalletAddress, createPrivyPaymentSignatures } from "../privy.js";
 import { resetSessionSpendForTests } from "../x402-policy.js";
 
 // Prevent evaluatePaymentRequirement → resolveMaxAmountUsd → getWalletConfig
@@ -192,6 +192,52 @@ describe("PrivyClient", () => {
     vi.unstubAllGlobals();
   });
 
+});
+
+describe("assertPrivyWalletAddress", () => {
+  const EVM = "0x" + "ab".repeat(20);
+  const SOLANA = "7UX2i7SucgLMQcfZ75s3VXmZZY4YRUyJN9X1RgfMoDUi";
+
+  it("accepts a matching direct wallet response", async () => {
+    const client = { getWallet: vi.fn().mockResolvedValue({ id: "w-1", address: EVM }) };
+
+    await expect(assertPrivyWalletAddress(client, "w-1", EVM, "evm")).resolves.toBe(EVM);
+  });
+
+  it("accepts EVM address casing differences from a data-wrapped response", async () => {
+    const client = { getWallet: vi.fn().mockResolvedValue({ data: { id: "w-1", address: EVM.toUpperCase() } }) };
+
+    await expect(assertPrivyWalletAddress(client, "w-1", EVM, "evm")).resolves.toBe(EVM.toUpperCase());
+  });
+
+  it("refuses a wallet ID that resolves to a different address", async () => {
+    const other = "0x" + "cd".repeat(20);
+    const client = { getWallet: vi.fn().mockResolvedValue({ id: "w-1", address: other }) };
+
+    await expect(assertPrivyWalletAddress(client, "w-1", EVM, "evm"))
+      .rejects.toThrow(/does not match the locally stored EVM address/);
+  });
+
+  it("compares Solana addresses exactly", async () => {
+    const client = { getWallet: vi.fn().mockResolvedValue({ id: "w-sol", address: "11111111111111111111111111111111" }) };
+
+    await expect(assertPrivyWalletAddress(client, "w-sol", SOLANA, "solana"))
+      .rejects.toThrow(/does not match/);
+  });
+
+  it("fails closed when Privy returns no wallet address", async () => {
+    const client = { getWallet: vi.fn().mockResolvedValue({ data: { id: "w-1" } }) };
+
+    await expect(assertPrivyWalletAddress(client, "w-1", EVM, "evm"))
+      .rejects.toThrow(/no valid EVM address.*Re-create the wallet/);
+  });
+
+  it("does not echo malformed remote addresses in errors", async () => {
+    const client = { getWallet: vi.fn().mockResolvedValue({ address: "\u001b[31mspoofed" }) };
+
+    await expect(assertPrivyWalletAddress(client, "w-1", EVM, "evm"))
+      .rejects.toThrow(/^Privy returned no valid EVM address/);
+  });
 });
 
 // ============= createPrivyPaymentSignatures =============
