@@ -11,7 +11,7 @@ import path from "path";
 import { parsePaymentRequirements } from "./x402.js";
 import { hasSufficientEvmPaymentBalance, hasSufficientSvmPaymentBalance } from "./x402-payment-balance.js";
 import { isEvmNetwork } from "./x402-evm.js";
-import { mkdirPrivateSync, readWalletJson, writeWalletJsonAtomic } from "./wallet.js";
+import { mkdirPrivateSync, readWalletJson, withWalletMutationLock, writeWalletJsonAtomic } from "./wallet.js";
 import { evaluatePaymentRequirement, resolvePaymentAmount, resolvePayTo, signWithSessionCharge } from "./x402-policy.js";
 import {
   isSvmNetwork,
@@ -28,6 +28,18 @@ import { trace } from "./debug.js";
 // ============= Constants =============
 
 const PRIVY_BASE_URL = "https://api.privy.io/v1";
+
+export class PrivyWalletLocalCommitError extends Error {
+  constructor(configError, rollbackError) {
+    super(`Privy wallet reference was written, but config persistence failed and the local reference could not be rolled back: ${configError.message}`, { cause: configError });
+    this.name = 'PrivyWalletLocalCommitError';
+    this.code = 'PRIVY_WALLET_LOCAL_COMMIT_PARTIAL';
+    this.committed = true;
+    this.partial = true;
+    this.configError = configError;
+    this.rollbackError = rollbackError;
+  }
+}
 
 // ============= PrivyClient =============
 
@@ -193,20 +205,44 @@ export async function createPrivyWalletPair(name) {
     createdAt: new Date().toISOString(),
   };
 
-  mkdirPrivateSync(walletsDir);
+  try {
+    // Do not hold the filesystem lock during Privy network calls. Re-check and
+    // serialize only the local persistence boundary, cleaning up the newly
+    // created remote pair if another process claimed the name meanwhile.
+    withWalletMutationLock(() => {
+      mkdirPrivateSync(walletsDir);
+      if (fs.existsSync(walletFile)) {
+        throw new Error(`Wallet "${name}" already exists`);
+      }
 
-  // Write config before wallet file so a crash doesn't leave an orphan without a default entry
-  const configPath = path.join(walletsDir, "config.json");
-  let config = { defaultWallet: null, passwordHash: null };
-  if (fs.existsSync(configPath)) {
-    config = readWalletJson(configPath);
-  }
-  if (!config.defaultWallet) {
-    config.defaultWallet = name;
-    writeWalletJsonAtomic(configPath, config);
-  }
+      const configPath = path.join(walletsDir, "config.json");
+      let config = { defaultWallet: null, passwordHash: null };
+      if (fs.existsSync(configPath)) config = readWalletJson(configPath);
 
-  writeWalletJsonAtomic(walletFile, walletData);
+      writeWalletJsonAtomic(walletFile, walletData);
+      try {
+        if (!config.defaultWallet) {
+          config.defaultWallet = name;
+          writeWalletJsonAtomic(configPath, config);
+        }
+      } catch (configError) {
+        try {
+          fs.unlinkSync(walletFile);
+        } catch (rollbackError) {
+          throw new PrivyWalletLocalCommitError(configError, rollbackError);
+        }
+        throw configError;
+      }
+    });
+  } catch (err) {
+    // The local reference is already durable. A lock-release failure must be
+    // reported as committed, never misclassified as a persistence failure that
+    // deletes the matching remote wallets.
+    if (err?.committed === true) throw err;
+    try { await client.deleteWallet(solanaResult.id); } catch { /* best effort */ }
+    try { await client.deleteWallet(evmResult.id); } catch { /* best effort */ }
+    throw err;
+  }
 
   return walletData;
 }

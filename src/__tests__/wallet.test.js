@@ -720,6 +720,133 @@ describe('Privy wallet create via unified flow', () => {
     expect(wallet.evm).toBe('0xEvmAddr');
     expect(wallet.solana).toBe('SolAddr');
   });
+
+  it('does not hold the local lock during Privy calls and cleans up a raced duplicate', async () => {
+    const { createPrivyWalletPair } = await import('../privy.js');
+    const lockPath = path.join(tempDir, '.nansen', 'wallets', '.wallet-mutation.lock');
+    const deleteCalls = [];
+    let createCalls = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      if (opts?.method === 'DELETE') {
+        deleteCalls.push(url);
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      }
+
+      expect(fs.existsSync(lockPath)).toBe(false);
+      createCalls++;
+      if (createCalls === 1) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 'wl_evm_raced', address: '0xRaced', chain_type: 'ethereum' }),
+        });
+      }
+
+      createWallet('raced-name', 'competing-password');
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ id: 'wl_sol_raced', address: 'SolRaced', chain_type: 'solana' }),
+      });
+    }));
+
+    await expect(createPrivyWalletPair('raced-name')).rejects.toThrow('already exists');
+    expect(deleteCalls).toHaveLength(2);
+    expect(deleteCalls.some(url => url.includes('wl_evm_raced'))).toBe(true);
+    expect(deleteCalls.some(url => url.includes('wl_sol_raced'))).toBe(true);
+    expect(showWallet('raced-name').provider).toBe('local');
+  });
+
+  it('does not delete remote wallets when lock release fails after local commit', async () => {
+    const { createPrivyWalletPair } = await import('../privy.js');
+    const deleteCalls = [];
+    let createCalls = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      if (opts?.method === 'DELETE') {
+        deleteCalls.push(url);
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      }
+      createCalls++;
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(createCalls === 1
+          ? { id: 'wl_evm_committed', address: '0xCommitted', chain_type: 'ethereum' }
+          : { id: 'wl_sol_committed', address: 'SolCommitted', chain_type: 'solana' }),
+      });
+    }));
+
+    const originalRenameSync = fs.renameSync;
+    fs.renameSync = (from, to) => {
+      if (String(from).endsWith('.wallet-mutation.lock') && String(to).includes('.released-')) {
+        const error = new Error('injected release failure');
+        error.code = 'EIO';
+        throw error;
+      }
+      return originalRenameSync(from, to);
+    };
+    try {
+      const error = await createPrivyWalletPair('committed-privy').catch(err => err);
+      expect(error.code).toBe('WALLET_MUTATION_COMMITTED_LOCK_RELEASE_FAILED');
+      expect(error.committed).toBe(true);
+      expect(error.message).toMatch(/mutation committed.*release/i);
+      expect(deleteCalls).toEqual([]);
+      expect(showWallet('committed-privy').provider).toBe('privy');
+    } finally {
+      fs.renameSync = originalRenameSync;
+    }
+  });
+
+  it('preserves remote wallets when config write and wallet rollback both fail', async () => {
+    const { createPrivyWalletPair } = await import('../privy.js');
+    const walletsDir = path.join(tempDir, '.nansen', 'wallets');
+    const walletFile = path.join(walletsDir, 'partial-privy.json');
+    const configPath = path.join(walletsDir, 'config.json');
+    const deleteCalls = [];
+    let createCalls = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      if (opts?.method === 'DELETE') {
+        deleteCalls.push(url);
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      }
+      createCalls++;
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(createCalls === 1
+          ? { id: 'wl_evm_partial', address: '0xPartial', chain_type: 'ethereum' }
+          : { id: 'wl_sol_partial', address: 'SolPartial', chain_type: 'solana' }),
+      });
+    }));
+
+    const originalRenameSync = fs.renameSync;
+    const originalUnlinkSync = fs.unlinkSync;
+    fs.renameSync = (from, to) => {
+      if (path.resolve(String(to)) === path.resolve(configPath) && String(from).endsWith('.tmp')) {
+        const error = new Error('injected config write failure');
+        error.code = 'EIO';
+        throw error;
+      }
+      return originalRenameSync(from, to);
+    };
+    fs.unlinkSync = file => {
+      if (path.resolve(String(file)) === path.resolve(walletFile)) {
+        const error = new Error('injected wallet rollback failure');
+        error.code = 'EPERM';
+        throw error;
+      }
+      return originalUnlinkSync(file);
+    };
+    try {
+      const error = await createPrivyWalletPair('partial-privy').catch(err => err);
+      expect(error.code).toBe('PRIVY_WALLET_LOCAL_COMMIT_PARTIAL');
+      expect(error.committed).toBe(true);
+      expect(error.partial).toBe(true);
+      expect(error.configError.message).toBe('injected config write failure');
+      expect(error.rollbackError.message).toBe('injected wallet rollback failure');
+      expect(deleteCalls).toEqual([]);
+      expect(fs.existsSync(walletFile)).toBe(true);
+    } finally {
+      fs.renameSync = originalRenameSync;
+      fs.unlinkSync = originalUnlinkSync;
+    }
+  });
 });
 
 describe('Privy wallet delete and export', () => {
