@@ -14,6 +14,8 @@ import { memoryOperation, sessionFixture } from './fixtures/auth-fixture.js';
 
 const examples = JSON.parse(fs.readFileSync(new URL('./fixtures/feedback-v1.json', import.meta.url)));
 const root = fileURLToPath(new URL('../../', import.meta.url));
+// Preference retries wait 1 + 2 + 4 seconds; leave process startup and shutdown headroom.
+const CLI_TIMEOUT_MS = 15000;
 const dirs = [], servers = [];
 afterEach(async () => {
   vi.unstubAllGlobals();
@@ -56,7 +58,7 @@ async function harness(responses, { keySource = 'env' } = {}) {
     });
     let stdout = '', stderr = '';
     child.stdout.on('data', chunk => stdout += chunk); child.stderr.on('data', chunk => stderr += chunk);
-    const timer = setTimeout(() => { child.kill(); reject(new Error('CLI fixture timed out')); }, 10000);
+    const timer = setTimeout(() => { child.kill(); reject(new Error('CLI fixture timed out')); }, CLI_TIMEOUT_MS);
     child.on('error', reject);
     child.on('close', code => { clearTimeout(timer); resolve({ code, stdout, stderr }); });
   });
