@@ -14,6 +14,7 @@ import { getAnonymousId, TELEMETRY_DISABLED } from './telemetry.js';
 import { readResponseMeta, stringHeader } from './response-meta.js';
 import { trace, traceRequest, traceResponse, traceError, traceRetry, traceCacheHit } from './debug.js';
 import { appendPaymentRecord, newPaymentId, sanitizeRequestUrl } from './x402-audit.js';
+import { openLocalFile } from './local-file.js';
 
 /**
  * Key for the credit/rate-limit metadata attached to a successful response.
@@ -384,37 +385,47 @@ export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL
     return null;
   }
   
+  let fd;
+  let primaryError;
+  let result = null;
   try {
-    const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+    fd = openLocalFile(cacheFile, { root: CACHE_DIR });
+    const cached = JSON.parse(fs.readFileSync(fd, 'utf8'));
     const age = (Date.now() - cached.timestamp) / 1000;
     
-    if (!Number.isFinite(cached.timestamp) || ttlSeconds <= 0 || age > ttlSeconds) {
-      // Delete entries with invalid timestamps, expired entries, or disabled entries.
-      fs.unlinkSync(cacheFile);
-      return null;
+    if (Number.isFinite(cached.timestamp) && ttlSeconds > 0 && age <= ttlSeconds) {
+      // Re-attach the cache marker without reshaping the payload. Object-spreading
+      // a top-level array turns it into { 0: …, 1: … }, so a cached array came back
+      // as an object and every Array.isArray() branch downstream (the table/CSV/
+      // markdown formatters in cli.js, alertsGet) stopped recognising it — the first
+      // call rendered rows and the second rendered nothing. Arrays therefore get
+      // _meta hung off the array itself, exactly as the live request path does when
+      // it records retriedAttempts, and primitives are handed back untouched
+      // because a non-object cannot carry the marker at all.
+      const meta = { ...cached.data?._meta, fromCache: true, cacheAge: Math.round(age) };
+      if (Array.isArray(cached.data)) {
+        const rows = cached.data.slice();
+        rows._meta = meta;
+        result = rows;
+      } else if (cached.data === null || typeof cached.data !== 'object') {
+        result = cached.data;
+      } else {
+        result = { ...cached.data, _meta: meta };
+      }
     }
-    
-    // Re-attach the cache marker without reshaping the payload. Object-spreading
-    // a top-level array turns it into { 0: …, 1: … }, so a cached array came back
-    // as an object and every Array.isArray() branch downstream (the table/CSV/
-    // markdown formatters in cli.js, alertsGet) stopped recognising it — the first
-    // call rendered rows and the second rendered nothing. Arrays therefore get
-    // _meta hung off the array itself, exactly as the live request path does when
-    // it records retriedAttempts, and primitives are handed back untouched
-    // because a non-object cannot carry the marker at all.
-    const meta = { ...cached.data?._meta, fromCache: true, cacheAge: Math.round(age) };
-    if (Array.isArray(cached.data)) {
-      const rows = cached.data.slice();
-      rows._meta = meta;
-      return rows;
-    }
-    if (cached.data === null || typeof cached.data !== 'object') return cached.data;
-    return { ...cached.data, _meta: meta };
-  } catch (_e) {
-    // Invalid cache file, delete it
-    try { fs.unlinkSync(cacheFile); } catch { /* ignore */ }
-    return null;
+  } catch (error) {
+    primaryError = error;
   }
+  let closeError;
+  if (fd !== undefined) {
+    try {
+      fs.closeSync(fd);
+    } catch (error) {
+      closeError = error;
+    }
+  }
+  if (!primaryError && closeError) throw closeError;
+  return result;
 }
 
 /**
@@ -434,7 +445,37 @@ export function setCachedResponse(endpoint, body, data, context = {}) {
     data
   };
   
-  fs.writeFileSync(cacheFile, JSON.stringify(cached), { mode: 0o600 });
+  const contents = JSON.stringify(cached);
+  const tempFile = `${cacheFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  let fd;
+  let primaryError;
+  try {
+    fd = openLocalFile(tempFile, {
+      root: CACHE_DIR,
+      flags: fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
+      mode: 0o600,
+    });
+    if (process.platform !== 'win32') fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, contents);
+    fs.fsyncSync(fd);
+    if (process.platform !== 'win32') fs.fchmodSync(fd, 0o600);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tempFile, cacheFile);
+  } catch (error) {
+    primaryError = error;
+  }
+  let closeError;
+  if (fd !== undefined) {
+    try {
+      fs.closeSync(fd);
+    } catch (error) {
+      closeError = error;
+    }
+  }
+  try { fs.unlinkSync(tempFile); } catch { /* rename may already have committed */ }
+  if (primaryError) throw primaryError;
+  if (closeError) throw closeError;
 }
 
 /**
