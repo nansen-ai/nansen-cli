@@ -1258,6 +1258,11 @@ ENVIRONMENT:
                             server doesn't cleanly reject (unset or "unlimited" = no limit; an
                             invalid value refuses every payment; environment only). It resets
                             with every process, so it does not limit spending across separate runs.
+  NANSEN_X402_DAILY_MAX_AMOUNT
+                            Max total USD of x402 auto-payments per UTC day, across all CLI runs
+                            (default 50.00; "unlimited" to disable; an invalid value refuses every
+                            payment). Every signing attempt counts, even one the server rejects.
+                            Today's total is kept in ~/.nansen/x402/spend-YYYY-MM-DD.json.
   NANSEN_X402_ALLOWED_PAYTO Comma-separated recipient allowlist for x402 auto-payment (optional)
 
 x402 auto-payments are recorded in ~/.nansen/x402/payments.jsonl (amount, network,

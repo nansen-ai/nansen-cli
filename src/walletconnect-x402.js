@@ -9,7 +9,7 @@ import crypto from 'crypto';
 import { NansenError, ErrorCode } from './api.js';
 import { wcExec } from './walletconnect-exec.js';
 import { getWalletConnectAddress, parseWcJson } from './walletconnect-trading.js';
-import { evaluatePaymentRequirement, resolvePaymentAmount, resolvePayTo, signWithSessionCharge } from './x402-policy.js';
+import { evaluatePaymentRequirement, resolvePaymentAmount, resolvePayTo, signWithSpendCharge } from './x402-policy.js';
 import { isEvmNetwork } from './x402-evm.js';
 import { rankRequirements } from './x402.js';
 import { hasSufficientEvmPaymentBalance } from './x402-payment-balance.js';
@@ -274,7 +274,7 @@ async function signRequirement(requirement, fromAddress, typedData, resource) {
  * as createPaymentSignatures() in x402.js.
  *
  * @param {Object} paymentRequirements - Decoded payment requirements from 402 response
- * @param {object} [options] - { onCapRefusal }, called with the reason when the session cap refuses an option
+ * @param {object} [options] - { onCapRefusal }, called with the reason when a spend cap refuses an option
  * @returns {AsyncGenerator<{ signature: string, network: string, asset: string, payment: object, releaseCharge: Function }>}
  */
 export async function* createWalletConnectPaymentSignatures(paymentRequirements, options = {}) {
@@ -302,7 +302,7 @@ export async function* createWalletConnectPaymentSignatures(paymentRequirements,
       continue;
     }
     // The charge comes before the approval prompt, so an over-cap option never prompts.
-    const signed = await signWithSessionCharge(payment, () => signRequirement(requirement, fromAddress, typedData, resource));
+    const signed = await signWithSpendCharge(payment, () => signRequirement(requirement, fromAddress, typedData, resource));
     if (!signed.ok) {
       console.error(`[x402] Skipping ${requirement.network} WalletConnect option: ${signed.reason}`);
       options.onCapRefusal?.(signed.reason);

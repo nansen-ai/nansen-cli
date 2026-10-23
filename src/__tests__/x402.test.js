@@ -181,6 +181,7 @@ describe('createPaymentSignatures — policy guard integration', () => {
     consoleErrorSpy.mockRestore();
     delete process.env.NANSEN_X402_MAX_AMOUNT;
     delete process.env.NANSEN_X402_SESSION_MAX_AMOUNT;
+    delete process.env.NANSEN_X402_DAILY_MAX_AMOUNT;
   });
 
   function mockEvmSigner() {
@@ -269,6 +270,24 @@ describe('createPaymentSignatures — policy guard integration', () => {
 
     expect(await collectSignatures(createPaymentSignatures, makeRequirement(10_000n))).toHaveLength(1);
     expect(createEvmSpy).toHaveBeenCalledTimes(2);
+
+    vi.doUnmock('../x402-evm.js');
+    vi.doUnmock('../x402-svm.js');
+  });
+
+  it('12g. daily cap: refuses before signing once today\'s total would pass it', async () => {
+    process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '0.005';
+    const createEvmSpy = mockEvmSigner();
+    const { createPaymentSignatures } = await import('../x402.js');
+    mockFetch.mockResolvedValue({ json: async () => ({}) });
+    const onCapRefusal = vi.fn();
+
+    const results = [];
+    for await (const item of createPaymentSignatures(makeResponse(makeRequirement(10_000n)), 'https://api.nansen.ai/test', { onCapRefusal })) results.push(item);
+
+    expect(results).toHaveLength(0);
+    expect(createEvmSpy).not.toHaveBeenCalled();
+    expect(onCapRefusal).toHaveBeenCalledWith(expect.stringContaining('exceed the $0.005 daily cap'));
 
     vi.doUnmock('../x402-evm.js');
     vi.doUnmock('../x402-svm.js');

@@ -1166,7 +1166,7 @@ export class NansenAPI {
             }
           }
 
-          // When the session cap stopped every payment, its reason outranks
+          // When a spend cap stopped every payment, its reason outranks
           // the generic payment failure below: the fix is to raise the cap, not
           // to change credentials. Once a payment was sent, its own outcome is
           // the better explanation. An invalid cap refuses every payment, so
@@ -1175,8 +1175,8 @@ export class NansenAPI {
           let paymentSent = false;
           const onCapRefusal = (reason) => { capRefusal = reason; };
           if (mayAutoPay && !hasManualSignature) {
-            const { sessionCapConfigError } = await import('./x402-policy.js');
-            capRefusal = sessionCapConfigError();
+            const { spendCapConfigError } = await import('./x402-policy.js');
+            capRefusal = spendCapConfigError();
           }
 
           if (mayAutoPay && !hasManualSignature && !capRefusal) {

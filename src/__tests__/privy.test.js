@@ -7,7 +7,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { PrivyClient, createPrivyPaymentSignatures } from "../privy.js";
-import { resetSessionSpendForTests } from "../x402-policy.js";
+import { resetSpendCapsForTests } from "../x402-policy.js";
 
 // Prevent evaluatePaymentRequirement → resolveMaxAmountUsd → getWalletConfig
 // from reading the real ~/.nansen/wallets/config.json. Without this mock the
@@ -206,14 +206,14 @@ describe("createPrivyPaymentSignatures", () => {
     process.env.HOME = tempDir;
     process.env.PRIVY_APP_ID = "test-app-id";
     process.env.PRIVY_APP_SECRET = "test-app-secret";
-    resetSessionSpendForTests();
+    resetSpendCapsForTests();
   });
 
   afterEach(() => {
     process.env = originalEnv;
     vi.unstubAllGlobals();
     fs.rmSync(tempDir, { recursive: true, force: true });
-    resetSessionSpendForTests();
+    resetSpendCapsForTests();
   });
 
   function make402Response(requirements) {
@@ -529,7 +529,7 @@ describe("createPrivyPaymentSignatures", () => {
     expect(signingCalls).toHaveLength(expected);
   });
 
-  describe("session spend cap", () => {
+  describe("spend caps", () => {
     const solRequirement = {
       scheme: "exact",
       network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
@@ -603,6 +603,22 @@ describe("createPrivyPaymentSignatures", () => {
 
       expect(signingCalls(method)).toBe(2);
       expect(errors).toHaveBeenCalledWith(expect.stringMatching(/^\[x402\] Privy (EVM|Solana) signing failed/));
+      errors.mockRestore();
+    });
+
+    it.each([
+      ["EVM", () => evmRequirement, "eth_signTypedData_v4"],
+      ["Solana", () => solRequirement, "signTransaction"],
+    ])("refuses a %s payment over the daily cap without asking Privy to sign", async (_label, requirement, method) => {
+      process.env.NANSEN_X402_DAILY_MAX_AMOUNT = "0.001";
+      const { signingCalls } = stubPrivy();
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      const onCapRefusal = vi.fn();
+
+      expect(await collect([requirement()], { onCapRefusal })).toHaveLength(0);
+
+      expect(signingCalls(method)).toBe(0);
+      expect(onCapRefusal).toHaveBeenCalledWith(expect.stringContaining("exceed the $0.001 daily cap"));
       errors.mockRestore();
     });
 

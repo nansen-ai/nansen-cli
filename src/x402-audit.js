@@ -50,7 +50,7 @@ export function sanitizeRequestUrl(url) {
  * A file the user can write but not chmod (owned by another user) is fine
  * as long as it is already private.
  */
-function tightenIfOpen(fd, mode) {
+export function tightenIfOpen(fd, mode) {
   if (process.platform === 'win32') return;
   if (fs.fstatSync(fd).mode & 0o077) fs.fchmodSync(fd, mode);
 }
@@ -61,7 +61,7 @@ function tightenIfOpen(fd, mode) {
  * (checked before the log was opened), so a swapped-in link at the x402
  * directory or ~/.nansen can't redirect the chmod.
  */
-function tightenDirectory(dir, expected) {
+export function tightenDirectory(dir, expected) {
   if (process.platform === 'win32') return;
   const { O_RDONLY, O_DIRECTORY, O_NOFOLLOW } = fs.constants;
   const fd = fs.openSync(dir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
@@ -83,7 +83,7 @@ function tightenDirectory(dir, expected) {
  * The umask is process-wide, so anything another thread creates in this short
  * synchronous window is only made more private, never less.
  */
-function withPrivateUmask(fn) {
+export function withPrivateUmask(fn) {
   let previous;
   try {
     previous = process.umask(0o077);
@@ -103,7 +103,7 @@ function withPrivateUmask(fn) {
  * than a real directory, so a symlink is never followed into another tree.
  * Returns its lstat.
  */
-function ensureDirectory(dir) {
+export function ensureDirectory(dir) {
   try {
     fs.mkdirSync(dir, { mode: 0o700 });
   } catch (err) {
