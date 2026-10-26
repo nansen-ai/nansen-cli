@@ -288,6 +288,10 @@ describe('validateResearchInput', () => {
     });
     expect(check('research token info', { token: [SOL_MINT, SOL_MINT] }).message).toBe("Option '--token' may only be given once");
     expect(check('research smart-money netflow', { labels: ['Fund', '30D Smart Trader'] })).toBeNull();
+    // JSON arrays are values, not repeats.
+    expect(check('research smart-money netflow', { 'order-by': [{ field: 'value_usd', direction: 'DESC' }] })).toBeNull();
+    expect(check('research profiler compare', { addresses: [EVM, EVM_MIXED] })).toBeNull();
+    expect(check('research profiler counterparties-batch', { addresses: [EVM] })).toBeNull();
   });
 
   it('accepts ISO times where the API takes a date range', () => {

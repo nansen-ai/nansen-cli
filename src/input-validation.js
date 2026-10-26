@@ -308,6 +308,10 @@ function isValidDateTime(value) {
 
 function valueErrors(name, spec, value) {
   const field = `--${name}`;
+  // A JSON option takes an array as its value (--order-by '[...]').
+  if (spec.format === 'json') return [];
+  // parseArgs turns a repeated option into an array, and so does a JSON
+  // array value. List options (`repeatable`) take either; others take one value.
   if (Array.isArray(value) && !spec.repeatable) {
     return [fieldError(field, 'invalid_field_value', `Option '${field}' may only be given once`)];
   }
@@ -316,7 +320,7 @@ function valueErrors(name, spec, value) {
   for (const item of values) {
     // parseArgs turns JSON-looking values into objects. Only JSON options
     // take one; elsewhere it would be dropped and the default sent instead.
-    if (item !== null && typeof item === 'object' && spec.format !== 'json') {
+    if (item !== null && typeof item === 'object') {
       errors.push(fieldError(field, 'invalid_field_value', `Option '${field}' must be a ${spec.type === 'boolean' ? 'boolean' : spec.type === 'number' || spec.type === 'integer' ? 'number' : 'string'}, not JSON; received: ${JSON.stringify(item)}`));
       continue;
     }

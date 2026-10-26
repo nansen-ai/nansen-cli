@@ -926,7 +926,8 @@
                   "required": true,
                   "requiredUnless": [
                     "file"
-                  ]
+                  ],
+                  "repeatable": true
                 },
                 "file": {
                   "type": "string",
@@ -1210,7 +1211,8 @@
                 "include": {
                   "type": "string",
                   "default": "labels,balance",
-                  "description": "Comma-separated sections to fetch per address: labels, balance, pnl"
+                  "description": "Comma-separated sections to fetch per address: labels, balance, pnl",
+                  "repeatable": true
                 },
                 "delay": {
                   "type": "number",
@@ -1223,7 +1225,8 @@
                   "required": true,
                   "requiredUnless": [
                     "file"
-                  ]
+                  ],
+                  "repeatable": true
                 },
                 "file": {
                   "type": "string",
@@ -1275,7 +1278,8 @@
                 "addresses": {
                   "type": "string",
                   "required": true,
-                  "description": "Comma-separated list (or JSON array) of wallet addresses to compare"
+                  "description": "Comma-separated list (or JSON array) of wallet addresses to compare",
+                  "repeatable": true
                 },
                 "chain": {
                   "type": "string",
