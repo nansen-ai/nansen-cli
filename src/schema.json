@@ -597,7 +597,7 @@
                 },
                 "labels": {
                   "type": "string",
-                  "description": "Smart money label to include (repeatable); sent as filters.include_smart_money_labels",
+                  "description": "Smart money labels to include, comma-separated or repeated; sent as filters.include_smart_money_labels",
                   "repeatable": true
                 }
               }
@@ -632,7 +632,7 @@
                 },
                 "labels": {
                   "type": "string",
-                  "description": "Smart money label to include (repeatable); sent as filters.include_smart_money_labels",
+                  "description": "Smart money labels to include, comma-separated or repeated; sent as filters.include_smart_money_labels",
                   "repeatable": true
                 }
               }
@@ -657,7 +657,7 @@
                 },
                 "labels": {
                   "type": "string",
-                  "description": "Smart money label to include (repeatable); sent as filters.include_smart_money_labels",
+                  "description": "Smart money labels to include, comma-separated or repeated; sent as filters.include_smart_money_labels",
                   "repeatable": true
                 },
                 "only-new-positions": {
@@ -686,7 +686,7 @@
                 },
                 "labels": {
                   "type": "string",
-                  "description": "Smart money label to include (repeatable); sent as filters.include_smart_money_labels",
+                  "description": "Smart money labels to include, comma-separated or repeated; sent as filters.include_smart_money_labels",
                   "repeatable": true
                 }
               }
@@ -721,7 +721,7 @@
                 },
                 "labels": {
                   "type": "string",
-                  "description": "Smart money label to include (repeatable); sent as filters.include_smart_money_labels",
+                  "description": "Smart money labels to include, comma-separated or repeated; sent as filters.include_smart_money_labels",
                   "repeatable": true
                 },
                 "token": {
@@ -766,7 +766,7 @@
                 },
                 "labels": {
                   "type": "string",
-                  "description": "Smart money label to include (repeatable); sent as filters.include_smart_money_labels",
+                  "description": "Smart money labels to include, comma-separated or repeated; sent as filters.include_smart_money_labels",
                   "repeatable": true
                 }
               }

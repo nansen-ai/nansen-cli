@@ -803,7 +803,8 @@ async function enrichTransfers(result, apiInstance, chain) {
  */
 export function parseAddressList(raw) {
   if (Array.isArray(raw)) {
-    return raw.map(a => String(a).trim()).filter(Boolean);
+    // A repeated flag may carry a list itself (`--addresses a,b --addresses c`).
+    return raw.flatMap(a => String(a).split(',')).map(a => a.trim()).filter(Boolean);
   }
   if (!raw) return [];
 
@@ -1824,10 +1825,9 @@ export function buildCommands(deps = {}) {
       }
 
       // Add smart money label filter if specified
-      if (options.labels) {
-        filters.include_smart_money_labels = Array.isArray(options.labels) 
-          ? options.labels 
-          : [options.labels];
+      const labels = parseCsvOption(options.labels, 'labels');
+      if (labels?.length) {
+        filters.include_smart_money_labels = labels;
       }
 
       const days = subcommand === 'historical-holdings'
@@ -1979,7 +1979,7 @@ export function buildCommands(deps = {}) {
       const chain = options.chain || 'solana';
       const tokenAddress = normalizeAddress(options.token || options['token-address'], chain);
       const tokenSymbol = options.symbol || options['token-symbol'];
-      const chains = options.chains || [chain];
+      const chains = parseCsvOption(options.chains, 'chains') || [chain];
       const timeframe = options.timeframe || '24h';
       const filters = parseFiltersOption(options.filters);
       const orderBy = parseSort(options.sort, options['order-by']);

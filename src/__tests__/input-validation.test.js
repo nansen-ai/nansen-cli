@@ -332,7 +332,23 @@ describe('validateResearchInput', () => {
       const resolved = resolveResearchCommand(SCHEMA, 'research', ['smart-money', 'netflow']);
       const mutable = { chain: 'ETH', chains: 'sol,Base' };
       validateResearchInput(resolved, { options: mutable, endpoints: API_ENDPOINTS, chains: SCHEMA.chains });
-      expect(mutable).toEqual({ chain: 'ethereum', chains: 'solana,base' });
+      expect(mutable).toEqual({ chain: 'ethereum', chains: ['solana', 'base'] });
+    });
+
+    it('turns --chains into an array however it was given', () => {
+      const resolved = resolveResearchCommand(SCHEMA, 'research', ['token', 'screener']);
+      for (const chains of ['eth, SOL', ['eth', 'SOL'], ['eth,sol'], ['ETH', 'base,sol']]) {
+        const mutable = { chains };
+        validateResearchInput(resolved, { options: mutable, endpoints: API_ENDPOINTS, chains: SCHEMA.chains });
+        expect(mutable.chains).toEqual(Array.isArray(chains) && chains.length === 2 && chains[1].includes(',') ? ['ethereum', 'base', 'solana'] : ['ethereum', 'solana']);
+      }
+    });
+
+    it('rejects a list option with no items', () => {
+      for (const chains of [',', ' , ', [',']]) {
+        const error = check('research token screener', { chains });
+        expect(error.details.errors[0]).toMatchObject({ field: '--chains', code: 'missing_field' });
+      }
     });
 
     it('takes the chain list from the API spec over a hand-written enum', () => {
@@ -463,6 +479,28 @@ describe('schema-wide checks', () => {
     }
   });
 
+  // The request field is a list; a "a,b" string is rejected or misread by the API.
+  const withChains = runnable.filter(([, leaf]) => leaf.options?.chains);
+
+  it('has research commands with --chains to check', () => {
+    expect(withChains.map(([words]) => words.join(' '))).toContain('research token screener');
+  });
+
+  it.each(withChains.flatMap(([words, leaf]) => {
+    const [first, second] = supportedChainList(leaf) ?? ['ethereum', 'solana'];
+    return [
+      ['comma-separated', ['--chains', `${first},${second}`]],
+      ['repeated', ['--chains', first, '--chains', second]],
+      ['JSON array', ['--chains', JSON.stringify([first, second])]],
+    ].map(([form, chainArgs]) => [words.join(' '), form, words, leaf, chainArgs, [first, second]]);
+  }))('%s sends --chains (%s) as an array', async (_name, _form, words, leaf, chainArgs, expected) => {
+    const { calls, exitCode, output } = await runCaptured([...words, ...requiredArgs(leaf), ...chainArgs]);
+    expect(exitCode, JSON.stringify(output)).toBeNull();
+    const call = calls.find(c => c.endpoint === leaf.endpoint);
+    expect(call, `no request to ${leaf.endpoint}`).toBeDefined();
+    expect(call.body.chains).toEqual(expected);
+  });
+
   it.each(runnable
     .filter(([, leaf]) => supportedChainList(leaf))
     .map(([words, leaf]) => [words.join(' '), words, leaf]))('%s rejects an unsupported chain before any request', async (_name, words, leaf) => {
@@ -521,6 +559,51 @@ describe('runCLI failures always exit 1 with success:false (API-1080)', () => {
   it('wires --limit/--page into profiler balance', async () => {
     const { calls } = await runCaptured(['research', 'profiler', 'balance', '--address', EVM, '--chain', 'ethereum', '--limit', '4', '--page', '2']);
     expect(calls[0].body.pagination).toEqual({ page: 2, per_page: 4 });
+  });
+
+  it('sends token screener --chains as a list, with aliases applied', async () => {
+    const { calls, exitCode } = await runCaptured(['research', 'token', 'screener', '--chains', 'eth,SOL']);
+    expect(exitCode).toBeNull();
+    expect(calls[0].body.chains).toEqual(['ethereum', 'solana']);
+  });
+
+  it('sends the deprecated top-level token screener --chains as a list', async () => {
+    const { calls, exitCode } = await runCaptured(['token', 'screener', '--chains', 'ethereum,solana']);
+    expect(exitCode).toBeNull();
+    expect(calls[0].body.chains).toEqual(['ethereum', 'solana']);
+  });
+
+  it('sends smart-money --labels as a list, comma-separated or repeated', async () => {
+    const expected = ['Fund', 'Smart Trader'];
+    for (const labelArgs of [['--labels', 'Fund,Smart Trader'], ['--labels', 'Fund', '--labels', 'Smart Trader']]) {
+      const { calls, exitCode } = await runCaptured(['research', 'smart-money', 'netflow', ...labelArgs]);
+      expect(exitCode).toBeNull();
+      expect(calls[0].body.filters.include_smart_money_labels).toEqual(expected);
+    }
+  });
+
+  it('splits repeated --addresses that carry a list themselves', async () => {
+    const other = `0x${'11'.repeat(20)}`;
+    const third = `0x${'22'.repeat(20)}`;
+    const { calls, exitCode, output } = await runCaptured(['research', 'profiler', 'counterparties-batch', '--addresses', `${EVM},${other}`, '--addresses', third, '--chain', 'ethereum']);
+    expect(exitCode, JSON.stringify(output)).toBeNull();
+    expect(calls[0].body.wallet_addresses).toEqual([EVM, other, third]);
+  });
+
+  it.each([
+    [['--sectors-filter', 'Crypto:AI,TradFi:Stocks'], 'sectors_filter', ['Crypto:AI', 'TradFi:Stocks']],
+    [['--sm-label-filter', 'Fund,Smart Trader'], 'sm_label_filter', ['Fund', 'Smart Trader']],
+    [['--trader-label-filter', 'HL Perps Whale,Other'], 'trader_label_filter', ['HL Perps Whale', 'Other']],
+  ])('sends perp screener %j as a list', async (listArgs, field, expected) => {
+    const { calls, exitCode, output } = await runCaptured(['research', 'perp', 'screener', ...listArgs]);
+    expect(exitCode, JSON.stringify(output)).toBeNull();
+    expect(calls[0].body.filters[field]).toEqual(expected);
+  });
+
+  it('sends prediction-market --tags as a list', async () => {
+    const { calls, exitCode, output } = await runCaptured(['research', 'prediction-market', 'market-screener', '--tags', 'Politics,Sports']);
+    expect(exitCode, JSON.stringify(output)).toBeNull();
+    expect(calls[0].body.tags).toEqual(['Politics', 'Sports']);
   });
 
   it('wires --token into smart-money holdings as a lowercased filter', async () => {

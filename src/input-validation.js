@@ -287,15 +287,19 @@ function chainErrors(path, leaf, option, value, endpoints, knownChains) {
   return errors;
 }
 
-/** Rewrite --chain/--chains to canonical spellings, as the API would. */
+/**
+ * Rewrite --chain/--chains to canonical spellings, as the API would. --chains
+ * becomes an array (the request field is a list), whether it was given as
+ * "a,b", repeated, or as a JSON array.
+ */
 function normalizeChainOptions(options, names) {
   for (const [raw, canonical] of names) {
     if (canonical !== 'chain' && canonical !== 'chains') continue;
     const value = options[raw];
-    if (typeof value === 'string' && value.trim() !== '') {
-      options[raw] = canonical === 'chains' ? splitList(value).map(canonicalChain).join(',') : canonicalChain(value);
-    } else if (Array.isArray(value)) {
-      options[raw] = value.map(item => (typeof item === 'string' ? splitList(item).map(canonicalChain).join(',') : item));
+    if (canonical === 'chains' && (Array.isArray(value) || (typeof value === 'string' && value.trim() !== ''))) {
+      options[raw] = splitList(value).map(canonicalChain);
+    } else if (typeof value === 'string' && value.trim() !== '') {
+      options[raw] = canonicalChain(value);
     }
   }
 }
@@ -368,7 +372,8 @@ function valueErrors(name, spec, value) {
  * Check a research command's options before it runs. Throws one NansenError
  * listing every problem (see validationError). On success it rewrites
  * --chain/--chains in `options` to their canonical spelling (lowercase, REST
- * aliases such as bsc -> bnb applied), as the API itself would.
+ * aliases such as bsc -> bnb applied), as the API itself would, and turns
+ * --chains into an array.
  */
 export function validateResearchInput(resolved, { flags = {}, options = {}, endpoints = {}, chains = [] } = {}) {
   const { path, leaf, positional = [] } = resolved;
@@ -408,7 +413,8 @@ export function validateResearchInput(resolved, { flags = {}, options = {}, endp
   for (const [name, value] of given) {
     const spec = leaf.options?.[name] ?? PAGINATION_SPECS[name];
     if (!spec) continue;
-    if (spec.type !== 'boolean' && isBlank(value)) {
+    // A list option needs at least one item: `--chains ,` would send [].
+    if (spec.type !== 'boolean' && (isBlank(value) || (spec.repeatable && spec.format !== 'json' && splitList(value).length === 0))) {
       errors.push(fieldError(`--${name}`, 'missing_field', `Option '--${name}' requires a value.`));
       continue;
     }

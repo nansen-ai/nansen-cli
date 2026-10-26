@@ -67,9 +67,9 @@ function parseBooleanOption(options, flags, key) {
 
 function parseChains(options) {
   if (options.chains) {
-    return Array.isArray(options.chains)
-      ? options.chains
-      : String(options.chains).split(',').map(s => s.trim()).filter(Boolean);
+    // "a,b", a repeated flag (each value may itself be "a,b") or a JSON array.
+    const values = Array.isArray(options.chains) ? options.chains : [options.chains];
+    return values.flatMap(value => String(value).split(',')).map(s => s.trim()).filter(Boolean);
   }
   if (options.chain) return [options.chain];
   return undefined;
