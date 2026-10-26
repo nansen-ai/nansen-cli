@@ -207,6 +207,7 @@ export function browserSessionResponseMeta(response) {
 // caller already has. Each string is bounded and dropped if it contains a
 // credential, so a server that echoes headers still leaks nothing.
 const SESSION_VALIDATION_STATUSES = new Set([400, 422]);
+const API_KEY_PAGE = 'https://app.nansen.ai/api?tab=api';
 const MAX_ECHOED_STRING = 1000;
 const MAX_ECHOED_FIELD_ERRORS = 100;
 
@@ -1241,7 +1242,11 @@ export class NansenAPI {
         // Enhance messages for specific error codes
         if (code === ErrorCode.UNAUTHORIZED) {
           if (this.apiKey && !safeSessionError) {
-            message = `${String(message).replace(/\.+$/, '')}. The API rejected the API key (HTTP 401); the connection works. Check or rotate the key at https://app.nansen.ai/api?tab=api, or run: nansen login.`;
+            // The server's sentence already says the key was rejected and
+            // usually links the key page; add only what it leaves out.
+            const serverMessage = String(message).replace(/\.+$/, '');
+            const keyPage = serverMessage.includes(API_KEY_PAGE) ? '' : ` at ${API_KEY_PAGE}`;
+            message = `${serverMessage}. The connection works; run nansen login or rotate the key${keyPage}.`;
           } else if (!safeSessionError) {
             message = 'Not logged in. Run: nansen login';
           }

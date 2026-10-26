@@ -144,6 +144,14 @@ describe('connection failure vs rejected key', () => {
     const api = new NansenAPI('bad-key', 'https://api.nansen.ai', { retry: { maxRetries: 0 } });
     const error = await api.smartMoneyNetflow({}).catch(e => e);
     expect(error.code).toBe(ErrorCode.UNAUTHORIZED);
-    expect(error.message).toContain('The API rejected the API key (HTTP 401); the connection works.');
+    expect(error.message).toBe('Invalid API key. The connection works; run nansen login or rotate the key at https://app.nansen.ai/api?tab=api.');
+  });
+
+  it('does not repeat the key page when the server message links it', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401, { message: 'Invalid API key. Manage your keys at https://app.nansen.ai/api?tab=api.', code: 'unauthenticated' })));
+    const api = new NansenAPI('bad-key', 'https://api.nansen.ai', { retry: { maxRetries: 0 } });
+    const error = await api.smartMoneyNetflow({}).catch(e => e);
+    expect(error.code).toBe(ErrorCode.UNAUTHORIZED);
+    expect(error.message).toBe('Invalid API key. Manage your keys at https://app.nansen.ai/api?tab=api. The connection works; run nansen login or rotate the key.');
   });
 });
