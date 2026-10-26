@@ -368,6 +368,13 @@ describe('validateFieldSelection', () => {
     expect(() => validateFieldSelection({ data: [{ a: 1 }] }, ['price_usd'], { returns: ['price_usd'] })).not.toThrow();
   });
 
+  it('rejects a dotted path that does not exist at that position', () => {
+    expect(() => validateFieldSelection({ data: [{ token_symbol: 'ETH' }] }, ['results.token_symbol'])).toThrow(
+      "Field 'results.token_symbol' is not in the response. Did you mean 'token_symbol'?",
+    );
+    expect(() => validateFieldSelection({ data: [{ token_symbol: 'ETH' }] }, ['data.token_symbol'])).not.toThrow();
+  });
+
   it('finds a field that only a late row carries', () => {
     const rows = Array.from({ length: 500 }, (_, i) => (i === 499 ? { id: i, rare: true } : { id: i }));
     expect(() => validateFieldSelection({ data: rows }, ['rare'])).not.toThrow();

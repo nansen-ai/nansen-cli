@@ -484,7 +484,8 @@ function collectKeys(data) {
 
 /**
  * Reject --fields names that match nothing. A name is known when the response
- * has that key at any depth (a dotted path must exist at that position), or
+ * has that key at any depth (a dotted path must exist at exactly that
+ * position, as filterFields() requires), or
  * when the command's schema lists it in `returns`. An empty response (no
  * rows) is never rejected: it cannot show which fields exist.
  */
@@ -499,7 +500,7 @@ export function validateFieldSelection(data, fields, { path, returns = [] } = {}
   const errors = [];
   for (const field of fields) {
     const known = field.includes('.')
-      ? paths.has(field) || documented.has(field) || names.has(field.split('.').pop())
+      ? paths.has(field) || documented.has(field)
       : names.has(field) || documented.has(field);
     if (known) continue;
     const suggestion = closestMatch(field.split('.').pop(), candidates);
