@@ -70,7 +70,9 @@ export function closestMatch(input, candidates, cutoff = 0.6) {
   let bestScore = -1;
   for (const candidate of candidates) {
     const lowered = String(candidate).toLowerCase();
-    const score = similarity(needle, lowered);
+    // get_close_matches scores SequenceMatcher(None, candidate, word): the
+    // order matters, because ties in the longest match resolve differently.
+    const score = similarity(lowered, needle);
     if (score < cutoff) continue;
     if (score > bestScore || (score === bestScore && lowered > String(best).toLowerCase())) {
       best = candidate;
@@ -146,8 +148,8 @@ export function resolveResearchCommand(schema, command, subArgs) {
   if (command === 'research') {
     const raw = subArgs[0];
     if (!raw || raw === 'help') return null;
-    category = CATEGORY_ALIASES[raw] || raw;
-    if (!research[category]) {
+    category = Object.hasOwn(CATEGORY_ALIASES, raw) ? CATEGORY_ALIASES[raw] : raw;
+    if (!Object.hasOwn(research, category)) {
       throw unknownCommandError('research category', raw, Object.keys(research));
     }
     rest = subArgs.slice(1);
@@ -172,8 +174,10 @@ export function resolveResearchCommand(schema, command, subArgs) {
   }
   const rawSub = rest[0];
   if (!rawSub || rawSub === 'help') return null;
-  const sub = SUBCOMMAND_ALIASES[category]?.[rawSub] || rawSub;
-  const leaf = entry.subcommands[sub];
+  const aliases = SUBCOMMAND_ALIASES[category] ?? {};
+  const sub = Object.hasOwn(aliases, rawSub) ? aliases[rawSub] : rawSub;
+  // Own properties only: `toString` or `constructor` is not a subcommand.
+  const leaf = Object.hasOwn(entry.subcommands, sub) ? entry.subcommands[sub] : null;
   if (!leaf) {
     throw unknownCommandError(`${category} subcommand`, rawSub, Object.keys(entry.subcommands));
   }
@@ -195,10 +199,29 @@ const PAGINATION_SPECS = {
   page: { type: 'integer', minimum: 1, description: 'Page number (1-based)' },
 };
 
-// Chain spellings a command normalises itself instead of rejecting.
-const ACCEPTED_CHAIN_ALIASES = { '/api/v1/profiler/address/counterparties/batch': ['bsc'] };
-// Common chain nicknames, used only to suggest the canonical name.
-const CHAIN_NICKNAMES = { bsc: 'bnb', eth: 'ethereum', sol: 'solana', arb: 'arbitrum', matic: 'polygon', avax: 'avalanche', op: 'optimism', btc: 'bitcoin', hl: 'hyperliquid' };
+// The chain aliases the REST API accepts.
+// The API folds case and maps these to the canonical name, so the CLI does
+// the same before it checks the chain and sends the request.
+export const CHAIN_ALIASES = {
+  bsc: 'bnb',
+  'binance-smart-chain': 'bnb',
+  binance: 'bnb',
+  eth: 'ethereum',
+  sol: 'solana',
+  arb: 'arbitrum',
+  avax: 'avalanche',
+  poly: 'polygon',
+  op: 'optimism',
+  'base-mainnet': 'base',
+  fantom: 'ftm',
+};
+
+/** The canonical spelling of a chain: lowercase, with REST's aliases applied. */
+export function canonicalChain(value) {
+  if (typeof value !== 'string') return value;
+  const lowered = value.trim().toLowerCase();
+  return CHAIN_ALIASES[lowered] ?? lowered;
+}
 
 function isBlank(value) {
   return value === true || (typeof value === 'string' && value.trim() === '');
@@ -228,11 +251,11 @@ function splitList(value) {
 
 /** Chains the command accepts for `option`, or null when unknown. */
 export function supportedChains(leaf, option, endpoints) {
-  const spec = leaf.options?.[option];
-  if (Array.isArray(spec?.enum) && spec.enum.length) return spec.enum;
+  // The API spec is authoritative; a hand-written enum is only a fallback.
   const endpoint = endpoints?.[leaf.endpoint];
-  if (!endpoint?.chains?.length) return null;
-  return [...endpoint.chains, ...(ACCEPTED_CHAIN_ALIASES[leaf.endpoint] || [])];
+  if (endpoint?.chains?.length) return endpoint.chains;
+  const spec = leaf.options?.[option];
+  return Array.isArray(spec?.enum) && spec.enum.length ? spec.enum : null;
 }
 
 // Chain typos need a closer match than option names: at 0.6, 'bitcoin' would
@@ -240,12 +263,8 @@ export function supportedChains(leaf, option, endpoints) {
 const CHAIN_SUGGESTION_CUTOFF = 0.75;
 
 function chainSuggestion(chain, allowed, knownChains) {
-  const lowered = chain.toLowerCase();
-  if (allowed.includes(lowered)) return lowered;
-  const nickname = CHAIN_NICKNAMES[lowered];
-  if (nickname) return allowed.includes(nickname) ? nickname : null;
   // A real chain this command does not support is not a typo.
-  if (knownChains.has(lowered)) return null;
+  if (knownChains.has(chain)) return null;
   return closestMatch(chain, allowed, CHAIN_SUGGESTION_CUTOFF);
 }
 
@@ -253,25 +272,54 @@ function chainErrors(path, leaf, option, value, endpoints, knownChains) {
   const allowed = supportedChains(leaf, option, endpoints);
   if (!allowed) return [];
   const errors = [];
-  for (const chain of splitList(value)) {
-    if (typeof chain !== 'string' || allowed.includes(chain)) continue;
+  for (const raw of splitList(value)) {
+    if (typeof raw !== 'string') continue;
+    const chain = canonicalChain(raw);
+    if (allowed.includes(chain)) continue;
     const suggestion = chainSuggestion(chain, allowed, knownChains);
     const hint = suggestion ? ` Did you mean '${suggestion}'?` : '';
-    const visible = allowed.filter(name => !(ACCEPTED_CHAIN_ALIASES[leaf.endpoint] || []).includes(name));
     errors.push(fieldError(
       `--${option}`,
       'invalid_field_value',
-      `Chain '${chain}' is not supported by ${path}.${hint} Supported chains: ${visible.join(', ')}`,
+      `Chain '${raw}' is not supported by ${path}.${hint} Supported chains: ${allowed.join(', ')}`,
     ));
   }
   return errors;
 }
 
+/** Rewrite --chain/--chains to canonical spellings, as the API would. */
+function normalizeChainOptions(options, names) {
+  for (const [raw, canonical] of names) {
+    if (canonical !== 'chain' && canonical !== 'chains') continue;
+    const value = options[raw];
+    if (typeof value === 'string' && value.trim() !== '') {
+      options[raw] = canonical === 'chains' ? splitList(value).map(canonicalChain).join(',') : canonicalChain(value);
+    } else if (Array.isArray(value)) {
+      options[raw] = value.map(item => (typeof item === 'string' ? splitList(item).map(canonicalChain).join(',') : item));
+    }
+  }
+}
+
+function isValidDateTime(value) {
+  if (isValidDateOnly(value)) return true;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/.test(value)) return false;
+  return isValidDateOnly(value.slice(0, 10)) && !Number.isNaN(Date.parse(value.replace(' ', 'T')));
+}
+
 function valueErrors(name, spec, value) {
   const field = `--${name}`;
+  if (Array.isArray(value) && !spec.repeatable) {
+    return [fieldError(field, 'invalid_field_value', `Option '${field}' may only be given once`)];
+  }
   const values = Array.isArray(value) ? value : [value];
   const errors = [];
   for (const item of values) {
+    // parseArgs turns JSON-looking values into objects. Only JSON options
+    // take one; elsewhere it would be dropped and the default sent instead.
+    if (item !== null && typeof item === 'object' && spec.format !== 'json') {
+      errors.push(fieldError(field, 'invalid_field_value', `Option '${field}' must be a ${spec.type === 'boolean' ? 'boolean' : spec.type === 'number' || spec.type === 'integer' ? 'number' : 'string'}, not JSON; received: ${JSON.stringify(item)}`));
+      continue;
+    }
     if (spec.type === 'boolean') {
       if (item === true) continue;
       if (!['true', 'false', '1', '0'].includes(String(item).toLowerCase())) {
@@ -305,6 +353,8 @@ function valueErrors(name, spec, value) {
     }
     if (spec.format === 'date' && !isValidDateOnly(item)) {
       errors.push(fieldError(field, 'invalid_date_format', `Invalid date '${String(item)}' for ${field}. Expected a real calendar date as YYYY-MM-DD.`));
+    } else if (spec.format === 'date-time' && !isValidDateTime(item)) {
+      errors.push(fieldError(field, 'invalid_date_format', `Invalid date '${String(item)}' for ${field}. Expected YYYY-MM-DD or an ISO 8601 time such as 2025-01-01T00:00:00Z.`));
     }
   }
   return errors;
@@ -312,7 +362,9 @@ function valueErrors(name, spec, value) {
 
 /**
  * Check a research command's options before it runs. Throws one NansenError
- * listing every problem (see validationError), or returns quietly.
+ * listing every problem (see validationError). On success it rewrites
+ * --chain/--chains in `options` to their canonical spelling (lowercase, REST
+ * aliases such as bsc -> bnb applied), as the API itself would.
  */
 export function validateResearchInput(resolved, { flags = {}, options = {}, endpoints = {}, chains = [] } = {}) {
   const { path, leaf, positional = [] } = resolved;
@@ -369,12 +421,14 @@ export function validateResearchInput(resolved, { flags = {}, options = {}, endp
       : `Required option '--${name}' is missing.`));
   }
 
+  const knownChains = new Set(chains);
   for (const option of ['chain', 'chains']) {
     if (!given.has(option) || isBlank(given.get(option))) continue;
-    errors.push(...chainErrors(path, leaf, option, given.get(option), endpoints, new Set(chains)));
+    errors.push(...chainErrors(path, leaf, option, given.get(option), endpoints, knownChains));
   }
 
   if (errors.length) throw validationError(errors);
+  normalizeChainOptions(options, names);
 }
 
 /** Reject an output format the CLI cannot write. */
@@ -405,7 +459,9 @@ function collectKeys(data) {
     if (depth > 12 || node === null || typeof node !== 'object') return;
     if (Array.isArray(node)) {
       arrays++;
-      for (const item of node.slice(0, 200)) {
+      // Every row: an optional field may appear only on a late row, and
+      // filterFields() looks at all of them too.
+      for (const item of node) {
         if (item !== null && typeof item === 'object') rows++;
         walk(item, path, depth + 1);
       }

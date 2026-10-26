@@ -92,6 +92,20 @@ describe('browser-session validation errors', () => {
     expect(JSON.stringify(error.details)).not.toContain(bundle.accessToken);
   });
 
+  it('map the field code like an API-key request does', async () => {
+    const { api } = await sessionApi();
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(422, {
+      ...UNKNOWN_FIELD_BODY,
+      error: 'Missing field',
+      message: "Required field 'body -> token_address' is missing",
+      code: 'missing_field',
+      param: 'token_address',
+      errors: [{ field: 'body.token_address', message: "Required field 'body -> token_address' is missing", code: 'missing_field' }],
+    })));
+    const error = await api.tokenInformation({ chain: 'solana' }).catch(e => e);
+    expect(error.code).toBe(ErrorCode.MISSING_PARAM);
+  });
+
   it('drop any string that echoes the credential', () => {
     const secret = 'secret-token-value';
     const result = sessionValidationDetails({

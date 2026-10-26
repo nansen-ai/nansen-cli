@@ -1558,7 +1558,7 @@ export function buildCommands(deps = {}) {
         }),
       };
 
-      if (!handlers[subcommand]) {
+      if (!Object.hasOwn(handlers, subcommand)) {
         throw unknownCommandError('web subcommand', subcommand, ['search', 'fetch']);
       }
 
@@ -1848,7 +1848,7 @@ export function buildCommands(deps = {}) {
         })
       };
 
-      if (!handlers[subcommand]) {
+      if (!Object.hasOwn(handlers, subcommand)) {
         throw unknownCommandError('smart-money subcommand', subcommand, Object.keys(handlers).filter(name => name !== 'help'));
       }
 
@@ -1957,7 +1957,7 @@ export function buildCommands(deps = {}) {
         })
       };
 
-      if (!handlers[subcommand]) {
+      if (!Object.hasOwn(handlers, subcommand)) {
         throw unknownCommandError('profiler subcommand', subcommand, Object.keys(handlers).filter(name => name !== 'help'));
       }
 
@@ -2126,7 +2126,7 @@ export function buildCommands(deps = {}) {
         })
       };
 
-      if (!handlers[subcommand]) {
+      if (!Object.hasOwn(handlers, subcommand)) {
         throw unknownCommandError('token subcommand', subcommand, Object.keys(handlers).filter(name => name !== 'help'));
       }
 
@@ -2186,7 +2186,7 @@ export function buildCommands(deps = {}) {
         })
       };
 
-      if (!handlers[subcommand]) {
+      if (!Object.hasOwn(handlers, subcommand)) {
         throw unknownCommandError('portfolio subcommand', subcommand, Object.keys(handlers).filter(name => name !== 'help'));
       }
 
@@ -2222,7 +2222,7 @@ export function buildCommands(deps = {}) {
         })
       };
 
-      if (!handlers[subcommand]) {
+      if (!Object.hasOwn(handlers, subcommand)) {
         throw unknownCommandError('perp analytics subcommand', subcommand, ['screener', 'leaderboard']);
       }
 
@@ -2293,7 +2293,7 @@ export function buildCommands(deps = {}) {
         })
       };
 
-      if (!handlers[subcommand]) {
+      if (!Object.hasOwn(handlers, subcommand)) {
         throw unknownCommandError('prediction-market subcommand', subcommand, Object.keys(handlers).filter(k => k !== 'help'));
       }
 

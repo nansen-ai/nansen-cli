@@ -196,7 +196,7 @@ USAGE:
   'historical-token-ohlcv': `nansen research historical-token-ohlcv — Historical token OHLCV candles
 
 USAGE:
-  nansen research historical-token-ohlcv --token-address <addr> --from-date <date> --timeframe <5m|15m|30m|1h|1d|1w> (--as-of-date <date> | --as-of-ts <timestamp>) [--chain <chain>] [--apply-blacklist-filter <true|false>]`,
+  nansen research historical-token-ohlcv --token-address <addr> --from-date <date> --timeframe <5m|15m|30m|1h|4h|1d|1w> (--as-of-date <date> | --as-of-ts <timestamp>) [--chain <chain>] [--apply-blacklist-filter <true|false>]`,
 };
 
 export function buildResearchCommands(deps = {}) {

@@ -1220,7 +1220,7 @@ export class NansenAPI {
         const nestedMatch = typeof message === 'string' && message.match(/['"]message['"]\s*:\s*['"](.*?)['"]\s*[,}]/s);
         if (nestedMatch) message = nestedMatch[1];
         const safeSessionError = this.selection.kind === 'session' ? browserSessionError(response.status, data) : null;
-        const code = safeSessionError?.code || statusToErrorCode(response.status, data);
+        let code = safeSessionError?.code || statusToErrorCode(response.status, data);
         // Keep a body-only challenge available to the signer without exposing
         // the authenticated error body through browser-session diagnostics.
         const bodyPaymentRequirements = response.status === 402 ? data.paymentRequirements : undefined;
@@ -1234,6 +1234,8 @@ export class NansenAPI {
             : null;
           message = validation?.message ?? safeSessionError.message;
           data = validation?.details ?? {};
+          // Same code as with an API key (missing_field -> MISSING_PARAM, ...).
+          if (validation) code = statusToErrorCode(response.status, validation.details);
         }
 
         // Enhance messages for specific error codes

@@ -137,6 +137,11 @@ describe('similarity / closestMatch (difflib parity)', () => {
     expect(closestMatch('TimeFrame', ['timeframe'])).toBe('timeframe');
   });
 
+  it('scores like get_close_matches (candidate first, then the word)', () => {
+    // SequenceMatcher(None, 'chain', 'cnani').ratio() is 0.6; the reverse is 0.4.
+    expect(closestMatch('cnani', ['chain'])).toBe('chain');
+  });
+
   it('returns null when nothing is close', () => {
     expect(closestMatch('turbo', ['chain', 'timeframe', 'token'])).toBeNull();
   });
@@ -255,10 +260,44 @@ describe('validateResearchInput', () => {
   it.each([
     ['research smart-money netflow', { page: '0' }, "Value for '--page' is out of the allowed range (must be at least 1); received: 0"],
     ['research smart-money netflow', { limit: 'ten' }, "Option '--limit' must be a whole number; received: ten"],
-    ['research historical-dex-trades', { 'token-address': SOL_MINT, 'from-date': '2024-13-45', 'to-date': '2024-01-02' }, "Invalid date '2024-13-45' for --from-date. Expected a real calendar date as YYYY-MM-DD."],
+    ['research historical-dex-trades', { 'token-address': SOL_MINT, 'from-date': '2024-13-45', 'to-date': '2024-01-02' }, "Invalid date '2024-13-45' for --from-date. Expected YYYY-MM-DD or an ISO 8601 time such as 2025-01-01T00:00:00Z."],
     ['research token flows', { token: SOL_MINT, label: 'smart-mony' }, "Invalid value 'smart-mony' for --label. Did you mean 'smart_money'? Valid options are: 'top_100_holders', 'smart_money', 'public_figure', 'whale' or 'exchange'"],
   ])('%s %j: invalid value', (path, args, message) => {
     expect(check(path, args)?.message).toBe(message);
+  });
+
+  it('rejects inherited object properties as subcommands', () => {
+    expect(() => resolveResearchCommand(SCHEMA, 'research', ['token', 'toString'])).toThrow(expect.objectContaining({ code: 'UNKNOWN_COMMAND' }));
+    expect(() => resolveResearchCommand(SCHEMA, 'research', ['constructor'])).toThrow(expect.objectContaining({ code: 'UNKNOWN_COMMAND' }));
+  });
+
+  it('accepts every flag the token handlers apply to filters', () => {
+    for (const sub of ['who-bought-sold', 'pnl', 'transfers', 'jup-dca']) {
+      expect(check(`research token ${sub}`, { token: SOL_MINT }, { 'smart-money': true }), sub).toBeNull();
+    }
+    for (const sub of ['perp-positions', 'perp-trades', 'perp-pnl-leaderboard']) {
+      expect(check(`research token ${sub}`, { symbol: 'BTC' }, { 'smart-money': true }), sub).toBeNull();
+    }
+    expect(check('research token screener', {}, { 'include-stablecoins': true })).toBeNull();
+  });
+
+  it('rejects a JSON value for a plain option instead of dropping it', () => {
+    expect(check('research token info', { token: SOL_MINT, timeframe: {} })).toMatchObject({
+      message: "Option '--timeframe' must be a string, not JSON; received: {}",
+      code: 'INVALID_PARAMS',
+    });
+    expect(check('research token info', { token: [SOL_MINT, SOL_MINT] }).message).toBe("Option '--token' may only be given once");
+    expect(check('research smart-money netflow', { labels: ['Fund', '30D Smart Trader'] })).toBeNull();
+  });
+
+  it('accepts ISO times where the API takes a date range', () => {
+    expect(check('research historical-dex-trades', { 'token-address': SOL_MINT, 'from-date': '2026-01-01T12:00:00Z', 'to-date': '2026-01-02' })).toBeNull();
+    expect(check('research historical-dex-trades', { 'token-address': SOL_MINT, 'from-date': '2026-01-01T25:00:00Z', 'to-date': '2026-01-02' })?.details.param).toBe('--from-date');
+    expect(check('research historical-top-holders', { 'token-address': SOL_MINT, 'as-of-date': '2026-01-01T12:00:00Z' })?.details.param).toBe('--as-of-date');
+  });
+
+  it('accepts the 4h historical OHLCV timeframe', () => {
+    expect(check('research historical-token-ohlcv', { 'token-address': SOL_MINT, 'from-date': '2026-01-01', 'as-of-date': '2026-01-02', timeframe: '4h' })).toBeNull();
   });
 
   it('collects every error, led by the first (like the REST errors list)', () => {
@@ -279,9 +318,21 @@ describe('validateResearchInput', () => {
       expect(check('research token holders', { token: '1111111111111111111114oLvT2', chain: 'bitcoin' })).toBeNull();
     });
 
-    it('suggests a typo and a nickname', () => {
+    it('suggests a typo', () => {
       expect(check('research smart-money netflow', { chain: 'etherium' }).message).toContain("Did you mean 'ethereum'?");
-      expect(check('research smart-money netflow', { chain: 'bsc' }).message).toContain("Did you mean 'bnb'?");
+    });
+
+    it('accepts and normalises the REST API aliases and case', () => {
+      const options = { chain: 'BSC' };
+      expect(check('research smart-money netflow', options)).toBeNull();
+      const resolved = resolveResearchCommand(SCHEMA, 'research', ['smart-money', 'netflow']);
+      const mutable = { chain: 'ETH', chains: 'sol,Base' };
+      validateResearchInput(resolved, { options: mutable, endpoints: API_ENDPOINTS, chains: SCHEMA.chains });
+      expect(mutable).toEqual({ chain: 'ethereum', chains: 'solana,base' });
+    });
+
+    it('takes the chain list from the API spec over a hand-written enum', () => {
+      expect(check('research transaction-with-token-transfer-lookup', { 'transaction-hash': TX_HASH, chain: 'arc' })).toBeNull();
     });
 
     it('checks every entry of --chains', () => {
@@ -290,7 +341,7 @@ describe('validateResearchInput', () => {
       expect(error.message).toMatch(/^Chain 'notachain' is not supported/);
     });
 
-    it('keeps the bsc spelling that batch counterparties normalises itself', () => {
+    it('accepts bsc for batch counterparties', () => {
       expect(check('research profiler counterparties-batch', { addresses: EVM, chain: 'bsc' })).toBeNull();
     });
   });
@@ -311,6 +362,11 @@ describe('validateFieldSelection', () => {
   it('accepts names present at any depth, dotted paths and documented returns', () => {
     expect(() => validateFieldSelection(data, ['token_symbol', 'address', 'data.token.address', 'pagination'])).not.toThrow();
     expect(() => validateFieldSelection({ data: [{ a: 1 }] }, ['price_usd'], { returns: ['price_usd'] })).not.toThrow();
+  });
+
+  it('finds a field that only a late row carries', () => {
+    const rows = Array.from({ length: 500 }, (_, i) => (i === 499 ? { id: i, rare: true } : { id: i }));
+    expect(() => validateFieldSelection({ data: rows }, ['rare'])).not.toThrow();
   });
 
   it('rejects a name that matches nothing, with a suggestion', () => {
