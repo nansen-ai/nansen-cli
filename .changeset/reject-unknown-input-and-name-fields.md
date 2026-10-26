@@ -11,6 +11,7 @@ Every failure now exits 1 with `success: false`, and research commands check the
 - `--fields` names that match nothing in the response are an error instead of `{}`.
 - `profiler balance` now sends `--limit`/`--page`, and `smart-money holdings --token` filters by token. Mixed-case EVM addresses in `--filters` are lowercased, so they match.
 - List options are sent as lists, whether given comma-separated, repeated or as a JSON array: `token screener --chains ethereum,solana` no longer sends one `"ethereum,solana"` string, `smart-money --labels` accepts a comma-separated list, and a repeated `--addresses` or `research ... --chains` value that itself holds a comma-separated list is split. An empty list (`--chains ,`) is rejected.
+- `prediction-market market-screener` and `event-screener` no longer accept `--min-unique-traders-24h` or `--max-volume-24hr`. The REST API has no such filters and rejected every request that used them; the CLI now says so before the request. `--max-unique-traders-24h` and `--min-volume-24hr` are unchanged.
 - API validation errors keep the field name (`details.param`, `details.errors[]`), also for browser-session logins, and the message is no longer repeated inside `details`.
 - A connection failure (`NETWORK_ERROR`) now says the API key was not checked; a rejected key (`UNAUTHORIZED`) says the connection works.
 - All error codes are listed in `docs/error-codes.md`.

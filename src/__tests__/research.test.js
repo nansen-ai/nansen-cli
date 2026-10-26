@@ -242,18 +242,23 @@ describe('NansenAPI research (historical) methods', () => {
   });
 
   describe('researchTokenFlowSummary', () => {
-    it('hits historical-token-flow-summary and does NOT include pagination', async () => {
+    it('hits historical-token-flow-summary and does NOT include pagination, filters or order_by', async () => {
       setupMock();
       await api.researchTokenFlowSummary({
         tokenAddress: TOKENS.solana,
         fromDate: FROM,
         toDate: TO,
-        pagination: { page: 1, per_page: 50 }, // caller-provided pagination must be dropped
+        // The endpoint has none of these fields, so caller-provided values must be dropped.
+        pagination: { page: 1, per_page: 50 },
+        filters: { a: 1 },
+        orderBy: [{ field: 'x', direction: 'ASC' }],
       });
       const body = lastCall('/api/v1/tgm/historical-token-flow-summary');
       expect(body.token_address).toBe(TOKENS.solana);
       expect(body.date_range).toEqual({ from: FROM, to: TO });
       expect(body.pagination).toBeUndefined();
+      expect(body.filters).toBeUndefined();
+      expect(body.order_by).toBeUndefined();
     });
   });
 

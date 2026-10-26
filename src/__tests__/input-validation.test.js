@@ -83,14 +83,42 @@ function sampleValue(name, spec) {
   }[name] ?? 'x';
 }
 
-function requiredArgs(leaf) {
+function requiredArgs(leaf, { evmToken = false, skip = [] } = {}) {
   const args = [];
   for (const [name, spec] of Object.entries(leaf.options || {})) {
+    if (skip.includes(name)) continue;
     const needed = spec.required || (name === 'as-of-date' && leaf.options['as-of-ts']);
-    if (needed) args.push(`--${name}`, sampleValue(name, spec));
+    if (!needed) continue;
+    const token = evmToken && (name === 'token' || name === 'token-address');
+    args.push(`--${name}`, token ? EVM : sampleValue(name, spec));
   }
   return args;
 }
+
+/** A value for an optional option that differs from its default. */
+function probeValue(name, spec, leaf) {
+  if (spec.type === 'boolean') return spec.default === true ? 'false' : 'true';
+  if (name === 'chain' || name === 'chains') {
+    const list = API_ENDPOINTS[leaf.endpoint]?.chains ?? spec.enum ?? ['base'];
+    return ['base', 'ethereum'].find(chain => list.includes(chain) && chain !== spec.default) ?? list.find(chain => chain !== spec.default);
+  }
+  if (Array.isArray(spec.enum) && spec.enum.length) return String(spec.enum.find(value => String(value) !== String(spec.default)) ?? spec.enum[0]);
+  if (spec.type === 'number' || spec.type === 'integer') {
+    let value = (spec.minimum ?? 0) + 3;
+    if (value === spec.default) value++;
+    return String(spec.maximum !== undefined ? Math.min(value, spec.maximum) : value);
+  }
+  if (spec.format === 'date' || name === 'date') return '2025-02-03';
+  if (spec.format === 'date-time') return '2025-02-03T00:00:00Z';
+  if (spec.format === 'json') return name === 'filters' ? JSON.stringify({ probe_field: 1 }) : JSON.stringify([{ field: 'probe_field', direction: 'ASC' }]);
+  return { address: EVM, addresses: EVM, wallet: EVM, token: SOL_MINT, 'token-address': SOL_MINT, 'transaction-hash': TX_HASH }[name] ?? 'probe-value';
+}
+
+// Options that change what the CLI does with the response, not the request.
+const CLIENT_SIDE_OPTIONS = new Set([
+  'research profiler counterparties-batch --file', // reads the addresses from a file instead of --addresses
+  'research token transfers --enrich', // looks up labels for the returned addresses
+]);
 
 async function runCaptured(argv) {
   const calls = [];
@@ -443,6 +471,26 @@ describe('schema-wide checks', () => {
       if (leaf.pagination !== false && !fields.includes('pagination')) problems.push(`${name}: pagination allowed but no pagination field`);
     }
     expect(problems).toEqual([]);
+  });
+
+  // Every option the schema accepts must reach the request, and only through
+  // fields the endpoint has (src/api-endpoints.json). An option that the
+  // handler drops, or sends under a field the API does not know (which it
+  // rejects with a 422), fails here.
+  it.each(leaves.filter(([, leaf]) => leaf.endpoint && API_ENDPOINTS[leaf.endpoint]?.fields).flatMap(([words, leaf]) => Object.entries(leaf.options || {})
+    .filter(([name, spec]) => !spec.required && !(name === 'as-of-date' && leaf.options['as-of-ts']))
+    .map(([name, spec]) => [`${words.join(' ')} --${name}`, words, leaf, name, spec])))('%s is sent through a field the endpoint has', async (label, words, leaf, name, spec) => {
+    const chainProbe = name === 'chain' || name === 'chains';
+    const required = requiredArgs(leaf, { evmToken: chainProbe, skip: name === 'as-of-ts' ? ['as-of-date'] : [] });
+    const baseline = await runCaptured([...words, ...required]);
+    const probe = await runCaptured([...words, ...required, `--${name}`, probeValue(name, spec, leaf)]);
+    expect(probe.exitCode, JSON.stringify(probe.output)).toBeNull();
+    const fields = API_ENDPOINTS[leaf.endpoint].fields;
+    const unknown = probe.calls.filter(call => call.endpoint === leaf.endpoint).flatMap(call => Object.keys(call.body).filter(key => !fields.includes(key)));
+    expect(unknown, `${label} sends fields the endpoint does not have`).toEqual([]);
+    if (!CLIENT_SIDE_OPTIONS.has(label)) {
+      expect(JSON.stringify(probe.calls), `${label} is accepted but not sent`).not.toBe(JSON.stringify(baseline.calls));
+    }
   });
 
   it('knows the chains of every endpoint that restricts --chain', () => {

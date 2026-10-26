@@ -357,7 +357,7 @@ export function buildResearchCommands(deps = {}) {
         'historical-token-flow-summary': () => apiInstance.researchTokenFlowSummary({
           tokenAddress: options['token-address'] || options.token,
           chain: options.chain,
-          fromDate, toDate, filters, orderBy,
+          fromDate, toDate,
         }),
         'historical-who-bought-sold': () => apiInstance.researchWhoBoughtSold({
           tokenAddress: options['token-address'] || options.token,

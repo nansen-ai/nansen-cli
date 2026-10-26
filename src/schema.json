@@ -2122,10 +2122,6 @@
                   "type": "number",
                   "description": "Maximum liquidity in USD"
                 },
-                "min-unique-traders-24h": {
-                  "type": "number",
-                  "description": "Minimum unique traders in the last 24 hours"
-                },
                 "max-unique-traders-24h": {
                   "type": "number",
                   "description": "Maximum unique traders in the last 24 hours"
@@ -2133,10 +2129,6 @@
                 "min-volume-24hr": {
                   "type": "number",
                   "description": "Minimum 24-hour volume in USD"
-                },
-                "max-volume-24hr": {
-                  "type": "number",
-                  "description": "Maximum 24-hour volume in USD"
                 },
                 "neg-risk": {
                   "type": "boolean",
@@ -2208,10 +2200,6 @@
                   "type": "number",
                   "description": "Maximum liquidity in USD"
                 },
-                "min-unique-traders-24h": {
-                  "type": "number",
-                  "description": "Minimum unique traders in the last 24 hours"
-                },
                 "max-unique-traders-24h": {
                   "type": "number",
                   "description": "Maximum unique traders in the last 24 hours"
@@ -2219,10 +2207,6 @@
                 "min-volume-24hr": {
                   "type": "number",
                   "description": "Minimum 24-hour volume in USD"
-                },
-                "max-volume-24hr": {
-                  "type": "number",
-                  "description": "Maximum 24-hour volume in USD"
                 },
                 "neg-risk": {
                   "type": "boolean",
