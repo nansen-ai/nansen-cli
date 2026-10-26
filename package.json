@@ -14,7 +14,8 @@
     "skills/**",
     "scripts/postinstall.js",
     "CHANGELOG.md",
-    "docs/browser-login.md"
+    "docs/browser-login.md",
+    "docs/error-codes.md"
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
@@ -32,6 +33,10 @@
     "mcp:check": "node scripts/generate-mcp-docs.js --check",
     "mcp:check-pin": "node scripts/check-mcp-remote-pin.js",
     "mcp:check-consumers": "node scripts/check-mcp-consumers.js",
+    "error-codes:generate": "node scripts/generate-error-codes-doc.js",
+    "error-codes:check": "node scripts/generate-error-codes-doc.js --check",
+    "endpoints:sync": "node scripts/sync-api-endpoints.js",
+    "endpoints:check": "node scripts/sync-api-endpoints.js --check",
     "lint:fix": "eslint . --fix",
     "changeset": "changeset",
     "changeset:version": "changeset version && npm install --package-lock-only",

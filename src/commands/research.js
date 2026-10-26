@@ -5,30 +5,8 @@
  */
 
 import { NansenError, ErrorCode } from '../api.js';
-import { parseSort, rejectBlankOption, parseObjectOption } from '../query-options.js';
-
-// Research subcommands validate --page strictly. The shared helper in
-// src/query-options.js clamps an invalid page to 1 for the category commands,
-// so keep a local variant here that rejects it instead.
-function buildPagination(options) {
-  if (options.limit === undefined && options.page === undefined) return undefined;
-  const pagination = { page: 1 };
-  if (options.page !== undefined) {
-    const page = Number(options.page);
-    if (!Number.isInteger(page) || page < 1) {
-      throw new NansenError('--page must be a positive integer', ErrorCode.INVALID_PARAMS);
-    }
-    pagination.page = page;
-  }
-  if (options.limit !== undefined) {
-    const perPage = Number(options.limit);
-    if (!Number.isInteger(perPage) || perPage < 1) {
-      throw new NansenError('--limit must be a positive integer', ErrorCode.INVALID_PARAMS);
-    }
-    pagination.per_page = perPage;
-  }
-  return pagination;
-}
+import { buildPagination, parseSort, rejectBlankOption, parseFiltersOption } from '../query-options.js';
+import { unknownCommandError } from '../input-validation.js';
 
 const SUBCOMMANDS = [
   'historical-dex-trades',
@@ -234,10 +212,7 @@ export function buildResearchCommands(deps = {}) {
       }
 
       if (!RESEARCH_SUBCOMMANDS.has(sub)) {
-        throw new NansenError(
-          `Unknown research subcommand: ${sub}. Available: ${[...RESEARCH_SUBCOMMANDS].join(', ')}`,
-          ErrorCode.UNKNOWN,
-        );
+        throw unknownCommandError('research subcommand', sub, [...RESEARCH_SUBCOMMANDS]);
       }
 
       if (flags.help || flags.h || args[1] === 'help') {
@@ -256,7 +231,7 @@ export function buildResearchCommands(deps = {}) {
 
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
-      const filters = parseObjectOption(options.filters, 'filters');
+      const filters = parseFiltersOption(options.filters);
       const { fromDate, toDate } = resolveDateRange(options);
       const asOfDate = options['as-of-date'];
 
@@ -491,7 +466,7 @@ export function buildResearchCommands(deps = {}) {
       }
 
       // Should be unreachable because SUBCOMMANDS guarded above.
-      throw new NansenError(`Unknown research subcommand: ${sub}`, ErrorCode.UNKNOWN);
+      throw unknownCommandError('research subcommand', sub, [...RESEARCH_SUBCOMMANDS]);
     },
   };
 }

@@ -615,7 +615,7 @@ describe('cache command', () => {
   });
 
   it.each(['toString', 'constructor', '__proto__'])('rejects inherited subcommand %s', async subcommand => {
-    await expect(runCacheCommand([subcommand])).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    await expect(runCacheCommand([subcommand])).rejects.toMatchObject({ code: 'UNKNOWN_COMMAND' });
   });
 
   it.each([
@@ -631,7 +631,7 @@ describe('cache command', () => {
 
   it('rejects an unknown subcommand', async () => {
     await expect(runCacheCommand(['nonsense'])).rejects.toThrow(
-      /Unknown cache subcommand: nonsense\. Use one of: stats, clear/,
+      /Unknown cache subcommand: nonsense\. Available: stats, clear/,
     );
   });
 });

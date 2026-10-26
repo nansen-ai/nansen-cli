@@ -3010,8 +3010,10 @@ describe('NansenAPI', () => {
         thrownError = error;
       }
       
-      // Check that original error data is included (with retry metadata added)
-      expect(thrownError.details.error).toEqual(errorData.error);
+      // The body's own fields are kept (with retry metadata added), except the
+      // copy of the message that the envelope already carries as `error`.
+      expect(thrownError.message).toBe(errorData.error);
+      expect(thrownError.details).not.toHaveProperty('error');
       expect(thrownError.details.details).toEqual(errorData.details);
     });
 

@@ -2377,11 +2377,13 @@ describe('buildCommands', () => {
   });
 
   describe('smart-money command', () => {
-    it('should return help for unknown subcommand', async () => {
+    it('should reject an unknown subcommand', async () => {
       const mockApi = {};
-      const result = await commands['smart-money'](['unknown'], mockApi, {}, {});
-      expect(result.error).toContain('Unknown subcommand');
-      expect(result.available).toContain('netflow');
+      await expect(commands['smart-money'](['unknown'], mockApi, {}, {})).rejects.toMatchObject({
+        code: 'UNKNOWN_COMMAND',
+        message: expect.stringContaining('Unknown smart-money subcommand: unknown'),
+        details: { available: expect.arrayContaining(['netflow']) },
+      });
     });
 
     it('should return help object for help subcommand', async () => {
@@ -2671,9 +2673,11 @@ describe('buildCommands', () => {
   });
 
   describe('profiler command', () => {
-    it('should return help for unknown subcommand', async () => {
-      const result = await commands['profiler'](['unknown'], {}, {}, {});
-      expect(result.error).toContain('Unknown subcommand');
+    it('should reject an unknown subcommand', async () => {
+      await expect(commands['profiler'](['unknown'], {}, {}, {})).rejects.toMatchObject({
+        code: 'UNKNOWN_COMMAND',
+        message: expect.stringContaining('Unknown profiler subcommand: unknown'),
+      });
     });
 
     it('should call balance with address', async () => {
@@ -2752,9 +2756,11 @@ describe('buildCommands', () => {
   });
 
   describe('token command', () => {
-    it('should return help for unknown subcommand', async () => {
-      const result = await commands['token'](['unknown'], {}, {}, {});
-      expect(result.error).toContain('Unknown subcommand');
+    it('should reject an unknown subcommand', async () => {
+      await expect(commands['token'](['unknown'], {}, {}, {})).rejects.toMatchObject({
+        code: 'UNKNOWN_COMMAND',
+        message: expect.stringContaining('Unknown token subcommand: unknown'),
+      });
     });
 
     it('should pass top-tokens --limit as a safe integer', async () => {
@@ -3267,9 +3273,11 @@ describe('buildCommands', () => {
   });
 
   describe('portfolio command', () => {
-    it('should return help for unknown subcommand', async () => {
-      const result = await commands['portfolio'](['unknown'], {}, {}, {});
-      expect(result.error).toContain('Unknown subcommand');
+    it('should reject an unknown subcommand', async () => {
+      await expect(commands['portfolio'](['unknown'], {}, {}, {})).rejects.toMatchObject({
+        code: 'UNKNOWN_COMMAND',
+        message: expect.stringContaining('Unknown portfolio subcommand: unknown'),
+      });
     });
 
     it('should call defi-holdings with wallet', async () => {
@@ -4712,7 +4720,7 @@ describe('cache command', () => {
     const commands = buildCommands({ log: vi.fn(), exit: vi.fn() });
 
     await expect(commands.cache(['unknown'], null, {}, {})).rejects.toThrow(
-      /Unknown cache subcommand: unknown\. Use one of: stats, clear/,
+      /Unknown cache subcommand: unknown\. Available: stats, clear/,
     );
   });
 });
@@ -5593,7 +5601,9 @@ describe('profiler counterparties-batch command', () => {
     const batch = SCHEMA.commands.research.subcommands['profiler'].subcommands['counterparties-batch'];
     expect(batch).toBeDefined();
     expect(batch.endpoint).toBe('/api/v1/profiler/address/counterparties/batch');
-    expect(batch.options.addresses.required).toBeUndefined();
+    // Required unless --file is given; checked locally before any request.
+    expect(batch.options.addresses.required).toBe(true);
+    expect(batch.options.addresses.requiredUnless).toEqual(['file']);
     expect(batch.options.addresses.description).toContain('--file <path>');
     expect(batch.options.days.default).toBe(30);
     // The dispatch default is 'all', so the schema must document that, not 'ethereum'
@@ -6632,8 +6642,8 @@ describe('research command routing', () => {
 
       await expect(commands.research(['perp', subcommand], null, {}, {}))
         .rejects.toMatchObject({
-          code: 'UNKNOWN',
-          message: `Unknown perp analytics subcommand: ${subcommand}. Available: screener, leaderboard`,
+          code: 'UNKNOWN_COMMAND',
+          message: expect.stringMatching(new RegExp(`^Unknown perp analytics subcommand: ${subcommand}\\.( Did you mean '[a-z]+'\\?)? Available: screener, leaderboard$`)),
         });
     },
   );
@@ -6817,19 +6827,19 @@ describe('buildPagination', () => {
   });
 
   it('handles --page alone', () => {
-    expect(buildPagination({ page: '2' })).toEqual({ page: 2, per_page: undefined });
+    expect(buildPagination({ page: '2' })).toEqual({ page: 2 });
   });
 
   it('handles --page + --limit together', () => {
     expect(buildPagination({ page: '3', limit: 10 })).toEqual({ page: 3, per_page: 10 });
   });
 
-  it('guards against NaN --page value', () => {
-    expect(buildPagination({ page: 'abc' })).toEqual({ page: 1, per_page: undefined });
+  it('rejects a non-numeric --page (API-1081: no silent clamp)', () => {
+    expect(() => buildPagination({ page: 'abc' })).toThrow('--page must be a positive integer');
   });
 
-  it('clamps negative --page to 1', () => {
-    expect(buildPagination({ page: '-5' })).toEqual({ page: 1, per_page: undefined });
+  it.each(['-5', '0', '1.5'])('rejects --page %s instead of clamping it to 1', page => {
+    expect(() => buildPagination({ page })).toThrow('--page must be a positive integer');
   });
 
   it('handles --limit alone', () => {
@@ -7482,9 +7492,14 @@ describe('--paginate / --all flag integration (API-275)', () => {
     expect(result.data.pagination).toEqual({ page: 1, pages_fetched: 2, next_page: 3, complete: false });
   });
 
-  it('does not paginate an endpoint whose request omits pagination', async () => {
+  it('rejects --paginate on an endpoint without pagination instead of ignoring it (API-1081)', async () => {
     const result = await runCLI(['token', 'ohlcv', '--token', 'abc', '--paginate'], deps());
-    expect(result.data).toEqual({ data: [{ kind: 'single-page' }] });
+    expect(result.type).toBe('error');
+    expect(result.data).toMatchObject({
+      success: false,
+      code: 'INVALID_PARAMS',
+      error: "Option '--paginate' is not supported by nansen token ohlcv: this endpoint does not paginate.",
+    });
   });
 
   it('streams all merged rows as NDJSON with --stream', async () => {

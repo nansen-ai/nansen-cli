@@ -5,6 +5,7 @@
 
 import { NansenError, ErrorCode } from '../api.js';
 import { parseCsvOption } from '../query-options.js';
+import { unknownCommandError } from '../input-validation.js';
 
 // ============= Formatting =============
 
@@ -748,7 +749,7 @@ USAGE:
       };
 
       if (!handlers[sub]) {
-        throw new NansenError(`Unknown alerts subcommand: ${sub}. Available: list, create, update, toggle, delete`, ErrorCode.UNKNOWN);
+        throw unknownCommandError('alerts subcommand', sub, ['list', 'create', 'update', 'toggle', 'delete']);
       }
 
       // Subcommand-level help: --help flag or "help" as second positional arg

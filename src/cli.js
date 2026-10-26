@@ -18,7 +18,8 @@ import { buildAgentCommands } from './commands/agent.js';
 import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
-import { buildPagination, parseSort, parseCsvOption, rejectBlankOption, parseObjectOption } from './query-options.js';
+import { buildPagination, parseSort, parseCsvOption, rejectBlankOption, parseFiltersOption } from './query-options.js';
+import { resolveResearchCommand, validateResearchInput, validateOutputOptions, validateFieldSelection, unknownCommandError, normalizeFilterAddresses } from './input-validation.js';
 import { enableAutoPagination, DEFAULT_MAX_PAGES, MAX_PAGES_LIMIT, locateRows } from './auto-paginate.js';
 export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
@@ -40,11 +41,31 @@ const { version: VERSION, engines: ENGINES } = require('../package.json');
 // ============= Schema Definition =============
 
 const schemaDefinition = require('./schema.json');
+// Chains and request fields per API endpoint, vendored from the public
+// OpenAPI spec by scripts/sync-api-endpoints.js (npm run endpoints:sync).
+export const API_ENDPOINTS = require('./api-endpoints.json').endpoints;
+
+/**
+ * Add `supportedChains` to every command whose --chain/--chains the API
+ * restricts, so `nansen schema` documents the list the CLI enforces. An
+ * option with its own `enum` already documents it.
+ */
+function withSupportedChains(definition, endpoints) {
+  const copy = structuredClone(definition);
+  (function walk(node) {
+    if (!node || typeof node !== 'object') return;
+    const chainOption = node.options?.chain ?? node.options?.chains;
+    const chains = endpoints[node.endpoint]?.chains;
+    if (chainOption && !chainOption.enum && chains?.length) node.supportedChains = chains;
+    for (const child of Object.values(node.subcommands || {})) walk(child);
+  })(copy.commands.research);
+  return copy;
+}
 
 // SCHEMA is the static definition with version injected at runtime.
 // The schema.json file is the source of truth for command metadata (returns, options, etc.)
 // and should be updated whenever the API changes — do not edit returns arrays here.
-export const SCHEMA = { version: VERSION, ...schemaDefinition };
+export const SCHEMA = { version: VERSION, ...withSupportedChains(schemaDefinition, API_ENDPOINTS) };
 
 // ============= Pagination =============
 
@@ -1444,7 +1465,7 @@ export function buildCommands(deps = {}) {
     'auth': async (args, _apiInstance, _flags, _options) => {
       const subcommand = args[0] || 'status';
       if (subcommand !== 'status') {
-        throw new NansenError(`Unknown auth subcommand: ${subcommand}. Available: status`, ErrorCode.UNKNOWN);
+        throw unknownCommandError('auth subcommand', subcommand, ['status']);
       }
       return getAuthStatus();
     },
@@ -1538,7 +1559,7 @@ export function buildCommands(deps = {}) {
       };
 
       if (!handlers[subcommand]) {
-        throw new NansenError(`Unknown web subcommand: ${subcommand}. Available: search, fetch`, ErrorCode.UNKNOWN);
+        throw unknownCommandError('web subcommand', subcommand, ['search', 'fetch']);
       }
 
       return handlers[subcommand]();
@@ -1618,7 +1639,10 @@ export function buildCommands(deps = {}) {
           // with it). A transient failure shouldn't read as "check your key".
           let message = 'Could not verify API key.';
           let resolution = ['Check your internet connection', 'Try again'];
-          if (error.code === ErrorCode.RATE_LIMITED) {
+          if (error.code === ErrorCode.NETWORK_ERROR) {
+            message = 'Could not reach the Nansen API to verify the API key. The key was not checked, so it may be valid.';
+            resolution = ['Check your internet connection, VPN, proxy or firewall', 'Run: nansen doctor', 'Try again'];
+          } else if (error.code === ErrorCode.RATE_LIMITED) {
             message = 'Rate limited while verifying the API key.';
             resolution = ['Wait a moment, then retry explicit key setup: nansen login --human'];
           } else if (error.code === ErrorCode.SERVER_ERROR || error.code === ErrorCode.SERVICE_UNAVAILABLE) {
@@ -1767,10 +1791,7 @@ export function buildCommands(deps = {}) {
       };
 
       if (!Object.hasOwn(handlers, subcommand)) {
-        throw new NansenError(
-          `Unknown cache subcommand: ${subcommand}. Use one of: stats, clear`,
-          ErrorCode.INVALID_PARAMS,
-        );
+        throw unknownCommandError('cache subcommand', subcommand, ['stats', 'clear']);
       }
 
       const maxArgs = subcommand === 'clear' ? 2 : 1;
@@ -1789,10 +1810,18 @@ export function buildCommands(deps = {}) {
       rejectBlankOption(options.chains, 'chains', 'solana');
       const subcommand = args[0] || 'help';
       const chain = options.chain || 'solana';
-      const chains = options.chains || [chain];
-      const filters = parseObjectOption(options.filters, 'filters');
+      const chains = parseCsvOption(options.chains, 'chains') || [chain];
+      const filters = parseFiltersOption(options.filters);
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
+
+      // `--token` narrows holdings to one token (the API filter token_address).
+      if (subcommand === 'holdings' && options.token !== undefined) {
+        if (typeof options.token !== 'string' || !options.token.trim()) {
+          throw new NansenError('--token requires a token address', ErrorCode.MISSING_PARAM);
+        }
+        filters.token_address = normalizeFilterAddresses(options.token.trim());
+      }
 
       // Add smart money label filter if specified
       if (options.labels) {
@@ -1820,7 +1849,7 @@ export function buildCommands(deps = {}) {
       };
 
       if (!handlers[subcommand]) {
-        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+        throw unknownCommandError('smart-money subcommand', subcommand, Object.keys(handlers).filter(name => name !== 'help'));
       }
 
       return handlers[subcommand]();
@@ -1846,7 +1875,7 @@ export function buildCommands(deps = {}) {
           throw new NansenError(err.message, ErrorCode.INVALID_ADDRESS);
         }
       }
-      const filters = parseObjectOption(options.filters, 'filters');
+      const filters = parseFiltersOption(options.filters);
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
       const days = [
@@ -1865,7 +1894,7 @@ export function buildCommands(deps = {}) {
         : 30;
 
       const handlers = {
-        'balance': () => apiInstance.addressBalance({ address, entityName, chain, filters, orderBy }),
+        'balance': () => apiInstance.addressBalance({ address, entityName, chain, filters, orderBy, pagination }),
         'labels': () => apiInstance.addressLabels({ address, chain, pagination }),
         'transactions': () => {
           const date = parseDateOption(options.date, days, flags.date);
@@ -1886,7 +1915,7 @@ export function buildCommands(deps = {}) {
             : (options.file ? readAddressFile(options.file) : []);
           return apiInstance.addressCounterpartiesBatch({ addresses, chain, filters, orderBy, pagination, days });
         },
-        'pnl-summary': () => apiInstance.addressPnlSummary({ address, chain, orderBy, pagination, days }),
+        'pnl-summary': () => apiInstance.addressPnlSummary({ address, chain, days }),
         'perp-positions': () => apiInstance.addressPerpPositions({ address, filters, orderBy, pagination }),
         'perp-trades': () => apiInstance.addressPerpTrades({ address, filters, orderBy, pagination, days }),
         'dex-trades': () => {
@@ -1929,7 +1958,7 @@ export function buildCommands(deps = {}) {
       };
 
       if (!handlers[subcommand]) {
-        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+        throw unknownCommandError('profiler subcommand', subcommand, Object.keys(handlers).filter(name => name !== 'help'));
       }
 
       const result = await handlers[subcommand]();
@@ -1952,9 +1981,10 @@ export function buildCommands(deps = {}) {
       const tokenSymbol = options.symbol || options['token-symbol'];
       const chains = options.chains || [chain];
       const timeframe = options.timeframe || '24h';
-      const filters = parseObjectOption(options.filters, 'filters');
+      const filters = parseFiltersOption(options.filters);
       const orderBy = parseSort(options.sort, options['order-by']);
-      const pagination = buildPagination(options);
+      // top-tokens has its own --limit (a result count, not a page size).
+      const pagination = subcommand === 'top-tokens' ? undefined : buildPagination(options);
       const days = [
         'flows',
         'dex-trades',
@@ -2073,8 +2103,8 @@ export function buildCommands(deps = {}) {
         'flow-intelligence': () => apiInstance.tokenFlowIntelligence({ tokenAddress, chain, timeframe: options.timeframe || '1d' }),
         'transfers': () => {
           // Inject --from/--to into filters
-          if (options.from) filters.from_address = options.from;
-          if (options.to) filters.to_address = options.to;
+          if (options.from) filters.from_address = normalizeFilterAddresses(options.from);
+          if (options.to) filters.to_address = normalizeFilterAddresses(options.to);
           return apiInstance.tokenTransfers({ tokenAddress, chain, filters, orderBy, pagination, days });
         },
         'jup-dca': () => apiInstance.tokenJupDca({ tokenAddress, filters, orderBy, pagination }),
@@ -2097,7 +2127,7 @@ export function buildCommands(deps = {}) {
       };
 
       if (!handlers[subcommand]) {
-        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+        throw unknownCommandError('token subcommand', subcommand, Object.keys(handlers).filter(name => name !== 'help'));
       }
 
       let result = await handlers[subcommand]();
@@ -2157,7 +2187,7 @@ export function buildCommands(deps = {}) {
       };
 
       if (!handlers[subcommand]) {
-        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+        throw unknownCommandError('portfolio subcommand', subcommand, Object.keys(handlers).filter(name => name !== 'help'));
       }
 
       return handlers[subcommand]();
@@ -2166,7 +2196,7 @@ export function buildCommands(deps = {}) {
     'perp': async (args, apiInstance, flags, options) => {
       rejectBlankOption(options.days, 'days', '30');
       const subcommand = args[0] || 'help';
-      const filters = parseObjectOption(options.filters, 'filters');
+      const filters = parseFiltersOption(options.filters);
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
       const days = ['screener', 'leaderboard'].includes(subcommand)
@@ -2193,7 +2223,7 @@ export function buildCommands(deps = {}) {
       };
 
       if (!handlers[subcommand]) {
-        throw new NansenError(`Unknown perp analytics subcommand: ${subcommand}. Available: screener, leaderboard`, ErrorCode.UNKNOWN);
+        throw unknownCommandError('perp analytics subcommand', subcommand, ['screener', 'leaderboard']);
       }
 
       return handlers[subcommand]();
@@ -2264,7 +2294,7 @@ export function buildCommands(deps = {}) {
       };
 
       if (!handlers[subcommand]) {
-        throw new NansenError(`Unknown subcommand: ${subcommand}. Available: ${Object.keys(handlers).filter(k => k !== 'help').join(', ')}`, ErrorCode.UNKNOWN);
+        throw unknownCommandError('prediction-market subcommand', subcommand, Object.keys(handlers).filter(k => k !== 'help'));
       }
 
       return handlers[subcommand]();
@@ -2298,7 +2328,7 @@ export function buildCommands(deps = {}) {
     }
     const category = RESEARCH_CATEGORY_ALIASES[rawCategory] || rawCategory;
     if (!RESEARCH_CATEGORIES.has(category)) {
-      throw new NansenError(`Unknown research category: ${rawCategory}. Available: ${[...RESEARCH_CATEGORIES, ...RESEARCH_SUBCOMMANDS].join(', ')}`, ErrorCode.UNKNOWN);
+      throw unknownCommandError('research category', rawCategory, [...RESEARCH_CATEGORIES, ...RESEARCH_SUBCOMMANDS]);
     }
     // `research perp` reaches only the analytics half (screener/leaderboard) —
     // the trading subcommands live at the top level. Use the captured handler
@@ -2339,12 +2369,12 @@ USAGE:
         return;
       }
       if (!limitOrderCmds[loSub]) {
-        throw new NansenError(`Unknown limit-order subcommand: ${loSub}. Available: create, list, cancel, update`, ErrorCode.UNKNOWN);
+        throw unknownCommandError('limit-order subcommand', loSub, ['create', 'list', 'cancel', 'update']);
       }
       return limitOrderCmds[loSub](args.slice(2), apiInstance, flags, options);
     }
     if (!tradingCmds[sub]) {
-      throw new NansenError(`Unknown trade subcommand: ${sub}. Available: quote, execute, bridge-status, limit-order`, ErrorCode.UNKNOWN);
+      throw unknownCommandError('trade subcommand', sub, ['quote', 'execute', 'bridge-status', 'limit-order']);
     }
     return tradingCmds[sub](args.slice(1), apiInstance, flags, options);
   };
@@ -2376,7 +2406,7 @@ SUPPORTED ROUTES:
       return;
     }
     if (!bridgeCmds[sub]) {
-      throw new NansenError(`Unknown bridge subcommand: ${sub}. Available: quote, execute, status`, ErrorCode.UNKNOWN);
+      throw unknownCommandError('bridge subcommand', sub, ['quote', 'execute', 'status']);
     }
     return bridgeCmds[sub](args.slice(1), apiInstance, flags, options);
   };
@@ -2421,7 +2451,7 @@ USAGE:
       if (PERP_ANALYTICS_SUBCOMMANDS.has(sub)) {
         return perpAnalytics(args, apiInstance, flags, options);
       }
-      throw new NansenError(`Unknown perp subcommand: ${sub}. Available: order, cancel, close, leverage, transfer, approve-builder-fee, positions, orders, account, meta, screener, leaderboard`, ErrorCode.UNKNOWN);
+      throw unknownCommandError('perp subcommand', sub, ['order', 'cancel', 'close', 'leverage', 'transfer', 'approve-builder-fee', 'positions', 'orders', 'account', 'meta', 'screener', 'leaderboard']);
     }
     return perpCmds[sub](args.slice(1), apiInstance, flags, options);
   };
@@ -2481,6 +2511,13 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
       return parts.join(' ');
     });
     lines.push(`Params (* required): ${params.join(', ')}`);
+  }
+
+  if (subSchema.supportedChains?.length) {
+    lines.push(`Chains: ${subSchema.supportedChains.join(', ')}`);
+  }
+  if (subSchema.pagination === false) {
+    lines.push('Pagination: not supported (--limit/--page are rejected)');
   }
 
   if (subSchema.endpoint) {
@@ -2779,20 +2816,32 @@ export async function runCLI(rawArgs, deps = {}) {
     // or an unquoted shell variable under zsh (which, unlike bash, does not
     // word-split `$var`). Point the user straight at the cause instead of a bare
     // "Unknown command" that reads like a spurious failure.
-    const errorData = {
-      error: /\s/.test(command)
-        ? `Unknown command: "${command}". This looks like multiple words passed as one argument — check your shell quoting (use \`nansen trade --help\`, not \`nansen "trade --help"\`).`
-        : `Unknown command: ${command}`,
-      available: Object.keys(commands)
-    };
-    const formatted = formatOutput(errorData, { pretty, table });
+    const available = Object.keys(commands);
+    const error = /\s/.test(command)
+      ? new NansenError(
+        `Unknown command: "${command}". This looks like multiple words passed as one argument — check your shell quoting (use \`nansen trade --help\`, not \`nansen "trade --help"\`).`,
+        ErrorCode.UNKNOWN_COMMAND, null, { available },
+      )
+      : unknownCommandError('command', command, available);
+    const errorData = formatError(error);
+    const formatted = formatOutput(errorData, { pretty, table, csv });
     output(formatted.text);
-    await trackFailed({ command: fullCommand, duration_ms: Date.now() - startTime, error_code: 'UNKNOWN_COMMAND', flags: usedFlags, chain });
+    await trackFailed({ command: fullCommand, duration_ms: Date.now() - startTime, error_code: ErrorCode.UNKNOWN_COMMAND, flags: usedFlags, chain });
     exit(1);
     return { type: 'error', data: errorData };
   }
 
+  let researchCommand;
   try {
+    // One validation path for every research command (API-1080/API-1081):
+    // unknown subcommands and options, missing or blank values, enums, dates
+    // and unsupported chains all fail here, before any request is made.
+    validateOutputOptions({ flags, options });
+    researchCommand = resolveResearchCommand(SCHEMA, command, subArgs);
+    if (researchCommand) {
+      validateResearchInput(researchCommand, { flags, options, endpoints: API_ENDPOINTS, chains: SCHEMA.chains });
+    }
+
     // Configure retry options
     const maxRetries = parseNonNegativeSafeIntegerOption('retries', options, flags, 3);
     const retryOptions = flags['no-retry']
@@ -2874,9 +2923,14 @@ export async function runCLI(rawArgs, deps = {}) {
       return { type: 'schema', data: result };
     }
 
-    // Apply field filtering if --fields is specified
+    // Apply field filtering if --fields is specified. A name that matches
+    // nothing is an error, not an empty success (API-1081).
     const fields = parseFields(options.fields);
     if (fields) {
+      validateFieldSelection(result, fields, {
+        path: researchCommand?.path ?? `nansen ${fullCommand}`,
+        returns: researchCommand?.leaf?.returns,
+      });
       result = filterFields(result, fields);
     }
 

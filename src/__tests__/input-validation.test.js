@@ -1,0 +1,468 @@
+/**
+ * API-1080 / API-1081: one validation path for research commands.
+ *
+ * Unit tests pin the wording (it mirrors the REST API's 422 messages) and the
+ * suggestion algorithm (Python difflib, as used by the REST API and the MCP
+ * server). The schema-wide tests run every research command through runCLI
+ * against a request-capturing API, so a flag that the schema accepts but the
+ * handler drops (the "--limit is ignored" class of bug) fails here.
+ */
+
+import { describe, it, expect } from 'vitest';
+import { NansenAPI } from '../api.js';
+import { runCLI, SCHEMA, API_ENDPOINTS } from '../cli.js';
+import {
+  similarity,
+  closestMatch,
+  quotedList,
+  normalizeFilterAddresses,
+  resolveResearchCommand,
+  validateResearchInput,
+  validateFieldSelection,
+  validateOutputOptions,
+} from '../input-validation.js';
+
+const EVM = '0x28c6c06298d514db089934071355e5743bf21d60';
+const EVM_MIXED = '0x28C6c06298d514Db089934071355E5743bf21d60';
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const TX_HASH = `0x${'ab'.repeat(32)}`;
+
+// ============= Helpers =============
+
+function capture(error) {
+  return {
+    message: error.message,
+    code: error.code,
+    details: error.details,
+  };
+}
+
+function check(path, args = {}, flags = {}) {
+  const [command, ...subArgs] = path.split(' ');
+  const resolved = resolveResearchCommand(SCHEMA, command, subArgs);
+  try {
+    validateResearchInput(resolved, { flags, options: args, endpoints: API_ENDPOINTS, chains: SCHEMA.chains });
+    return null;
+  } catch (error) {
+    return capture(error);
+  }
+}
+
+/** Every research leaf: [path words, leaf]. */
+function researchLeaves() {
+  const leaves = [];
+  for (const [category, entry] of Object.entries(SCHEMA.commands.research.subcommands)) {
+    if (category === 'points') continue;
+    if (entry.subcommands) {
+      for (const [sub, leaf] of Object.entries(entry.subcommands)) leaves.push([['research', category, sub], leaf]);
+    } else {
+      leaves.push([['research', category], entry]);
+    }
+  }
+  return leaves;
+}
+
+/** Sample values that pass local checks for each required option. */
+function sampleValue(name, spec) {
+  if (Array.isArray(spec.enum) && spec.enum.length) return String(spec.enum[0]);
+  if (spec.format === 'date') return '2025-01-01';
+  return {
+    address: EVM,
+    addresses: EVM,
+    wallet: EVM,
+    token: SOL_MINT,
+    'token-address': SOL_MINT,
+    symbol: 'BTC',
+    'market-id': '12345',
+    query: 'eth',
+    'from-date': '2025-01-01',
+    'to-date': '2025-01-02',
+    'as-of-date': '2025-01-02',
+    'timeframe-days': '7',
+    'transaction-hash': TX_HASH,
+  }[name] ?? 'x';
+}
+
+function requiredArgs(leaf) {
+  const args = [];
+  for (const [name, spec] of Object.entries(leaf.options || {})) {
+    const needed = spec.required || (name === 'as-of-date' && leaf.options['as-of-ts']);
+    if (needed) args.push(`--${name}`, sampleValue(name, spec));
+  }
+  return args;
+}
+
+async function runCaptured(argv) {
+  const calls = [];
+  const outputs = [];
+  let exitCode = null;
+  class CaptureAPI extends NansenAPI {
+    constructor() {
+      super('test-key', 'https://api.nansen.ai', { retry: { maxRetries: 0 }, cache: { enabled: false } });
+    }
+
+    async request(endpoint, body = {}) {
+      calls.push({ endpoint, body: JSON.parse(JSON.stringify(NansenAPI.cleanBody(body))) });
+      return { data: [{ token_symbol: 'X', value_usd: 1 }] };
+    }
+  }
+  const result = await runCLI(argv, {
+    output: line => outputs.push(line),
+    errorOutput: () => {},
+    exit: code => { exitCode = code; },
+    NansenAPIClass: CaptureAPI,
+    isTTY: false,
+  });
+  const last = outputs.length ? outputs[outputs.length - 1] : null;
+  let parsed = null;
+  try { parsed = JSON.parse(last); } catch { /* not JSON */ }
+  return { calls, result, exitCode, output: parsed };
+}
+
+// ============= Suggestions =============
+
+describe('similarity / closestMatch (difflib parity)', () => {
+  it.each([
+    ['timefrme', 'timeframe', 0.9411764705882353],
+    ['bitcoin', 'ton', 0.6],
+    ['abc', 'xyz', 0],
+    ['', '', 1],
+  ])('ratio(%s, %s) = %f', (a, b, expected) => {
+    expect(similarity(a, b)).toBeCloseTo(expected, 12);
+  });
+
+  it('suggests the closest candidate above the cutoff', () => {
+    expect(closestMatch('timefrme', ['chain', 'timeframe', 'token'])).toBe('timeframe');
+    expect(closestMatch('scrrener', ['screener', 'info'])).toBe('screener');
+    expect(closestMatch('TimeFrame', ['timeframe'])).toBe('timeframe');
+  });
+
+  it('returns null when nothing is close', () => {
+    expect(closestMatch('turbo', ['chain', 'timeframe', 'token'])).toBeNull();
+  });
+
+  it('formats lists like the REST API', () => {
+    expect(quotedList(['json'])).toBe("'json'");
+    expect(quotedList(['json', 'csv'])).toBe("'json' or 'csv'");
+    expect(quotedList(['a', 'b', 'c'])).toBe("'a', 'b' or 'c'");
+  });
+});
+
+// ============= Command resolution =============
+
+describe('resolveResearchCommand', () => {
+  it('resolves research, deprecated top-level and perp analytics paths', () => {
+    expect(resolveResearchCommand(SCHEMA, 'research', ['token', 'info']).path).toBe('nansen research token info');
+    expect(resolveResearchCommand(SCHEMA, 'research', ['tgm', 'info']).path).toBe('nansen research token info');
+    expect(resolveResearchCommand(SCHEMA, 'token', ['info']).path).toBe('nansen token info');
+    expect(resolveResearchCommand(SCHEMA, 'perp', ['screener']).path).toBe('nansen perp screener');
+    expect(resolveResearchCommand(SCHEMA, 'research', ['historical-dex-trades']).path).toBe('nansen research historical-dex-trades');
+    expect(resolveResearchCommand(SCHEMA, 'research', ['portfolio', 'defi-holdings']).path).toBe('nansen research portfolio defi');
+  });
+
+  it('skips help and non-research commands', () => {
+    expect(resolveResearchCommand(SCHEMA, 'research', [])).toBeNull();
+    expect(resolveResearchCommand(SCHEMA, 'research', ['token'])).toBeNull();
+    expect(resolveResearchCommand(SCHEMA, 'research', ['token', 'help'])).toBeNull();
+    expect(resolveResearchCommand(SCHEMA, 'perp', ['order'])).toBeNull();
+    expect(resolveResearchCommand(SCHEMA, 'wallet', ['list'])).toBeNull();
+  });
+
+  it('rejects a subcommand typo with the closest match', () => {
+    expect(() => resolveResearchCommand(SCHEMA, 'research', ['token', 'scrrener'])).toThrow(
+      expect.objectContaining({
+        code: 'UNKNOWN_COMMAND',
+        message: expect.stringMatching(/^Unknown token subcommand: scrrener\. Did you mean 'screener'\? Available: /),
+      }),
+    );
+    expect(() => resolveResearchCommand(SCHEMA, 'research', ['tokn', 'screener'])).toThrow(
+      expect.objectContaining({ code: 'UNKNOWN_COMMAND', details: expect.objectContaining({ suggestion: 'token' }) }),
+    );
+  });
+});
+
+// ============= Option validation =============
+
+describe('validateResearchInput', () => {
+  it('rejects an unknown option with a did-you-mean hint (REST wording)', () => {
+    const error = check('research token info', { token: SOL_MINT, timefrme: '30d' });
+    expect(error).toEqual({
+      message: "Option '--timefrme' is not recognized by nansen research token info. Did you mean '--timeframe'?",
+      code: 'INVALID_PARAMS',
+      details: {
+        param: '--timefrme',
+        errors: [{
+          field: '--timefrme',
+          message: "Option '--timefrme' is not recognized by nansen research token info. Did you mean '--timeframe'?",
+          code: 'unknown_field',
+        }],
+      },
+    });
+  });
+
+  it('lists the valid options when nothing is close (--turbo)', () => {
+    const error = check('research token info', { token: SOL_MINT }, { turbo: true });
+    expect(error.message).toBe("Option '--turbo' is not recognized by nansen research token info. Valid options are: --chain, --token, --timeframe (plus output options; see: nansen schema).");
+  });
+
+  it('rejects an unknown short flag', () => {
+    expect(check('research token info', { token: SOL_MINT }, { x: true }).details.param).toBe('-x');
+  });
+
+  it.each([
+    ['research profiler balance', { address: EVM, limit: '4' }, null],
+    ['research token ohlcv', { token: SOL_MINT, limit: '4' }, "Option '--limit' is not supported by nansen research token ohlcv: this endpoint does not paginate."],
+    ['research profiler perp-positions', { address: EVM, page: '2' }, "Option '--page' is not supported by nansen research profiler perp-positions: this endpoint does not paginate."],
+    ['research smart-money holdings', { token: EVM }, null],
+    ['research prediction-market position-detail', { 'market-id': '1', address: EVM }, "Option '--address' is not recognized by nansen research prediction-market position-detail. Valid options are: --market-id, --limit, --page (plus output options; see: nansen schema)."],
+  ])('%s with %j: flags the command used to ignore', (path, args, message) => {
+    const error = check(path, args);
+    if (message === null) expect(error).toBeNull();
+    else expect(error.message).toBe(message);
+  });
+
+  it('rejects a paginate flag on an endpoint without pagination', () => {
+    expect(check('research token ohlcv', { token: SOL_MINT }, { paginate: true }).details.param).toBe('--paginate');
+  });
+
+  it('reports a missing required option locally (with the alternative)', () => {
+    expect(check('research profiler balance', { chain: 'ethereum' })).toMatchObject({
+      message: "Required option '--address' is missing (or pass --entity).",
+      code: 'MISSING_PARAM',
+      details: { param: '--address', errors: [{ field: '--address', code: 'missing_field' }] },
+    });
+    expect(check('research profiler balance', { entity: 'Binance' })).toBeNull();
+    expect(check('research profiler balance', { 'entity-name': 'Binance' })).toBeNull();
+    expect(check('research token info', {}).message).toBe("Required option '--token' is missing.");
+    expect(check('research token info', { 'token-address': SOL_MINT })).toBeNull();
+  });
+
+  it('accepts a positional query for search', () => {
+    const resolved = resolveResearchCommand(SCHEMA, 'search', ['bitcoin']);
+    expect(() => validateResearchInput(resolved, { options: {}, endpoints: API_ENDPOINTS })).not.toThrow();
+  });
+
+  it.each([
+    [{ chain: '' }, "Option '--chain' requires a value."],
+    [{}, "Option '--chain' requires a value.", { chain: true }],
+  ])('rejects a blank value %j', (args, message, flags = {}) => {
+    expect(check('research token info', { token: SOL_MINT, ...args }, flags)).toMatchObject({
+      message,
+      code: 'MISSING_PARAM',
+    });
+  });
+
+  it.each([
+    ['research smart-money netflow', { page: '0' }, "Value for '--page' is out of the allowed range (must be at least 1); received: 0"],
+    ['research smart-money netflow', { limit: 'ten' }, "Option '--limit' must be a whole number; received: ten"],
+    ['research historical-dex-trades', { 'token-address': SOL_MINT, 'from-date': '2024-13-45', 'to-date': '2024-01-02' }, "Invalid date '2024-13-45' for --from-date. Expected a real calendar date as YYYY-MM-DD."],
+    ['research token flows', { token: SOL_MINT, label: 'smart-mony' }, "Invalid value 'smart-mony' for --label. Did you mean 'smart_money'? Valid options are: 'top_100_holders', 'smart_money', 'public_figure', 'whale' or 'exchange'"],
+  ])('%s %j: invalid value', (path, args, message) => {
+    expect(check(path, args)?.message).toBe(message);
+  });
+
+  it('collects every error, led by the first (like the REST errors list)', () => {
+    const error = check('research token info', { timefrme: '1d', chain: 'etherium' });
+    expect(error.details.errors.map(e => e.code)).toEqual(['unknown_field', 'missing_field', 'invalid_field_value']);
+    expect(error.message).toMatch(/\(2 more errors in details\.errors\)$/);
+  });
+
+  describe('chains', () => {
+    it('rejects a chain the endpoint does not accept, with the supported list', () => {
+      const error = check('research token flow-intelligence', { token: '1111111111111111111114oLvT2', chain: 'bitcoin' });
+      expect(error.message).toMatch(/^Chain 'bitcoin' is not supported by nansen research token flow-intelligence\. Supported chains: arbitrum, /);
+      expect(error.message).not.toContain('Did you mean');
+      expect(error.details.errors[0]).toMatchObject({ field: '--chain', code: 'invalid_field_value' });
+    });
+
+    it('accepts bitcoin where the endpoint supports it', () => {
+      expect(check('research token holders', { token: '1111111111111111111114oLvT2', chain: 'bitcoin' })).toBeNull();
+    });
+
+    it('suggests a typo and a nickname', () => {
+      expect(check('research smart-money netflow', { chain: 'etherium' }).message).toContain("Did you mean 'ethereum'?");
+      expect(check('research smart-money netflow', { chain: 'bsc' }).message).toContain("Did you mean 'bnb'?");
+    });
+
+    it('checks every entry of --chains', () => {
+      const error = check('research smart-money netflow', { chains: 'ethereum,notachain' });
+      expect(error.details.errors).toHaveLength(1);
+      expect(error.message).toMatch(/^Chain 'notachain' is not supported/);
+    });
+
+    it('keeps the bsc spelling that batch counterparties normalises itself', () => {
+      expect(check('research profiler counterparties-batch', { addresses: EVM, chain: 'bsc' })).toBeNull();
+    });
+  });
+});
+
+describe('validateOutputOptions', () => {
+  it('rejects --format xml', () => {
+    expect(() => validateOutputOptions({ options: { format: 'xml' } })).toThrow("Invalid value 'xml' for --format. Valid options are: 'json' or 'csv'");
+    expect(() => validateOutputOptions({ options: { format: 'jsn' } })).toThrow("Did you mean 'json'?");
+    expect(() => validateOutputOptions({ flags: { format: true } })).toThrow("Option '--format' requires a value.");
+    expect(() => validateOutputOptions({ options: { format: 'csv' } })).not.toThrow();
+  });
+});
+
+describe('validateFieldSelection', () => {
+  const data = { data: [{ token_symbol: 'X', value_usd: 1, token: { address: 'a' } }], pagination: { page: 1 } };
+
+  it('accepts names present at any depth, dotted paths and documented returns', () => {
+    expect(() => validateFieldSelection(data, ['token_symbol', 'address', 'data.token.address', 'pagination'])).not.toThrow();
+    expect(() => validateFieldSelection({ data: [{ a: 1 }] }, ['price_usd'], { returns: ['price_usd'] })).not.toThrow();
+  });
+
+  it('rejects a name that matches nothing, with a suggestion', () => {
+    expect(() => validateFieldSelection(data, ['token_symbl'], { path: 'nansen research token screener' })).toThrow(
+      expect.objectContaining({
+        code: 'INVALID_PARAMS',
+        message: "Field 'token_symbl' is not in the response from nansen research token screener. Did you mean 'token_symbol'?",
+      }),
+    );
+  });
+
+  it('does not guess when the response has no rows', () => {
+    expect(() => validateFieldSelection({}, ['anything'])).not.toThrow();
+    expect(() => validateFieldSelection({ data: [], pagination: { page: 1 } }, ['address'], { returns: ['name'] })).not.toThrow();
+  });
+});
+
+describe('normalizeFilterAddresses', () => {
+  it('lowercases EVM addresses at any depth and leaves other values alone', () => {
+    expect(normalizeFilterAddresses({
+      token_address: EVM_MIXED,
+      nested: { list: [EVM_MIXED, SOL_MINT] },
+      label: 'Fund',
+      amount: 5,
+    })).toEqual({
+      token_address: EVM,
+      nested: { list: [EVM, SOL_MINT] },
+      label: 'Fund',
+      amount: 5,
+    });
+  });
+});
+
+// ============= Every research command =============
+
+describe('schema-wide checks', () => {
+  const leaves = researchLeaves();
+
+  it('only marks list options on endpoints that have the matching request field', () => {
+    const problems = [];
+    for (const [words, leaf] of leaves) {
+      const fields = API_ENDPOINTS[leaf.endpoint]?.fields;
+      if (!fields) continue;
+      const name = words.join(' ');
+      if (leaf.options?.filters && !fields.includes('filters')) problems.push(`${name}: --filters but no filters field`);
+      if (leaf.options?.sort && !fields.includes('order_by')) problems.push(`${name}: --sort but no order_by field`);
+      if (leaf.pagination !== false && !fields.includes('pagination')) problems.push(`${name}: pagination allowed but no pagination field`);
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it('knows the chains of every endpoint that restricts --chain', () => {
+    // The general search takes any chain name as free text.
+    const freeText = new Set(['/api/v1/search/general']);
+    const missing = leaves
+      .filter(([, leaf]) => leaf.endpoint && (leaf.options?.chain || leaf.options?.chains) && !leaf.options?.chain?.enum)
+      .filter(([, leaf]) => !freeText.has(leaf.endpoint) && !API_ENDPOINTS[leaf.endpoint]?.chains?.length)
+      .map(([words]) => words.join(' '));
+    expect(missing).toEqual([]);
+  });
+
+  it('documents supportedChains in `nansen schema`', () => {
+    expect(SCHEMA.commands.research.subcommands.token.subcommands['flow-intelligence'].supportedChains).not.toContain('bitcoin');
+    expect(SCHEMA.commands.research.subcommands.token.subcommands.holders.supportedChains).toContain('bitcoin');
+  });
+
+  const runnable = leaves.filter(([, leaf]) => leaf.endpoint);
+
+  it.each(runnable.map(([words, leaf]) => [words.join(' '), words, leaf]))('%s runs with its required options and sends what it accepts', async (_name, words, leaf) => {
+    const args = [...words, ...requiredArgs(leaf)];
+    const probeFilters = leaf.options?.filters ? ['--filters', JSON.stringify({ probe_address: EVM_MIXED })] : [];
+    const probeSort = leaf.options?.sort ? ['--sort', 'probe_field:asc'] : [];
+    const probePages = leaf.pagination !== false ? ['--limit', '7', '--page', '2'] : [];
+    const { calls, exitCode, output } = await runCaptured([...args, ...probeFilters, ...probeSort, ...probePages]);
+
+    expect(exitCode, JSON.stringify(output)).toBeNull();
+    const call = calls.find(c => c.endpoint === leaf.endpoint);
+    expect(call, `no request to ${leaf.endpoint}`).toBeDefined();
+    if (probeFilters.length) expect(call.body.filters?.probe_address).toBe(EVM);
+    if (probeSort.length) expect(call.body.order_by).toEqual([{ field: 'probe_field', direction: 'ASC' }]);
+    if (probePages.length && words.join(' ') !== 'research token screener') {
+      expect(call.body.pagination).toEqual({ page: 2, per_page: 7 });
+    }
+  });
+
+  it.each(runnable
+    .filter(([, leaf]) => supportedChainList(leaf))
+    .map(([words, leaf]) => [words.join(' '), words, leaf]))('%s rejects an unsupported chain before any request', async (_name, words, leaf) => {
+    const option = leaf.options.chain ? 'chain' : 'chains';
+    const { calls, exitCode, output } = await runCaptured([...words, ...requiredArgs(leaf), `--${option}`, 'notachain']);
+    expect(exitCode).toBe(1);
+    expect(calls).toEqual([]);
+    expect(output).toMatchObject({ success: false, code: 'INVALID_PARAMS', details: { param: `--${option}` } });
+  });
+});
+
+function supportedChainList(leaf) {
+  const spec = leaf.options?.chain ?? leaf.options?.chains;
+  if (!spec) return null;
+  return spec.enum ?? API_ENDPOINTS[leaf.endpoint]?.chains ?? null;
+}
+
+// ============= runCLI envelope =============
+
+describe('runCLI failures always exit 1 with success:false (API-1080)', () => {
+  it.each([
+    [['research', 'token', 'scrrener']],
+    [['token', 'scrrener', '--fields', 'token_symbol']],
+    [['smart-money', 'netflw']],
+    [['frobnicate']],
+  ])('%j', async argv => {
+    const { exitCode, output, calls } = await runCaptured(argv);
+    expect(exitCode).toBe(1);
+    expect(calls).toEqual([]);
+    expect(output).toMatchObject({ success: false, code: 'UNKNOWN_COMMAND' });
+  });
+
+  it('rejects an unknown --fields name instead of printing {}', async () => {
+    const { exitCode, output } = await runCaptured(['research', 'token', 'screener', '--fields', 'token_symbl']);
+    expect(exitCode).toBe(1);
+    expect(output).toMatchObject({
+      success: false,
+      code: 'INVALID_PARAMS',
+      error: "Field 'token_symbl' is not in the response from nansen research token screener. Did you mean 'token_symbol'?",
+    });
+  });
+
+  it('still filters known --fields', async () => {
+    const { exitCode, output } = await runCaptured(['research', 'token', 'screener', '--fields', 'token_symbol']);
+    expect(exitCode).toBeNull();
+    expect(output).toEqual({ success: true, data: { data: [{ token_symbol: 'X' }] } });
+  });
+
+  it('rejects --format xml before any request', async () => {
+    const { exitCode, output, calls } = await runCaptured(['research', 'token', 'screener', '--format', 'xml']);
+    expect(exitCode).toBe(1);
+    expect(calls).toEqual([]);
+    expect(output).toMatchObject({ success: false, code: 'INVALID_PARAMS', details: { param: '--format' } });
+  });
+
+  it('wires --limit/--page into profiler balance', async () => {
+    const { calls } = await runCaptured(['research', 'profiler', 'balance', '--address', EVM, '--chain', 'ethereum', '--limit', '4', '--page', '2']);
+    expect(calls[0].body.pagination).toEqual({ page: 2, per_page: 4 });
+  });
+
+  it('wires --token into smart-money holdings as a lowercased filter', async () => {
+    const { calls } = await runCaptured(['research', 'smart-money', 'holdings', '--chain', 'ethereum', '--token', EVM_MIXED]);
+    expect(calls[0].body.filters).toEqual({ token_address: EVM });
+  });
+
+  it('lowercases mixed-case EVM addresses in --filters', async () => {
+    const { calls } = await runCaptured(['research', 'token', 'transfers', '--chain', 'ethereum', '--token', EVM, '--filters', JSON.stringify({ from_address: EVM_MIXED })]);
+    expect(calls[0].body.filters.from_address).toBe(EVM);
+  });
+});

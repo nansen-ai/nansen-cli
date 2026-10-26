@@ -573,7 +573,10 @@ Default JSON output still contains the complete response body.
 | Code | Action |
 |------|--------|
 | `CREDITS_EXHAUSTED` | Stop all API calls immediately. `details.credits.remaining` is your actual balance. Top up at [app.nansen.ai/api?tab=api](https://app.nansen.ai/api?tab=api). |
-| `UNAUTHORIZED` | Wrong or missing key. Re-auth. |
+| `UNAUTHORIZED` | The API rejected the key (the connection works). Re-auth. |
+| `NETWORK_ERROR` | The CLI could not reach the API, so the key was not checked. Fix the connection (`nansen doctor`); do not replace the key. |
+| `INVALID_PARAMS` / `MISSING_PARAM` | Fix the option or field named in `details.param` and `details.errors[]` (each `{ field, message, code }`), then retry. |
+| `UNKNOWN_COMMAND` | The command or subcommand does not exist; the message suggests the closest one. |
 | `RATE_LIMITED` | Auto-retried by CLI. `details.rateLimit.resetSeconds` is how long the window needs to drain. |
 | `UNSUPPORTED_FILTER` | Remove the filter and retry. |
 | `PLAN_UPGRADE_REQUIRED` | The endpoint or option needs a higher subscription plan. Do not retry. |
@@ -581,7 +584,9 @@ Default JSON output still contains the complete response body.
 | `SERVER_ERROR` | Not your fault. Quote `details.requestId` when reporting it. |
 | `COMMAND_UNAVAILABLE` | The command is no longer available. For points leaderboard, run `nansen research` to explore other analytics commands. |
 
-Every code documented on the API's [error-handling page](https://docs.nansen.ai/getting-started/error-handling) maps onto a stable CLI error code; a code the CLI does not recognise is passed through unchanged.
+Every failure exits 1. The full list of codes is in [docs/error-codes.md](docs/error-codes.md). Every code documented on the API's [error-handling page](https://docs.nansen.ai/getting-started/error-handling) maps onto a stable CLI error code; a code the CLI does not recognise is passed through unchanged.
+
+Research commands check their options before calling the API: an unknown or ignored option, a missing required option, a bad value or a chain the endpoint does not accept fails locally with the option named. `nansen schema <command>` lists each command's options and `supportedChains`.
 
 **Error metadata.** When the API reports them, `details` carries:
 

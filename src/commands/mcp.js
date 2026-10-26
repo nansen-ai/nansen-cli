@@ -307,7 +307,7 @@ export function buildMcpCommands(deps = {}) {
       }
 
       if (sub !== 'install' && sub !== 'uninstall') {
-        throw new CommandError(`Unknown subcommand: ${sub}\n\n${MCP_USAGE}`, 'INVALID_PARAMS');
+        throw new CommandError(`Unknown subcommand: ${sub}\n\n${MCP_USAGE}`, 'UNKNOWN_COMMAND');
       }
 
       requireClient(sub, client);

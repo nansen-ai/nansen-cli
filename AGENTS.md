@@ -50,8 +50,9 @@ All use `vitest.e2e.config.js` with a 12-minute timeout (cross-chain bridges are
 
 1. `npm test` passes
 2. `npm run lint` passes (auto-fix: `npm run lint:fix`)
-3. Update `src/schema.json` if you added/changed commands or options (manually maintained, no codegen)
+3. Update `src/schema.json` if you added/changed commands or options (manually maintained, no codegen). For research commands it is also what the CLI validates against (see below), so an option the handler reads but the schema omits is rejected
 4. Add a changeset if the change is user-facing (see below)
+5. A new error code needs an entry in `src/error-codes.js`; then run `npm run error-codes:generate`
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full PR checklist.
 
@@ -106,6 +107,15 @@ The Nansen API supports three auth paths. Pick the right one when answering setu
 
 MPP is a separate payment rail on the Nansen API (server-side toggled via `MPP_ENABLED=true`); `nansen-cli` does **not** sign MPP credentials in-process. Don't add an `--mpp-*` flag or shell out to tempo unless explicitly asked — the user's intended UX is "install tempo separately, use it side-by-side with `nansen-cli`".
 
+## Input validation and errors
+
+Every research command (`research ...` and the deprecated top-level `token`, `profiler`, `smart-money`, `portfolio`, `search`, `prediction-market`, plus `perp screener|leaderboard`) goes through `src/input-validation.js` before any request (API-1080, API-1081). It rejects unknown subcommands and options (with the closest match), options given without a value, missing required options, bad enum/number/date values and chains the endpoint does not accept. Do not add a second validation path in a handler; extend the schema or this module.
+
+- **Source of truth:** a leaf's `options` in `src/schema.json`, plus `aliases`, `required`/`requiredUnless`, `positional`, `format: "date"`, `enum`, and `"pagination": false` for endpoints without pagination (`--limit`/`--page`/`--paginate` are then rejected). `src/__tests__/input-validation.test.js` runs every research command and fails if `--filters`, `--sort` or `--limit/--page` is accepted but not sent.
+- **Chains:** `src/api-endpoints.json` lists each endpoint's chains and request fields, vendored from the public OpenAPI spec. Refresh with `npm run endpoints:sync`; `npm run endpoints:check` (weekly in `.github/workflows/api-endpoints.yml`) reports drift. `nansen schema` shows them as `supportedChains`.
+- **Error shape:** `{ success: false, error, code, status, requestId?, details }`, exit 1. `details.errors[]` is `{ field, message, code }` with the API's snake_case field codes; wording mirrors the REST API ("... is not recognized. Did you mean ...?"). Every `code` is listed in `src/error-codes.js` and `docs/error-codes.md` (generated; `npm test` fails when stale).
+- **Connection vs key:** `NETWORK_ERROR` means the API was not reached and the key was not checked; `UNAUTHORIZED` means the API rejected the key. Keep the messages saying so.
+
 ## API Endpoint Quirks
 
 Behaviors that are not bugs — don't "fix" them:
@@ -113,8 +123,9 @@ Behaviors that are not bugs — don't "fix" them:
 - `token holders --smart-money` → API returns `UNSUPPORTED_FILTER` for tokens without SM tracking
 - `token flow-intelligence` → may return all-zero flows for illiquid tokens
 - `token screener --search` → client-side filtering (fetches 500, filters locally). `_meta.search.complete: false` in the response (plus a stderr note) means the window was full and lower-ranked tokens were never searched — an empty result is not proof the token is absent
-- `token ohlcv` → no pagination/limit support; returns all candles for the timeframe
-- `profiler perp-positions` → no pagination support; API ignores the parameter
-- `smart-money netflow --timeframe` → silently accepted but has no effect; response always includes all timeframes
+- `token ohlcv` → no pagination/limit support; returns all candles for the timeframe (the CLI rejects `--limit`/`--page`)
+- `profiler perp-positions` → no pagination support (the CLI rejects `--limit`/`--page`)
+- `smart-money netflow` → response always includes all timeframes; there is no `--timeframe` option
+- `token screener --chain bitcoin` → the endpoint accepts bitcoin but may return no rows; native BTC on token endpoints is `1111111111111111111114oLvT2`
 - `nansen research search` → matches by name, symbol, or address; use `profiler labels` for richer address metadata
 - `--chain bnb` → accepted as input but response `chain` field returns `bsc`
