@@ -17,7 +17,9 @@ import { ERROR_CODES, ERROR_CODE_GROUPS, FIELD_ERROR_CODES } from '../src/error-
 
 export const DOC_PATH = fileURLToPath(new URL('../docs/error-codes.md', import.meta.url));
 
-const cell = text => text.replace(/\|/g, '\\|');
+// Escape backslashes first, then pipes, so a description cannot end a cell or
+// turn the escape of a pipe into a literal backslash.
+const cell = text => text.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
 
 export function renderErrorCodesDoc() {
   const lines = [
