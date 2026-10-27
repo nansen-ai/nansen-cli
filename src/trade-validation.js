@@ -1809,7 +1809,9 @@ export function assertLimitOrderCancelOutcome(sim, { inputMint, amount } = {}) {
  *
  * Throws on any of those patterns. Otherwise returns the parsed transaction
  * plus `priorityFeeLamports` (0n when no compute-unit price is set), which
- * checkSolanaFeeBalance compares against the wallet's balance.
+ * checkSolanaFeeBalance compares against the wallet's balance. With no limit
+ * instruction it is priced at the runtime's default limit, not the 1.4M
+ * ceiling the priority-fee cap assumes, so it is not a worst-case bound.
  */
 export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
   // Fail closed on a missing wallet address: every authority check below
@@ -1909,19 +1911,21 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
     // The runtime rounds the priority fee up to a whole lamport.
     const feeAt = (units) =>
       (computeUnitPriceMicroLamports * BigInt(Math.min(units, SOLANA_MAX_COMPUTE_UNITS)) + 999_999n) / 1_000_000n;
-    // The cap is a guard against a hostile transaction, so with no limit
-    // instruction it assumes the 1.4M ceiling.
-    const worstCaseFeeLamports = feeAt(computeUnitLimit ?? SOLANA_MAX_COMPUTE_UNITS);
+    // Returned for checkSolanaFeeBalance's fallback. With no limit instruction
+    // it prices the runtime's default limit, so it doesn't reject a transaction
+    // the wallet can afford.
+    const defaultLimit =
+      SOLANA_DEFAULT_INSTRUCTION_COMPUTE_UNITS * (parsed.instructions.length - computeBudgetInstructions) +
+      SOLANA_DEFAULT_BUILTIN_COMPUTE_UNITS * computeBudgetInstructions;
+    priorityFeeLamports = feeAt(computeUnitLimit ?? defaultLimit);
+    // The cap guards against a hostile transaction, so with no limit
+    // instruction it assumes the 1.4M ceiling instead.
+    const worstCaseFeeLamports = computeUnitLimit != null ? priorityFeeLamports : feeAt(SOLANA_MAX_COMPUTE_UNITS);
     if (worstCaseFeeLamports > MAX_PRIORITY_FEE_LAMPORTS) {
       throw new Error(
         `Solana transaction sets an excessive priority fee (~${worstCaseFeeLamports} lamports, cap ${MAX_PRIORITY_FEE_LAMPORTS}). Refusing to sign.`,
       );
     }
-    // The fee checkSolanaFeeBalance falls back to uses the runtime's default
-    // limit instead, so it doesn't reject a transaction the wallet can afford.
-    priorityFeeLamports = feeAt(computeUnitLimit ??
-      SOLANA_DEFAULT_INSTRUCTION_COMPUTE_UNITS * (parsed.instructions.length - computeBudgetInstructions) +
-      SOLANA_DEFAULT_BUILTIN_COMPUTE_UNITS * computeBudgetInstructions);
   }
 
   return { ...parsed, priorityFeeLamports };

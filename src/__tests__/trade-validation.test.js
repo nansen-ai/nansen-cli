@@ -3055,6 +3055,20 @@ describe('assertSolanaInstructionsSafe', () => {
     expect(assertSolanaInstructionsSafe(tx, { walletAddress: wallet }).priorityFeeLamports).toBe(403n);
   });
 
+  it('clamps the default compute-unit limit to the 1.4M ceiling', () => {
+    const wallet = generateSolanaWallet().address;
+    const program = generateSolanaWallet().address;
+    const tx = buildTransaction({
+      accountKeys: [wallet, COMPUTE_BUDGET_PROGRAM, program],
+      instructions: [
+        { programIdIndex: 1, accountIndexes: [], data: computeBudgetSetPrice(1_000) },
+        ...Array.from({ length: 10 }, () => ({ programIdIndex: 2, accountIndexes: [], data: Buffer.alloc(0) })),
+      ],
+    });
+    // 10 x 200,000 + 3,000 = 2,003,000 CU, clamped to 1,400,000.
+    expect(assertSolanaInstructionsSafe(tx, { walletAddress: wallet }).priorityFeeLamports).toBe(1_400n);
+  });
+
   it('clamps an explicit compute-unit limit above the 1.4M ceiling', () => {
     const wallet = generateSolanaWallet().address;
     const tx = buildTransaction({
