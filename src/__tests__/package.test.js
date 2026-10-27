@@ -136,7 +136,7 @@ describe('Package Integrity', () => {
     };`);
     const home = join(tmpDir, 'headless-home');
     mkdirSync(home);
-    const envKey = { ...childEnv, HOME: home, USERPROFILE: home, NANSEN_API_KEY: 'synthetic-key', NANSEN_BASE_URL: 'https://api.nansen.ai', NODE_OPTIONS: `--import=${accountCapture}` };
+    const envKey = { ...childEnv, HOME: home, USERPROFILE: home, NANSEN_API_KEY: 'synthetic-key', NANSEN_BASE_URL: 'https://api.nansen.ai', NO_UPDATE_NOTIFIER: '1', NODE_OPTIONS: `${childEnv.NODE_OPTIONS} --import=${accountCapture}` };
     const account = invoke([join(packageRoot, 'src/index.js'), 'account'], envKey);
     expect(account.status).toBe(0);
     expect(account.stdout).toContain('env-key-without-native');
@@ -147,6 +147,7 @@ describe('Package Integrity', () => {
     expect(savedLogin.status).toBe(1);
     expect(savedLogin.stdout + savedLogin.stderr).toContain('AUTH_LOCK_UNAVAILABLE');
     expect(savedLogin.stdout + savedLogin.stderr).toContain("export NANSEN_API_KEY='<your-api-key>'");
+    expect(JSON.parse(savedLogin.stdout).error).not.toMatch(/[\r\n]/);
     expect(savedLogin.stdout + savedLogin.stderr).not.toContain('synthetic-key');
 
     // Cleanup tarball

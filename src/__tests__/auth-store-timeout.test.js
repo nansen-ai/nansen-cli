@@ -20,6 +20,7 @@ it('fails bounded without claiming termination when the OS never reports helper 
   expect(error.message).toContain("export NANSEN_API_KEY='<your-api-key>'");
   expect(error.message).toContain('nansen account');
   expect(error.message).toContain("You don't need to run nansen login");
+  expect(error.message).not.toMatch(/[\r\n]/);
   expect(child.kill).toHaveBeenCalledWith('SIGKILL'); expect(child.unref).toHaveBeenCalledOnce();
   expect(child.stdin.destroy).toHaveBeenCalledOnce(); expect(child.stdout.destroy).toHaveBeenCalledOnce();
   // No late readiness can issue another operation after the failure deadline.
@@ -39,6 +40,7 @@ it('reports a missing native binding after helper termination without claiming s
   expect(error.message).toContain('optional dependencies');
   expect(error.message).toContain('https://app.nansen.ai/api');
   expect(error.message).toContain("export NANSEN_API_KEY='<your-api-key>'");
+  expect(error.message).not.toMatch(/[\r\n]/);
   expect(error.message).not.toContain('Unlock');
   expect(child.kill).not.toHaveBeenCalled();
 });

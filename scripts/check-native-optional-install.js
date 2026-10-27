@@ -26,6 +26,8 @@ const env = {
   HOME: home,
   DO_NOT_TRACK: '1',
   NANSEN_NO_TELEMETRY: '1',
+  // A detached update checker can race temporary-directory cleanup.
+  NO_UPDATE_NOTIFIER: '1',
   npm_config_cache: path.join(temp, 'npm-cache'),
 };
 

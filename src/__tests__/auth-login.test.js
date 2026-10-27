@@ -277,6 +277,7 @@ it.each([[false, true], [true, false], [false, false]])('runCLI rejects browser 
     expect(output.mock.calls.at(-1)[0]).toContain('nansen login --api-key-stdin');
     expect(result.data.error).toContain("export NANSEN_API_KEY='<your-api-key>'");
     expect(result.data.error).toContain("You don't need to run nansen login");
+    expect(result.data.error).not.toMatch(/[\r\n]/);
   }
   expect(browserLoginFn).not.toHaveBeenCalled();
 });
