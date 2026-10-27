@@ -323,12 +323,14 @@ export async function resolveSolanaWallet(walletName, deps = {}) {
   }
 
   if (wallet.provider === 'privy') {
-    const { PrivyClient } = await import('./privy.js');
+    const { PrivyClient, assertPrivyWalletAddress } = await import('./privy.js');
     const privyClient = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);
+    const walletId = wallet.privyWalletIds?.solana;
+    await assertPrivyWalletAddress(privyClient, walletId, wallet.solana, 'solana');
     return {
       pubkey: wallet.solana,
       walletType: 'privy',
-      walletInfo: { privyClient, walletId: wallet.privyWalletIds?.solana },
+      walletInfo: { privyClient, walletId },
       privyWalletIds: wallet.privyWalletIds,
     };
   }

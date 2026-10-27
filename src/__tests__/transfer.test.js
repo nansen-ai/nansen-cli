@@ -22,6 +22,7 @@ import { signSecp256k1, rlpEncode } from '../crypto.js';
 import { base58Encode } from '../wallet.js';
 import * as wallet from '../wallet.js';
 import * as wcTrading from '../walletconnect-trading.js';
+import { PrivyClient } from '../privy.js';
 
 
 // ============= Unit Tests =============
@@ -1149,6 +1150,7 @@ describe('buildUnsignedSolanaTransaction', () => {
 
 describe('sendTokens via Privy', () => {
   let originalEnv;
+  let getWalletSpy;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1167,11 +1169,61 @@ describe('sendTokens via Privy', () => {
       solana: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
       privyWalletIds: { evm: 'wl_evm_1', solana: 'wl_sol_1' },
     });
+    getWalletSpy = vi.spyOn(PrivyClient.prototype, 'getWallet').mockImplementation(async (walletId) => ({
+      id: walletId,
+      address: walletId === 'wl_sol_1'
+        ? '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM'
+        : '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+    }));
   });
 
   afterEach(() => {
     process.env = originalEnv;
+    getWalletSpy.mockRestore();
     vi.unstubAllGlobals();
+  });
+
+  test('refuses a mismatched EVM Privy wallet before preview or send', async () => {
+    getWalletSpy.mockResolvedValue({ id: 'wl_evm_1', address: '0x' + '11'.repeat(20) });
+    const sendSpy = vi.spyOn(PrivyClient.prototype, 'sendTransaction');
+
+    await expect(sendTokens({
+      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      amount: '0.01',
+      chain: 'base',
+      wallet: 'pv',
+      dryRun: true,
+    })).rejects.toThrow(/does not match/);
+
+    expect(getWalletSpy).toHaveBeenCalledOnce();
+    expect(sendSpy).not.toHaveBeenCalled();
+    sendSpy.mockRestore();
+  });
+
+  test('refuses a mismatched Solana Privy wallet before preview or signing', async () => {
+    getWalletSpy.mockResolvedValue({ id: 'wl_sol_1', address: '11111111111111111111111111111111' });
+    const signSpy = vi.spyOn(PrivyClient.prototype, 'signSolanaTransaction');
+
+    await expect(sendTokens({
+      to: '11111111111111111111111111111112',
+      amount: '0.001',
+      chain: 'solana',
+      wallet: 'pv',
+      dryRun: true,
+    })).rejects.toThrow(/does not match/);
+
+    expect(getWalletSpy).toHaveBeenCalledOnce();
+    expect(signSpy).not.toHaveBeenCalled();
+    signSpy.mockRestore();
+  });
+
+  test('rejects an unsupported EVM chain before looking up the Privy wallet', async () => {
+    await expect(sendTokens({
+      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      amount: '0.01', chain: 'unknown', wallet: 'pv', dryRun: true,
+    })).rejects.toThrow(/Unsupported chain/);
+
+    expect(getWalletSpy).not.toHaveBeenCalled();
   });
 
   test('sends native ETH via Privy sendTransaction', async () => {

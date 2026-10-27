@@ -108,6 +108,42 @@ describe('getUpdateNotification', () => {
     expect(result).toContain('npm i -g nansen-cli');
   });
 
+  it('names the required Node when the running Node is below the latest release engines', () => {
+    writeCache({ latest: '2.2.0', engines: '>=22.0.0', checkedAt: Date.now() });
+    const result = getUpdateNotification('2.0.1', 'v20.19.2');
+    expect(result).toContain('2.0.1 → 2.2.0');
+    expect(result).toContain('requires Node >= 22.0.0 (you have v20.19.2)');
+    expect(result).toContain('Install Node >= 22.0.0, then: npm i -g nansen-cli');
+  });
+
+  it('keeps the plain notice when the running Node meets the latest release engines', () => {
+    writeCache({ latest: '2.2.0', engines: '>=22.0.0', checkedAt: Date.now() });
+    const result = getUpdateNotification('2.0.1', 'v22.1.0');
+    expect(result).toBe('Update available: 2.0.1 → 2.2.0  (npm i -g nansen-cli)');
+  });
+
+  it('compares the full minimum version, not just the major', () => {
+    writeCache({ latest: '2.2.0', engines: '>=22.14.0', checkedAt: Date.now() });
+    expect(getUpdateNotification('2.0.1', 'v22.0.0')).toContain('requires Node >= 22.14.0 (you have v22.0.0)');
+    expect(getUpdateNotification('2.0.1', 'v22.14.0')).toBe('Update available: 2.0.1 → 2.2.0  (npm i -g nansen-cli)');
+  });
+
+  it('keeps the plain notice for an engines range it does not parse', () => {
+    writeCache({ latest: '2.2.0', engines: '^20.19.0 || >=22.12.0', checkedAt: Date.now() });
+    expect(getUpdateNotification('2.0.1', 'v18.0.0')).toBe('Update available: 2.0.1 → 2.2.0  (npm i -g nansen-cli)');
+  });
+
+  it('keeps the plain notice for a cache written before engines were recorded', () => {
+    writeCache({ latest: '2.2.0', checkedAt: Date.now() });
+    const result = getUpdateNotification('2.0.1', 'v20.19.2');
+    expect(result).toBe('Update available: 2.0.1 → 2.2.0  (npm i -g nansen-cli)');
+  });
+
+  it('says nothing about Node when already on the latest version', () => {
+    writeCache({ latest: '2.2.0', engines: '>=22.0.0', checkedAt: Date.now() });
+    expect(getUpdateNotification('2.2.0', 'v20.19.2')).toBeNull();
+  });
+
   it('should return null when on latest version', () => {
     writeCache({ latest: '1.3.0', checkedAt: Date.now() });
     const result = getUpdateNotification('1.3.0');
@@ -271,7 +307,7 @@ describe('scheduleUpdateCheck atomic write', () => {
   it('produces a complete, parseable cache file with no temp leftover', async () => {
     const server = http.createServer((_req, res) => {
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ version: '99.0.0' }));
+      res.end(JSON.stringify({ version: '99.0.0', engines: { node: '>=24.0.0' } }));
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const { port } = server.address();
@@ -289,6 +325,7 @@ describe('scheduleUpdateCheck atomic write', () => {
 
       const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
       expect(parsed.latest).toBe('99.0.0');
+      expect(parsed.engines).toBe('>=24.0.0');
       expect(typeof parsed.checkedAt).toBe('number');
 
       const leftovers = fs.readdirSync(dir).filter(f => f.includes('.tmp'));

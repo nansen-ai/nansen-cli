@@ -33,6 +33,7 @@ import {
 } from '../limit-order.js';
 import { createWallet, base58Decode, base58Encode, generateSolanaWallet } from '../wallet.js';
 import { SIMULATION_RPCS } from '../rpc-urls.js';
+import { PrivyClient } from '../privy.js';
 
 const TEST_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const TEST_WSOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -59,6 +60,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   process.env.HOME = originalHome;
   fs.rmSync(tempDir, { recursive: true, force: true });
   global.fetch = originalFetch;
@@ -85,6 +87,18 @@ function mockFetchSequence(responses) {
 // Create a local test wallet (unencrypted)
 function createTestWallet(name = 'test-wallet') {
   return createWallet(name, null);
+}
+
+function createPrivyTestWallet(name, address, walletId = 'privy-solana-1') {
+  const dir = path.join(tempDir, '.nansen', 'wallets');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${name}.json`), JSON.stringify({
+    name,
+    provider: 'privy',
+    evm: null,
+    solana: { address, privyWalletId: walletId },
+    createdAt: new Date().toISOString(),
+  }));
 }
 
 // We need child_process mocked for walletconnect.
@@ -509,6 +523,22 @@ describe('resolveSolanaWallet', () => {
     await resolveSolanaWallet(undefined, { log: (m) => logs.push(m), exit });
     expect(exit).toHaveBeenCalledWith(1);
     expect(logs.some(l => l.includes('No Solana wallet found'))).toBe(true);
+  });
+
+  it('refuses a Privy ID/address mismatch before returning signing context', async () => {
+    vi.stubEnv('PRIVY_APP_ID', 'test');
+    vi.stubEnv('PRIVY_APP_SECRET', 'test');
+    const local = generateSolanaWallet().address;
+    const remote = generateSolanaWallet().address;
+    createPrivyTestWallet('privy-mismatch', local);
+    const lookup = vi.spyOn(PrivyClient.prototype, 'getWallet')
+      .mockResolvedValue({ id: 'privy-solana-1', address: remote });
+
+    await expect(resolveSolanaWallet('privy-mismatch', { log: () => {}, exit: vi.fn() }))
+      .rejects.toThrow(/does not match the locally stored Solana address/);
+
+    expect(lookup).toHaveBeenCalledWith('privy-solana-1');
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });
 

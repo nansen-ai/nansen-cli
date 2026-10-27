@@ -14,6 +14,95 @@ npm install -g nansen-cli
 npx skills add nansen-ai/nansen-cli  # load agent skill files
 ```
 
+## Feedback
+
+Send product feedback to Nansen with your configured API key or login session:
+
+```json
+{
+  "category": "missing_capability",
+  "description": "I need to compare labels across 50 wallets but cannot find a bulk lookup.",
+  "goal": "Compare labels across a wallet list."
+}
+```
+
+`category` and `description` are required. `category` is one of `bug`,
+`data_quality`, `documentation`, `missing_capability`, `usability` or `other`.
+A feature request or product gap is `missing_capability`. `description` says
+what happened and what was needed, in up to 2,000 characters. Optional fields
+are `endpoint` and `tool` (up to 256 characters each), `goal`,
+`expected_behavior`, `observed_behavior` and `workaround` (up to 2,000
+characters each), `request_ids` (up to 10 of your own request IDs) and
+`client` (`{"name": ..., "version": ...}`, attribution only). The API rejects
+any other field or category with a 422, so leave out fields such as `title`,
+`summary` or `severity`. Write plain sentences without Markdown or code
+formatting. `nansen feedback submit --help` prints the same list.
+
+Save the report as `feedback.json`. Omit the ID to save private recovery data before sending:
+
+```bash
+nansen feedback submit --file feedback.json --json
+nansen feedback resume --json
+nansen feedback get fb_123 --json
+```
+
+`resume` uses the saved ID and exact report bytes, even if the input file is gone.
+Changing the account, API environment or report stops replay. After confirmation,
+`resume` reads the receipt without sending another report. To deliberately start
+another report, use `feedback submit --new --file feedback.json`.
+
+One recovery entry lives in `~/.nansen/feedback/recovery.json`, with private
+permissions and a process lock. Confirmed receipts remove report content and keep
+only the submission ID, feedback ID, account, environment and expiry. Feedback
+recovery operations erase expired data when they next open the journal. Pending
+reports expire after one calendar year. No cleanup runs while the CLI is closed.
+`nansen feedback forget` erases local recovery data
+offline, leaving a content-free marker that prevents accidental replay. It does
+not delete your input file or a report on the server. A missing or erased server
+receipt also clears the local entry. Validation rejections erase the saved payload;
+correct the input and use --new to submit again. Forget also erases damaged journals.
+Do not back up pending report content.
+
+Automatic IDs require POSIX private storage and the optional native locking
+binding. On Windows or when storage cannot be secured, supply a caller-managed
+`--submission-id report-123` and keep that ID and the unchanged file for retries.
+This explicit-ID path does not save a local report. Recovery format version 1
+survives upgrades; unsupported or damaged journals stop rather than start fresh.
+Older explicit-ID-only CLI releases do not read recovery journals; finish recovery
+with a supporting version before rolling back.
+
+Remove `--json` for human output. `received` means
+saved, `reviewed` means triaged, and `closed` means review is complete. Review does
+not promise a fix or a date.
+
+Feedback is free, with seven accepted reports per account each week, resetting
+Monday at 00:00 UTC. An exhausted allowance exits with its reset time; accepted
+IDs can still be replayed. Feedback bypasses caching and payment fallback.
+Remove secrets and unnecessary personal details from your report. A backend
+without feedback support reports an unavailable capability.
+
+New submissions may be paused before release or during an outage. HTTP 503 with
+`reason: feedback_admissions_paused` means this attempt accepted no new report
+and used no weekly allowance. Tell the user feedback is unavailable, then stop;
+do not keep retrying or ask for approval again in the same session. Keep the ID
+and unchanged file for a later retry. Accepted-ID replays and receipt reads
+remain available during a pause.
+
+Agents should check the saved account preference before sending feedback on their
+own. If enabled, they may send without asking again, subject to their host's
+controls. If off, unset or unavailable, show the proposed report and ask first.
+Approval for one report does not change the preference. Never enable it
+automatically. Use `nansen feedback preferences --json` for a fresh account read
+before each new automatic report. Without `--json`, it prints a human summary.
+Reads use no credits or report quota. Change the lasting choice in Superapp settings.
+An explicit user request to send the report needs no additional preference
+check. The submit command sends the report without an interactive prompt.
+
+HTTP 403 with `reason: feedback_not_enabled` means feedback is not enabled for
+this account. Stop automatic retries. Approval or an enabled preference does
+not override rollout. Keep the ID and unchanged report for recovery; an earlier
+uncertain attempt remains uncertain. Never switch accounts or pay to bypass denial.
+
 ## Auth
 
 Plain `nansen login` requests fresh browser approval and saves a session automatically. No API-key copying or PEM setup is needed. Selected sessions renew automatically; rejected or uncertain renewal requires fresh login.
@@ -496,7 +585,10 @@ Default JSON output still contains the complete response body.
 | Code | Action |
 |------|--------|
 | `CREDITS_EXHAUSTED` | Stop all API calls immediately. `details.credits.remaining` is your actual balance. Top up at [app.nansen.ai/api?tab=api](https://app.nansen.ai/api?tab=api). |
-| `UNAUTHORIZED` | Wrong or missing key. Re-auth. |
+| `UNAUTHORIZED` | The API rejected the key (the connection works). Re-auth. |
+| `NETWORK_ERROR` | The CLI could not reach the API, so the key was not checked. Fix the connection (`nansen doctor`); do not replace the key. |
+| `INVALID_PARAMS` / `MISSING_PARAM` | Fix the option or field named in `details.param` and `details.errors[]` (each `{ field, message, code }`), then retry. |
+| `UNKNOWN_COMMAND` | The command or subcommand does not exist; the message suggests the closest one. |
 | `RATE_LIMITED` | Auto-retried by CLI. `details.rateLimit.resetSeconds` is how long the window needs to drain. |
 | `UNSUPPORTED_FILTER` | Remove the filter and retry. |
 | `PLAN_UPGRADE_REQUIRED` | The endpoint or option needs a higher subscription plan. Do not retry. |
@@ -504,7 +596,9 @@ Default JSON output still contains the complete response body.
 | `SERVER_ERROR` | Not your fault. Quote `details.requestId` when reporting it. |
 | `COMMAND_UNAVAILABLE` | The command is no longer available. For points leaderboard, run `nansen research` to explore other analytics commands. |
 
-Every code documented on the API's [error-handling page](https://docs.nansen.ai/getting-started/error-handling) maps onto a stable CLI error code; a code the CLI does not recognise is passed through unchanged.
+Every failure exits 1. The full list of codes is in [docs/error-codes.md](docs/error-codes.md). Every code documented on the API's [error-handling page](https://docs.nansen.ai/getting-started/error-handling) maps onto a stable CLI error code; a code the CLI does not recognise is passed through unchanged.
+
+Research commands check their options before calling the API: an unknown or ignored option, a missing required option, a bad value or a chain the endpoint does not accept fails locally with the option named. `nansen schema <command>` lists each command's options and `supportedChains`.
 
 **Error metadata.** When the API reports them, `details` carries:
 
@@ -521,7 +615,7 @@ Any field may be absent or `null`, meaning unknown — never assume zero. A low-
 | Symptom | Fix |
 |---------|-----|
 | `command not found` | `npm install -g nansen-cli` |
-| Global install reports an older version | `npm i -g nansen-cli@latest --registry=https://registry.npmjs.org/ --prefer-online`, then check `which -a nansen` for stale binaries |
+| Global install reports an older version | Check `node -v` first: current releases need Node.js >= 22. On an older Node, `npm i -g nansen-cli` installs the newest release that still supports it without an error, and `npm i -g nansen-cli@latest` installs the current release with an `EBADENGINE` warning (or fails under `engine-strict`). Upgrade Node, then run `npm i -g nansen-cli@latest --registry=https://registry.npmjs.org/ --prefer-online` and check `which -a nansen` for stale binaries |
 | `UNAUTHORIZED` after login | `nansen auth status` shows the effective credential and cached/unverified session metadata. Correct an invalid environment key first; browser login does not override it. Use fresh `nansen login` for a rejected session, or explicit legacy key setup for integration credentials |
 | MCP client lists tools but paid calls fail | Run `npx -y nansen-cli mcp verify` with the saved key or `NANSEN_API_KEY`, and ensure that same key is in the client's `NANSEN-API-KEY` header |
 | Anything else misbehaving | `nansen doctor` checks your whole setup (auth, wallets, caches, connectivity) with a fix per finding |

@@ -17,9 +17,15 @@ vi.mock('../keychain.js', () => ({
   retrievePassword: vi.fn(() => ({ password: 'pw', source: 'keychain' })),
 }));
 
-const ethSignTypedDataV4 = vi.fn(async () => ({ signature: '0x' + '11'.repeat(65) }));
-vi.mock('../privy.js', () => ({
+const privyMocks = vi.hoisted(() => ({
+  getWallet: vi.fn(),
+  ethSignTypedDataV4: vi.fn(async () => ({ signature: '0x' + '11'.repeat(65) })),
+}));
+const { ethSignTypedDataV4 } = privyMocks;
+vi.mock('../privy.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   PrivyClient: vi.fn().mockImplementation(function () {
+    this.getWallet = privyMocks.getWallet;
     this.ethSignTypedDataV4 = ethSignTypedDataV4;
   }),
 }));
@@ -402,6 +408,7 @@ beforeEach(() => {
   quotesDir = path.join(tmpHome, '.nansen', 'quotes');
   fs.mkdirSync(quotesDir, { recursive: true });
   showWallet.mockReturnValue({ name: 'w', evm: WALLET, provider: 'local' });
+  privyMocks.getWallet.mockReset().mockResolvedValue({ id: 'pw-1', address: WALLET });
   ethSignTypedDataV4.mockClear();
 });
 
@@ -411,6 +418,20 @@ afterEach(() => {
 });
 
 describe('bridge execute — Hyperliquid action intent binding', () => {
+  it('Privy path refuses an ID/address mismatch before screening or signing', async () => {
+    writeQuote('bridge-privy-wallet-mismatch', [depositStep()], { walletProvider: 'privy' });
+    showWallet.mockReturnValue({
+      name: 'p', evm: WALLET, provider: 'privy', privyWalletIds: { evm: 'pw-1' },
+    });
+    privyMocks.getWallet.mockResolvedValue({ id: 'pw-1', address: '0x' + '99'.repeat(20) });
+    const calls = [];
+
+    await expect(execute('bridge-privy-wallet-mismatch', {}, calls)).rejects.toThrow(/does not match/);
+
+    expect(calls.filter(({ endpoint }) => endpoint.includes('/sanctions/screen'))).toEqual([]);
+    expect(ethSignTypedDataV4).not.toHaveBeenCalled();
+  });
+
   it('rejects an inflated sendAsset amount before signing, leaving the quote unconsumed', async () => {
     writeQuote('bridge-inflated', [depositStep(undefined, { amount: '2000.000000' })]);
     await expect(execute('bridge-inflated')).rejects.toThrow(/more than the 200000000 base units/);

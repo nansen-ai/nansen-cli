@@ -225,9 +225,9 @@ describe('CLI Smoke Tests', () => {
     const output = stdout || stderr;
     const json = JSON.parse(output.split('\n').find(l => l.startsWith('{')));
     expect(json.success).toBe(false);
-    expect(json.error).toContain('Unknown subcommand');
+    expect(json.error).toContain('Unknown prediction-market subcommand');
     expect(json.error).toContain('ohlcv');
-    expect(json.code).toBe('UNKNOWN');
+    expect(json.code).toBe('UNKNOWN_COMMAND');
   });
 
   it('should still route deprecated smart-money path', () => {
@@ -261,11 +261,19 @@ describe('CLI Smoke Tests', () => {
     expect(result.error).toContain('Unknown command');
   });
 
-  it('should handle unknown subcommand gracefully', () => {
-    const { stdout } = runCLI('smart-money unknown-subcommand');
+  // API-1080: a subcommand typo is a failure (exit 1, success:false), not a
+  // success with the error tucked inside `data`, with or without --fields.
+  it.each([
+    'smart-money unknown-subcommand',
+    'smart-money netflw --fields token_symbol',
+  ])('fails on an unknown subcommand: %s', (command) => {
+    const { stdout, exitCode } = runCLI(command);
 
+    expect(exitCode).toBe(1);
     const result = JSON.parse(stdout);
-    expect(result.data.error).toContain('Unknown subcommand');
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('UNKNOWN_COMMAND');
+    expect(result.error).toContain('Unknown smart-money subcommand');
   });
 
   // Regression: trade-group commands must exit 0 when invoked back-to-back.

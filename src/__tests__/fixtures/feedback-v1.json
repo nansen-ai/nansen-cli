@@ -1,0 +1,352 @@
+{
+  "source": "nansen-ai/nansen-api contracts/feedback/v1/fixtures at b78f13be47515aac398ada1587e03abedbdfd218",
+  "accepted": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/feedback",
+      "headers": {
+        "Idempotency-Key": "7d0cfa19-5e6b-49d4-a71c-5f75a07d780e"
+      },
+      "body": {
+        "category": "missing_capability",
+        "description": "I need to compare labels across 50 wallets, but could not find a bulk lookup.",
+        "goal": "Compare labels across a wallet list."
+      }
+    },
+    "status": 201,
+    "headers": {
+      "Location": "/api/v1/feedback/fb_01JA8Z6K2R7N4Q9V3T5W8X1Y2Z",
+      "X-Nansen-Credits-Cost": "0",
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "feedback_id": "fb_01JA8Z6K2R7N4Q9V3T5W8X1Y2Z",
+      "submission_id": "7d0cfa19-5e6b-49d4-a71c-5f75a07d780e",
+      "status": "received",
+      "disposition": null,
+      "received_at": "2026-10-13T12:00:00Z",
+      "updated_at": "2026-10-13T12:00:00Z",
+      "expires_at": "2027-10-13T12:00:00Z",
+      "replayed": false,
+      "quota": {
+        "limit": 7,
+        "remaining": 6,
+        "resets_at": "2026-10-19T00:00:00Z"
+      }
+    }
+  },
+  "replayed": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/feedback",
+      "headers": {
+        "Idempotency-Key": "7d0cfa19-5e6b-49d4-a71c-5f75a07d780e"
+      },
+      "body": {
+        "category": "missing_capability",
+        "description": "I need to compare labels across 50 wallets, but could not find a bulk lookup.",
+        "goal": "Compare labels across a wallet list."
+      }
+    },
+    "status": 200,
+    "headers": {
+      "X-Nansen-Credits-Cost": "0",
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "feedback_id": "fb_01JA8Z6K2R7N4Q9V3T5W8X1Y2Z",
+      "submission_id": "7d0cfa19-5e6b-49d4-a71c-5f75a07d780e",
+      "status": "reviewed",
+      "disposition": null,
+      "received_at": "2026-10-13T12:00:00Z",
+      "updated_at": "2026-10-14T08:15:00Z",
+      "expires_at": "2027-10-13T12:00:00Z",
+      "replayed": true,
+      "quota": {
+        "limit": 7,
+        "remaining": 0,
+        "resets_at": "2026-10-19T00:00:00Z"
+      }
+    }
+  },
+  "weekly_limit": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/feedback",
+      "headers": {
+        "Idempotency-Key": "c1f5e0a2-8d4b-4c47-9a0e-3b6f2d9e1a74"
+      },
+      "body": {
+        "category": "bug",
+        "description": "Labels endpoint returns 500 for wallets with no labels.",
+        "endpoint": "/api/v1/profiler/address/labels",
+        "request_ids": [
+          "req_91bc",
+          "req_7f3a"
+        ],
+        "client": {
+          "name": "nansen-cli",
+          "version": "1.42.0"
+        }
+      }
+    },
+    "status": 429,
+    "headers": {
+      "Retry-After": "475200",
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "error": "Too Many Requests",
+      "message": "Seven reports have been accepted for this account this week.",
+      "code": "rate_limit_exceeded",
+      "status": 429,
+      "request_id": "req_attempt_8",
+      "doc_url": "https://docs.nansen.ai/getting-started/error-handling#rate_limit_exceeded",
+      "reason": "feedback_weekly_quota_exhausted",
+      "retry_after": 475200,
+      "quota": {
+        "limit": 7,
+        "remaining": 0,
+        "resets_at": "2026-10-19T00:00:00Z"
+      }
+    }
+  },
+  "throttled": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/feedback",
+      "headers": {
+        "Idempotency-Key": "5b2e9c71-0f3d-4a8e-b6c4-9d1a7e2f3c58"
+      },
+      "body": {
+        "category": "usability",
+        "description": "Pagination cursor is hard to find."
+      }
+    },
+    "status": 429,
+    "headers": {
+      "Retry-After": "2",
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "error": "Too Many Requests",
+      "message": "Rate limit exceeded. Please try again later.",
+      "code": "rate_limit_exceeded",
+      "status": 429,
+      "request_id": "req_attempt_9",
+      "doc_url": "https://docs.nansen.ai/getting-started/error-handling#rate_limit_exceeded",
+      "reason": "request_rate_limited",
+      "retry_after": 2
+    }
+  },
+  "conflict": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/feedback",
+      "headers": {
+        "Idempotency-Key": "7d0cfa19-5e6b-49d4-a71c-5f75a07d780e"
+      },
+      "body": {
+        "category": "missing_capability",
+        "description": "I need to compare labels across 50 wallets, but could not find a bulk lookup.",
+        "goal": "Compare labels across a wallet list.",
+        "endpoint": "/api/v1/profiler/address/labels",
+        "request_ids": [
+          "req_7f3a",
+          "req_91bc"
+        ]
+      }
+    },
+    "status": 409,
+    "headers": {
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "error": "Conflict",
+      "message": "This submission ID was already used for a different report.",
+      "code": "conflict",
+      "status": 409,
+      "request_id": "req_attempt_2",
+      "doc_url": "https://docs.nansen.ai/getting-started/error-handling#conflict",
+      "reason": "idempotency_key_reused"
+    }
+  },
+  "receipt_reviewed": {
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/feedback/fb_01JA8Z6K2R7N4Q9V3T5W8X1Y2Z"
+    },
+    "status": 200,
+    "headers": {
+      "X-Nansen-Credits-Cost": "0",
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "feedback_id": "fb_01JA8Z6K2R7N4Q9V3T5W8X1Y2Z",
+      "submission_id": "7d0cfa19-5e6b-49d4-a71c-5f75a07d780e",
+      "status": "reviewed",
+      "disposition": null,
+      "received_at": "2026-10-13T12:00:00Z",
+      "updated_at": "2026-10-14T08:15:00Z",
+      "expires_at": "2027-10-13T12:00:00Z"
+    }
+  },
+  "receipt_closed": {
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/feedback/fb_01JA8Z6K2R7N4Q9V3T5W8X1Y2Z"
+    },
+    "status": 200,
+    "headers": {
+      "X-Nansen-Credits-Cost": "0",
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "feedback_id": "fb_01JA8Z6K2R7N4Q9V3T5W8X1Y2Z",
+      "submission_id": "7d0cfa19-5e6b-49d4-a71c-5f75a07d780e",
+      "status": "closed",
+      "disposition": "duplicate",
+      "received_at": "2026-10-13T12:00:00Z",
+      "updated_at": "2026-10-20T09:40:00Z",
+      "expires_at": "2027-10-13T12:00:00Z"
+    }
+  },
+  "route_unavailable_zero_credit": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/feedback",
+      "headers": {
+        "Idempotency-Key": "7d0cfa19-5e6b-49d4-a71c-5f75a07d780e"
+      },
+      "body": {
+        "category": "missing_capability",
+        "description": "I need to compare labels across 50 wallets, but could not find a bulk lookup.",
+        "goal": "Compare labels across a wallet list."
+      }
+    },
+    "status": 403,
+    "headers": {
+      "X-Nansen-Credits-Cost": "1"
+    },
+    "body": {
+      "error": "Insufficient credits",
+      "message": "Insufficient credits remaining to call this endpoint.",
+      "code": "insufficient_credits",
+      "status": 403,
+      "request_id": "req_attempt_12",
+      "doc_url": "https://docs.nansen.ai/getting-started/error-handling#insufficient_credits",
+      "detail": "Insufficient credits remaining to call this endpoint."
+    }
+  },
+  "not_found": {
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/feedback/fb_01JA9ZZZZZZZZZZZZZZZZZZZZZ"
+    },
+    "status": 404,
+    "headers": {
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "error": "Not Found",
+      "message": "The requested resource was not found.",
+      "code": "not_found",
+      "status": 404,
+      "request_id": "req_attempt_4",
+      "doc_url": "https://docs.nansen.ai/getting-started/error-handling#not_found"
+    }
+  },
+  "denied": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/feedback",
+      "headers": {
+        "Idempotency-Key": "e8a4c2d6-3b1f-4e9a-8c7d-2f6b0a9e4d13"
+      },
+      "body": {
+        "category": "missing_capability",
+        "description": "I need to compare labels across 50 wallets, but could not find a bulk lookup.",
+        "goal": "Compare labels across a wallet list."
+      }
+    },
+    "status": 403,
+    "headers": {
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "error": "Forbidden",
+      "message": "This credential is not allowed to submit feedback.",
+      "code": "forbidden",
+      "status": 403,
+      "request_id": "req_attempt_10",
+      "doc_url": "https://docs.nansen.ai/getting-started/error-handling#forbidden",
+      "reason": "feedback_permission_required"
+    }
+  },
+  "admissions_paused": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/feedback",
+      "headers": {
+        "Idempotency-Key": "a3d7f1b9-6e2c-4d8a-9f5b-1c4e8a2d7b60"
+      },
+      "body": {
+        "category": "missing_capability",
+        "description": "I need to compare labels across 50 wallets, but could not find a bulk lookup.",
+        "goal": "Compare labels across a wallet list."
+      }
+    },
+    "status": 503,
+    "headers": {
+      "Retry-After": "10",
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "error": "Service Unavailable",
+      "message": "Feedback submission is temporarily unavailable.",
+      "code": "upstream_unavailable",
+      "status": 503,
+      "request_id": "req_attempt_11",
+      "doc_url": "https://docs.nansen.ai/getting-started/error-handling#upstream_unavailable",
+      "reason": "feedback_admissions_paused",
+      "retry_after": 10
+    }
+  },
+  "invalid_unknown_field": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/feedback",
+      "headers": {
+        "Idempotency-Key": "0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f"
+      },
+      "body": {
+        "category": "missing_capability",
+        "description": "I need to compare labels across 50 wallets, but could not find a bulk lookup.",
+        "goal": "Compare labels across a wallet list.",
+        "attachments": [
+          "screenshot.png"
+        ]
+      }
+    },
+    "status": 422,
+    "headers": {
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "error": "Unknown field",
+      "message": "Field 'attachments' is not recognized. Please check the API documentation for valid request fields.",
+      "code": "unknown_field",
+      "status": 422,
+      "request_id": "req_attempt_3",
+      "doc_url": "https://docs.nansen.ai/getting-started/error-handling#unknown_field",
+      "param": "attachments",
+      "errors": [
+        {
+          "field": "body.attachments",
+          "code": "unknown_field",
+          "message": "Field 'attachments' is not recognized. Please check the API documentation for valid request fields."
+        }
+      ]
+    }
+  }
+}

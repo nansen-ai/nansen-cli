@@ -432,6 +432,23 @@ describe('doctor', () => {
       expect(check.message).toContain('1.0.0 → 9.9.9');
     });
 
+    it('names the required Node when the latest release needs a newer Node than the running one', () => {
+      fs.mkdirSync(nansenDir(), { recursive: true });
+      fs.writeFileSync(path.join(nansenDir(), 'update-check.json'), JSON.stringify({ latest: '2.2.0', engines: '>=22.0.0', checkedAt: Date.now() }));
+      const check = findCheck(runDoctorChecks(deps({ cliVersion: '2.0.1', nodeVersion: 'v20.19.2' })), 'cli-version');
+      expect(check.status).toBe('warn');
+      expect(check.message).toContain('requires Node >= 22.0.0 (you have v20.19.2)');
+      expect(check.fix).toContain('Install Node >= 22.0.0');
+    });
+
+    it('keeps the plain update hint when the running Node meets the latest release engines', () => {
+      fs.mkdirSync(nansenDir(), { recursive: true });
+      fs.writeFileSync(path.join(nansenDir(), 'update-check.json'), JSON.stringify({ latest: '2.2.0', engines: '>=22.0.0', checkedAt: Date.now() }));
+      const check = findCheck(runDoctorChecks(deps({ cliVersion: '2.0.1', nodeVersion: 'v22.1.0' })), 'cli-version');
+      expect(check.message).toBe('Update available: 2.0.1 → 2.2.0');
+      expect(check.fix).toBe('Run: npm i -g nansen-cli');
+    });
+
     it('reports up to date when the cached latest matches', () => {
       fs.mkdirSync(nansenDir(), { recursive: true });
       fs.writeFileSync(path.join(nansenDir(), 'update-check.json'), JSON.stringify({ latest: '1.0.0', checkedAt: Date.now() }));

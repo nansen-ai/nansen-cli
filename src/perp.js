@@ -621,9 +621,10 @@ async function resolveSigningCtx(wallet, log) {
     log,
   };
   if (wallet.provider === 'privy') {
-    const { PrivyClient } = await import('./privy.js');
+    const { PrivyClient, assertPrivyWalletAddress } = await import('./privy.js');
     ctx.privyClient = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);
     ctx.privyWalletId = wallet.privyWalletIds?.evm;
+    await assertPrivyWalletAddress(ctx.privyClient, ctx.privyWalletId, wallet.address, 'evm');
   } else {
     ctx.privateKeyHex = resolvePrivateKey(wallet);
   }

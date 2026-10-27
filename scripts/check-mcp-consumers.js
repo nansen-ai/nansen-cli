@@ -3,7 +3,7 @@
 /**
  * Report whether public consumers of src/mcp-client-config.json vendor the
  * current file (API-322). Today that is nansen-ai/nansen-mcp-dxt. The docs
- * source runs its own check.
+ * source and the webapp source run their own checks.
  *
  * Exit codes: 0 = in sync, 3 = a consumer pins a different file, 2 = the check failed.
  * .github/workflows/mcp-remote-pin.yml runs this weekly next to the pin check,

@@ -1,5 +1,175 @@
 {
   "commands": {
+    "feedback": {
+      "description": "Read the account feedback preference, submit product feedback, or recover an account-scoped receipt. Free; seven new reports per account per UTC week.",
+      "notes": "Use the configured API key or login session. Keep the same submission ID and unchanged report after an uncertain result. No caching or payment fallback. Remove credentials and unnecessary personal context from reports. Without --submission-id, save one private submission before sending. Resume with nansen feedback resume. Use --new for a deliberate new report after confirmation or local erasure. Pending data expires after one calendar year; feedback commands enforce cleanup. Automatic IDs require POSIX private storage and native locking; otherwise supply an explicit ID. The report file is a JSON object with required category and description. Category is one of bug, data_quality, documentation, missing_capability, usability or other; a feature request or product gap is missing_capability. Optional fields: endpoint, tool, goal, expected_behavior, observed_behavior, workaround, request_ids and client. The API rejects any other field or category with a 422, so do not add fields such as title, summary or severity. nansen feedback submit --help lists the limits. Agents: send on your own only after an authenticated read shows the account preference is enabled and host controls permit it. Otherwise show the report and ask first; a direct user request permits that report. Use nansen feedback preferences --json for a fresh account preference before each new automatic report. If the read fails, show the report and ask. Host or local-deny controls still apply. Direct lasting choices to Superapp settings. Never enable the preference automatically. Submit is noninteractive and does not verify approval. New submissions may be paused before release or during an outage. A 503 with reason feedback_admissions_paused means this attempt accepted no new report and used no weekly allowance. Tell the user feedback is unavailable and stop; do not keep retrying or ask for approval again in the same session. Preserve the ID and unchanged file for a later retry. A 403 with reason feedback_not_enabled means this account is outside rollout. Stop automatic retries; approval and saved preferences do not override it. Preserve IDs and earlier uncertain outcomes. Accepted-ID replays and receipt reads remain available during a pause.",
+      "subcommands": {
+        "submit": {
+          "description": "Submit a JSON report. Received means saved; human review may still be pending.",
+          "endpoint": "/api/v1/feedback",
+          "options": {
+            "file": {
+              "type": "string",
+              "required": true,
+              "description": "JSON report file. Fields and categories are listed under report."
+            },
+            "submission-id": {
+              "type": "string",
+              "required": false,
+              "description": "New opaque ID: 1 to 128 ASCII letters, digits, underscores or hyphens. Reuse with unchanged file on retries."
+            },
+            "json": {
+              "type": "boolean",
+              "description": "Return the standard JSON receipt or error envelope."
+            },
+            "new": {
+              "type": "boolean",
+              "description": "Deliberately start a new generated submission after confirmation or local erasure. Never replaces pending data."
+            }
+          },
+          "returns": [
+            "feedback_id",
+            "submission_id",
+            "status",
+            "disposition",
+            "received_at",
+            "updated_at",
+            "expires_at",
+            "replayed",
+            "quota"
+          ],
+          "examples": [
+            "nansen feedback submit --file feedback.json --json",
+            "nansen feedback submit --file feedback.json --submission-id report-123 --json"
+          ],
+          "report": {
+            "description": "JSON object in --file. Unknown fields and categories are rejected.",
+            "fields": {
+              "category": {
+                "required": true,
+                "description": "Kind of problem. A feature request or product gap is missing_capability.",
+                "enum": [
+                  "bug",
+                  "data_quality",
+                  "documentation",
+                  "missing_capability",
+                  "usability",
+                  "other"
+                ]
+              },
+              "description": {
+                "required": true,
+                "description": "What happened and what was needed, up to 2,000 characters."
+              },
+              "endpoint": {
+                "description": "API endpoint path involved, without query string or credentials, up to 256 characters."
+              },
+              "tool": {
+                "description": "Tool name involved, up to 256 characters."
+              },
+              "goal": {
+                "description": "What you were trying to do, up to 2,000 characters."
+              },
+              "expected_behavior": {
+                "description": "What you expected, up to 2,000 characters."
+              },
+              "observed_behavior": {
+                "description": "What happened instead, up to 2,000 characters."
+              },
+              "workaround": {
+                "description": "Any workaround used, up to 2,000 characters."
+              },
+              "request_ids": {
+                "description": "Array of up to 10 distinct request IDs from your own requests, each up to 128 characters."
+              },
+              "client": {
+                "description": "Object with name and version, up to 64 characters each. Attribution only."
+              }
+            },
+            "example": {
+              "category": "missing_capability",
+              "description": "I need to compare labels across 50 wallets but cannot find a bulk lookup.",
+              "goal": "Compare labels across a wallet list."
+            }
+          }
+        },
+        "get": {
+          "description": "Read the current receipt. Reviewed means triaged; closed means review complete. Neither promises a fix date.",
+          "endpoint": "/api/v1/feedback/{feedback_id}",
+          "args": [
+            {
+              "name": "feedback-id",
+              "required": true,
+              "description": "Feedback ID from a submit receipt, such as fb_01JA8Z6K2R7N4Q9V3T5W8X1Y2Z."
+            }
+          ],
+          "options": {
+            "json": {
+              "type": "boolean",
+              "description": "Return the standard JSON receipt or error envelope."
+            }
+          },
+          "returns": [
+            "feedback_id",
+            "submission_id",
+            "status",
+            "disposition",
+            "received_at",
+            "updated_at",
+            "expires_at"
+          ],
+          "examples": [
+            "nansen feedback get fb_123 --json"
+          ]
+        },
+        "resume": {
+          "description": "Retry the saved report and ID with the original account and API environment, or read its confirmed receipt. Does not need the original file.",
+          "options": {
+            "json": {
+              "type": "boolean",
+              "description": "Return structured output."
+            }
+          },
+          "examples": [
+            "nansen feedback resume --json"
+          ]
+        },
+        "forget": {
+          "description": "Erase local recovery data offline. Does not delete a server report or the original input file. Stops replay until a deliberate --new submission.",
+          "options": {
+            "json": {
+              "type": "boolean",
+              "description": "Return structured output."
+            }
+          },
+          "examples": [
+            "nansen feedback forget --json"
+          ]
+        },
+        "preferences": {
+          "method": "GET",
+          "endpoint": "/api/v1/feedback/preferences",
+          "description": "Read the authenticated account preference fresh, with no credits or report quota. Does not change it.",
+          "options": {
+            "json": {
+              "type": "boolean",
+              "description": "Return the standard JSON preference or error envelope."
+            }
+          },
+          "returns": [
+            "automatic_reporting",
+            "configured",
+            "version",
+            "updated_at",
+            "can_manage"
+          ],
+          "examples": [
+            "nansen feedback preferences",
+            "nansen feedback preferences --json"
+          ]
+        }
+      }
+    },
     "perp": {
       "description": "Hyperliquid perpetual trading commands",
       "subcommands": {
@@ -438,9 +608,13 @@
                 "wallet": {
                   "type": "string",
                   "required": true,
-                  "description": "Wallet address to fetch DeFi positions for"
+                  "description": "Wallet address to fetch DeFi positions for",
+                  "aliases": [
+                    "address"
+                  ]
                 }
-              }
+              },
+              "pagination": false
             }
           },
           "description": "Portfolio analytics"
@@ -455,6 +629,30 @@
                   "type": "string",
                   "default": "solana",
                   "description": "Chain to query"
+                },
+                "chains": {
+                  "type": "string",
+                  "description": "Comma-separated chains; overrides --chain",
+                  "repeatable": true
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "labels": {
+                  "type": "string",
+                  "description": "Smart money labels to include, comma-separated or repeated; sent as filters.include_smart_money_labels",
+                  "repeatable": true
                 }
               }
             },
@@ -466,16 +664,86 @@
                   "type": "string",
                   "default": "solana",
                   "description": "Chain to query"
+                },
+                "chains": {
+                  "type": "string",
+                  "description": "Comma-separated chains; overrides --chain",
+                  "repeatable": true
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "labels": {
+                  "type": "string",
+                  "description": "Smart money labels to include, comma-separated or repeated; sent as filters.include_smart_money_labels",
+                  "repeatable": true
                 }
               }
             },
             "perp-trades": {
               "endpoint": "/api/v1/smart-money/perp-trades",
-              "description": "Perpetual trading on Hyperliquid"
+              "description": "Perpetual trading on Hyperliquid",
+              "options": {
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "labels": {
+                  "type": "string",
+                  "description": "Smart money labels to include, comma-separated or repeated; sent as filters.include_smart_money_labels",
+                  "repeatable": true
+                },
+                "only-new-positions": {
+                  "type": "boolean",
+                  "description": "Only trades that open a new position"
+                }
+              }
             },
             "dcas": {
               "endpoint": "/api/v1/smart-money/dcas",
-              "description": "DCA strategies on Jupiter"
+              "description": "DCA strategies on Jupiter",
+              "options": {
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "labels": {
+                  "type": "string",
+                  "description": "Smart money labels to include, comma-separated or repeated; sent as filters.include_smart_money_labels",
+                  "repeatable": true
+                }
+              }
             },
             "holdings": {
               "endpoint": "/api/v1/smart-money/holdings",
@@ -485,6 +753,34 @@
                   "type": "string",
                   "default": "solana",
                   "description": "Chain to query"
+                },
+                "chains": {
+                  "type": "string",
+                  "description": "Comma-separated chains; overrides --chain",
+                  "repeatable": true
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "labels": {
+                  "type": "string",
+                  "description": "Smart money labels to include, comma-separated or repeated; sent as filters.include_smart_money_labels",
+                  "repeatable": true
+                },
+                "token": {
+                  "type": "string",
+                  "description": "Only this token (contract address); sent as filters.token_address"
                 }
               }
             },
@@ -502,6 +798,30 @@
                   "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
+                },
+                "chains": {
+                  "type": "string",
+                  "description": "Comma-separated chains; overrides --chain",
+                  "repeatable": true
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "labels": {
+                  "type": "string",
+                  "description": "Smart money labels to include, comma-separated or repeated; sent as filters.include_smart_money_labels",
+                  "repeatable": true
                 }
               }
             }
@@ -529,6 +849,25 @@
                   "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
+                },
+                "date": {
+                  "type": "string",
+                  "description": "Date range: YYYY-MM-DD or {\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}; overrides --days",
+                  "format": "json"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -552,7 +891,8 @@
                   "default": 30,
                   "description": "Lookback window in days"
                 }
-              }
+              },
+              "pagination": false
             },
             "balance": {
               "endpoint": "/api/v1/profiler/address/current-balance",
@@ -561,12 +901,36 @@
                 "address": {
                   "type": "string",
                   "required": true,
-                  "description": "Wallet address to profile"
+                  "description": "Wallet address to profile",
+                  "requiredUnless": [
+                    "entity"
+                  ]
                 },
                 "chain": {
                   "type": "string",
                   "default": "ethereum",
                   "description": "Chain to profile the address on"
+                },
+                "entity": {
+                  "type": "string",
+                  "aliases": [
+                    "entity-name"
+                  ],
+                  "description": "Nansen entity name to profile instead of --address"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -589,6 +953,20 @@
                   "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -598,7 +976,12 @@
               "options": {
                 "addresses": {
                   "type": "string",
-                  "description": "Comma-separated list (or JSON array) of up to 10 distinct wallet addresses; required unless --file <path> is provided"
+                  "description": "Comma-separated list (or JSON array) of up to 10 distinct wallet addresses; required unless --file <path> is provided",
+                  "required": true,
+                  "requiredUnless": [
+                    "file"
+                  ],
+                  "repeatable": true
                 },
                 "file": {
                   "type": "string",
@@ -614,6 +997,20 @@
                   "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days (max 90 for this command)"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -636,6 +1033,20 @@
                   "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -652,6 +1063,15 @@
                   "type": "string",
                   "default": "ethereum",
                   "description": "Chain to profile the address on"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -664,7 +1084,8 @@
                   "required": true,
                   "description": "Address whose first funder to find"
                 }
-              }
+              },
+              "pagination": false
             },
             "pnl": {
               "endpoint": "/api/v1/profiler/address/pnl",
@@ -685,6 +1106,25 @@
                   "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
+                },
+                "date": {
+                  "type": "string",
+                  "description": "Date range: YYYY-MM-DD or {\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}; overrides --days",
+                  "format": "json"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -712,8 +1152,23 @@
                   "type": "string",
                   "required": true,
                   "description": "Hyperliquid trader address"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
-              }
+              },
+              "pagination": false
             },
             "perp-trades": {
               "endpoint": "/api/v1/profiler/perp-trades",
@@ -729,6 +1184,20 @@
                   "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -751,6 +1220,25 @@
                   "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
+                },
+                "date": {
+                  "type": "string",
+                  "description": "Date range: YYYY-MM-DD or {\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}; overrides --days",
+                  "format": "json"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -763,7 +1251,8 @@
                   "required": true,
                   "description": "Entity or label name to search for"
                 }
-              }
+              },
+              "pagination": false
             },
             "batch": {
               "description": "Batch profile multiple addresses",
@@ -776,14 +1265,29 @@
                 "include": {
                   "type": "string",
                   "default": "labels,balance",
-                  "description": "Comma-separated sections to fetch per address: labels, balance, pnl"
+                  "description": "Comma-separated sections to fetch per address: labels, balance, pnl",
+                  "repeatable": true
                 },
                 "delay": {
                   "type": "number",
                   "default": 1000,
                   "description": "Delay in milliseconds between API calls"
+                },
+                "addresses": {
+                  "type": "string",
+                  "description": "Comma-separated addresses (max 100)",
+                  "required": true,
+                  "requiredUnless": [
+                    "file"
+                  ],
+                  "repeatable": true
+                },
+                "file": {
+                  "type": "string",
+                  "description": "File with one address per line"
                 }
-              }
+              },
+              "pagination": false
             },
             "trace": {
               "description": "Multi-hop counterparty trace (BFS)",
@@ -819,7 +1323,8 @@
                   "default": 1000,
                   "description": "Delay in milliseconds between API calls"
                 }
-              }
+              },
+              "pagination": false
             },
             "compare": {
               "description": "Compare two wallets (shared counterparties, tokens)",
@@ -827,7 +1332,8 @@
                 "addresses": {
                   "type": "string",
                   "required": true,
-                  "description": "Comma-separated list (or JSON array) of wallet addresses to compare"
+                  "description": "Comma-separated list (or JSON array) of wallet addresses to compare",
+                  "repeatable": true
                 },
                 "chain": {
                   "type": "string",
@@ -840,7 +1346,8 @@
                   "default": 30,
                   "description": "Lookback window in days"
                 }
-              }
+              },
+              "pagination": false
             }
           },
           "description": "Wallet profiling - detailed information about any blockchain address"
@@ -859,7 +1366,10 @@
                 "token": {
                   "type": "string",
                   "required": true,
-                  "description": "Token contract address (mint address on Solana)"
+                  "description": "Token contract address (mint address on Solana)",
+                  "aliases": [
+                    "token-address"
+                  ]
                 },
                 "days": {
                   "type": "integer",
@@ -876,7 +1386,31 @@
                     "whale",
                     "exchange"
                   ],
-                  "default": "top_100_holders"
+                  "default": "top_100_holders",
+                  "type": "string"
+                },
+                "date": {
+                  "type": "string",
+                  "description": "Date range: YYYY-MM-DD or {\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}; overrides --days",
+                  "format": "json"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "smart-money": {
+                  "type": "boolean",
+                  "description": "Only smart money wallets"
                 }
               }
             },
@@ -892,7 +1426,10 @@
                 "token": {
                   "type": "string",
                   "required": true,
-                  "description": "Token contract address (mint address on Solana)"
+                  "description": "Token contract address (mint address on Solana)",
+                  "aliases": [
+                    "token-address"
+                  ]
                 },
                 "days": {
                   "type": "integer",
@@ -906,7 +1443,31 @@
                     "BUY",
                     "SELL"
                   ],
-                  "default": "BUY"
+                  "default": "BUY",
+                  "type": "string"
+                },
+                "date": {
+                  "type": "string",
+                  "description": "Date range: YYYY-MM-DD or {\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}; overrides --days",
+                  "format": "json"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "smart-money": {
+                  "type": "boolean",
+                  "description": "Only smart money wallets"
                 }
               }
             },
@@ -922,13 +1483,34 @@
                 "token": {
                   "type": "string",
                   "required": true,
-                  "description": "Token contract address (mint address on Solana)"
+                  "description": "Token contract address (mint address on Solana)",
+                  "aliases": [
+                    "token-address"
+                  ]
                 },
                 "days": {
                   "type": "integer",
                   "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "smart-money": {
+                  "type": "boolean",
+                  "description": "Only smart money wallets"
                 }
               }
             },
@@ -944,13 +1526,46 @@
                 "token": {
                   "type": "string",
                   "required": true,
-                  "description": "Token contract address (mint address on Solana)"
+                  "description": "Token contract address (mint address on Solana)",
+                  "aliases": [
+                    "token-address"
+                  ]
                 },
                 "days": {
                   "type": "integer",
                   "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "from": {
+                  "type": "string",
+                  "description": "Only transfers from this address; sent as filters.from_address"
+                },
+                "to": {
+                  "type": "string",
+                  "description": "Only transfers to this address; sent as filters.to_address"
+                },
+                "enrich": {
+                  "type": "boolean",
+                  "description": "Add Nansen labels for the from/to addresses (extra requests)"
+                },
+                "smart-money": {
+                  "type": "boolean",
+                  "description": "Only smart money wallets"
                 }
               }
             },
@@ -966,11 +1581,32 @@
                 "token": {
                   "type": "string",
                   "required": true,
-                  "description": "Token contract address (mint address on Solana)"
+                  "description": "Token contract address (mint address on Solana)",
+                  "aliases": [
+                    "token-address"
+                  ]
                 },
                 "premium-labels": {
                   "description": "Include premium Nansen labels in the response (true=premium, false=free-tier). When omitted, uses API default.",
                   "type": "boolean"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "smart-money": {
+                  "type": "boolean",
+                  "description": "Only smart money wallets"
                 }
               }
             },
@@ -986,7 +1622,10 @@
                 "token": {
                   "type": "string",
                   "required": true,
-                  "description": "Token contract address (mint address on Solana)"
+                  "description": "Token contract address (mint address on Solana)",
+                  "aliases": [
+                    "token-address"
+                  ]
                 },
                 "days": {
                   "type": "integer",
@@ -997,6 +1636,24 @@
                 "premium-labels": {
                   "description": "Include premium Nansen labels in the response (true=premium, false=free-tier). When omitted, uses API default.",
                   "type": "boolean"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "smart-money": {
+                  "type": "boolean",
+                  "description": "Only smart money wallets"
                 }
               }
             },
@@ -1007,7 +1664,10 @@
                 "symbol": {
                   "type": "string",
                   "required": true,
-                  "description": "Perp symbol, e.g. BTC"
+                  "description": "Perp symbol, e.g. BTC",
+                  "aliases": [
+                    "token-symbol"
+                  ]
                 },
                 "days": {
                   "type": "integer",
@@ -1018,6 +1678,24 @@
                 "premium-labels": {
                   "description": "Include premium Nansen labels in the response (true=premium, false=free-tier). When omitted, uses API default.",
                   "type": "boolean"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "smart-money": {
+                  "type": "boolean",
+                  "description": "Only smart money wallets"
                 }
               }
             },
@@ -1028,7 +1706,28 @@
                 "symbol": {
                   "type": "string",
                   "required": true,
-                  "description": "Perp symbol, e.g. BTC"
+                  "description": "Perp symbol, e.g. BTC",
+                  "aliases": [
+                    "token-symbol"
+                  ]
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "smart-money": {
+                  "type": "boolean",
+                  "description": "Only smart money wallets"
                 }
               }
             },
@@ -1039,13 +1738,34 @@
                 "symbol": {
                   "type": "string",
                   "required": true,
-                  "description": "Perp symbol, e.g. BTC"
+                  "description": "Perp symbol, e.g. BTC",
+                  "aliases": [
+                    "token-symbol"
+                  ]
                 },
                 "days": {
                   "type": "integer",
                   "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "smart-money": {
+                  "type": "boolean",
+                  "description": "Only smart money wallets"
                 }
               }
             },
@@ -1061,14 +1781,18 @@
                 "token": {
                   "type": "string",
                   "required": true,
-                  "description": "Token contract address (mint address on Solana)"
+                  "description": "Token contract address (mint address on Solana)",
+                  "aliases": [
+                    "token-address"
+                  ]
                 },
                 "timeframe": {
                   "type": "string",
                   "default": "1d",
                   "description": "Time window for the flow metrics"
                 }
-              }
+              },
+              "pagination": false
             },
             "info": {
               "endpoint": "/api/v1/tgm/token-information",
@@ -1082,14 +1806,18 @@
                 "token": {
                   "type": "string",
                   "required": true,
-                  "description": "Token contract address (mint address on Solana)"
+                  "description": "Token contract address (mint address on Solana)",
+                  "aliases": [
+                    "token-address"
+                  ]
                 },
                 "timeframe": {
                   "type": "string",
                   "default": "1d",
                   "description": "Time window for the price-change and volume fields"
                 }
-              }
+              },
+              "pagination": false
             },
             "indicators": {
               "endpoint": "/api/v1/tgm/indicators",
@@ -1103,9 +1831,13 @@
                 "token": {
                   "type": "string",
                   "required": true,
-                  "description": "Token contract address"
+                  "description": "Token contract address",
+                  "aliases": [
+                    "token-address"
+                  ]
                 }
-              }
+              },
+              "pagination": false
             },
             "ohlcv": {
               "endpoint": "/api/v1/tgm/token-ohlcv",
@@ -1119,14 +1851,18 @@
                 "token": {
                   "type": "string",
                   "required": true,
-                  "description": "Token contract address (mint address on Solana)"
+                  "description": "Token contract address (mint address on Solana)",
+                  "aliases": [
+                    "token-address"
+                  ]
                 },
                 "timeframe": {
                   "type": "string",
                   "default": "1d",
                   "description": "Candle interval"
                 }
-              }
+              },
+              "pagination": false
             },
             "jup-dca": {
               "endpoint": "/api/v1/tgm/jup-dca",
@@ -1135,7 +1871,19 @@
                 "token": {
                   "type": "string",
                   "required": true,
-                  "description": "Token mint address"
+                  "description": "Token mint address",
+                  "aliases": [
+                    "token-address"
+                  ]
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "smart-money": {
+                  "type": "boolean",
+                  "description": "Only smart money wallets"
                 }
               }
             },
@@ -1155,11 +1903,35 @@
                 },
                 "include-stablecoins": {
                   "description": "Whether to include stablecoins in screener results (default true on API side)",
-                  "default": true
+                  "default": true,
+                  "type": "boolean"
                 },
                 "search": {
                   "type": "string",
                   "description": "Filter screener candidates client-side by token name, symbol, or exact address. Only the fetched candidate rows are searched (the first 500 by default, more with --limit/--page, every traversed page with --paginate/--all), so the response adds _meta.search: { query, searched, matched, complete }. complete: false means the API had more rows beyond that window and a missing token may simply rank below it; widen with --limit (max 1000) or --paginate, or narrow with --filters. A stderr note repeats this for --fields/--table/--csv/--stream output. With --paginate/--all, the fully traversed candidate pool is filtered after traversal; pagination metadata describes the upstream candidate-page traversal, not the number of matches after filtering."
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "smart-money": {
+                  "type": "boolean",
+                  "description": "Only smart money wallets"
+                },
+                "chains": {
+                  "type": "string",
+                  "description": "Comma-separated chains; overrides --chain",
+                  "repeatable": true
                 }
               }
             },
@@ -1173,14 +1945,19 @@
                     "lowcap",
                     "midcap",
                     "largecap"
-                  ]
+                  ],
+                  "aliases": [
+                    "market-cap-group"
+                  ],
+                  "type": "string"
                 },
                 "limit": {
                   "type": "number",
                   "default": 25,
                   "description": "Number of tokens to return"
                 }
-              }
+              },
+              "pagination": false
             }
           },
           "description": "Token God Mode - deep analytics for any token"
@@ -1192,7 +1969,8 @@
             "query": {
               "type": "string",
               "required": true,
-              "description": "Token name, symbol, or address, or an entity name"
+              "description": "Token name, symbol, or address, or an entity name",
+              "positional": true
             },
             "type": {
               "type": "string",
@@ -1204,8 +1982,13 @@
               "type": "number",
               "default": 25,
               "description": "Maximum number of results"
+            },
+            "chain": {
+              "type": "string",
+              "description": "Only results on this chain"
             }
-          }
+          },
+          "pagination": false
         },
         "perp": {
           "subcommands": {
@@ -1227,16 +2010,37 @@
                     "whale",
                     "public_figure",
                     "high_winrate_hl_perps_trader"
-                  ]
+                  ],
+                  "type": "string"
                 },
                 "sectors-filter": {
-                  "description": "Comma-separated sector:subcategory pairs to filter by, e.g. \"Crypto:AI,TradFi:Stocks\"."
+                  "description": "Comma-separated sector:subcategory pairs to filter by, e.g. \"Crypto:AI,TradFi:Stocks\".",
+                  "type": "string",
+                  "repeatable": true
                 },
                 "sm-label-filter": {
-                  "description": "Comma-separated Nansen SM labels to filter by, e.g. \"30D Smart Trader\". Only applies when trader-type is all or sm."
+                  "description": "Comma-separated Nansen SM labels to filter by, e.g. \"30D Smart Trader\". Only applies when trader-type is all or sm.",
+                  "type": "string",
+                  "repeatable": true
                 },
                 "trader-label-filter": {
-                  "description": "Comma-separated HL perps trader labels to filter by, e.g. \"HL Perps Whale\". Only applies when trader-type is all or sm."
+                  "description": "Comma-separated HL perps trader labels to filter by, e.g. \"HL Perps Whale\". Only applies when trader-type is all or sm.",
+                  "type": "string",
+                  "repeatable": true
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -1253,6 +2057,20 @@
                 "premium-labels": {
                   "description": "Include premium Nansen labels in the response (true=premium, false=free-tier). When omitted, uses API default.",
                   "type": "boolean"
+                },
+                "filters": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             }
@@ -1269,6 +2087,15 @@
                   "type": "string",
                   "required": true,
                   "description": "Polymarket market ID (numeric, from the screener)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -1291,6 +2118,15 @@
                   "type": "string",
                   "required": true,
                   "description": "Polymarket market ID (numeric, from the screener)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -1302,6 +2138,15 @@
                   "type": "string",
                   "required": true,
                   "description": "Polymarket market ID (numeric, from the screener)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -1315,11 +2160,13 @@
                   "description": "Text filter on market titles"
                 },
                 "sort-by": {
-                  "description": "Deprecated: use --sort field:dir instead"
+                  "description": "Deprecated: use --sort field:dir instead",
+                  "type": "string"
                 },
                 "tags": {
                   "type": "string",
-                  "description": "Comma-separated Polymarket tags to filter by"
+                  "description": "Comma-separated Polymarket tags to filter by",
+                  "repeatable": true
                 },
                 "min-liquidity": {
                   "type": "number",
@@ -1329,10 +2176,6 @@
                   "type": "number",
                   "description": "Maximum liquidity in USD"
                 },
-                "min-unique-traders-24h": {
-                  "type": "number",
-                  "description": "Minimum unique traders in the last 24 hours"
-                },
                 "max-unique-traders-24h": {
                   "type": "number",
                   "description": "Maximum unique traders in the last 24 hours"
@@ -1340,10 +2183,6 @@
                 "min-volume-24hr": {
                   "type": "number",
                   "description": "Minimum 24-hour volume in USD"
-                },
-                "max-volume-24hr": {
-                  "type": "number",
-                  "description": "Maximum 24-hour volume in USD"
                 },
                 "neg-risk": {
                   "type": "boolean",
@@ -1373,6 +2212,19 @@
                 "max-price": {
                   "type": "number",
                   "description": "Maximum outcome price (0-1)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "Market status filter, e.g. active or closed"
                 }
               }
             },
@@ -1386,11 +2238,13 @@
                   "description": "Text filter on event titles"
                 },
                 "sort-by": {
-                  "description": "Deprecated: use --sort field:dir instead"
+                  "description": "Deprecated: use --sort field:dir instead",
+                  "type": "string"
                 },
                 "tags": {
                   "type": "string",
-                  "description": "Comma-separated Polymarket tags to filter by"
+                  "description": "Comma-separated Polymarket tags to filter by",
+                  "repeatable": true
                 },
                 "min-liquidity": {
                   "type": "number",
@@ -1400,10 +2254,6 @@
                   "type": "number",
                   "description": "Maximum liquidity in USD"
                 },
-                "min-unique-traders-24h": {
-                  "type": "number",
-                  "description": "Minimum unique traders in the last 24 hours"
-                },
                 "max-unique-traders-24h": {
                   "type": "number",
                   "description": "Maximum unique traders in the last 24 hours"
@@ -1411,10 +2261,6 @@
                 "min-volume-24hr": {
                   "type": "number",
                   "description": "Minimum 24-hour volume in USD"
-                },
-                "max-volume-24hr": {
-                  "type": "number",
-                  "description": "Maximum 24-hour volume in USD"
                 },
                 "neg-risk": {
                   "type": "boolean",
@@ -1436,6 +2282,19 @@
                 "end-date-after": {
                   "type": "string",
                   "description": "Only events ending after this date (ISO 8601)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "Market status filter, e.g. active or closed"
                 }
               }
             },
@@ -1447,6 +2306,15 @@
                   "type": "string",
                   "required": true,
                   "description": "Polymarket market ID (numeric, from the screener)"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -1458,6 +2326,15 @@
                   "type": "string",
                   "required": true,
                   "description": "Polymarket trader address"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -1480,6 +2357,15 @@
                   "type": "string",
                   "required": true,
                   "description": "Polymarket trader address"
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Sort as field or field:asc|desc, sent as order_by"
+                },
+                "order-by": {
+                  "type": "string",
+                  "format": "json",
+                  "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
                 }
               }
             },
@@ -1525,11 +2411,13 @@
               "default": "all",
               "description": "Include all chains or only EVM chains"
             }
-          }
+          },
+          "pagination": false
         },
         "token-sectors": {
           "endpoint": "/api/v1/search/token-sectors",
-          "description": "List token sectors available for filtering"
+          "description": "List token sectors available for filtering",
+          "pagination": false
         },
         "address-premium-labels": {
           "endpoint": "/api/v1/profiler/address/premium-labels",
@@ -1563,7 +2451,9 @@
           "options": {
             "chains": {
               "default": "solana",
-              "description": "Comma-separated chains"
+              "description": "Comma-separated chains",
+              "type": "string",
+              "repeatable": true
             },
             "timeframe-days": {
               "type": "number",
@@ -1573,7 +2463,8 @@
             },
             "filters": {
               "type": "string",
-              "description": "Filters as JSON object"
+              "description": "Filters as JSON object",
+              "format": "json"
             },
             "sort": {
               "type": "string",
@@ -1587,6 +2478,15 @@
             "limit": {
               "type": "number",
               "description": "Max results per page; maps to pagination.per_page"
+            },
+            "order-by": {
+              "type": "string",
+              "format": "json",
+              "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+            },
+            "chain": {
+              "type": "string",
+              "description": "Single chain; --chains takes precedence"
             }
           }
         },
@@ -1596,9 +2496,15 @@
           "options": {
             "symbol": {
               "required": true,
-              "description": "Hyperliquid asset symbol (--token-address is accepted as an alias)"
+              "description": "Hyperliquid asset symbol (--token-address is accepted as an alias)",
+              "type": "string",
+              "aliases": [
+                "token-address",
+                "token"
+              ]
             }
-          }
+          },
+          "pagination": false
         },
         "perp-pnl-summary": {
           "endpoint": "/api/v1/profiler/perp-pnl-summary",
@@ -1611,13 +2517,18 @@
             },
             "from-date": {
               "required": true,
-              "description": "Start of date range"
+              "description": "Start of date range",
+              "type": "string",
+              "format": "date-time"
             },
             "to-date": {
               "required": true,
-              "description": "End of date range"
+              "description": "End of date range",
+              "type": "string",
+              "format": "date-time"
             }
-          }
+          },
+          "pagination": false
         },
         "historical-token-ohlcv": {
           "endpoint": "/api/v1beta1/tgm/historical-token-ohlcv",
@@ -1625,35 +2536,50 @@
           "options": {
             "token-address": {
               "required": true,
-              "description": "Token address or Hyperliquid asset symbol"
+              "description": "Token address or Hyperliquid asset symbol",
+              "type": "string",
+              "aliases": [
+                "token"
+              ]
             },
             "chain": {
               "type": "string",
-              "enum": ["base", "bnb", "ethereum", "hyperliquid", "solana"],
               "default": "solana",
               "description": "Chain the token lives on"
             },
             "from-date": {
               "required": true,
-              "description": "Start of data window"
+              "description": "Start of data window",
+              "type": "string"
             },
             "as-of-date": {
-              "description": "End of data window; exactly one of --as-of-date or --as-of-ts is required"
+              "description": "End of data window; exactly one of --as-of-date or --as-of-ts is required",
+              "type": "string"
             },
             "as-of-ts": {
-              "description": "Exact Hyperliquid cutoff timestamp; exactly one of --as-of-date or --as-of-ts is required"
+              "description": "Exact Hyperliquid cutoff timestamp; exactly one of --as-of-date or --as-of-ts is required",
+              "type": "string"
             },
             "timeframe": {
               "type": "string",
               "required": true,
-              "enum": ["5m", "15m", "30m", "1h", "1d", "1w"],
+              "enum": [
+                "5m",
+                "15m",
+                "30m",
+                "1h",
+                "4h",
+                "1d",
+                "1w"
+              ],
               "description": "Candle interval"
             },
             "apply-blacklist-filter": {
               "type": "boolean",
               "description": "Apply blacklist filtering for 1d/1w non-Hyperliquid requests"
             }
-          }
+          },
+          "pagination": false
         },
         "transaction-with-token-transfer-lookup": {
           "endpoint": "/api/v1/transaction-with-token-transfer-lookup",
@@ -1666,14 +2592,15 @@
             },
             "chain": {
               "type": "string",
-              "enum": ["all", "arbitrum", "avalanche", "base", "bitcoin", "bnb", "ethereum", "hyperevm", "injective", "iotaevm", "linea", "mantle", "mantra", "monad", "near", "optimism", "plasma", "robinhood", "sei", "sonic", "starknet", "sui", "ton", "tron"],
               "default": "ethereum",
               "description": "Chain the transaction was made on"
             },
             "block-timestamp": {
-              "description": "Block timestamp (required for bitcoin, tron, ton, starknet, and sui)"
+              "description": "Block timestamp (required for bitcoin, tron, ton, starknet, and sui)",
+              "type": "string"
             }
-          }
+          },
+          "pagination": false
         },
         "historical-dex-trades": {
           "endpoint": "/api/v1/tgm/historical-dex-trades",
@@ -1681,19 +2608,42 @@
           "options": {
             "token-address": {
               "required": true,
-              "description": "Token address"
+              "description": "Token address",
+              "type": "string",
+              "aliases": [
+                "token"
+              ]
             },
             "from-date": {
               "required": true,
-              "description": "Start of date range (YYYY-MM-DD)"
+              "description": "Start of date range (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date-time"
             },
             "to-date": {
               "required": true,
-              "description": "End of date range (YYYY-MM-DD)"
+              "description": "End of date range (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date-time"
             },
             "chain": {
               "default": "solana",
-              "description": "Chain"
+              "description": "Chain",
+              "type": "string"
+            },
+            "filters": {
+              "type": "string",
+              "format": "json",
+              "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+            },
+            "sort": {
+              "type": "string",
+              "description": "Sort as field or field:asc|desc, sent as order_by"
+            },
+            "order-by": {
+              "type": "string",
+              "format": "json",
+              "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
             }
           }
         },
@@ -1703,19 +2653,42 @@
           "options": {
             "token-address": {
               "required": true,
-              "description": "Token address"
+              "description": "Token address",
+              "type": "string",
+              "aliases": [
+                "token"
+              ]
             },
             "from-date": {
               "required": true,
-              "description": "Start of date range (YYYY-MM-DD)"
+              "description": "Start of date range (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date-time"
             },
             "to-date": {
               "required": true,
-              "description": "End of date range (YYYY-MM-DD)"
+              "description": "End of date range (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date-time"
             },
             "chain": {
               "default": "solana",
-              "description": "Chain"
+              "description": "Chain",
+              "type": "string"
+            },
+            "filters": {
+              "type": "string",
+              "format": "json",
+              "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+            },
+            "sort": {
+              "type": "string",
+              "description": "Sort as field or field:asc|desc, sent as order_by"
+            },
+            "order-by": {
+              "type": "string",
+              "format": "json",
+              "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
             }
           }
         },
@@ -1725,21 +2698,31 @@
           "options": {
             "token-address": {
               "required": true,
-              "description": "Token address"
+              "description": "Token address",
+              "type": "string",
+              "aliases": [
+                "token"
+              ]
             },
             "from-date": {
               "required": true,
-              "description": "Start of date range (YYYY-MM-DD)"
+              "description": "Start of date range (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date-time"
             },
             "to-date": {
               "required": true,
-              "description": "End of date range (YYYY-MM-DD)"
+              "description": "End of date range (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date-time"
             },
             "chain": {
               "default": "solana",
-              "description": "Chain"
+              "description": "Chain",
+              "type": "string"
             }
-          }
+          },
+          "pagination": false
         },
         "historical-token-quant-scores": {
           "endpoint": "/api/v1/tgm/historical-token-quant-scores",
@@ -1747,17 +2730,25 @@
           "options": {
             "token-address": {
               "required": true,
-              "description": "Token address"
+              "description": "Token address",
+              "type": "string",
+              "aliases": [
+                "token"
+              ]
             },
             "as-of-date": {
               "required": true,
-              "description": "Snapshot date (YYYY-MM-DD)"
+              "description": "Snapshot date (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date"
             },
             "chain": {
               "default": "solana",
-              "description": "Chain"
+              "description": "Chain",
+              "type": "string"
             }
-          }
+          },
+          "pagination": false
         },
         "historical-top-holders": {
           "endpoint": "/api/v1/tgm/historical-top-holders",
@@ -1765,15 +2756,36 @@
           "options": {
             "token-address": {
               "required": true,
-              "description": "Token address"
+              "description": "Token address",
+              "type": "string",
+              "aliases": [
+                "token"
+              ]
             },
             "as-of-date": {
               "required": true,
-              "description": "Snapshot date (YYYY-MM-DD)"
+              "description": "Snapshot date (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date"
             },
             "chain": {
               "default": "solana",
-              "description": "Chain"
+              "description": "Chain",
+              "type": "string"
+            },
+            "filters": {
+              "type": "string",
+              "format": "json",
+              "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+            },
+            "sort": {
+              "type": "string",
+              "description": "Sort as field or field:asc|desc, sent as order_by"
+            },
+            "order-by": {
+              "type": "string",
+              "format": "json",
+              "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
             }
           }
         },
@@ -1783,23 +2795,47 @@
           "options": {
             "token-address": {
               "required": true,
-              "description": "Token address"
+              "description": "Token address",
+              "type": "string",
+              "aliases": [
+                "token"
+              ]
             },
             "from-date": {
               "required": true,
-              "description": "Start of date range (YYYY-MM-DD)"
+              "description": "Start of date range (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date-time"
             },
             "to-date": {
               "required": true,
-              "description": "End of date range (YYYY-MM-DD)"
+              "description": "End of date range (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date-time"
             },
             "buy-or-sell": {
               "default": "BUY",
-              "description": "BUY or SELL"
+              "description": "BUY or SELL",
+              "type": "string"
             },
             "chain": {
               "default": "solana",
-              "description": "Chain"
+              "description": "Chain",
+              "type": "string"
+            },
+            "filters": {
+              "type": "string",
+              "format": "json",
+              "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+            },
+            "sort": {
+              "type": "string",
+              "description": "Sort as field or field:asc|desc, sent as order_by"
+            },
+            "order-by": {
+              "type": "string",
+              "format": "json",
+              "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
             }
           }
         },
@@ -1809,11 +2845,24 @@
           "options": {
             "as-of-date": {
               "required": true,
-              "description": "Snapshot date (YYYY-MM-DD)"
+              "description": "Snapshot date (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date"
             },
             "chains": {
               "default": "solana",
-              "description": "Comma-separated chains"
+              "description": "Comma-separated chains",
+              "type": "string",
+              "repeatable": true
+            },
+            "filters": {
+              "type": "string",
+              "format": "json",
+              "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+            },
+            "chain": {
+              "type": "string",
+              "description": "Single chain; --chains takes precedence"
             }
           }
         },
@@ -1828,11 +2877,33 @@
             },
             "to-date": {
               "required": true,
-              "description": "End date for the window (YYYY-MM-DD)"
+              "description": "End date for the window (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date"
             },
             "chains": {
               "default": "solana",
-              "description": "Comma-separated chains"
+              "description": "Comma-separated chains",
+              "type": "string",
+              "repeatable": true
+            },
+            "filters": {
+              "type": "string",
+              "format": "json",
+              "description": "Filters as a JSON object, sent as the request filters. EVM addresses (0x + 40 hex) are lowercased."
+            },
+            "sort": {
+              "type": "string",
+              "description": "Sort as field or field:asc|desc, sent as order_by"
+            },
+            "order-by": {
+              "type": "string",
+              "format": "json",
+              "description": "Full order_by JSON array, e.g. [{\"field\":\"value_usd\",\"direction\":\"DESC\"}]; overrides --sort"
+            },
+            "chain": {
+              "type": "string",
+              "description": "Single chain; --chains takes precedence"
             }
           }
         },
@@ -1842,15 +2913,19 @@
           "options": {
             "address": {
               "required": true,
-              "description": "Wallet address"
+              "description": "Wallet address",
+              "type": "string"
             },
             "as-of-date": {
               "required": true,
-              "description": "Snapshot date (YYYY-MM-DD)"
+              "description": "Snapshot date (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date"
             },
             "chain": {
               "default": "ethereum",
-              "description": "Chain"
+              "description": "Chain",
+              "type": "string"
             }
           }
         },
@@ -1860,20 +2935,26 @@
           "options": {
             "transaction-hash": {
               "required": true,
-              "description": "Transaction hash (0x-prefixed, 66 chars)"
+              "description": "Transaction hash (0x-prefixed, 66 chars)",
+              "type": "string"
             },
             "as-of-date": {
               "required": true,
-              "description": "Reference date for label and pricing resolution (YYYY-MM-DD)"
+              "description": "Reference date for label and pricing resolution (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date"
             },
             "block-timestamp": {
-              "description": "Block timestamp (YYYY-MM-DD HH:MM:SS) — skips slow hash-resolution step if provided"
+              "description": "Block timestamp (YYYY-MM-DD HH:MM:SS) — skips slow hash-resolution step if provided",
+              "type": "string"
             },
             "chain": {
               "default": "ethereum",
-              "description": "Chain (ethereum, bnb, base)"
+              "description": "Chain (ethereum, bnb, base)",
+              "type": "string"
             }
-          }
+          },
+          "pagination": false
         },
         "historical-wallet-transactions": {
           "endpoint": "/api/v1/profiler/address/historical-transactions",
@@ -1881,15 +2962,19 @@
           "options": {
             "address": {
               "required": true,
-              "description": "Wallet address"
+              "description": "Wallet address",
+              "type": "string"
             },
             "as-of-date": {
               "required": true,
-              "description": "Snapshot date (YYYY-MM-DD)"
+              "description": "Snapshot date (YYYY-MM-DD)",
+              "type": "string",
+              "format": "date"
             },
             "chain": {
               "default": "ethereum",
-              "description": "Chain"
+              "description": "Chain",
+              "type": "string"
             }
           }
         }
@@ -1910,7 +2995,13 @@
             "channels",
             "data",
             "description"
-          ]
+          ],
+          "options": {
+            "reveal": {
+              "type": "boolean",
+              "description": "Show full channel webhook URLs and webhook signing secrets (redacted by default)"
+            }
+          }
         },
         "create": {
           "endpoint": "/api/v1/smart-alert",
@@ -1962,6 +3053,10 @@
             "disabled": {
               "type": "boolean",
               "description": "Create alert in disabled state"
+            },
+            "reveal": {
+              "type": "boolean",
+              "description": "Show full channel webhook URLs and webhook signing secrets in the response (redacted by default)"
             }
           }
         },
@@ -2017,6 +3112,10 @@
             "disabled": {
               "type": "boolean",
               "description": "Disable alert"
+            },
+            "reveal": {
+              "type": "boolean",
+              "description": "Show full channel webhook URLs and webhook signing secrets in the response (redacted by default)"
             }
           }
         },
@@ -2031,13 +3130,22 @@
             "disabled": {
               "type": "boolean",
               "description": "Disable alert"
+            },
+            "reveal": {
+              "type": "boolean",
+              "description": "Show full channel webhook URLs and webhook signing secrets in the response (redacted by default)"
             }
           }
         },
         "delete": {
           "endpoint": "/api/v1/smart-alert/{alertId}",
           "description": "Delete an alert. Usage: nansen alerts delete <id>",
-          "options": {}
+          "options": {
+            "reveal": {
+              "type": "boolean",
+              "description": "Show full channel webhook URLs and webhook signing secrets in error messages (redacted by default)"
+            }
+          }
         }
       }
     },
@@ -2815,16 +3923,16 @@
     },
     "limit": {
       "type": "number",
-      "description": "Maximum results per page for list-returning research commands; maps to pagination.per_page. General endpoints default to 10 (max 1000), while profiler address endpoints default to 20 (max 100). Supported by smart-money, profiler, token, perp, points, prediction-market, and supported research historical-* commands. Commands that declare their own limit option (search, token top-tokens, trade limit-order list) use those command-specific semantics instead; token ohlcv, profiler perp-positions, and historical-token-flow-summary do not support pagination. profiler labels defaults to 100 when omitted."
+      "description": "Maximum results per page for list-returning research commands; maps to pagination.per_page. General endpoints default to 10 (max 1000), while profiler address endpoints default to 20 (max 100). Commands that declare their own limit option (search, token top-tokens, trade limit-order list) use those command-specific semantics instead. Research commands marked \"pagination\": false in this schema (for example token ohlcv, profiler perp-positions, historical-token-flow-summary) reject it. profiler labels defaults to 100 when omitted."
     },
     "page": {
       "type": "number",
       "default": 1,
-      "description": "1-based page number for list-returning research commands; maps to pagination.page. Supported by smart-money, profiler, token, perp, points, prediction-market, and supported research historical-* commands. Trade, wallet, and operational commands ignore it; token ohlcv, profiler perp-positions, and historical-token-flow-summary do not support pagination. profiler labels defaults to page 1 when omitted."
+      "description": "1-based page number (a positive integer) for list-returning research commands; maps to pagination.page. Research commands marked \"pagination\": false in this schema reject it. Trade, wallet, and operational commands ignore it. profiler labels defaults to page 1 when omitted."
     },
     "paginate": {
       "type": "boolean",
-      "description": "Fetch every page of a list-returning command and return one merged response (alias: --all). Starts at --page (default 1) and uses --limit as the page size; stops on a short or empty page, when server pagination metadata (total_pages, total, is_last_page, has_more, or next_page) says the traversal is complete, when a page repeats rows already seen, or after --max-pages requests. Server total metadata is trusted, so a live dataset that changes or reports inconsistent totals during traversal can omit later rows. The merged response keeps the first page's shape (a bare array is wrapped as { data: [...] }) with rows de-duplicated, plus pagination: { page, pages_fetched, next_page, complete } — next_page is null when complete, otherwise the page to resume from. Each page is a separate, separately billed API call. Works with --stream (NDJSON), --table, --format csv and --fields. Commands without pagination are unaffected."
+      "description": "Fetch every page of a list-returning command and return one merged response (alias: --all). Starts at --page (default 1) and uses --limit as the page size; stops on a short or empty page, when server pagination metadata (total_pages, total, is_last_page, has_more, or next_page) says the traversal is complete, when a page repeats rows already seen, or after --max-pages requests. Server total metadata is trusted, so a live dataset that changes or reports inconsistent totals during traversal can omit later rows. The merged response keeps the first page's shape (a bare array is wrapped as { data: [...] }) with rows de-duplicated, plus pagination: { page, pages_fetched, next_page, complete } — next_page is null when complete, otherwise the page to resume from. Each page is a separate, separately billed API call. Works with --stream (NDJSON), --table, --format csv and --fields. Research commands marked \"pagination\": false reject it."
     },
     "max-pages": {
       "type": "integer",
@@ -2869,7 +3977,7 @@
         "json",
         "csv"
       ],
-      "description": "Output format (default: json)"
+      "description": "Output format: json (default) or csv. Any other value is rejected."
     },
     "x402-payment-signature": {
       "type": "string",

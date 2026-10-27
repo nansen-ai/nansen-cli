@@ -203,7 +203,8 @@ describe('NansenAPI.request with structured server errors', () => {
     const thrown = await capture(new NansenAPI('test-key', 'https://api.nansen.ai'));
 
     expect(thrown.code).toBe(ErrorCode.UNAUTHORIZED);
-    expect(thrown.message).toBe('Invalid API key');
+    // The server message leads; the hint says the key, not the connection, failed.
+    expect(thrown.message).toBe('Invalid API key. The connection works; run nansen login or rotate the key at https://app.nansen.ai/api?tab=api.');
   });
 
   it('adds the no-retry hint for insufficient_credits', async () => {

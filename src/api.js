@@ -14,6 +14,7 @@ import { getAnonymousId, TELEMETRY_DISABLED } from './telemetry.js';
 import { readResponseMeta, stringHeader } from './response-meta.js';
 import { trace, traceRequest, traceResponse, traceError, traceRetry, traceCacheHit } from './debug.js';
 import { appendPaymentRecord, newPaymentId, sanitizeRequestUrl } from './x402-audit.js';
+import { openLocalFile } from './local-file.js';
 
 /**
  * Key for the credit/rate-limit metadata attached to a successful response.
@@ -82,50 +83,13 @@ export const { version: packageVersion } = JSON.parse(
 
 // ============= Error Codes =============
 
-/**
- * Structured error codes for programmatic handling by AI agents
- */
-export const ErrorCode = {
-  // Authentication & Authorization
-  UNAUTHORIZED: 'UNAUTHORIZED',           // 401 - Invalid or missing API key
-  FORBIDDEN: 'FORBIDDEN',                 // 403 - Valid key but insufficient permissions
-  CREDITS_EXHAUSTED: 'CREDITS_EXHAUSTED', // 403 - Insufficient API credits
-  PLAN_UPGRADE_REQUIRED: 'PLAN_UPGRADE_REQUIRED', // 403 - Feature needs a higher subscription plan
-  GEO_BLOCKED: 'GEO_BLOCKED',             // 451 - Not available in the caller's region
-  PAYMENT_REQUIRED: 'PAYMENT_REQUIRED',   // 402 - x402 payment required
-  
-  // Rate Limiting
-  RATE_LIMITED: 'RATE_LIMITED',           // 429 - Too many requests
-  
-  // Validation Errors
-  INVALID_ADDRESS: 'INVALID_ADDRESS',     // Address format validation failed
-  INVALID_TOKEN: 'INVALID_TOKEN',         // Token address validation failed
-  INVALID_CHAIN: 'INVALID_CHAIN',         // Unsupported or invalid chain
-  INVALID_PARAMS: 'INVALID_PARAMS',       // Generic parameter validation error
-  MISSING_PARAM: 'MISSING_PARAM',         // Required parameter not provided
-  UNSUPPORTED_FILTER: 'UNSUPPORTED_FILTER', // Filter not supported for this token/chain
-  QUERY_TOO_LARGE: 'QUERY_TOO_LARGE',     // Query would return too much data - narrow it; retrying will not help
-  PAYLOAD_TOO_LARGE: 'PAYLOAD_TOO_LARGE', // 413 - Request body exceeds the size limit
-  
-  // Resource Errors
-  NOT_FOUND: 'NOT_FOUND',                 // 404 - Resource not found
-  TOKEN_NOT_FOUND: 'TOKEN_NOT_FOUND',     // Token doesn't exist
-  ADDRESS_NOT_FOUND: 'ADDRESS_NOT_FOUND', // Address has no data
-  METHOD_NOT_ALLOWED: 'METHOD_NOT_ALLOWED', // 405 - HTTP method not allowed for this endpoint
-  CONFLICT: 'CONFLICT',                   // 409 - Request conflicts with the current state
-  
-  // Server Errors
-  SERVER_ERROR: 'SERVER_ERROR',           // 500+ - Nansen API internal error
-  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE', // 503 - API temporarily down
-  
-  // Client Errors
-  NETWORK_ERROR: 'NETWORK_ERROR',         // Connection failed
-  TIMEOUT: 'TIMEOUT',                     // Request timed out
-  PAYMENT_AMBIGUOUS: 'PAYMENT_AMBIGUOUS', // x402 payment outcome unknown after transmission — do not retry with another payment
-  
-  // Generic
-  UNKNOWN: 'UNKNOWN',                     // Unclassified error
-};
+// The full, documented code list lives in src/error-codes.js (see
+// docs/error-codes.md). Re-exported here because most modules import it from
+// this file.
+import { ErrorCode } from './error-codes.js';
+
+export { ErrorCode };
+export { ERROR_CODES, FIELD_ERROR_CODES } from './error-codes.js';
 
 /**
  * Error thrown by command handlers for user-facing failures (validation errors,
@@ -235,6 +199,89 @@ export function browserSessionResponseMeta(response) {
   const meta = readResponseMeta(response);
   // Only bounded numeric quota metadata is safe to echo from an auth error.
   return { ...(meta?.credits && { credits: meta.credits }), ...(meta?.rateLimit && { rateLimit: meta.rateLimit }) };
+}
+
+// Validation failures (400/422) name the bad field in the body. A browser
+// session drops the body of every other error so nothing token-bearing can be
+// echoed, but these field-level parts only repeat request input, which the
+// caller already has. Each string is bounded and dropped if it contains a
+// credential, so a server that echoes headers still leaks nothing.
+const SESSION_VALIDATION_STATUSES = new Set([400, 422]);
+const API_KEY_PAGE = 'https://app.nansen.ai/api?tab=api';
+const MAX_ECHOED_STRING = 1000;
+const MAX_ECHOED_FIELD_ERRORS = 100;
+
+export function sessionValidationDetails(data, secrets = []) {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return null;
+  const safe = value => (typeof value === 'string' && value.length > 0 && value.length <= MAX_ECHOED_STRING
+    && !secrets.some(secret => secret && value.includes(secret)) ? value : undefined);
+  const errors = Array.isArray(data.errors)
+    ? data.errors.slice(0, MAX_ECHOED_FIELD_ERRORS)
+      .map(entry => ({ field: safe(entry?.field), message: safe(entry?.message), code: safe(entry?.code) }))
+      .filter(entry => entry.field && entry.message)
+      .map(entry => (entry.code ? entry : { field: entry.field, message: entry.message }))
+    : [];
+  const message = safe(data.message) ?? errors[0]?.message;
+  if (!message) return null;
+  const details = {};
+  for (const key of ['code', 'param', 'doc_url']) {
+    const value = safe(data[key]);
+    if (value) details[key] = value;
+  }
+  if (errors.length) details.errors = errors;
+  return { message, details };
+}
+
+/** Credential values a browser-session error must never echo. */
+function credentialSecrets(headers = {}) {
+  const secrets = [];
+  for (const [name, value] of Object.entries(headers)) {
+    if (typeof value !== 'string' || !['authorization', 'apikey'].includes(name.toLowerCase())) continue;
+    secrets.push(value);
+    const bearer = value.match(/^Bearer\s+(.+)$/i);
+    if (bearer) secrets.push(bearer[1]);
+  }
+  return secrets;
+}
+
+/**
+ * The API error body as `details`, without the copies of what the envelope
+ * already carries: the message (top-level `error`), the HTTP status and the
+ * request id (top-level `requestId`). The per-field `errors[]` list stays.
+ */
+export function apiErrorDetails(data, message, status) {
+  const details = { ...data };
+  const sameText = value => typeof value === 'string' && typeof message === 'string'
+    && value.trim() !== '' && message.includes(value.replace(/\.+$/, ''));
+  if (sameText(details.message)) delete details.message;
+  if (sameText(details.error)) delete details.error;
+  if (details.status === status) delete details.status;
+  if (typeof details.request_id === 'string') {
+    details.requestId ??= details.request_id;
+    delete details.request_id;
+  }
+  return details;
+}
+
+/** Why the connection failed, from the fetch error's cause (ENOTFOUND, ECONNREFUSED, ...). */
+function networkFailureReason(err) {
+  const cause = err?.cause;
+  const code = [cause?.code, cause?.errors?.[0]?.code].find(value => typeof value === 'string' && value);
+  if (code) return code;
+  if (err?.name === 'AbortError' || err?.name === 'TimeoutError') return 'timed out';
+  if (typeof cause?.message === 'string' && cause.message) return cause.message;
+  return typeof err?.message === 'string' && err.message ? err.message : 'connection failed';
+}
+
+/**
+ * NETWORK_ERROR message. It says plainly that the credential was never
+ * checked, so a caller fixes the connection instead of replacing a valid key.
+ */
+export function networkErrorMessage(baseUrl, err, { redact = false } = {}) {
+  let origin = baseUrl;
+  try { origin = new URL(baseUrl).origin; } catch { /* keep the raw value */ }
+  const reason = networkFailureReason(err);
+  return `Could not reach the Nansen API at ${origin}${redact ? '' : ` (${reason})`}. Check your internet connection, VPN, proxy or firewall, then retry. Your credentials were not checked, so this is not an API key problem.`;
 }
 
 /**
@@ -384,37 +431,47 @@ export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL
     return null;
   }
   
+  let fd;
+  let primaryError;
+  let result = null;
   try {
-    const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+    fd = openLocalFile(cacheFile, { root: CACHE_DIR });
+    const cached = JSON.parse(fs.readFileSync(fd, 'utf8'));
     const age = (Date.now() - cached.timestamp) / 1000;
     
-    if (!Number.isFinite(cached.timestamp) || ttlSeconds <= 0 || age > ttlSeconds) {
-      // Delete entries with invalid timestamps, expired entries, or disabled entries.
-      fs.unlinkSync(cacheFile);
-      return null;
+    if (Number.isFinite(cached.timestamp) && ttlSeconds > 0 && age <= ttlSeconds) {
+      // Re-attach the cache marker without reshaping the payload. Object-spreading
+      // a top-level array turns it into { 0: …, 1: … }, so a cached array came back
+      // as an object and every Array.isArray() branch downstream (the table/CSV/
+      // markdown formatters in cli.js, alertsGet) stopped recognising it — the first
+      // call rendered rows and the second rendered nothing. Arrays therefore get
+      // _meta hung off the array itself, exactly as the live request path does when
+      // it records retriedAttempts, and primitives are handed back untouched
+      // because a non-object cannot carry the marker at all.
+      const meta = { ...cached.data?._meta, fromCache: true, cacheAge: Math.round(age) };
+      if (Array.isArray(cached.data)) {
+        const rows = cached.data.slice();
+        rows._meta = meta;
+        result = rows;
+      } else if (cached.data === null || typeof cached.data !== 'object') {
+        result = cached.data;
+      } else {
+        result = { ...cached.data, _meta: meta };
+      }
     }
-    
-    // Re-attach the cache marker without reshaping the payload. Object-spreading
-    // a top-level array turns it into { 0: …, 1: … }, so a cached array came back
-    // as an object and every Array.isArray() branch downstream (the table/CSV/
-    // markdown formatters in cli.js, alertsGet) stopped recognising it — the first
-    // call rendered rows and the second rendered nothing. Arrays therefore get
-    // _meta hung off the array itself, exactly as the live request path does when
-    // it records retriedAttempts, and primitives are handed back untouched
-    // because a non-object cannot carry the marker at all.
-    const meta = { ...cached.data?._meta, fromCache: true, cacheAge: Math.round(age) };
-    if (Array.isArray(cached.data)) {
-      const rows = cached.data.slice();
-      rows._meta = meta;
-      return rows;
-    }
-    if (cached.data === null || typeof cached.data !== 'object') return cached.data;
-    return { ...cached.data, _meta: meta };
-  } catch (_e) {
-    // Invalid cache file, delete it
-    try { fs.unlinkSync(cacheFile); } catch { /* ignore */ }
-    return null;
+  } catch (error) {
+    primaryError = error;
   }
+  let closeError;
+  if (fd !== undefined) {
+    try {
+      fs.closeSync(fd);
+    } catch (error) {
+      closeError = error;
+    }
+  }
+  if (!primaryError && closeError) throw closeError;
+  return result;
 }
 
 /**
@@ -434,7 +491,37 @@ export function setCachedResponse(endpoint, body, data, context = {}) {
     data
   };
   
-  fs.writeFileSync(cacheFile, JSON.stringify(cached), { mode: 0o600 });
+  const contents = JSON.stringify(cached);
+  const tempFile = `${cacheFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  let fd;
+  let primaryError;
+  try {
+    fd = openLocalFile(tempFile, {
+      root: CACHE_DIR,
+      flags: fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
+      mode: 0o600,
+    });
+    if (process.platform !== 'win32') fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, contents);
+    fs.fsyncSync(fd);
+    if (process.platform !== 'win32') fs.fchmodSync(fd, 0o600);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tempFile, cacheFile);
+  } catch (error) {
+    primaryError = error;
+  }
+  let closeError;
+  if (fd !== undefined) {
+    try {
+      fs.closeSync(fd);
+    } catch (error) {
+      closeError = error;
+    }
+  }
+  try { fs.unlinkSync(tempFile); } catch { /* rename may already have committed */ }
+  if (primaryError) throw primaryError;
+  if (closeError) throw closeError;
 }
 
 /**
@@ -544,6 +631,9 @@ function resolveCounterpartiesBatchChain(chain) {
   return resolved;
 }
 
+/** The address the API uses for native BTC on token endpoints that accept bitcoin. */
+export const BITCOIN_NATIVE_ADDRESS = '1111111111111111111114oLvT2';
+
 /**
  * Validate address format for a given chain
  * @param {string} address - The address to validate
@@ -567,7 +657,7 @@ export function validateAddress(address, chain = 'ethereum') {
     }
   } else if (chain === 'bitcoin') {
     if (!ADDRESS_PATTERNS.bitcoin.test(trimmed)) {
-      return { valid: false, error: `Invalid Bitcoin address format.`, code: ErrorCode.INVALID_ADDRESS };
+      return { valid: false, error: `Invalid Bitcoin address format. Expected a legacy (1...), P2SH (3...) or bech32 (bc1...) address. For native BTC use ${BITCOIN_NATIVE_ADDRESS}.`, code: ErrorCode.INVALID_ADDRESS };
     }
   }
   // For unknown chains, allow any non-empty string (API will validate)
@@ -1059,7 +1149,7 @@ export class NansenAPI {
         // Network-level errors - retry these too
         traceError({ method, url, durationMs: Date.now() - startedAt, attempt: attempt + 1, error: this.redactAuthDiagnostics ? 'API request failed' : err.message });
         lastError = new NansenError(
-          this.selection.kind === 'session' ? 'API request failed. Check your connection and retry.' : `Network error: ${err.message}`,
+          networkErrorMessage(this.baseUrl, err, { redact: this.selection.kind === 'session' }),
           ErrorCode.NETWORK_ERROR,
           null,
           { ...(this.selection.kind !== 'session' && { originalError: err.message }), attempt: attempt + 1 }
@@ -1131,19 +1221,35 @@ export class NansenAPI {
         const nestedMatch = typeof message === 'string' && message.match(/['"]message['"]\s*:\s*['"](.*?)['"]\s*[,}]/s);
         if (nestedMatch) message = nestedMatch[1];
         const safeSessionError = this.selection.kind === 'session' ? browserSessionError(response.status, data) : null;
-        const code = safeSessionError?.code || statusToErrorCode(response.status, data);
+        let code = safeSessionError?.code || statusToErrorCode(response.status, data);
         // Keep a body-only challenge available to the signer without exposing
         // the authenticated error body through browser-session diagnostics.
         const bodyPaymentRequirements = response.status === 402 ? data.paymentRequirements : undefined;
         const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'));
         if (this.selection.kind === 'session') {
-          message = safeSessionError.message;
-          data = {}; // Authenticated errors must not echo access tokens into output.
+          // Authenticated errors must not echo access tokens into output. A
+          // validation failure keeps only its field-level parts, so the caller
+          // still learns which field to fix.
+          const validation = SESSION_VALIDATION_STATUSES.has(response.status)
+            ? sessionValidationDetails(data, credentialSecrets(credentialHeaders))
+            : null;
+          message = validation?.message ?? safeSessionError.message;
+          data = validation?.details ?? {};
+          // Same code as with an API key (missing_field -> MISSING_PARAM, ...).
+          if (validation) code = statusToErrorCode(response.status, validation.details);
         }
 
         // Enhance messages for specific error codes
         if (code === ErrorCode.UNAUTHORIZED) {
-          message = this.apiKey || safeSessionError ? message : 'Not logged in. Run: nansen login';
+          if (this.apiKey && !safeSessionError) {
+            // The server's sentence already says the key was rejected and
+            // usually links the key page; add only what it leaves out.
+            const serverMessage = String(message).replace(/\.+$/, '');
+            const keyPage = serverMessage.includes(API_KEY_PAGE) ? '' : ` at ${API_KEY_PAGE}`;
+            message = `${serverMessage}. The connection works; run nansen login or rotate the key${keyPage}.`;
+          } else if (!safeSessionError) {
+            message = 'Not logged in. Run: nansen login';
+          }
         } else if (code === ErrorCode.UNSUPPORTED_FILTER) {
           message = message.replace(/\.+$/, '') + '. This filter is not supported for this token/chain combination. Do not retry.';
         } else if (code === ErrorCode.CREDITS_EXHAUSTED) {
@@ -1301,7 +1407,7 @@ export class NansenAPI {
         const meta = this.selection.kind === 'session' ? browserSessionResponseMeta(response) : readResponseMeta(response);
         this.lastResponseMeta = meta;
         lastError = new NansenError(message, code, response.status, {
-          ...data,
+          ...apiErrorDetails(data, message, response.status),
           attempt: attempt + 1,
           retryAfterMs,
           ...(meta?.requestId && { requestId: meta.requestId }),
@@ -1455,7 +1561,7 @@ export class NansenAPI {
   // ============= Profiler Endpoints =============
 
   async addressBalance(params = {}) {
-    const { address, entityName, chain = 'all', hideSpamToken = true, filters = {}, orderBy } = params;
+    const { address, entityName, chain = 'all', hideSpamToken = true, filters = {}, orderBy, pagination } = params;
     if (address) requireValidAddress(address, chain);
     return this.request('/api/v1/profiler/address/current-balance', {
       address,
@@ -1463,7 +1569,8 @@ export class NansenAPI {
       chain,
       hide_spam_token: hideSpamToken,
       filters,
-      order_by: orderBy
+      order_by: orderBy,
+      pagination
     });
   }
 
@@ -1693,15 +1800,14 @@ export class NansenAPI {
   }
 
   async addressPnlSummary(params = {}) {
-    // Note: pnl-summary endpoint is non-paginated (returns aggregate stats, not a list).
-    // Pagination param intentionally omitted from this request.
-    const { address, chain = 'ethereum', orderBy, days = 30 } = params;
+    // Note: pnl-summary endpoint is non-paginated (returns aggregate stats, not a list)
+    // and has no order_by, so neither is sent.
+    const { address, chain = 'ethereum', days = 30 } = params;
     if (address) requireValidAddress(address, chain);
     return this.request('/api/v1/profiler/address/pnl-summary', {
       address,
       chain,
-      date: buildDateRange(days),
-      order_by: orderBy
+      date: buildDateRange(days)
     });
   }
 
@@ -2046,7 +2152,7 @@ export class NansenAPI {
   }
 
   async pmMarketScreener(params = {}) {
-    const { orderBy, sortBy = 'volume_24hr', query = '', status = '', tags, minLiquidity, maxLiquidity, minUniqueTraders24h, maxUniqueTraders24h, minVolume24hr, maxVolume24hr, negRisk, minOpenInterest, maxOpenInterest, endDateBefore, endDateAfter, minPrice, maxPrice, pagination } = params;
+    const { orderBy, sortBy = 'volume_24hr', query = '', status = '', tags, minLiquidity, maxLiquidity, maxUniqueTraders24h, minVolume24hr, negRisk, minOpenInterest, maxOpenInterest, endDateBefore, endDateAfter, minPrice, maxPrice, pagination } = params;
     const body = {
       sort_by: sortBy,
       query,
@@ -2057,10 +2163,8 @@ export class NansenAPI {
     if (tags && tags.length) body.tags = tags;
     if (minLiquidity != null) body.min_liquidity = minLiquidity;
     if (maxLiquidity != null) body.max_liquidity = maxLiquidity;
-    if (minUniqueTraders24h != null) body.min_unique_traders_24h = minUniqueTraders24h;
     if (maxUniqueTraders24h != null) body.max_unique_traders_24h = maxUniqueTraders24h;
     if (minVolume24hr != null) body.min_volume_24hr = minVolume24hr;
-    if (maxVolume24hr != null) body.max_volume_24hr = maxVolume24hr;
     if (negRisk != null) body.neg_risk = negRisk;
     if (minOpenInterest != null) body.min_open_interest = minOpenInterest;
     if (maxOpenInterest != null) body.max_open_interest = maxOpenInterest;
@@ -2072,7 +2176,7 @@ export class NansenAPI {
   }
 
   async pmEventScreener(params = {}) {
-    const { orderBy, sortBy = 'volume_24hr', query = '', status = '', tags, minLiquidity, maxLiquidity, minUniqueTraders24h, maxUniqueTraders24h, minVolume24hr, maxVolume24hr, negRisk, minOpenInterest, maxOpenInterest, endDateBefore, endDateAfter, pagination } = params;
+    const { orderBy, sortBy = 'volume_24hr', query = '', status = '', tags, minLiquidity, maxLiquidity, maxUniqueTraders24h, minVolume24hr, negRisk, minOpenInterest, maxOpenInterest, endDateBefore, endDateAfter, pagination } = params;
     const body = {
       sort_by: sortBy,
       query,
@@ -2083,10 +2187,8 @@ export class NansenAPI {
     if (tags && tags.length) body.tags = tags;
     if (minLiquidity != null) body.min_liquidity = minLiquidity;
     if (maxLiquidity != null) body.max_liquidity = maxLiquidity;
-    if (minUniqueTraders24h != null) body.min_unique_traders_24h = minUniqueTraders24h;
     if (maxUniqueTraders24h != null) body.max_unique_traders_24h = maxUniqueTraders24h;
     if (minVolume24hr != null) body.min_volume_24hr = minVolume24hr;
-    if (maxVolume24hr != null) body.max_volume_24hr = maxVolume24hr;
     if (negRisk != null) body.neg_risk = negRisk;
     if (minOpenInterest != null) body.min_open_interest = minOpenInterest;
     if (maxOpenInterest != null) body.max_open_interest = maxOpenInterest;
@@ -2185,15 +2287,14 @@ export class NansenAPI {
   }
 
   async researchTokenFlowSummary(params = {}) {
-    // API does not support pagination on this endpoint.
-    const { tokenAddress, chain = 'solana', fromDate, toDate, filters = {}, orderBy } = params;
+    // The endpoint returns one aggregated row: it takes no pagination,
+    // filters or order_by.
+    const { tokenAddress, chain = 'solana', fromDate, toDate } = params;
     if (tokenAddress) requireValidToken(tokenAddress, chain);
     return this.request('/api/v1/tgm/historical-token-flow-summary', {
       token_address: tokenAddress,
       chain,
       date_range: { from: fromDate, to: toDate },
-      filters,
-      order_by: orderBy,
     });
   }
 

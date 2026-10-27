@@ -44,7 +44,27 @@ export function isNewer(latest, current) {
   return compareSemver(latest, current) > 0;
 }
 
-const LAST_VERSION_FILE = path.join(CONFIG_DIR, 'last-version.json');
+/**
+ * Return the minimum Node version the latest release requires when the
+ * running Node is below it, otherwise null. `enginesNode` is the cached
+ * `engines.node` of the latest release; a cache written before it was
+ * recorded has none, so this returns null and callers fall back to the plain
+ * update notice.
+ *
+ * Only a single lower bound (">=22", ">=22.14.0") is understood, compared on
+ * the full version so ">=22.14.0" rejects v22.0.0. Any other range ("||", "^",
+ * upper bounds) also returns null rather than guessing.
+ *
+ * npm installs the newest version whose engines match the running Node, so on
+ * an older Node "npm i -g nansen-cli" resolves back to the installed version.
+ */
+export function nodeTooOldFor(enginesNode, nodeVersion = process.version) {
+  const match = /^\s*>=\s*v?(\d+(?:\.\d+){0,2})\s*$/.exec(typeof enginesNode === 'string' ? enginesNode : '');
+  if (!match || !/^v?\d/.test(String(nodeVersion))) return null;
+  return compareSemver(nodeVersion, match[1]) < 0 ? match[1] : null;
+}
+
+const LAST_VERSION_FILE =path.join(CONFIG_DIR, 'last-version.json');
 
 /**
  * After an update, show a one-time "what's new" notice on the first run.
@@ -82,16 +102,20 @@ export function getUpgradeNotice(currentVersion) {
 /**
  * Read the cached check result and return a notification string (or null).
  */
-export function getUpdateNotification(currentVersion) {
+export function getUpdateNotification(currentVersion, nodeVersion = process.version) {
   try {
     if (process.env.NO_UPDATE_NOTIFIER || process.env.CI) return null;
     if (!fs.existsSync(CACHE_FILE)) return null;
 
     const raw = fs.readFileSync(CACHE_FILE, 'utf8');
-    const { latest } = JSON.parse(raw);
+    const { latest, engines } = JSON.parse(raw);
     if (!latest) return null;
 
     if (isNewer(latest, currentVersion)) {
+      const neededNode = nodeTooOldFor(engines, nodeVersion);
+      if (neededNode) {
+        return `Update available: ${currentVersion} → ${latest}, but it requires Node >= ${neededNode} (you have ${nodeVersion}). Install Node >= ${neededNode}, then: npm i -g ${PACKAGE_NAME}`;
+      }
       return `Update available: ${currentVersion} → ${latest}  (npm i -g ${PACKAGE_NAME})`;
     }
     return null;
@@ -129,12 +153,15 @@ export function buildCheckScript(dir, file, url = REGISTRY_URL) {
       res.on('data', c => body += c);
       res.on('end', () => {
         try {
-          const { version } = JSON.parse(body);
+          const { version, engines } = JSON.parse(body);
           if (typeof version !== 'string' || version.trim() === '') return;
+          // Keep the latest release's Node requirement so the notice can say
+          // when a reinstall would not reach it. Omitted when absent.
+          const node = engines && typeof engines.node === 'string' ? engines.node : undefined;
           if (!fs.existsSync(dir)) fs.mkdirSync(dir, { mode: 0o700, recursive: true });
           const tmp = file + '.' + process.pid + '.tmp';
           try {
-            fs.writeFileSync(tmp, JSON.stringify({ latest: version, checkedAt: Date.now() }));
+            fs.writeFileSync(tmp, JSON.stringify({ latest: version, engines: node, checkedAt: Date.now() }));
             fs.renameSync(tmp, file);
           } catch (e) {
             try { fs.unlinkSync(tmp); } catch {}

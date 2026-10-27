@@ -2706,12 +2706,11 @@ describe('NansenAPI', () => {
         expect(body).not.toHaveProperty('order_by');
       });
 
-      it('should pass volume filters', async () => {
+      it('should pass the volume filter', async () => {
         setupMock(MOCK_RESPONSES.pmMarketScreener);
-        await api.pmMarketScreener({ minVolume24hr: 1000, maxVolume24hr: 50000 });
+        await api.pmMarketScreener({ minVolume24hr: 1000 });
         const body = expectFetchCalledWith('/api/v1/prediction-market/market-screener');
         expect(body.min_volume_24hr).toBe(1000);
-        expect(body.max_volume_24hr).toBe(50000);
       });
 
       it('should pass liquidity filters', async () => {
@@ -2730,12 +2729,19 @@ describe('NansenAPI', () => {
         expect(body.max_open_interest).toBe(500000);
       });
 
-      it('should pass unique traders filters', async () => {
+      it('should pass the unique traders filter', async () => {
         setupMock(MOCK_RESPONSES.pmMarketScreener);
-        await api.pmMarketScreener({ minUniqueTraders24h: 10, maxUniqueTraders24h: 500 });
+        await api.pmMarketScreener({ maxUniqueTraders24h: 500 });
         const body = expectFetchCalledWith('/api/v1/prediction-market/market-screener');
-        expect(body.min_unique_traders_24h).toBe(10);
         expect(body.max_unique_traders_24h).toBe(500);
+      });
+
+      it('never sends min_unique_traders_24h or max_volume_24hr (the API rejects them)', async () => {
+        setupMock(MOCK_RESPONSES.pmMarketScreener);
+        await api.pmMarketScreener({ minUniqueTraders24h: 10, maxVolume24hr: 50000 });
+        const body = expectFetchCalledWith('/api/v1/prediction-market/market-screener');
+        expect(body).not.toHaveProperty('min_unique_traders_24h');
+        expect(body).not.toHaveProperty('max_volume_24hr');
       });
 
       it('should pass neg_risk boolean', async () => {
@@ -2773,7 +2779,7 @@ describe('NansenAPI', () => {
         await api.pmMarketScreener({});
         const body = expectFetchCalledWith('/api/v1/prediction-market/market-screener');
         expect(body).not.toHaveProperty('min_volume_24hr');
-        expect(body).not.toHaveProperty('max_volume_24hr');
+        expect(body).not.toHaveProperty('max_unique_traders_24h');
         expect(body).not.toHaveProperty('tags');
         expect(body).not.toHaveProperty('neg_risk');
       });
@@ -2799,19 +2805,17 @@ describe('NansenAPI', () => {
 
       it('should pass volume and liquidity filters', async () => {
         setupMock(MOCK_RESPONSES.pmEventScreener);
-        await api.pmEventScreener({ minVolume24hr: 1000, maxVolume24hr: 50000, minLiquidity: 5000, maxLiquidity: 100000 });
+        await api.pmEventScreener({ minVolume24hr: 1000, minLiquidity: 5000, maxLiquidity: 100000 });
         const body = expectFetchCalledWith('/api/v1/prediction-market/event-screener');
         expect(body.min_volume_24hr).toBe(1000);
-        expect(body.max_volume_24hr).toBe(50000);
         expect(body.min_liquidity).toBe(5000);
         expect(body.max_liquidity).toBe(100000);
       });
 
       it('should pass unique traders and open interest filters', async () => {
         setupMock(MOCK_RESPONSES.pmEventScreener);
-        await api.pmEventScreener({ minUniqueTraders24h: 10, maxUniqueTraders24h: 500, minOpenInterest: 1000, maxOpenInterest: 100000 });
+        await api.pmEventScreener({ maxUniqueTraders24h: 500, minOpenInterest: 1000, maxOpenInterest: 100000 });
         const body = expectFetchCalledWith('/api/v1/prediction-market/event-screener');
-        expect(body.min_unique_traders_24h).toBe(10);
         expect(body.max_unique_traders_24h).toBe(500);
         expect(body.min_open_interest).toBe(1000);
         expect(body.max_open_interest).toBe(100000);
@@ -3010,8 +3014,10 @@ describe('NansenAPI', () => {
         thrownError = error;
       }
       
-      // Check that original error data is included (with retry metadata added)
-      expect(thrownError.details.error).toEqual(errorData.error);
+      // The body's own fields are kept (with retry metadata added), except the
+      // copy of the message that the envelope already carries as `error`.
+      expect(thrownError.message).toBe(errorData.error);
+      expect(thrownError.details).not.toHaveProperty('error');
       expect(thrownError.details.details).toEqual(errorData.details);
     });
 

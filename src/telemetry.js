@@ -232,11 +232,15 @@ function perpOutcomeEventId({ wallet_address, submission_id, leg_index, outcome 
 
 /**
  * Convert a command string like "smart-money netflow" to a path like "/smart-money/netflow".
- * Agent ("agent …") always maps to "/agent" so prompts are not exploded into path segments.
+ * Free text and malformed feedback arguments must never become path segments.
  */
 function commandToPath(command) {
   if (typeof command === 'string' && /^agent(?:\s+|$)/.test(command.trimStart())) {
     return '/agent';
+  }
+  if (typeof command === 'string' && /^feedback(?:\s+|$)/.test(command.trimStart())) {
+    const subcommand = command.trim().split(/\s+/)[1];
+    return ['submit', 'get'].includes(subcommand) ? `/feedback/${subcommand}` : '/feedback';
   }
   return '/' + String(command).replace(/\s+/g, '/');
 }

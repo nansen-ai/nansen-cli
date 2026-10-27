@@ -1918,13 +1918,15 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
       log(`  Type: ${execution_type}`);
       log(`  Steps: ${steps.length}`);
 
-      // Dry-run preflight needs only the public address persisted alongside the
-      // quote. Prefer it before touching local wallet configuration; legacy
-      // quotes without the field retain the previous wallet-resolution path.
-      // A real execution always resolves the live signer independently and
-      // binds it to the quote before any credentials are loaded.
+      // Dry-run preflight normally needs only the public address persisted with
+      // the quote. Privy Hyperliquid quotes are the exception: resolve the live
+      // signer so its wallet ID can be bound before even showing a preview.
+      // Real execution always resolves the live signer independently and binds
+      // it to the quote before any credentials are loaded.
       const quotedWalletAddress = validateQuotedWalletAddress(quoteId, quoteData.walletAddress);
-      const signer = guard.dryRun && quotedWalletAddress
+      const requiresPrivyBinding = execution_type === 'hyperliquid_signature'
+        && quoteData.walletProvider === 'privy';
+      const signer = guard.dryRun && quotedWalletAddress && !requiresPrivyBinding
         ? null
         : resolveWalletAddress(walletName);
       const signerAddress = signer?.address || quotedWalletAddress;
@@ -1945,6 +1947,15 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         throw new Error(
           `Bridge quote "${quoteId}" was created for ${quotedWalletAddress} but the signing wallet is ${signer.address}. Pass --wallet for the quote's wallet, or request a new quote.`,
         );
+      }
+
+      let privyBinding = null;
+      if (execution_type === 'hyperliquid_signature' && signer?.provider === 'privy') {
+        const { PrivyClient, assertPrivyWalletAddress } = await import('./privy.js');
+        const client = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);
+        const walletId = signer.privyWalletIds?.evm;
+        await assertPrivyWalletAddress(client, walletId, signer.address, 'evm');
+        privyBinding = { client, walletId };
       }
 
       // Re-screen the signer and any distinct recipient immediately before
@@ -2106,14 +2117,12 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
           }
         } else if (execution_type === 'hyperliquid_signature') {
           if (creds.provider === 'privy') {
-            const { PrivyClient } = await import('./privy.js');
-            const privyClient = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);
             for (const [index, step] of steps.entries()) {
               await processSignatureStepPrivy(step, {
-                privyClient,
+                privyClient: privyBinding.client,
                 // `signer` above — the same resolution that was screened and
                 // matched against the quote, rather than resolving a second time.
-                walletId: signer.privyWalletIds?.evm,
+                walletId: privyBinding.walletId,
                 log,
                 apiInstance,
                 onBroadcast,

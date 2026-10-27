@@ -116,7 +116,7 @@ describe('request() tracing', () => {
     vi.stubGlobal('fetch', fetchMock);
     const api = new NansenAPI(FAKE_API_KEY, BASE_URL, FAST_RETRY);
 
-    await expect(api.request('/api/v1/demo', {}, { retry: false })).rejects.toThrow(/Network error/);
+    await expect(api.request('/api/v1/demo', {}, { retry: false })).rejects.toThrow(/Could not reach the Nansen API/);
 
     const output = traced();
     expect(fetchMock).toHaveBeenCalledTimes(1);

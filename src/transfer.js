@@ -664,7 +664,7 @@ export { parseAmount, formatAmount, signEd25519, encodeCompactU16, base58Decode,
  * Solana builds unsigned tx, signs via Privy, then broadcasts.
  */
 async function sendTokensViaPrivy({ to, amount, chain, token, max, dryRun, walletInfo }) {
-  const { PrivyClient } = await import('./privy.js');
+  const { PrivyClient, assertPrivyWalletAddress } = await import('./privy.js');
   const client = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);
 
   if (chain === 'solana') {
@@ -672,6 +672,9 @@ async function sendTokensViaPrivy({ to, amount, chain, token, max, dryRun, walle
     const fromAddress = walletInfo.solana;
     if (!fromAddress) throw new Error('No Solana wallet in this Privy wallet');
     if (!walletId) throw new Error('No Privy Solana wallet ID found. Re-create the wallet with: nansen wallet create --provider privy');
+    if (token && !validateSolanaAddress(token).valid) throw new Error('Invalid Solana token address');
+    if (!max && !token) parseAmount(amount, 9);
+    await assertPrivyWalletAddress(client, walletId, fromAddress, 'solana');
 
     if (max && !token) {
       const balResult = await rpcCall(CHAIN_RPCS.solana, 'getBalance', [fromAddress, { commitment: 'confirmed' }]);
@@ -715,6 +718,9 @@ async function sendTokensViaPrivy({ to, amount, chain, token, max, dryRun, walle
 
   const chainId = CHAIN_IDS[chain];
   if (!chainId) throw new Error(`Unsupported chain: ${chain}`);
+  if (token && !validateEvmAddress(token).valid) throw new Error('Invalid ERC-20 token address');
+  if (!max && !token) parseAmount(amount, 18);
+  await assertPrivyWalletAddress(client, walletId, fromAddress, 'evm');
 
   let decimals = 18;
   const rpcUrl = CHAIN_RPCS[chain] || CHAIN_RPCS.evm;

@@ -73,7 +73,7 @@ describe('telemetry tracking for all first-level commands', () => {
     { category: 'profiler',    sub: 'labels', extraOpts: ['--address', '0x1234'] },
     { category: 'token',       sub: 'screener' },
     { category: 'search',      sub: 'search', extraOpts: ['--query', 'bitcoin'] },
-    { category: 'portfolio',   sub: 'current', extraOpts: ['--address', '0x1234'] },
+    { category: 'portfolio',   sub: 'defi', extraOpts: ['--address', '0x1234'] },
     { category: 'prediction-market', sub: 'market-screener' },
   ];
 

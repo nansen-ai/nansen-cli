@@ -15,7 +15,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { passwordSource } from './keychain.js';
-import { isNewer } from './update-check.js';
+import { isNewer, nodeTooOldFor } from './update-check.js';
 import { isTelemetryDisabled } from './telemetry.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -374,9 +374,18 @@ export function runDoctorChecks(deps = {}) {
   if (cliVersion) {
     const updateCache = readJson(path.join(getConfigDir(env), 'update-check.json'));
     if (updateCache?.latest) {
-      checks.push(isNewer(updateCache.latest, cliVersion)
-        ? check('cli-version', 'warn', `Update available: ${cliVersion} → ${updateCache.latest}`, 'Run: npm i -g nansen-cli')
-        : check('cli-version', 'ok', `nansen-cli ${cliVersion} is up to date`));
+      const neededNode = nodeTooOldFor(updateCache.engines, nodeVersion);
+      if (!isNewer(updateCache.latest, cliVersion)) {
+        checks.push(check('cli-version', 'ok', `nansen-cli ${cliVersion} is up to date`));
+      } else if (neededNode) {
+        // npm only installs releases whose engines match the running Node, so
+        // a plain reinstall would land back on this version.
+        checks.push(check('cli-version', 'warn',
+          `Update available: ${cliVersion} → ${updateCache.latest}, but it requires Node >= ${neededNode} (you have ${nodeVersion})`,
+          `Install Node >= ${neededNode} (https://nodejs.org), then run: npm i -g nansen-cli`));
+      } else {
+        checks.push(check('cli-version', 'warn', `Update available: ${cliVersion} → ${updateCache.latest}`, 'Run: npm i -g nansen-cli'));
+      }
     } else {
       checks.push(check('cli-version', 'info', `nansen-cli ${cliVersion} (no update-check cache yet)`));
     }

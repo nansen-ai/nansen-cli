@@ -141,7 +141,7 @@ describe('generateSubcommandHelp', () => {
   it('lists every option, marking required ones and showing defaults and enums', () => {
     const params = lineStartingWith(helpLines('token', 'who-bought-sold'), 'Params');
     expect(params).toBe(
-      'Params (* required): --chain (solana), --token*, --days (30), --buy-or-sell (BUY) [BUY|SELL]'
+      'Params (* required): --chain (solana), --token*, --days (30), --buy-or-sell (BUY) [BUY|SELL], --date, --filters, --sort, --order-by, --smart-money'
     );
     // The marker is what tells an agent which options it must supply, so
     // pin it per option rather than only on the joined line.

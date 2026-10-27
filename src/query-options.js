@@ -7,17 +7,31 @@
  */
 
 import { NansenError, CommandError, ErrorCode } from './api.js';
+import { normalizeFilterAddresses } from './input-validation.js';
 
+/**
+ * The request `pagination` object for --page/--limit, or undefined when
+ * neither is given. Both must be positive whole numbers: --page 0 used to be
+ * clamped to 1 silently (API-1081).
+ */
 export function buildPagination(options) {
   if (options.limit === undefined && options.page === undefined) return undefined;
-  const perPage = options.limit === undefined ? undefined : Number(options.limit);
-  if (perPage !== undefined && (!Number.isInteger(perPage) || perPage < 1)) {
-    throw new NansenError('--limit must be a positive integer', ErrorCode.INVALID_PARAMS);
+  const pagination = { page: 1 };
+  if (options.page !== undefined) {
+    const page = Number(options.page);
+    if (typeof options.page === 'boolean' || String(options.page).trim() === '' || !Number.isSafeInteger(page) || page < 1) {
+      throw new NansenError('--page must be a positive integer', ErrorCode.INVALID_PARAMS);
+    }
+    pagination.page = page;
   }
-  return {
-    page: Math.max(1, parseInt(options.page, 10) || 1),
-    per_page: perPage,
-  };
+  if (options.limit !== undefined) {
+    const perPage = Number(options.limit);
+    if (typeof options.limit === 'boolean' || String(options.limit).trim() === '' || !Number.isSafeInteger(perPage) || perPage < 1) {
+      throw new NansenError('--limit must be a positive integer', ErrorCode.INVALID_PARAMS);
+    }
+    pagination.per_page = perPage;
+  }
+  return pagination;
 }
 
 // Parse simple sort syntax: "field:direction" or "field" (defaults to DESC)
@@ -83,6 +97,15 @@ export function parseObjectOption(val, name) {
     );
   }
   return val;
+}
+
+/**
+ * `--filters '<json>'` as a plain object with every EVM address lowercased.
+ * The API stores EVM addresses lowercase, so a checksummed address matched no
+ * rows and the command returned an empty success (API-1081).
+ */
+export function parseFiltersOption(val) {
+  return normalizeFilterAddresses(parseObjectOption(val, 'filters'));
 }
 
 /** Reject explicit blank strings before a handler selects an omitted-option default. */

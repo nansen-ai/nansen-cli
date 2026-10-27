@@ -1,0 +1,180 @@
+{
+  "source": "https://api.nansen.ai/openapi.json components.schemas, fetched 2026-10-26. Generated from nansen-ai/nansen-api wrapper/models/feedback.py at 5dddf08db314eeb95154c22ca57c2d0837c5ca7e.",
+  "schemas": {
+    "FeedbackReport": {
+      "properties": {
+        "category": {
+          "$ref": "#/components/schemas/FeedbackCategory",
+          "description": "Kind of friction reported"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Description",
+          "description": "What happened and what was needed, at most 2,000 characters"
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 256,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Endpoint",
+          "description": "API endpoint path involved, without query string or credentials"
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 256,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tool",
+          "description": "Tool name involved"
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 2000,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Goal",
+          "description": "What the caller was trying to achieve"
+        },
+        "expected_behavior": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 2000,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expected Behavior",
+          "description": "What the caller expected"
+        },
+        "observed_behavior": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 2000,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Observed Behavior",
+          "description": "What the caller observed"
+        },
+        "workaround": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 2000,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Workaround",
+          "description": "Any workaround used"
+        },
+        "request_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              "type": "array",
+              "maxItems": 10
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Request Ids",
+          "description": "Up to 10 distinct request IDs from the caller's own requests, as evidence references"
+        },
+        "client": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/FeedbackClient"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Declared client name and version"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "category",
+        "description"
+      ],
+      "title": "FeedbackReport",
+      "description": "One product feedback report. Remove secrets and unnecessary personal context before sending."
+    },
+    "FeedbackCategory": {
+      "type": "string",
+      "enum": [
+        "bug",
+        "data_quality",
+        "documentation",
+        "missing_capability",
+        "usability",
+        "other"
+      ],
+      "title": "FeedbackCategory",
+      "description": "What kind of friction the report describes."
+    },
+    "FeedbackClient": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Name",
+          "description": "Client name"
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Version",
+          "description": "Client version"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "FeedbackClient",
+      "description": "Declared client metadata. Attribution only; never identity or authorization."
+    }
+  }
+}
