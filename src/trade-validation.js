@@ -44,12 +44,24 @@ const SOLANA_MAX_COMPUTE_UNITS = 1_400_000; // Solana's per-transaction compute-
                                              // worst-case bound the priority-fee cap assumes when a
                                              // price is set with no explicit limit instruction. The
                                              // runtime clamps any larger requested limit to it.
-// The runtime's default limit when none is set: 200,000 CU per non-builtin
-// instruction and 3,000 per builtin, compute-budget ones included (current
-// runtime; before, 200,000 per non-compute-budget instruction). Counting 200,000 per
-// non-compute-budget and 3,000 per compute-budget instruction bounds both rules.
+// The runtime's default limit when none is set: 200,000 CU per instruction,
+// or 3,000 for a builtin program's instruction (Agave's builtin cost map).
+// Vote is mid-migration to on-chain BPF; counting it as a builtin can only
+// understate the fee, and an unpayable fee is dropped by the leader unsigned
+// and uncharged, whereas overstating it falsely rejects the transaction.
 const SOLANA_DEFAULT_INSTRUCTION_COMPUTE_UNITS = 200_000;
 const SOLANA_DEFAULT_BUILTIN_COMPUTE_UNITS = 3_000;
+const SOLANA_BUILTIN_PROGRAMS = new Set([
+  SYSTEM_PROGRAM,
+  COMPUTE_BUDGET_PROGRAM,
+  'BPFLoader1111111111111111111111111111111111',
+  'BPFLoader2111111111111111111111111111111111',
+  'BPFLoaderUpgradeab1e11111111111111111111111',
+  'LoaderV411111111111111111111111111111111111',
+  'KeccakSecp256k11111111111111111111111111111',
+  'Ed25519SigVerify111111111111111111111111111',
+  'Vote111111111111111111111111111111111111111',
+]);
 const MAX_PRIORITY_FEE_LAMPORTS = 10_000_000n; // 0.01 SOL sanity ceiling on the priority fee a
                                                 // single trade can be made to pay.
 
@@ -1843,7 +1855,7 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
 
   let computeUnitLimit = null;
   let computeUnitPriceMicroLamports = null;
-  let computeBudgetInstructions = 0;
+  let builtinInstructions = 0;
 
   for (const ix of parsed.instructions) {
     const programId = resolveStaticAccount(parsed, ix.programIdIndex);
@@ -1859,7 +1871,7 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
         'Solana transaction invokes a program only resolvable via an address-lookup-table entry, which cannot be safety-classified. Refusing to sign.',
       );
     }
-    if (programId === COMPUTE_BUDGET_PROGRAM) computeBudgetInstructions++;
+    if (SOLANA_BUILTIN_PROGRAMS.has(programId)) builtinInstructions++;
 
     if (SPL_TOKEN_PROGRAMS.has(programId)) {
       // No discriminator byte — not a valid SPL Token instruction (the runtime
@@ -1915,8 +1927,8 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
     // it prices the runtime's default limit, so it doesn't reject a transaction
     // the wallet can afford.
     const defaultLimit =
-      SOLANA_DEFAULT_INSTRUCTION_COMPUTE_UNITS * (parsed.instructions.length - computeBudgetInstructions) +
-      SOLANA_DEFAULT_BUILTIN_COMPUTE_UNITS * computeBudgetInstructions;
+      SOLANA_DEFAULT_INSTRUCTION_COMPUTE_UNITS * (parsed.instructions.length - builtinInstructions) +
+      SOLANA_DEFAULT_BUILTIN_COMPUTE_UNITS * builtinInstructions;
     priorityFeeLamports = feeAt(computeUnitLimit ?? defaultLimit);
     // The cap guards against a hostile transaction, so with no limit
     // instruction it assumes the 1.4M ceiling instead.

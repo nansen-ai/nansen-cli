@@ -3368,6 +3368,32 @@ describe('checkSolanaFeeBalance', () => {
       expect(result.reason).toContain('needs at least 0.000408 SOL for its estimated network fee');
     });
 
+    it('prices builtin-program instructions at 3,000 CU each, not 200,000', async () => {
+      // A price-only transaction of System transfers: the runtime's default
+      // limit is 3,000 CU per instruction, compute-budget one included.
+      const wallet = generateSolanaWallet().address;
+      const recipient = generateSolanaWallet().address;
+      const SYSTEM = '11111111111111111111111111111111';
+      const transfer = Buffer.alloc(12);
+      transfer.writeUInt32LE(2, 0);
+      transfer.writeBigUInt64LE(1_000n, 4);
+      const tx = buildTransaction({
+        accountKeys: [wallet, recipient, COMPUTE_BUDGET, SYSTEM],
+        instructions: [
+          { programIdIndex: 2, accountIndexes: [], data: setPrice(1_000_000) },
+          ...Array.from({ length: 4 }, () => ({ programIdIndex: 3, accountIndexes: [0, 1], data: transfer })),
+        ],
+      });
+      // 5,000 base + 1 lamport/CU x (5 x 3,000) = 20,000.
+      mockRpc({ balance: 20_000, fee: null });
+      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet }))
+        .toEqual({ proceed: true });
+      mockRpc({ balance: 20_000 - 1, fee: null });
+      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+      expect(result.proceed).toBe(false);
+      expect(result.reason).toContain('needs at least 0.00002 SOL for its estimated network fee');
+    });
+
     it('charges signatures a precompile verifies', async () => {
       const wallet = generateSolanaWallet().address;
       const ED25519 = 'Ed25519SigVerify111111111111111111111111111';
