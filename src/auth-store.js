@@ -62,7 +62,7 @@ export function nativeStoreOperation(operation, account, bytes, { directory = au
       try {
         if (failed || code !== 0 || !ready || !result || output) throw new Error();
         if (result.error === 'BINDING_MISSING') {
-          reject(new AuthError('AUTH_STORE_UNAVAILABLE', `The native credential-store binding could not load. ${ENV_API_KEY_GUIDANCE} For saved browser login, reinstall nansen-cli with optional dependencies enabled on a supported OS and architecture. See nansen doctor --offline and docs/browser-login.md#preview-platform-scope.`));
+          reject(new AuthError('AUTH_STORE_UNAVAILABLE', `The native credential-store binding could not load. ${ENV_API_KEY_GUIDANCE} For saved browser login, reinstall nansen-cli with optional dependencies enabled on a supported OS and architecture. See docs/browser-login.md#preview-platform-scope.`));
           return;
         }
         if (result.error === 'STORE_LOCKED') {

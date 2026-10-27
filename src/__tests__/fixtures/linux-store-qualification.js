@@ -61,9 +61,9 @@ if (!mode) {
     const before = config();
     await call('--object-path', '/org/freedesktop/secrets', '--method', 'org.freedesktop.Secret.Service.Lock', "['/org/freedesktop/secrets/collection/login']");
     assert.match(await locked(), /true/);
-    await run('blocked-login'); assert.equal(config(), before);
+    await run('blocked-login-locked'); assert.equal(config(), before);
     // Unavailable bus must also fail before approval and preserve selection.
-    await run('blocked-login', { DBUS_SESSION_BUS_ADDRESS: 'unix:path=/nonexistent-nansen-test-bus' });
+    await run('blocked-login-unavailable', { DBUS_SESSION_BUS_ADDRESS: 'unix:path=/nonexistent-nansen-test-bus' });
     assert.equal(config(), before);
     await stop(); await start();
     await run('read'); // same encrypted keyring, fresh service and CLI process
@@ -88,7 +88,7 @@ if (!mode) {
       return new Response(JSON.stringify({ access_token: next.accessToken, refresh_token: randomUUID(), token_type: 'Bearer', expires_in: 3600 }));
     } }),
   });
-  if (action === 'login' || action === 'blocked-login') {
+  if (action === 'login' || action.startsWith('blocked-login-')) {
     let paired = false;
     const login = () => browserLogin({ state, env: {}, isTTY: true, log: () => {}, errorOutput: () => {},
       pair: async (_client, hooks) => {
@@ -98,8 +98,12 @@ if (!mode) {
         hooks.onIssued(bundle); return bundle;
       },
     });
-    if (action === 'blocked-login') {
-      await assert.rejects(login, { code: 'AUTH_STORE_UNAVAILABLE' }); assert.equal(paired, false);
+    if (action.startsWith('blocked-login-')) {
+      await assert.rejects(login, error => {
+        assert.equal(error.code, 'AUTH_STORE_UNAVAILABLE');
+        assert.match(error.message, action === 'blocked-login-locked' ? /Unlock the default collection/ : /check the user D-Bus session/);
+        return true;
+      }); assert.equal(paired, false);
     } else { await login(); assert.equal(paired, true); }
   } else {
     const snapshot = { config: JSON.parse(fs.readFileSync(path.join(directory, 'config.json'))) };

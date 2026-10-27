@@ -2,4 +2,4 @@
 "nansen-cli": patch
 ---
 
-Explain Linux Secret Service setup and recovery, and report dismissed unlock prompts separately from missing native bindings.
+Qualify saved browser login on Debian 12 x64 over SSH with GNOME Keyring, document setup and reboot recovery, and distinguish dismissed unlock prompts from missing native bindings.
