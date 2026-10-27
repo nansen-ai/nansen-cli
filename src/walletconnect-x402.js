@@ -318,8 +318,8 @@ export async function* createWalletConnectPaymentSignatures(paymentRequirements,
 /**
  * Handle x402 payment: return the first viable Payment-Signature header.
  * For fallback across options, use createWalletConnectPaymentSignatures().
- * The signature's session-cap charge is never released, so a payment the
- * server rejects still counts against the cap.
+ * The signature's spend-cap charges are never released, so a payment the
+ * server rejects still counts against the caps.
  *
  * @param {Object} paymentRequirements - Decoded payment requirements from 402 response
  * @returns {string} Base64-encoded Payment-Signature header value

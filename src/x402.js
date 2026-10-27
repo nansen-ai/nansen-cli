@@ -270,8 +270,8 @@ export async function* createPaymentSignatures(response, url, options = {}) {
 /**
  * Attempt to auto-pay a 402 response (single-shot, returns first viable signature).
  * For fallback support, use createPaymentSignatures() instead. The signature's
- * session-cap charge is never released, so a payment the server rejects still
- * counts against the cap.
+ * spend-cap charges are never released, so a payment the server rejects still
+ * counts against the caps.
  *
  * @param {Response} response - The 402 HTTP response
  * @param {string} url - The original request URL

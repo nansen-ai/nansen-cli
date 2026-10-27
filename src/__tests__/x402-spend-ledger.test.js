@@ -4,13 +4,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { addToDailySpend, utcDay, x402SpendLedgerPath } from '../x402-spend-ledger.js';
+import { addToDailySpend, subtractFromDailySpend, utcDay, x402SpendLedgerPath } from '../x402-spend-ledger.js';
 
 const posix = process.platform !== 'win32';
 const mode = file => fs.statSync(file).mode & 0o777;
 const NOW = new Date('2026-10-16T12:00:00Z');
 const readLedger = (now = NOW) => JSON.parse(fs.readFileSync(x402SpendLedgerPath(now), 'utf8'));
 const lockPath = () => path.join(path.dirname(x402SpendLedgerPath(NOW)), 'spend.lock');
+const makeStale = file => {
+  const minuteAgo = new Date(Date.now() - 60_000);
+  fs.utimesSync(file, minuteAgo, minuteAgo);
+};
 
 describe('x402 daily spend ledger', () => {
   let originalHome;
@@ -53,6 +57,20 @@ describe('x402 daily spend ledger', () => {
     expect(addToDailySpend(400_000n, 1_000_000n, NOW)).toEqual({ ok: true, spent: 1_000_000n });
     expect(addToDailySpend(1n, 1_000_000n, NOW)).toEqual({ ok: false, spent: 1_000_000n });
     expect(readLedger().spentMicroUsd).toBe('1000000');
+  });
+
+  it('takes a payment back off the day it was counted on, never below zero', () => {
+    const lastSecond = new Date('2026-10-16T23:59:59.999Z');
+    expect(addToDailySpend(30_000n, 1_000_000n, lastSecond).ok).toBe(true);
+    expect(addToDailySpend(5_000n, 1_000_000n, new Date('2026-10-17T00:00:00Z')).ok).toBe(true);
+
+    subtractFromDailySpend(10_000n, lastSecond);
+    expect(readLedger(lastSecond).spentMicroUsd).toBe('20000');
+    expect(readLedger(new Date('2026-10-17T00:00:00Z')).spentMicroUsd).toBe('5000');
+
+    subtractFromDailySpend(50_000n, lastSecond);
+    expect(readLedger(lastSecond).spentMicroUsd).toBe('0');
+    expect(fs.existsSync(lockPath())).toBe(false);
   });
 
   it('starts a new total when the UTC day changes', () => {
@@ -118,11 +136,50 @@ describe('x402 daily spend ledger', () => {
   it('takes over a stale lock left by a process that died holding it', () => {
     addToDailySpend(1n, 10n, NOW);
     fs.writeFileSync(lockPath(), '');
-    const minuteAgo = new Date(Date.now() - 60_000);
-    fs.utimesSync(lockPath(), minuteAgo, minuteAgo);
+    makeStale(lockPath());
 
     expect(addToDailySpend(1n, 10n, NOW)).toEqual({ ok: true, spent: 2n });
-    expect(fs.existsSync(lockPath())).toBe(false);
+    expect(fs.readdirSync(path.dirname(lockPath()))).toEqual(['spend-2026-10-16.json']);
+  });
+
+  it('leaves a stale lock alone while another process is taking it over', () => {
+    addToDailySpend(1n, 10n, NOW);
+    fs.writeFileSync(lockPath(), '');
+    makeStale(lockPath());
+    fs.writeFileSync(`${lockPath()}.break`, '');
+
+    expect(() => addToDailySpend(1n, 10n, NOW)).toThrow(/timed out waiting for the x402 spend ledger lock/);
+    expect(fs.existsSync(lockPath())).toBe(true);
+    expect(readLedger().spentMicroUsd).toBe('1');
+  });
+
+  it('removes a takeover lock left by a process that died taking over', () => {
+    addToDailySpend(1n, 10n, NOW);
+    fs.writeFileSync(lockPath(), '');
+    makeStale(lockPath());
+    fs.writeFileSync(`${lockPath()}.break`, '');
+    makeStale(`${lockPath()}.break`);
+
+    expect(addToDailySpend(1n, 10n, NOW)).toEqual({ ok: true, spent: 2n });
+    expect(fs.readdirSync(path.dirname(lockPath()))).toEqual(['spend-2026-10-16.json']);
+  });
+
+  it('never lets concurrent processes together pass the cap when taking over a stale lock', async () => {
+    const run = promisify(execFile);
+    const ledger = new URL('../x402-spend-ledger.js', import.meta.url).href;
+    addToDailySpend(0n, 1n, NOW);
+    fs.writeFileSync(lockPath(), '');
+    makeStale(lockPath());
+    const script = `
+      const { addToDailySpend } = await import(${JSON.stringify(ledger)});
+      const result = addToDailySpend(1000000n, 5000000n, new Date(${JSON.stringify(NOW.toISOString())}));
+      process.stdout.write(String(result.ok));
+    `;
+    const outputs = await Promise.all(Array.from({ length: 8 }, () =>
+      run(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, HOME: home } })));
+
+    expect(outputs.map(o => o.stdout).filter(ok => ok === 'true')).toHaveLength(5);
+    expect(readLedger().spentMicroUsd).toBe('5000000');
   });
 
   it('never lets concurrent processes together pass the cap', async () => {

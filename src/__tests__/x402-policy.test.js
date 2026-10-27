@@ -828,15 +828,27 @@ describe('daily spend cap', () => {
       expect(fs.existsSync(x402SpendLedgerPath())).toBe(false);
     });
 
-    it('keeps the daily charge when the signer fails or the payment is released', async () => {
+    it('takes the daily charge back when the signer fails or the payment is released', async () => {
       process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '0.02';
       await expect(signWithSpendCharge(approve('10000'), async () => { throw new Error('rejected by wallet'); }))
         .rejects.toThrow('rejected by wallet');
       const signed = await signWithSpendCharge(approve('10000'), async () => 'sig');
       signed.release();
+      signed.release(); // only once
+      expect(JSON.parse(fs.readFileSync(x402SpendLedgerPath(), 'utf8')).spentMicroUsd).toBe('0');
 
+      expect((await signWithSpendCharge(approve('10000'), async () => 'sig')).ok).toBe(true);
+      expect((await signWithSpendCharge(approve('10000'), async () => 'sig')).ok).toBe(true);
       const refused = await signWithSpendCharge(approve('10000'), vi.fn());
       expect(refused.reason).toContain('already total $0.02');
+    });
+
+    it('keeps the daily charge when taking it back fails', async () => {
+      process.env.NANSEN_X402_DAILY_MAX_AMOUNT = '0.01';
+      const signed = await signWithSpendCharge(approve('10000'), async () => 'sig');
+      fs.writeFileSync(x402SpendLedgerPath(), '{');
+      expect(() => signed.release()).not.toThrow();
+      expect(fs.readFileSync(x402SpendLedgerPath(), 'utf8')).toBe('{');
     });
   });
 });

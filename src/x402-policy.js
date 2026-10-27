@@ -9,7 +9,7 @@
 
 import { EVM_X402_TOKENS, SVM_X402_TOKENS } from './x402-tokens.js';
 import { getWalletConfig } from './wallet.js';
-import { addToDailySpend } from './x402-spend-ledger.js';
+import { addToDailySpend, subtractFromDailySpend } from './x402-spend-ledger.js';
 
 // The only x402 scheme this client can honour. "exact" = a fixed-amount transfer
 // authorization (EIP-3009 / Permit2 on EVM, SPL TransferChecked on SVM). Any other
@@ -327,12 +327,14 @@ const unknownAmount = cap =>
 const knownAmount = decision => typeof decision.amountMicroUsd === 'string' && /^\d+$/.test(decision.amountMicroUsd);
 
 /**
- * Count an approved payment against the persisted daily cap. Never refunded.
- * Returns { ok: true } or { ok: false, reason }.
+ * Count an approved payment against the persisted daily cap.
+ * Returns { ok: true, release } or { ok: false, reason }. release() takes the
+ * payment back off the day it was counted on. A failed release keeps it
+ * counted, which only over-counts.
  */
 export function chargeDailySpend(decision, now = new Date()) {
   const cap = dailyMaxMicroUsd();
-  if (cap === null) return { ok: true };
+  if (cap === null) return { ok: true, release: () => {} };
   if (typeof cap === 'object') return { ok: false, reason: cap.error };
   if (!knownAmount(decision)) return { ok: false, reason: unknownAmount('daily') };
 
@@ -343,7 +345,15 @@ export function chargeDailySpend(decision, now = new Date()) {
   } catch (err) {
     return { ok: false, reason: err.message };
   }
-  if (result.ok) return { ok: true };
+  if (result.ok) {
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      try { subtractFromDailySpend(micro, now); } catch { /* stays counted */ }
+    };
+    return { ok: true, release };
+  }
   return {
     ok: false,
     reason:
@@ -401,24 +411,28 @@ export function chargeSessionSpend(decision) {
  * after every async check that could still skip the option.
  *
  * Returns { ok: false, reason } when a cap refuses, without calling `sign`,
- * or { ok: true, value, release }. The session charge is released if `sign`
+ * or { ok: true, value, release }. Both charges are released if `sign`
  * throws. The caller calls release() if the server cleanly rejects the
- * payment; any other outcome keeps it, so the session cap can only
- * over-count. The daily charge is never released.
+ * payment; any other outcome keeps them, so the caps can only over-count.
  */
 export async function signWithSpendCharge(decision, sign) {
   const charge = chargeSessionSpend(decision);
   if (!charge.ok) return charge;
-  // The session check comes first: it can be undone, the daily charge can't.
+  // The session check comes first: undoing it is free, undoing the daily
+  // charge rewrites the ledger.
   const daily = chargeDailySpend(decision);
   if (!daily.ok) {
     charge.release();
     return daily;
   }
-  try {
-    return { ok: true, value: await sign(), release: charge.release };
-  } catch (err) {
+  const release = () => {
     charge.release();
+    daily.release();
+  };
+  try {
+    return { ok: true, value: await sign(), release };
+  } catch (err) {
+    release();
     throw err;
   }
 }

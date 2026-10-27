@@ -1309,7 +1309,7 @@ export class NansenAPI {
                   paymentSent = true;
                   const result = await this._x402Retry(signature, `Privy wallet ${defaultWalletName}`, network, url, body, options, { asset, provider: 'privy', decision: payment });
                   if (result !== X402_PAYMENT_REJECTED) return result;
-                  // A clean rejection settled nothing, so it doesn't count against the session cap.
+                  // A clean rejection settled nothing, so it doesn't count against the spend caps.
                   releaseCharge();
                 }
               } catch (privyErr) {
@@ -1330,7 +1330,7 @@ export class NansenAPI {
                   const result = await this._x402Retry(signature, `local wallet ${defaultWalletName}`, network, url, body, options, { asset, provider: 'local', decision: payment });
                   if (result !== X402_PAYMENT_REJECTED) return result;
                   // This payment option was cleanly rejected without settling, so it
-                  // doesn't count against the session cap. Try the next one.
+                  // doesn't count against the spend caps. Try the next one.
                   releaseCharge();
                 }
               } catch (localErr) {
@@ -1368,7 +1368,7 @@ export class NansenAPI {
                       const result = await this._x402Retry(signature, 'WalletConnect', network, url, body, options, { checkBalance: false, provider: 'walletconnect', decision: payment });
                       if (result !== X402_PAYMENT_REJECTED) return result;
                       // Cleanly rejected without settling, so it doesn't count
-                      // against the session cap. Try the next option.
+                      // against the spend caps. Try the next option.
                       releaseCharge();
                     }
                   } catch (x402Err) {
