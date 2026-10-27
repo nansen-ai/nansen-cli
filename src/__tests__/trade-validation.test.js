@@ -3029,22 +3029,30 @@ describe('assertSolanaInstructionsSafe', () => {
       .toThrow(/excessive priority fee/);
   });
 
-  it('derives the default compute-unit limit from the instruction count when a price is set with no explicit limit', () => {
+  it('assumes the max compute-unit ceiling when a price is set with no explicit limit', () => {
+    const wallet = generateSolanaWallet().address;
+    // A price that's fine at a small limit but excessive at Solana's 1.4M-unit ceiling.
+    const tx = buildTransaction({
+      accountKeys: [wallet, COMPUTE_BUDGET_PROGRAM],
+      instructions: [{ programIdIndex: 1, accountIndexes: [], data: computeBudgetSetPrice(10_000_000) }],
+    });
+    expect(() => assertSolanaInstructionsSafe(tx, { walletAddress: wallet }))
+      .toThrow(/excessive priority fee/);
+  });
+
+  it("estimates the fee at the runtime's default limit when a price is set with no explicit limit", () => {
     const wallet = generateSolanaWallet().address;
     const program = generateSolanaWallet().address;
-    // 10 lamports per CU at 200,000 default CU per instruction is 2,000,000
-    // lamports each, so 5 instructions (1M CU) sit exactly at the 0.01 SOL cap.
-    const txWith = (count) => buildTransaction({
+    const tx = buildTransaction({
       accountKeys: [wallet, COMPUTE_BUDGET_PROGRAM, program],
       instructions: [
-        { programIdIndex: 1, accountIndexes: [], data: computeBudgetSetPrice(10_000_000) },
-        ...Array.from({ length: count }, () => ({ programIdIndex: 2, accountIndexes: [], data: Buffer.alloc(0) })),
+        { programIdIndex: 1, accountIndexes: [], data: computeBudgetSetPrice(1_000) },
+        { programIdIndex: 2, accountIndexes: [], data: Buffer.alloc(0) },
+        { programIdIndex: 2, accountIndexes: [], data: Buffer.alloc(0) },
       ],
     });
-    expect(assertSolanaInstructionsSafe(txWith(5), { walletAddress: wallet }).priorityFeeLamports).toBe(10_000_000n);
-    // 7 instructions reach the 1.4M ceiling: 14,000,000 lamports, over the cap.
-    expect(() => assertSolanaInstructionsSafe(txWith(7), { walletAddress: wallet }))
-      .toThrow(/excessive priority fee/);
+    // 2 x 200,000 + 1 compute-budget instruction x 3,000 = 403,000 CU at 0.001 lamports/CU.
+    expect(assertSolanaInstructionsSafe(tx, { walletAddress: wallet }).priorityFeeLamports).toBe(403n);
   });
 
   it('clamps an explicit compute-unit limit above the 1.4M ceiling', () => {
@@ -3247,7 +3255,7 @@ describe('checkSolanaFeeBalance', () => {
     mockRpc({ balance: STATIC_FEE - 1 });
     const result = await checkSolanaFeeBalance({ parsed: parse(priorityFeeTx({ wallet }), wallet), walletAddress: wallet });
     expect(result.proceed).toBe(false);
-    expect(result.reason).toContain("wallet has 0.001004999 SOL but this transaction's network fee is 0.001005 SOL");
+    expect(result.reason).toContain('wallet has 0.001004999 SOL but this transaction needs at least 0.001005 SOL for its estimated network fee');
     expect(result.reason).toContain(`Fund ${wallet} with SOL`);
   });
 
@@ -3258,7 +3266,7 @@ describe('checkSolanaFeeBalance', () => {
     const parsed = parse(priorityFeeTx({ wallet }), wallet);
     const result = await checkSolanaFeeBalance({ parsed, walletAddress: wallet });
     expect(result.proceed).toBe(false);
-    expect(result.reason).toContain("network fee is 0.00101 SOL");
+    expect(result.reason).toContain('needs at least 0.00101 SOL for its network fee');
     const feeRequest = global.fetch.mock.calls
       .map(([, init]) => JSON.parse(init.body))
       .find(r => r.method === 'getFeeForMessage');
@@ -3270,7 +3278,7 @@ describe('checkSolanaFeeBalance', () => {
     mockRpc({ balance: STATIC_FEE - 1, fee: null });
     const result = await checkSolanaFeeBalance({ parsed: parse(priorityFeeTx({ wallet }), wallet), walletAddress: wallet });
     expect(result.proceed).toBe(false);
-    expect(result.reason).toContain("network fee is 0.001005 SOL");
+    expect(result.reason).toContain('needs at least 0.001005 SOL for its estimated network fee');
   });
 
   it('falls back to the static fee estimate when the cluster returns a malformed fee', async () => {
@@ -3278,7 +3286,7 @@ describe('checkSolanaFeeBalance', () => {
     mockRpc({ balance: STATIC_FEE - 1, fee: '1.5' });
     const result = await checkSolanaFeeBalance({ parsed: parse(priorityFeeTx({ wallet }), wallet), walletAddress: wallet });
     expect(result.proceed).toBe(false);
-    expect(result.reason).toContain("network fee is 0.001005 SOL");
+    expect(result.reason).toContain('needs at least 0.001005 SOL for its estimated network fee');
   });
 
   it('does not check a fee another account pays', async () => {
@@ -3335,15 +3343,15 @@ describe('checkSolanaFeeBalance', () => {
           { programIdIndex: 2, accountIndexes: [], data: Buffer.alloc(0) },
         ],
       });
-      // 5,000 base + 1 lamport/CU x (2 x 200,000) = 405,000, where the ceiling
-      // would have demanded 1,405,000.
-      mockRpc({ balance: 405_000, fee: null });
+      // 5,000 base + 1 lamport/CU x (2 x 200,000 + 3,000) = 408,000, where the
+      // ceiling would have demanded 1,405,000.
+      mockRpc({ balance: 408_000, fee: null });
       expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet }))
         .toEqual({ proceed: true });
-      mockRpc({ balance: 405_000 - 1, fee: null });
+      mockRpc({ balance: 408_000 - 1, fee: null });
       const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
       expect(result.proceed).toBe(false);
-      expect(result.reason).toContain('network fee is 0.000405 SOL');
+      expect(result.reason).toContain('needs at least 0.000408 SOL for its estimated network fee');
     });
 
     it('charges signatures a precompile verifies', async () => {
@@ -3356,7 +3364,7 @@ describe('checkSolanaFeeBalance', () => {
       mockRpc({ balance: 15_000 - 1, fee: null });
       const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
       expect(result.proceed).toBe(false);
-      expect(result.reason).toContain("network fee is 0.000015 SOL");
+      expect(result.reason).toContain('needs at least 0.000015 SOL for its estimated network fee');
     });
   });
 

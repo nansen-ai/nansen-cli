@@ -40,11 +40,16 @@ const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 const COMPUTE_BUDGET_PROGRAM = 'ComputeBudget111111111111111111111111111111';
 const COMPUTE_BUDGET_SET_UNIT_LIMIT = 2;
 const COMPUTE_BUDGET_SET_UNIT_PRICE = 3;
-const SOLANA_MAX_COMPUTE_UNITS = 1_400_000; // Solana's per-transaction compute-unit ceiling; the
+const SOLANA_MAX_COMPUTE_UNITS = 1_400_000; // Solana's per-transaction compute-unit ceiling — the
+                                             // worst-case bound the priority-fee cap assumes when a
+                                             // price is set with no explicit limit instruction. The
                                              // runtime clamps any larger requested limit to it.
-const SOLANA_DEFAULT_INSTRUCTION_COMPUTE_UNITS = 200_000; // Default limit per non-compute-budget
-                                                          // instruction when no limit is set
-                                                          // (builtins get less, so an upper bound).
+// The runtime's default limit when none is set: 200,000 CU per non-builtin
+// instruction and 3,000 per builtin, compute-budget ones included (current
+// runtime; before, 200,000 per non-compute-budget instruction). Counting 200,000 per
+// non-compute-budget and 3,000 per compute-budget instruction bounds both rules.
+const SOLANA_DEFAULT_INSTRUCTION_COMPUTE_UNITS = 200_000;
+const SOLANA_DEFAULT_BUILTIN_COMPUTE_UNITS = 3_000;
 const MAX_PRIORITY_FEE_LAMPORTS = 10_000_000n; // 0.01 SOL sanity ceiling on the priority fee a
                                                 // single trade can be made to pay.
 
@@ -1836,7 +1841,7 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
 
   let computeUnitLimit = null;
   let computeUnitPriceMicroLamports = null;
-  let nonComputeBudgetInstructions = 0;
+  let computeBudgetInstructions = 0;
 
   for (const ix of parsed.instructions) {
     const programId = resolveStaticAccount(parsed, ix.programIdIndex);
@@ -1852,7 +1857,7 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
         'Solana transaction invokes a program only resolvable via an address-lookup-table entry, which cannot be safety-classified. Refusing to sign.',
       );
     }
-    if (programId !== COMPUTE_BUDGET_PROGRAM) nonComputeBudgetInstructions++;
+    if (programId === COMPUTE_BUDGET_PROGRAM) computeBudgetInstructions++;
 
     if (SPL_TOKEN_PROGRAMS.has(programId)) {
       // No discriminator byte — not a valid SPL Token instruction (the runtime
@@ -1901,20 +1906,22 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
 
   let priorityFeeLamports = 0n;
   if (computeUnitPriceMicroLamports != null) {
-    // With no limit instruction the runtime derives the limit from the
-    // instruction count, not the 1.4M ceiling; overstating it here would
-    // inflate the fee checkSolanaFeeBalance falls back to.
-    const units = BigInt(Math.min(
-      computeUnitLimit ?? SOLANA_DEFAULT_INSTRUCTION_COMPUTE_UNITS * nonComputeBudgetInstructions,
-      SOLANA_MAX_COMPUTE_UNITS,
-    ));
     // The runtime rounds the priority fee up to a whole lamport.
-    priorityFeeLamports = (computeUnitPriceMicroLamports * units + 999_999n) / 1_000_000n;
-    if (priorityFeeLamports > MAX_PRIORITY_FEE_LAMPORTS) {
+    const feeAt = (units) =>
+      (computeUnitPriceMicroLamports * BigInt(Math.min(units, SOLANA_MAX_COMPUTE_UNITS)) + 999_999n) / 1_000_000n;
+    // The cap is a guard against a hostile transaction, so with no limit
+    // instruction it assumes the 1.4M ceiling.
+    const worstCaseFeeLamports = feeAt(computeUnitLimit ?? SOLANA_MAX_COMPUTE_UNITS);
+    if (worstCaseFeeLamports > MAX_PRIORITY_FEE_LAMPORTS) {
       throw new Error(
-        `Solana transaction sets an excessive priority fee (~${priorityFeeLamports} lamports, cap ${MAX_PRIORITY_FEE_LAMPORTS}). Refusing to sign.`,
+        `Solana transaction sets an excessive priority fee (~${worstCaseFeeLamports} lamports, cap ${MAX_PRIORITY_FEE_LAMPORTS}). Refusing to sign.`,
       );
     }
+    // The fee checkSolanaFeeBalance falls back to uses the runtime's default
+    // limit instead, so it doesn't reject a transaction the wallet can afford.
+    priorityFeeLamports = feeAt(computeUnitLimit ??
+      SOLANA_DEFAULT_INSTRUCTION_COMPUTE_UNITS * (parsed.instructions.length - computeBudgetInstructions) +
+      SOLANA_DEFAULT_BUILTIN_COMPUTE_UNITS * computeBudgetInstructions);
   }
 
   return { ...parsed, priorityFeeLamports };
@@ -2016,8 +2023,9 @@ export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () =>
   }
 
   const clusterFee = feeResult?.value;
+  const clusterPriced = Number.isSafeInteger(clusterFee) && clusterFee >= 0;
   let feeLamports;
-  if (Number.isSafeInteger(clusterFee) && clusterFee >= 0) {
+  if (clusterPriced) {
     feeLamports = BigInt(clusterFee);
   } else {
     let precompileSignatures = 0n;
@@ -2033,8 +2041,8 @@ export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () =>
   if (balance < feeLamports) {
     return {
       proceed: false,
-      reason: `wallet has ${formatLamports(balance)} SOL but this transaction's network fee is ${formatLamports(feeLamports)} SOL. ` +
-        `Fund ${walletAddress} with SOL and retry.`,
+      reason: `wallet has ${formatLamports(balance)} SOL but this transaction needs at least ${formatLamports(feeLamports)} SOL ` +
+        `for its ${clusterPriced ? '' : 'estimated '}network fee. Fund ${walletAddress} with SOL and retry.`,
     };
   }
 

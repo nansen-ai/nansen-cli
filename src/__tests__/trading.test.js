@@ -6550,7 +6550,7 @@ describe('Solana execute: SOL fee balance check', () => {
 
     expect(error).toBeTruthy();
     expect(executeCalls).toHaveLength(0);
-    expect(logs.some(l => l.includes('cannot be paid for') && l.includes('network fee is 0.001005 SOL'))).toBe(true);
+    expect(logs.some(l => l.includes('cannot be paid for') && l.includes('needs at least 0.001005 SOL'))).toBe(true);
   });
 
   it('signs and broadcasts when the wallet covers the fee exactly', async () => {
