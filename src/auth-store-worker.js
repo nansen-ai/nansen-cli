@@ -45,7 +45,7 @@ function receive(line) {
   worker.on('error', stop);
   worker.on('exit', code => {
     // No response or lock release until the executor can no longer write.
-    if (code !== 0 || !result || (result.error && result.error !== 'BINDING_MISSING')) return stop();
+    if (code !== 0 || !result || (result.error && !['BINDING_MISSING', 'STORE_LOCKED', 'STORE_UNAVAILABLE'].includes(result.error))) return stop();
     process.stdout.write(JSON.stringify(result) + '\n', () => {
       clearTimeout(timer);
       fs.closeSync(fd);

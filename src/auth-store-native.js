@@ -16,5 +16,10 @@ try {
   else if (operation === 'delete') value = entry.deleteCredential();
   else throw new Error();
   parentPort.postMessage({ value });
-} catch { parentPort.postMessage({ error: 'STORE_UNAVAILABLE' }); }
+} catch (error) {
+  // The binding exposes GenericFailure for both cases. Recognize only the
+  // upstream Secret Service refusal; never forward native messages or secrets.
+  const locked = process.platform === 'linux' && /Secret Service: unlock prompt was dismissed/.test(error?.message || '');
+  parentPort.postMessage({ error: locked ? 'STORE_LOCKED' : 'STORE_UNAVAILABLE' });
+}
 }
