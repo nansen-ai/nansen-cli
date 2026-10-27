@@ -1,4 +1,4 @@
-import { authConfigView } from './auth-credentials.js';
+import { authConfigView, ENV_API_KEY_GUIDANCE } from './auth-credentials.js';
 import { browserLogin, defaultAuthState, cleanupMessage } from './auth-login.js';
 import { readApiKeyInput } from './auth-key-input.js';
 /**
@@ -1576,7 +1576,7 @@ export function buildCommands(deps = {}) {
       if ('api-key' in options && typeof options['api-key'] !== 'string') throw new CommandError('--api-key must be a single key string.', 'INVALID_PARAMS');
       if (!fromStdin && !flags.human && options['api-key'] === undefined) {
         if (!stdinTTY || !stdoutTTY) {
-          throw new CommandError('Browser login requires an interactive terminal. In a headless environment, set NANSEN_API_KEY and run nansen login --human, or pipe a key to nansen login --api-key-stdin.', 'NOT_A_TTY');
+          throw new CommandError(`Browser login requires an interactive terminal.\n\n${ENV_API_KEY_GUIDANCE}\n\nTo deliberately save an API key instead, use nansen login --human or nansen login --api-key-stdin. Saving requires native authentication locking.`, 'NOT_A_TTY');
         }
         return browserLoginFn({ flags, env, isTTY: stdoutTTY, log, errorOutput, state: authState });
       }

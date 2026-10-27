@@ -56,6 +56,23 @@ describe('browser login public command integration', () => {
     expect(pair).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledOnce(); expect(log.mock.calls[0][0]).not.toContain('native secret echo');
   });
+  it('failed secure-store probe explains direct API-key access before pairing and preserves the saved key', async () => {
+    const f = fixture();
+    fs.writeFileSync(f.file, JSON.stringify({ apiKey: 'SAVED_A' }));
+    // Simulate a store which accepts writes but cannot read them back.
+    const store = createAuthStore({ operation: async op => op === 'get' ? null : true });
+    const state = createAuthState({ directory: f.directory, store });
+    const pair = vi.fn(), openBrowser = vi.fn(), log = vi.fn();
+    await expect(browserLogin({ env: f.env, state, pair, openBrowser, log, errorOutput: vi.fn(), flags: { json: true }, isTTY: true, signals: new EventEmitter() })).rejects.toMatchObject({ code: 'AUTH_STORE_UNAVAILABLE', reported: true });
+    expect(pair).not.toHaveBeenCalled(); expect(openBrowser).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledOnce();
+    const event = JSON.parse(log.mock.calls[0][0]);
+    expect(event).toMatchObject({ version: 1, event: 'error', code: 'AUTH_STORE_UNAVAILABLE' });
+    expect(event.message).toContain("export NANSEN_API_KEY='<your-api-key>'");
+    expect(event.message).toContain('secret manager');
+    expect(event.message).not.toContain('SAVED_A');
+    expect(JSON.parse(fs.readFileSync(f.file)).apiKey).toBe('SAVED_A');
+  });
   it('cancels approval without replacing the previous key and emits one terminal event', async () => {
     const f = fixture(); fs.writeFileSync(f.file, JSON.stringify({ apiKey: 'A' }));
     const signals = new EventEmitter(); const log = vi.fn();
@@ -258,6 +275,8 @@ it.each([[false, true], [true, false], [false, false]])('runCLI rejects browser 
     expect(result).toMatchObject({ type: 'error', data: { code: 'NOT_A_TTY' } });
     expect(output.mock.calls.at(-1)[0]).toContain('nansen login --human');
     expect(output.mock.calls.at(-1)[0]).toContain('nansen login --api-key-stdin');
+    expect(result.data.error).toContain("export NANSEN_API_KEY='<your-api-key>'");
+    expect(result.data.error).toContain("You don't need to run nansen login");
   }
   expect(browserLoginFn).not.toHaveBeenCalled();
 });

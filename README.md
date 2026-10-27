@@ -119,7 +119,16 @@ Browser login is available in Nansen CLI 2.0.0 and enabled in production. Saved 
 
 Existing API-key users can run commands directly with `NANSEN_API_KEY`. It overrides the saved session, even after successful browser login. To deliberately save an injected key, use explicit `nansen login --human`; without an environment key this prompts in a human terminal. `nansen login --api-key <key>` remains available but puts the key in shell history. Saved-auth mutations require the native lock binding. Get a conventional key at [agent setup](https://app.nansen.ai/auth/agent-setup); MCP installation exports a separate persistent API key; it does not export browser sessions.
 
-For automation, pipe a key from your secret manager into `nansen login --api-key-stdin`, or redirect a protected key file:
+On a server, in a container, or in CI without a credential store, get your key from [the API page](https://app.nansen.ai/api) and use it directly:
+
+```bash
+export NANSEN_API_KEY='<your-api-key>'
+nansen account
+```
+
+No `nansen login` is needed. Core API commands using the environment key require neither secure storage nor native authentication locking. The variable stays set for this terminal session; for automation, inject it through your platform's secret manager. See [headless setup, including PowerShell](docs/browser-login.md#servers-containers-and-ci-without-secure-storage).
+
+To save a key for later commands on a machine with native authentication locking, pipe it from your secret manager into `nansen login --api-key-stdin`, or redirect a protected key file:
 
 ```bash
 nansen login --api-key-stdin --json < /path/to/protected-api-key
@@ -182,7 +191,7 @@ Run `nansen schema --pretty` for the full subcommand and field reference.
 
 Browser login requests `nansen:api` for the same account/API permissions as a pasted API key, including smart-alert CRUD, public agent, portfolio, web, beta and existing trading API operations. The same endpoint ownership, plan, credit, quota, sanctions and geographic checks apply. Existing OAuth/MCP `nansen:read` grants keep their existing semantics. Wallet signing remains separate.
 
-Plain `nansen login` always starts fresh browser approval, whether no credential, an environment key, a saved key or a saved session exists. It preflights secure storage, shows a link/code, verifies the approved account through the free account endpoint, then replaces the single saved API credential. `nansen login --no-browser` lets you approve on another device without opening a browser on the CLI machine. It does not remove the native-storage or supported-platform requirements. Browser login requires both stdin and stdout to be terminals; without either, it exits immediately with `NOT_A_TTY` and points to `nansen login --human` with `NANSEN_API_KEY` or `nansen login --api-key-stdin`. In a terminal, `--json` emits NDJSON pending and terminal events; the private device code and tokens are never printed.
+Plain `nansen login` always starts fresh browser approval, whether no credential, an environment key, a saved key or a saved session exists. It preflights secure storage, shows a link/code, verifies the approved account through the free account endpoint, then replaces the single saved API credential. `nansen login --no-browser` lets you approve on another device without opening a browser on the CLI machine. It does not remove the native-storage or supported-platform requirements. Browser login requires both stdin and stdout to be terminals; without either, it exits immediately with `NOT_A_TTY` and explains how to use `NANSEN_API_KEY` directly without login. Deliberately saving a key with `--human` or `--api-key-stdin` still requires native locking. In a terminal, `--json` emits NDJSON pending and terminal events; the private device code and tokens are never printed.
 
 `NANSEN_API_KEY` still overrides the saved session. Login verifies the new account independently and explains this override. Failed approval or installation preserves the previous selection. `nansen auth status` is offline and labels saved metadata as cached/unverified; `nansen account` checks the effective credential live. `nansen logout` removes saved API authentication and attempts family retirement, preserving wallets and environment keys. Remote revocation and physical deletion failures are reported separately.
 
