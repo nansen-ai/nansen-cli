@@ -151,7 +151,7 @@ describe('generateSubcommandHelp', () => {
 
   it('generates a runnable example that already carries every required option', () => {
     const example = lineStartingWith(helpLines('token', 'who-bought-sold'), 'Example:');
-    expect(example).toBe('Example: nansen research token who-bought-sold --token 0x... --chain solana');
+    expect(example).toBe('Example: nansen research token who-bought-sold --token So11111111111111111111111111111111111111112 --chain solana');
   });
 
   it('uses the schema example verbatim when one exists, and lists the returned fields', () => {
@@ -404,5 +404,43 @@ describe('changelog --since filtering', () => {
       code: 'INVALID_PARAMS',
       message: 'Invalid --since value "1.11.0-beta.1": expected a version like 1.43 or 1.43.0.',
     });
+  });
+});
+
+
+describe('command-specific help', () => {
+  it.each(['quote', 'execute', 'bridge-status', 'limit-order', 'limit-order create'])(
+    'shows focused trade %s help without executing', async sub => {
+      const output = vi.fn();
+      const execute = vi.fn(() => { throw new Error('must not execute'); });
+      const result = await runCLI(['trade', ...sub.split(' '), '--help'], {
+        output, exit: vi.fn(), commandOverrides: { trade: execute },
+      });
+      expect(result.type).toBe('command-help');
+      expect(output.mock.calls[0][0]).toMatch(new RegExp(`^trade ${sub} —`));
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+  it('exposes quote controls and their units', () => {
+    const help = generateSubcommandHelp('trade', 'quote');
+    expect(help).toContain('--slippage — Slippage tolerance as a decimal');
+    expect(help).toContain('--swap-mode (exactIn) [exactIn|exactOut]');
+    expect(help).toContain('--max-input — exactOut only:');
+    expect(help).toContain('in base units');
+  });
+
+  it('uses the same directional bridge routes in root and group help', async () => {
+    const render = async args => {
+      const output = vi.fn();
+      await runCLI(args, { output, exit: vi.fn() });
+      return output.mock.calls.map(call => call[0]).join('\n');
+    };
+    const root = await render(['--help']);
+    const bridge = await render(['bridge', '--help']);
+    for (const route of ['base -> hyperliquid', 'hyperliquid -> base', 'hyperliquid -> ethereum', 'hyperliquid -> arbitrum']) {
+      expect(root).toContain(route);
+      expect(bridge).toContain(route);
+    }
+    expect(root.split('\n').find(line => line.startsWith('Bridge routes:'))).not.toContain('polygon');
   });
 });
