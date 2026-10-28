@@ -2694,7 +2694,7 @@
         },
         "historical-token-flow-summary": {
           "endpoint": "/api/v1/tgm/historical-token-flow-summary",
-          "description": "Historical token flow summary (no pagination)",
+          "description": "Historical token flow summary (no pagination; label segments start 2025-03-11)",
           "options": {
             "token-address": {
               "required": true,
@@ -2712,7 +2712,7 @@
             },
             "to-date": {
               "required": true,
-              "description": "End of date range (YYYY-MM-DD)",
+              "description": "End of date range (YYYY-MM-DD). Label history starts 2025-03-11: for an earlier date, the whale, public figure, top PnL and exchange fields are null",
               "type": "string",
               "format": "date-time"
             },
@@ -2931,7 +2931,7 @@
         },
         "historical-tx-lookup": {
           "endpoint": "/api/v1/profiler/historical-transaction-lookup",
-          "description": "Lookup a historical transaction by hash",
+          "description": "Lookup a historical transaction by hash (entity labels start 2025-03-11)",
           "options": {
             "transaction-hash": {
               "required": true,
@@ -2940,7 +2940,7 @@
             },
             "as-of-date": {
               "required": true,
-              "description": "Reference date for label and pricing resolution (YYYY-MM-DD)",
+              "description": "Reference date for label and pricing resolution (YYYY-MM-DD). Entity labels are available from 2025-03-11 onward",
               "type": "string",
               "format": "date"
             },
