@@ -14,6 +14,7 @@
     "skills/**",
     "scripts/postinstall.js",
     "CHANGELOG.md",
+    "docs/auth.md",
     "docs/browser-login.md",
     "docs/error-codes.md"
   ],
