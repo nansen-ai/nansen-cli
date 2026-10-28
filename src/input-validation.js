@@ -380,7 +380,7 @@ export function validateResearchInput(resolved, { flags = {}, options = {}, endp
   const errors = [];
   const given = new Map(); // schema name -> raw value
   const accepted = [...names.keys()].filter(name => names.get(name) === name);
-  const visible = [...accepted, ...(pagination ? ['limit', 'page'] : [])].map(name => `--${name}`);
+  const visible = [...new Set([...accepted, ...(pagination ? PAGINATION_OPTIONS : [])])].map(name => `--${name}`);
 
   const supplied = [
     ...Object.entries(options).map(([name, value]) => [name, value]),
@@ -403,7 +403,7 @@ export function validateResearchInput(resolved, { flags = {}, options = {}, endp
     }
     const field = raw.length === 1 ? `-${raw}` : `--${raw}`;
     errors.push(fieldError(field, 'unknown_field',
-      `Option '${field}' is not recognized by ${path}. Valid options are: ${visible.join(', ') || 'none'} (plus output options; see: nansen schema).`));
+      `Option '${field}' is not recognized by ${path}. Command-specific options: ${visible.join(', ') || 'none'}. Common options also apply; see: nansen schema.`));
   }
 
   for (const [name, value] of given) {
@@ -499,6 +499,9 @@ export function validateFieldSelection(data, fields, { path, returns = [] } = {}
   // list may be incomplete, so an empty result never fails here.
   if (empty || names.size === 0) return;
   const candidates = [...new Set([...names, ...documented])].filter(name => !name.startsWith('_'));
+  const fieldList = candidates.length > 40
+    ? `Available fields (first 40 of ${candidates.length}): ${candidates.slice(0, 40).join(', ')}. Run without --fields to inspect the full response; see nansen schema for documented fields.`
+    : `Available fields: ${candidates.join(', ')}`;
   const errors = [];
   for (const field of fields) {
     const known = field.includes('.')
@@ -506,7 +509,7 @@ export function validateFieldSelection(data, fields, { path, returns = [] } = {}
       : names.has(field) || documented.has(field);
     if (known) continue;
     const where = path ? ` from ${path}` : '';
-    errors.push(fieldError('--fields', 'unknown_field', `Field '${field}' is not in the response${where}. Available fields: ${candidates.slice(0, 40).join(', ')}`));
+    errors.push(fieldError('--fields', 'unknown_field', `Field '${field}' is not in the response${where}. ${fieldList}`));
   }
   if (errors.length) throw validationError(errors);
 }
