@@ -256,7 +256,7 @@ it.each(['response', 'jwt'])('fresh pairing rejects over-ceiling %s lifetime wit
     .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: parts.join('.'), refresh_token: bundle.refreshToken, token_type: 'Bearer', scope: 'nansen:api', expires_in: kind === 'response' ? 3601 : 3600 })));
   const retire = vi.fn(async () => ({ remote: 'recorded_pending' }));
   const client = createDeviceClient({ audience: bundle.audience, privateJwk: bundle.privateJwk, fetchFn });
-  await expect(browserLogin({ env: f.env, state: f.state, clientFactory: () => client, pair: (c, options) => pairDevice(c, { ...options, wait: async () => {} }), retire, signals: new EventEmitter(), isTTY: false, log: vi.fn(), errorOutput: vi.fn() })).rejects.toMatchObject({ code: 'BROWSER_SESSION_SETUP_REQUIRED', message: expect.stringContaining('3600 seconds') });
+  await expect(browserLogin({ env: f.env, state: f.state, clientFactory: () => client, pair: (c, options) => pairDevice(c, { ...options, wait: async () => {} }), retire, openBrowser: vi.fn(), signals: new EventEmitter(), isTTY: false, log: vi.fn(), errorOutput: vi.fn() })).rejects.toMatchObject({ code: 'BROWSER_SESSION_SETUP_REQUIRED', message: expect.stringContaining('3600 seconds') });
   expect(fetchFn).toHaveBeenCalledTimes(2); expect(retire).toHaveBeenCalledOnce(); expect(retire.mock.calls[0][0].refreshToken).toBe(bundle.refreshToken);
   expect(JSON.parse(fs.readFileSync(f.file)).apiKey).toBe('previous-key');
 });
