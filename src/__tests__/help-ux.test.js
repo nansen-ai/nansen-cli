@@ -226,15 +226,15 @@ describe('generateSubcommandHelp', () => {
     };
 
     it('reports the cached per-tier cost for the endpoint the subcommand calls', async () => {
-      seedCosts({ '/api/v1/tgm/who-bought-sold': { free: 3, pro: 5 } });
+      seedCosts({ '/api/v1/tgm/who-bought-sold': { free: 1, pro: 0 } });
       const help = await freshHelp('token', 'who-bought-sold');
-      expect(help).toContain('Cost: 3 credits (Free tier) / 5 credits (Pro tier)');
+      expect(help).toContain('Cost: 1 credit (Free tier) / 0 credits (Pro tier)');
     });
 
     it('says "credit", not "credits", for a single credit', async () => {
       seedCosts({ '/api/v1/tgm/who-bought-sold': { free: 1, pro: 1 } });
       const help = await freshHelp('token', 'who-bought-sold');
-      expect(help).toContain('Cost: 1 credit (Free tier) / 1 credit (Pro tier)');
+      expect(help).toContain('Cost: 1 credit\n');
     });
 
     it('omits the cost line entirely when no cost is known, rather than printing a blank one', async () => {
@@ -282,7 +282,7 @@ describe('generateSubcommandHelp', () => {
       expect(combined).toContain('"nansen smart-money" is deprecated');
       expect(combined).toContain('smart-money netflow — Net capital flows');
       expect(combined).toContain('Params (* required): --chain (solana)');
-      expect(combined).toContain('Cost: 5 credits (Free tier) / 5 credits (Pro tier)');
+      expect(combined).toContain('Cost: 5 credits\n');
       expect(combined).toContain('Example: nansen research smart-money netflow --chain solana');
     });
 

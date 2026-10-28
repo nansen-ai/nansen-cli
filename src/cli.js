@@ -27,7 +27,7 @@ import { compareSemver } from './semver.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
 import { getAuthStatus, runDoctorChecks, runConnectivityChecks, formatDoctorReport } from './doctor.js';
-import { refreshCostMapIfStale, getCostForEndpoint, creditsCharged } from './cost-cache.js';
+import { refreshCostMapIfStale, getCostForEndpoint, getCostVariants, formatCost, creditsCharged } from './cost-cache.js';
 import { collectCacheStats, clearCaches, formatCacheStats, formatCacheClear } from './cache-inspect.js';
 import { creditWarning, noticeWarnings } from './response-meta.js';
 import { trackCommandSucceeded, trackCommandFailed, trackAuthCommand } from './telemetry.js';
@@ -2478,6 +2478,22 @@ export const RESEARCH_CATEGORY_ALIASES = {
   'pm': 'prediction-market'
 };
 
+// Cost lines for help: the base cost, then each spec variant that costs
+// something different. Variant keys are API conditions such as
+// "premium_labels=true"; name the CLI flag instead when this command has it.
+function costHelpLines(endpoint, options = {}) {
+  const cost = getCostForEndpoint(endpoint);
+  if (!cost) return [];
+  const lines = [`Cost: ${formatCost(cost)}`];
+  for (const [condition, variant] of Object.entries(getCostVariants(endpoint) ?? {})) {
+    if (variant.free === cost.free && variant.pro === cost.pro) continue;
+    const flag = condition.match(/^(\w+)=true$/)?.[1].replace(/_/g, '-');
+    const label = flag && options[flag] ? `--${flag}` : condition;
+    lines.push(`Cost with ${label}: ${formatCost(variant)}`);
+  }
+  return lines;
+}
+
 // Generate help text for a specific subcommand using SCHEMA
 export function generateSubcommandHelp(command, subcommand, prefix = null) {
   // `perp` is both a top-level trading command and a research category, and
@@ -2529,10 +2545,7 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
     lines.push('Pagination: not supported (--limit/--page are rejected)');
   }
 
-  if (subSchema.endpoint) {
-    const cost = getCostForEndpoint(subSchema.endpoint);
-    if (cost) lines.push(`Cost: ${cost.free} credit${cost.free === 1 ? '' : 's'} (Free tier) / ${cost.pro} credit${cost.pro === 1 ? '' : 's'} (Pro tier)`);
-  }
+  if (subSchema.endpoint) lines.push(...costHelpLines(subSchema.endpoint, subSchema.options));
 
   if (subSchema.returns?.length) {
     lines.push(`Returns: ${subSchema.returns.join(', ')}`);
@@ -2589,7 +2602,9 @@ function emitResponseMetadata(api, errorOutput) {
     else if (paginationMeta?.livePages === 0) scope = 'cached traversal';
     errorOutput(`Credits: ${charged.cost} (${scope})`);
   } else if (charged?.source === 'estimate') {
-    errorOutput(`Credits: ~${charged.estimate.free} free / ${charged.estimate.pro} pro (estimated)`);
+    const { free, pro } = charged.estimate;
+    const amount = free === pro ? free : `${free} free / ${pro} pro`;
+    errorOutput(`Credits: ~${amount} (estimated)`);
   }
 }
 
@@ -2746,10 +2761,7 @@ export async function runCLI(rawArgs, deps = {}) {
               return parts.join(' ');
             });
             lines.push(`Params (* required): ${params.join(', ')}`);
-            if (catSchema.endpoint) {
-              const cost = getCostForEndpoint(catSchema.endpoint);
-              if (cost) lines.push(`Cost: ${cost.free} credit${cost.free === 1 ? '' : 's'} (Free tier) / ${cost.pro} credit${cost.pro === 1 ? '' : 's'} (Pro tier)`);
-            }
+            if (catSchema.endpoint) lines.push(...costHelpLines(catSchema.endpoint, catSchema.options));
           }
           output(lines.join('\n'));
           notify();
