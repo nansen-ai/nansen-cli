@@ -441,6 +441,20 @@ describe('command-specific help', () => {
       expect(root).toContain(route);
       expect(bridge).toContain(route);
     }
-    expect(root.split('\n').find(line => line.startsWith('Bridge routes:'))).not.toContain('polygon');
+    const bridgeSection = root.split('BRIDGE (Hyperliquid):')[1].split('EXAMPLES:')[0];
+    expect(bridgeSection).not.toMatch(/polygon|bnb/);
+    expect(bridgeSection).toContain('base -> hyperliquid');
+  });
+});
+
+
+describe('example chain selection', () => {
+  it.each([['profiler', 'first-funder'], ['profiler', 'perp-positions'], ['profiler', 'perp-trades'], ['prediction-market', 'pnl-by-address'], ['prediction-market', 'trades-by-address'], ['prediction-market', 'address-summary']])('keeps EVM examples for %s %s', (group, sub) => {
+    const help = generateSubcommandHelp(group, sub);
+    expect(help).toContain('--address 0x...');
+    expect(help).not.toContain('So11111111111111111111111111111111111111112');
+  });
+  it('uses a Solana address for Solana-only jup-dca', () => {
+    expect(generateSubcommandHelp('token', 'jup-dca')).toContain('So11111111111111111111111111111111111111112');
   });
 });

@@ -1867,6 +1867,7 @@
             "jup-dca": {
               "endpoint": "/api/v1/tgm/jup-dca",
               "description": "Jupiter DCA orders for token",
+              "examples": ["nansen research token jup-dca --token So11111111111111111111111111111111111111112"],
               "options": {
                 "token": {
                   "type": "string",

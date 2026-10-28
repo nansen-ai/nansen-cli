@@ -1205,7 +1205,7 @@ BRIDGE (Hyperliquid):
   nansen bridge quote --from-chain base --to-chain hyperliquid --from-token USDC --amount 1000000
   nansen bridge execute --quote <quoteId>
   nansen bridge status --request-id <id>
-  Supports EVM chains (ethereum, base, arbitrum, polygon, bnb) <-> Hyperliquid.
+  Supported routes: ${formatBridgeRoutes()}
 
 EXAMPLES:
   nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000
@@ -2550,7 +2550,8 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
   }
 
   const chain = subSchema.options?.chain?.default || 'solana';
-  const exampleAddress = chain === 'solana' ? 'So11111111111111111111111111111111111111112' : '0x...';
+  const isSolana = subSchema.options?.chain?.default === 'solana';
+  const exampleAddress = isSolana ? 'So11111111111111111111111111111111111111112' : '0x...';
   const exampleValues = { address: exampleAddress, token: exampleAddress, query: '"term"', symbol: 'BTC', date: '2024-01-01' };
   const cmdPrefix = prefix || (fromResearch || DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command);
   let example = subSchema.examples?.[0] || `nansen ${cmdPrefix} ${subcommand}`;
