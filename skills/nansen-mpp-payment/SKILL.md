@@ -46,11 +46,11 @@ tempo wallet whoami
 
 ```bash
 # Smart Money netflow
-tempo request POST https://api.nansen.ai/api/v1/smart-money/netflow \
+tempo request -X POST https://api.nansen.ai/api/v1/smart-money/netflow \
   --json '{"chains":["solana"],"pagination":{"page":1,"page_size":10}}'
 
 # TGM holders
-tempo request POST https://api.nansen.ai/api/v1/tgm/holders \
+tempo request -X POST https://api.nansen.ai/api/v1/tgm/holders \
   --json '{"token_address":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","chain":"solana"}'
 ```
 

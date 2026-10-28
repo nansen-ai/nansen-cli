@@ -113,16 +113,16 @@ Pick one of three ways to authenticate and pay for API calls.
 nansen login
 ```
 
-**x402.** Pay per call from a CLI wallet funded with USDC on Base or Solana, or USDT0 on X Layer. When the API answers with HTTP 402, the CLI pays from your default wallet and retries. Each payment is capped at $1.00 by default; set `NANSEN_X402_MAX_AMOUNT` to change it. Your first wallet becomes the default.
+**x402.** Pay per call from a CLI wallet funded with USDC on Base or Solana, or USDT0 on X Layer. When the API answers with HTTP 402, the CLI pays from your default wallet and retries. Each payment is capped at $1.00 by default; set `NANSEN_X402_MAX_AMOUNT` to change it. Your first wallet becomes the default. The wallet needs a password of at least 12 characters. The CLI saves it for later payments, in the OS keychain when one is available.
 
 ```bash
-nansen wallet create --name my-wallet
+NANSEN_WALLET_PASSWORD='<your-wallet-password>' nansen wallet create --name my-wallet
 ```
 
 **MPP via tempo.** Pay per call through the separate [tempo CLI](https://docs.tempo.xyz). The Nansen CLI does not sign MPP payments. After the [one-time tempo setup](#mpp--tempo):
 
 ```bash
-tempo request POST https://api.nansen.ai/api/v1/smart-money/netflow --json '{"chains":["solana"],"pagination":{"page":1,"page_size":10}}'
+tempo request -X POST https://api.nansen.ai/api/v1/smart-money/netflow --json '{"chains":["solana"],"pagination":{"page":1,"page_size":10}}'
 ```
 
 [docs/auth.md](docs/auth.md) covers headless setup, saving an API key, browser-session storage and how x402 payment works with each credential.
@@ -373,7 +373,7 @@ tempo wallet fund     # follow the on-screen instructions to deposit USDC
 **Calling the Nansen API via tempo:**
 
 ```bash
-tempo request POST https://api.nansen.ai/api/v1/smart-money/netflow \
+tempo request -X POST https://api.nansen.ai/api/v1/smart-money/netflow \
   --json '{"chains":["solana"],"pagination":{"page":1,"page_size":10}}'
 ```
 
