@@ -49,8 +49,8 @@ Browser login is enabled in production. Saved browser-session storage is [qualif
 
 ## x402
 
-create and fund a wallet with USDC on Base/Solana or USDT0 on X Layer. API keys, browser sessions and anonymous requests can all pay a supported HTTP 402 challenge under the same wallet policy and spending limits. The paid retry sends `Payment-Signature` without the account credential. Authentication or authorization failures never trigger payment. Explicit manual API-key payment signatures remain supported.
+Create and fund a wallet with USDC on Base/Solana or USDT0 on X Layer. API keys, browser sessions and anonymous requests can all pay a supported HTTP 402 challenge under the same wallet policy and spending limits. The paid retry sends `Payment-Signature` without the account credential. Authentication or authorization failures never trigger payment. Explicit manual API-key payment signatures remain supported.
 
 ## MPP via tempo
 
-install the separate tempo CLI and use `tempo request`. Browser login does not configure a wallet, sign MPP credentials or purchase credits. See [MPP / Tempo](../README.md#mpp--tempo).
+Install the separate tempo CLI and use `tempo request`. Browser login does not configure a wallet, sign MPP credentials or purchase credits. See [MPP / Tempo](../README.md#mpp--tempo).
