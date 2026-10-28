@@ -217,23 +217,23 @@ describe('resolveResearchCommand', () => {
 // ============= Option validation =============
 
 describe('validateResearchInput', () => {
-  it('rejects an unknown option with a did-you-mean hint (REST wording)', () => {
+  it('rejects an unknown option with the valid option list', () => {
     const error = check('research token info', { token: SOL_MINT, timefrme: '30d' });
     expect(error).toEqual({
-      message: "Option '--timefrme' is not recognized by nansen research token info. Did you mean '--timeframe'?",
+      message: "Option '--timefrme' is not recognized by nansen research token info. Valid options are: --chain, --token, --timeframe (plus output options; see: nansen schema).",
       code: 'INVALID_PARAMS',
       details: {
         param: '--timefrme',
         errors: [{
           field: '--timefrme',
-          message: "Option '--timefrme' is not recognized by nansen research token info. Did you mean '--timeframe'?",
+          message: "Option '--timefrme' is not recognized by nansen research token info. Valid options are: --chain, --token, --timeframe (plus output options; see: nansen schema).",
           code: 'unknown_field',
         }],
       },
     });
   });
 
-  it('lists the valid options when nothing is close (--turbo)', () => {
+  it('lists the valid options for an invented name (--turbo)', () => {
     const error = check('research token info', { token: SOL_MINT }, { turbo: true });
     expect(error.message).toBe("Option '--turbo' is not recognized by nansen research token info. Valid options are: --chain, --token, --timeframe (plus output options; see: nansen schema).");
   });
@@ -414,7 +414,7 @@ describe('validateFieldSelection', () => {
 
   it('rejects a dotted path that does not exist at that position', () => {
     expect(() => validateFieldSelection({ data: [{ token_symbol: 'ETH' }] }, ['results.token_symbol'])).toThrow(
-      "Field 'results.token_symbol' is not in the response. Did you mean 'token_symbol'?",
+      "Field 'results.token_symbol' is not in the response. Available fields: data, token_symbol",
     );
     expect(() => validateFieldSelection({ data: [{ token_symbol: 'ETH' }] }, ['data.token_symbol'])).not.toThrow();
   });
@@ -424,11 +424,11 @@ describe('validateFieldSelection', () => {
     expect(() => validateFieldSelection({ data: rows }, ['rare'])).not.toThrow();
   });
 
-  it('rejects a name that matches nothing, with a suggestion', () => {
+  it('rejects a name that matches nothing, with the field list', () => {
     expect(() => validateFieldSelection(data, ['token_symbl'], { path: 'nansen research token screener' })).toThrow(
       expect.objectContaining({
         code: 'INVALID_PARAMS',
-        message: "Field 'token_symbl' is not in the response from nansen research token screener. Did you mean 'token_symbol'?",
+        message: "Field 'token_symbl' is not in the response from nansen research token screener. Available fields: data, token_symbol, value_usd, token, address, pagination, page",
       }),
     );
   });
@@ -587,7 +587,7 @@ describe('runCLI failures always exit 1 with success:false (API-1080)', () => {
     expect(output).toMatchObject({
       success: false,
       code: 'INVALID_PARAMS',
-      error: "Field 'token_symbl' is not in the response from nansen research token screener. Did you mean 'token_symbol'?",
+      error: expect.stringMatching(/^Field 'token_symbl' is not in the response from nansen research token screener\. Available fields: /),
     });
   });
 
