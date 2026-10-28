@@ -2694,7 +2694,7 @@
         },
         "historical-token-flow-summary": {
           "endpoint": "/api/v1/tgm/historical-token-flow-summary",
-          "description": "Historical token flow summary (no pagination; label segments start 2025-03-11)",
+          "description": "Historical token flow summary (no pagination; whale, public figure, top PnL and exchange segments start 2025-03-11)",
           "options": {
             "token-address": {
               "required": true,
@@ -2712,7 +2712,7 @@
             },
             "to-date": {
               "required": true,
-              "description": "End of date range (YYYY-MM-DD). Label history starts 2025-03-11: for an earlier date, the whale, public figure, top PnL and exchange fields are null",
+              "description": "End of date range (YYYY-MM-DD). Whale, public figure, top PnL and exchange label history starts 2025-03-11, so those fields are null for an earlier date",
               "type": "string",
               "format": "date-time"
             },

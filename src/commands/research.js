@@ -157,7 +157,7 @@ USAGE:
   nansen research historical-token-flow-summary --token-address <addr> --from-date <YYYY-MM-DD> --to-date <YYYY-MM-DD> [--chain <chain>]
 
 NOTE: This endpoint does not support pagination.
-Label history starts 2025-03-11. For an earlier --to-date, the whale, public figure, top PnL and exchange fields are null.`,
+Whale, public figure, top PnL and exchange label history starts 2025-03-11, so those fields are null for an earlier --to-date.`,
   'historical-token-quant-scores': `nansen research historical-token-quant-scores — Historical token quantitative scores
 
 USAGE:
