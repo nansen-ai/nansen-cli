@@ -235,7 +235,7 @@ export function enableAutoPagination(api, opts = {}) {
       api.paginatedEndpoint = null;
       const pageMetadata = [];
       const recordPageMetadata = (meta, cached = false) => {
-        pageMetadata.push({ cached, meta: cached ? null : meta });
+        pageMetadata.push({ cached, meta });
       };
       try {
         return await collectPages(async pagination => {
