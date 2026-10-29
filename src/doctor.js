@@ -316,7 +316,7 @@ export function runDoctorChecks(deps = {}) {
   if (walletInfo.dirError) {
     checks.push(check('wallets', 'error', `${walletInfo.dir} exists but cannot be read — permission problem?`, `Check ownership and mode: ls -ld "${walletInfo.dir}"`));
   } else if (!walletInfo.dirExists || walletInfo.wallets.length === 0) {
-    checks.push(check('wallets', 'info', 'No local wallets (only needed for trading and x402 micropayments)', 'Run: nansen wallet create <name>'));
+    checks.push(check('wallets', 'info', 'No local wallets (only needed for trading and x402 micropayments)', 'Run: nansen wallet create --name <name>'));
   } else {
     const defaultNote = walletInfo.defaultWallet ? `default: ${walletInfo.defaultWallet}` : 'no default set';
     checks.push(check('wallets', 'ok', `${walletInfo.wallets.length} wallet${walletInfo.wallets.length === 1 ? '' : 's'} in ${walletInfo.dir} (${defaultNote})`));

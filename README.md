@@ -105,32 +105,27 @@ uncertain attempt remains uncertain. Never switch accounts or pay to bypass deni
 
 ## Auth
 
-Plain `nansen login` requests fresh browser approval and saves a session automatically. No API-key copying or PEM setup is needed. Selected sessions renew automatically; rejected or uncertain renewal requires fresh login.
+Pick one of three ways to authenticate and pay for API calls.
+
+**Nansen account.** Calls use your account's plan and credits. `nansen login` approves the CLI in your browser and saves a session. On a server, in a container or in CI, set `NANSEN_API_KEY` to a key from [the API page](https://app.nansen.ai/api) instead.
 
 ```bash
-nansen login                 # approve the displayed code, account and CLI
-nansen login --no-browser    # approve on another device; same storage requirements
-nansen auth status           # offline, cached/unverified credential selection
-nansen account               # free live check, including with zero research credits
-nansen logout                # clear saved API auth; preserve wallets and environment keys
+nansen login
 ```
 
-Browser login is available in Nansen CLI 2.0.0 and enabled in production. Saved browser sessions are currently qualified on macOS arm64 in a local GUI Terminal with an unlocked login Keychain and local home directory. Other platforms and terminal environments still need qualification. See [storage, supported scope and recovery](docs/browser-login.md). Email/password and Google sign-in are supported by the device-flow contract. Apple device sign-in remains deferred.
-
-Existing API-key users can run commands directly with `NANSEN_API_KEY`. It overrides the saved session, even after successful browser login. To deliberately save an injected key, use explicit `nansen login --human`; without an environment key this prompts in a human terminal. `nansen login --api-key <key>` remains available but puts the key in shell history. Saved-auth mutations require the native lock binding. Get a conventional key at [agent setup](https://app.nansen.ai/auth/agent-setup); MCP installation exports a separate persistent API key; it does not export browser sessions.
-
-For automation, pipe a key from your secret manager into `nansen login --api-key-stdin`, or redirect a protected key file:
+**x402.** Pay per call from a CLI wallet funded with USDC on Base or Solana, or USDT0 on X Layer. When the API answers with HTTP 402, the CLI pays from your default wallet and retries. Each payment is capped at $1.00 by default; set `NANSEN_X402_MAX_AMOUNT` to change it. Your first wallet becomes the default. The wallet needs a password of at least 12 characters. The CLI saves it for later payments, in the OS keychain when one is available.
 
 ```bash
-nansen login --api-key-stdin --json < /path/to/protected-api-key
+NANSEN_WALLET_PASSWORD='<your-wallet-password>' nansen wallet create --name my-wallet
 ```
 
-This reads one key (up to 4096 bytes, with an optional trailing newline), verifies it, and saves it without printing it. Input must close within 30 seconds. `--json` prints one `saved` event with the effective credential source; errors exit nonzero. As with existing API-key login, the key is stored in `~/.nansen/config.json` using an atomic write with owner-only file permissions (`0600` on POSIX), not in the OS keychain. The native lock binding is required for saving credentials. It does not create an account or issue a key. Avoid commands containing literal secrets, which may enter shell history. Do not combine it with `--api-key`, `--human`, or `--no-browser`. An existing `NANSEN_API_KEY` still overrides the saved credential until you unset it.
+**MPP via tempo.** Pay per call through the separate [tempo CLI](https://docs.tempo.xyz). The Nansen CLI does not sign MPP payments. After the [one-time tempo setup](#mpp--tempo):
 
-Wallet and micropayment options:
+```bash
+tempo request -X POST https://api.nansen.ai/api/v1/smart-money/netflow --json '{"chains":["solana"],"pagination":{"page":1,"page_size":10}}'
+```
 
-- **x402:** create and fund a wallet with USDC on Base/Solana or USDT0 on X Layer. API keys, browser sessions and anonymous requests can all pay a supported HTTP 402 challenge under the same wallet policy and spending limits. The paid retry sends `Payment-Signature` without the account credential. Authentication or authorization failures never trigger payment. Explicit manual API-key payment signatures remain supported.
-- **MPP:** install the separate tempo CLI and use `tempo request`. Browser login does not configure a wallet, sign MPP credentials or purchase credits. See [MPP / Tempo](#mpp--tempo).
+[docs/auth.md](docs/auth.md) covers headless setup, saving an API key, browser-session storage and how x402 payment works with each credential.
 
 ## Verify your MCP setup
 
@@ -177,18 +172,6 @@ Plus the `historical-*` point-in-time commands — run `nansen research help` fo
 **Wallet:** `create`, `list`, `show`, `export`, `default`, `delete`, `send`, `forget-password`, `secure` — local or Privy server-side wallets (EVM + Solana).
 
 Run `nansen schema --pretty` for the full subcommand and field reference.
-
-## Browser login compatibility and scope
-
-Browser login requests `nansen:api` for the same account/API permissions as a pasted API key, including smart-alert CRUD, public agent, portfolio, web, beta and existing trading API operations. The same endpoint ownership, plan, credit, quota, sanctions and geographic checks apply. Existing OAuth/MCP `nansen:read` grants keep their existing semantics. Wallet signing remains separate.
-
-Plain `nansen login` always starts fresh browser approval, whether no credential, an environment key, a saved key or a saved session exists. It preflights secure storage, shows a link/code, verifies the approved account through the free account endpoint, then replaces the single saved API credential. `nansen login --no-browser` lets you approve on another device without opening a browser on the CLI machine. It does not remove the native-storage or supported-platform requirements. Browser login requires both stdin and stdout to be terminals; without either, it exits immediately with `NOT_A_TTY` and points to `nansen login --human` with `NANSEN_API_KEY` or `nansen login --api-key-stdin`. In a terminal, `--json` emits NDJSON pending and terminal events; the private device code and tokens are never printed.
-
-`NANSEN_API_KEY` still overrides the saved session. Login verifies the new account independently and explains this override. Failed approval or installation preserves the previous selection. `nansen auth status` is offline and labels saved metadata as cached/unverified; `nansen account` checks the effective credential live. `nansen logout` removes saved API authentication and attempts family retirement, preserving wallets and environment keys. Remote revocation and physical deletion failures are reported separately.
-
-This is a breaking change for scripts that used plain login to persist an environment key. Use explicit `nansen login --human` with that environment key, or `--api-key <key>` with its existing shell-history risk. Direct key-authenticated commands need no migration. Existing API-key x402 payment behavior is preserved and also applies to browser sessions: a supported HTTP 402 challenge can trigger wallet payment under the existing policy and spending limits. A paid retry does not change the saved credential or top up account credits. Invalid credentials never cause an account switch or payment; login verification remains free and never pays.
-
-Browser login is enabled in production. Saved browser-session storage is [qualified on macOS arm64](docs/browser-login.md#preview-platform-scope); Linux qualification is pending, and Windows and SSH/background sessions are not qualified. Selected sessions renew automatically near expiry. If a refresh response is lost before a complete replacement is stored, follow the fresh-login guidance; the CLI never retries a consumed refresh credential. Browser sessions have the same account API permissions as API keys, subject to existing endpoint checks. They add no wallet-signing or internal-service authority and cannot be exported as MCP API keys. See [storage and recovery](docs/browser-login.md).
 
 ## MCP
 
@@ -390,7 +373,7 @@ tempo wallet fund     # follow the on-screen instructions to deposit USDC
 **Calling the Nansen API via tempo:**
 
 ```bash
-tempo request POST https://api.nansen.ai/api/v1/smart-money/netflow \
+tempo request -X POST https://api.nansen.ai/api/v1/smart-money/netflow \
   --json '{"chains":["solana"],"pagination":{"page":1,"page_size":10}}'
 ```
 
@@ -615,7 +598,7 @@ Any field may be absent or `null`, meaning unknown — never assume zero. A low-
 | Symptom | Fix |
 |---------|-----|
 | `command not found` | `npm install -g nansen-cli` |
-| Global install reports an older version | `npm i -g nansen-cli@latest --registry=https://registry.npmjs.org/ --prefer-online`, then check `which -a nansen` for stale binaries |
+| Global install reports an older version | Check `node -v` first: current releases need Node.js >= 22. On an older Node, `npm i -g nansen-cli` installs the newest release that still supports it without an error, and `npm i -g nansen-cli@latest` installs the current release with an `EBADENGINE` warning (or fails under `engine-strict`). Upgrade Node, then run `npm i -g nansen-cli@latest --registry=https://registry.npmjs.org/ --prefer-online` and check `which -a nansen` for stale binaries |
 | `UNAUTHORIZED` after login | `nansen auth status` shows the effective credential and cached/unverified session metadata. Correct an invalid environment key first; browser login does not override it. Use fresh `nansen login` for a rejected session, or explicit legacy key setup for integration credentials |
 | MCP client lists tools but paid calls fail | Run `npx -y nansen-cli mcp verify` with the saved key or `NANSEN_API_KEY`, and ensure that same key is in the client's `NANSEN-API-KEY` header |
 | Anything else misbehaving | `nansen doctor` checks your whole setup (auth, wallets, caches, connectivity) with a fix per finding |

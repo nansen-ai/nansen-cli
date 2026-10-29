@@ -2,12 +2,12 @@ import { spawn } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { AuthError, authDirectory } from './auth-credentials.js';
+import { AuthError, authDirectory, ENV_API_KEY_GUIDANCE } from './auth-credentials.js';
 
 export const CHUNK_BYTES = 2048;
 export const MAX_BUNDLE_BYTES = 16384;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-const unavailable = () => new AuthError('AUTH_STORE_UNAVAILABLE', 'Secure credential storage is unavailable or locked. Unlock your OS credential store and retry nansen login. No file fallback is used.');
+const unavailable = () => new AuthError('AUTH_STORE_UNAVAILABLE', `Secure credential storage is unavailable or locked. ${ENV_API_KEY_GUIDANCE} To use browser login, enable and unlock your OS credential store, then retry nansen login from a supported terminal. See docs/browser-login.md#preview-platform-scope. No file fallback is used.`);
 export function nativeStoreOperation(operation, account, bytes, { directory = authDirectory(), signal } = {}) {
   signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
@@ -62,7 +62,7 @@ export function nativeStoreOperation(operation, account, bytes, { directory = au
       try {
         if (failed || code !== 0 || !ready || !result || output) throw new Error();
         if (result.error === 'BINDING_MISSING') {
-          reject(new AuthError('AUTH_STORE_UNAVAILABLE', 'The native credential-store binding could not load. Reinstall nansen-cli with optional dependencies enabled on a supported OS and architecture. See nansen doctor --offline and the browser-login platform guide.'));
+          reject(new AuthError('AUTH_STORE_UNAVAILABLE', `The native credential-store binding could not load. ${ENV_API_KEY_GUIDANCE} For saved browser login, reinstall nansen-cli with optional dependencies enabled on a supported OS and architecture. See nansen doctor --offline and docs/browser-login.md#preview-platform-scope.`));
           return;
         }
         resolve(operation === 'get' && result.value !== null ? Buffer.from(result.value, 'base64') : result.value);

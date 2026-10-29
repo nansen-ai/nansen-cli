@@ -1,4 +1,4 @@
-import { authConfigView } from './auth-credentials.js';
+import { authConfigView, ENV_API_KEY_GUIDANCE } from './auth-credentials.js';
 import { browserLogin, defaultAuthState, cleanupMessage } from './auth-login.js';
 import { readApiKeyInput } from './auth-key-input.js';
 /**
@@ -27,7 +27,7 @@ import { compareSemver } from './semver.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
 import { getAuthStatus, runDoctorChecks, runConnectivityChecks, formatDoctorReport } from './doctor.js';
-import { refreshCostMapIfStale, getCostForEndpoint, creditsCharged } from './cost-cache.js';
+import { refreshCostMapIfStale, getCostForEndpoint, getCostVariants, formatCost, creditsCharged } from './cost-cache.js';
 import { collectCacheStats, clearCaches, formatCacheStats, formatCacheClear } from './cache-inspect.js';
 import { creditWarning, noticeWarnings } from './response-meta.js';
 import { trackCommandSucceeded, trackCommandFailed, trackAuthCommand } from './telemetry.js';
@@ -1205,7 +1205,7 @@ BRIDGE (Hyperliquid):
   nansen bridge quote --from-chain base --to-chain hyperliquid --from-token USDC --amount 1000000
   nansen bridge execute --quote <quoteId>
   nansen bridge status --request-id <id>
-  Supports EVM chains (ethereum, base, arbitrum, polygon, bnb) <-> Hyperliquid.
+  Supported routes: ${formatBridgeRoutes()}
 
 EXAMPLES:
   nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000
@@ -1220,8 +1220,8 @@ DEPRECATED ALIASES (still work, will be removed in a future version):
 
 Research chains: ${SCHEMA.chains.join(', ')}
 Trade chains: solana, base
-Bridge chains: ethereum, base, arbitrum, polygon, bnb, hyperliquid
-Labels: Fund, Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader
+Bridge routes: ${formatBridgeRoutes()}
+Labels: Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader (Smart Trader covers all windows; Fund is no longer a Smart Money label)
 
 Docs: https://docs.nansen.ai
 Skills: npx skills add nansen-ai/nansen-cli (agent-optimised docs per command group)
@@ -1269,9 +1269,7 @@ expire on their own, and an unexecuted quote is still spendable. Credentials,
 wallets and config are never changed by this command. CLI startup loads the saved
 config as usual.`;
 
-// Usage text for the `trade` command group. Shared by the trade handler and the
-// --help path in runCLI, so `nansen trade`, `nansen trade <sub> --help`, and the
-// deprecated top-level `quote`/`execute --help` all show the same usage.
+// Overview for the trade group. Individual subcommand help comes from the schema.
 export const TRADE_USAGE = `nansen trade — DEX trading commands
 
 SUBCOMMANDS:
@@ -1576,7 +1574,7 @@ export function buildCommands(deps = {}) {
       if ('api-key' in options && typeof options['api-key'] !== 'string') throw new CommandError('--api-key must be a single key string.', 'INVALID_PARAMS');
       if (!fromStdin && !flags.human && options['api-key'] === undefined) {
         if (!stdinTTY || !stdoutTTY) {
-          throw new CommandError('Browser login requires an interactive terminal. In a headless environment, set NANSEN_API_KEY and run nansen login --human, or pipe a key to nansen login --api-key-stdin.', 'NOT_A_TTY');
+          throw new CommandError(`Browser login requires an interactive terminal. ${ENV_API_KEY_GUIDANCE} To deliberately save an API key instead, use nansen login --human or nansen login --api-key-stdin. Saving requires native authentication locking.`, 'NOT_A_TTY');
         }
         return browserLoginFn({ flags, env, isTTY: stdoutTTY, log, errorOutput, state: authState });
       }
@@ -1844,7 +1842,7 @@ export function buildCommands(deps = {}) {
         'help': () => ({
           commands: ['netflow', 'dex-trades', 'perp-trades', 'holdings', 'dcas', 'historical-holdings'],
           description: 'Smart Money analytics endpoints',
-          example: 'nansen smart-money netflow --chain solana --labels Fund'
+          example: 'nansen research smart-money netflow --chain solana --labels "Smart Trader"'
         })
       };
 
@@ -2001,7 +1999,7 @@ export function buildCommands(deps = {}) {
       const onlySmartMoney = resolveBooleanOption(options, flags, 'smart-money') ?? false;
       if (onlySmartMoney) {
         filters.include_smart_money_labels = filters.include_smart_money_labels ||
-          ['Fund', 'Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader'];
+          ['Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader'];
       }
 
       const includeStablecoins = resolveBooleanOption(options, flags, 'include-stablecoins');
@@ -2480,6 +2478,22 @@ export const RESEARCH_CATEGORY_ALIASES = {
   'pm': 'prediction-market'
 };
 
+// Cost lines for help: the base cost, then each spec variant that costs
+// something different. Variant keys are API conditions such as
+// "premium_labels=true"; name the CLI flag instead when this command has it.
+function costHelpLines(endpoint, options = {}) {
+  const cost = getCostForEndpoint(endpoint);
+  if (!cost) return [];
+  const lines = [`Cost: ${formatCost(cost)}`];
+  for (const [condition, variant] of Object.entries(getCostVariants(endpoint) ?? {})) {
+    if (variant.free === cost.free && variant.pro === cost.pro) continue;
+    const flag = condition.match(/^(\w+)=true$/)?.[1].replace(/_/g, '-');
+    const label = flag && options[flag] ? `--${flag}` : condition;
+    lines.push(`Cost with ${label}: ${formatCost(variant)}`);
+  }
+  return lines;
+}
+
 // Generate help text for a specific subcommand using SCHEMA
 export function generateSubcommandHelp(command, subcommand, prefix = null) {
   // `perp` is both a top-level trading command and a research category, and
@@ -2488,7 +2502,8 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
   // stopping at the first schema whose *name* matches — that made
   // `research perp screener --help` fall back to listing the category's
   // subcommands, i.e. telling the caller to run the command they just ran.
-  const topSchema = SCHEMA.commands[command];
+  const [group, ...parents] = command.split(' ');
+  const topSchema = parents.reduce((schema, name) => schema?.subcommands?.[name], SCHEMA.commands[group]);
   const researchSchema = SCHEMA.commands.research.subcommands[command];
   const fromResearch = !topSchema?.subcommands?.[subcommand] && Boolean(researchSchema?.subcommands?.[subcommand]);
   const cmdSchema = fromResearch ? researchSchema : topSchema || researchSchema;
@@ -2499,6 +2514,11 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
 
   const lines = [];
   lines.push(`${command} ${subcommand} — ${subSchema.description || 'No description'}`);
+  if (subSchema.subcommands) {
+    lines.push('Subcommands: ' + Object.keys(subSchema.subcommands).join(', '));
+    lines.push(`Use: nansen ${command} ${subcommand} <subcommand> --help`);
+    return lines.join('\n');
+  }
 
   const positional = subSchema.args ?? [];
   if (subSchema.options || positional.length) {
@@ -2506,13 +2526,16 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
       const parts = [`${label}${opt.required ? '*' : ''}`];
       if (opt.default !== undefined) parts.push(`(${opt.default})`);
       if (opt.enum) parts.push(`[${opt.enum.join('|')}]`);
+      if (command.startsWith('trade') && opt.description) parts.push(`— ${opt.description}`);
       return parts.join(' ');
     };
     const params = [
       ...positional.map(arg => describe(`<${arg.name}>`, arg)),
       ...Object.entries(subSchema.options ?? {}).map(([name, opt]) => describe(`--${name}`, opt)),
     ];
-    lines.push(`Params (* required): ${params.join(', ')}`);
+    lines.push(command.startsWith('trade')
+      ? `Options (* required):\n  ${params.join('\n  ')}`
+      : `Params (* required): ${params.join(', ')}`);
   }
 
   if (subSchema.supportedChains?.length) {
@@ -2522,10 +2545,7 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
     lines.push('Pagination: not supported (--limit/--page are rejected)');
   }
 
-  if (subSchema.endpoint) {
-    const cost = getCostForEndpoint(subSchema.endpoint);
-    if (cost) lines.push(`Cost: ${cost.free} credit${cost.free === 1 ? '' : 's'} (Free tier) / ${cost.pro} credit${cost.pro === 1 ? '' : 's'} (Pro tier)`);
-  }
+  if (subSchema.endpoint) lines.push(...costHelpLines(subSchema.endpoint, subSchema.options));
 
   if (subSchema.returns?.length) {
     lines.push(`Returns: ${subSchema.returns.join(', ')}`);
@@ -2542,8 +2562,10 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
     if (subSchema.report.example) lines.push(`Report example: ${JSON.stringify(subSchema.report.example)}`);
   }
 
-  const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
   const chain = subSchema.options?.chain?.default || 'solana';
+  const isSolana = subSchema.options?.chain?.default === 'solana';
+  const exampleAddress = isSolana ? 'So11111111111111111111111111111111111111112' : '0x...';
+  const exampleValues = { address: exampleAddress, token: exampleAddress, query: '"term"', symbol: 'BTC', date: '2024-01-01' };
   const cmdPrefix = prefix || (fromResearch || DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command);
   let example = subSchema.examples?.[0] || `nansen ${cmdPrefix} ${subcommand}`;
   if (!subSchema.examples?.length && subSchema.options) {
@@ -2580,7 +2602,9 @@ function emitResponseMetadata(api, errorOutput) {
     else if (paginationMeta?.livePages === 0) scope = 'cached traversal';
     errorOutput(`Credits: ${charged.cost} (${scope})`);
   } else if (charged?.source === 'estimate') {
-    errorOutput(`Credits: ~${charged.estimate.free} free / ${charged.estimate.pro} pro (estimated)`);
+    const { free, pro } = charged.estimate;
+    const amount = free === pro ? free : `${free} free / ${pro} pro`;
+    errorOutput(`Credits: ~${amount} (estimated)`);
   }
 }
 
@@ -2737,10 +2761,7 @@ export async function runCLI(rawArgs, deps = {}) {
               return parts.join(' ');
             });
             lines.push(`Params (* required): ${params.join(', ')}`);
-            if (catSchema.endpoint) {
-              const cost = getCostForEndpoint(catSchema.endpoint);
-              if (cost) lines.push(`Cost: ${cost.free} credit${cost.free === 1 ? '' : 's'} (Free tier) / ${cost.pro} credit${cost.pro === 1 ? '' : 's'} (Pro tier)`);
-            }
+            if (catSchema.endpoint) lines.push(...costHelpLines(catSchema.endpoint, catSchema.options));
           }
           output(lines.join('\n'));
           notify();
@@ -2763,6 +2784,7 @@ export async function runCLI(rawArgs, deps = {}) {
       if (command && cmdSchemaLookup) {
         const cmdSchema = cmdSchemaLookup;
         const lines = [`${command} — ${cmdSchema.description}`];
+        if (command === 'bridge') lines.push(`Supported routes: ${formatBridgeRoutes()}`);
         if (cmdSchema.subcommands) {
           lines.push('Subcommands: ' + Object.keys(cmdSchema.subcommands).join(', '));
           lines.push(`Use: nansen ${command} <subcommand> --help`);
@@ -2798,12 +2820,13 @@ export async function runCLI(rawArgs, deps = {}) {
         return { type: 'command-help', command };
       }
     }
-    // The trade group (and the deprecated top-level quote/execute aliases) use
-    // handler-based usage rather than schema help. Show it and exit 0, instead of
-    // falling through to command execution, which would error on missing required
-    // args and exit 1.
+    // Resolve nested trade help and deprecated aliases before command execution.
+    // Keep the overview for the group or an unknown subcommand.
     if (command === 'trade' || DEPRECATED_TO_TRADE.has(command)) {
-      output(deprecationNote(command) + TRADE_USAGE);
+      const path = command === 'trade' ? positional.slice(1) : [command];
+      const parent = ['trade', ...path.slice(0, -1)].join(' ');
+      const help = path.length ? generateSubcommandHelp(parent, path.at(-1)) : null;
+      output(deprecationNote(command) + (help || TRADE_USAGE));
       notify();
       return { type: 'command-help', command };
     }

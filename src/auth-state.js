@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { AuthError, authDirectory, validAuthPointer } from './auth-credentials.js';
+import { AuthError, authDirectory, validAuthPointer, ENV_API_KEY_GUIDANCE } from './auth-credentials.js';
 import { createAuthStore } from './auth-store.js';
 import { refreshSession, retireSession, validateSession } from './auth-device.js';
 import { openLocalFile, readLocalFile } from './local-file.js';
@@ -78,7 +78,7 @@ async function waitTurn(previous, signal) {
 }
 async function loadLocks() {
   try { return (await import('fs-native-extensions')).default; }
-  catch { throw new AuthError('AUTH_LOCK_UNAVAILABLE', 'Native authentication locking is unavailable. Reinstall nansen-cli with optional dependencies; if they are installed, this platform may lack a compatible fs-native-extensions prebuild. Legacy key setup and logout require this binding. Environment API keys still work. For offline saved-key removal, stop every CLI/auth process, then follow docs/browser-login.md#offline-recovery-without-native-locking. Do not delete auth journals or wallet files.'); }
+  catch { throw new AuthError('AUTH_LOCK_UNAVAILABLE', `Native authentication locking is unavailable. ${ENV_API_KEY_GUIDANCE} Saved login and logout require this binding. Reinstall nansen-cli with optional dependencies; if they are installed, this platform may lack a compatible fs-native-extensions prebuild. For offline saved-key removal, stop every CLI/auth process, then follow docs/browser-login.md#offline-recovery-without-native-locking. Do not delete auth journals or wallet files.`); }
 }
 export function createAuthState({ directory = authDirectory(), store = createAuthStore({ directory }), retire = retireSession, refresh = refreshSession, now = Date.now, barrier = async () => {}, locks = loadLocks, waitMs = 15000, operationMs = 60000 } = {}) {
   let operationSignal;

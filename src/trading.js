@@ -16,7 +16,7 @@ import { buildMessageV0, fetchAddressLookupTables, fetchRecentBlockhash } from '
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendSolanaTransactionViaWalletConnect, sendApprovalViaWalletConnect } from './walletconnect-trading.js';
 import { retrievePassword } from './keychain.js';
-import { validateQuoteInput, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, assertSolanaSwapOutcome, approvalAmountForSwap, needsAllowanceRevoke, OVERSIZED_ALLOWANCE_MULTIPLIER, EVM_BRIDGE_NATIVE_FEE_SLACK, isBridgeRequest } from './trade-validation.js';
+import { validateQuoteInput, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, checkSolanaFeeBalance, assertSolanaSwapOutcome, approvalAmountForSwap, needsAllowanceRevoke, OVERSIZED_ALLOWANCE_MULTIPLIER, EVM_BRIDGE_NATIVE_FEE_SLACK, isBridgeRequest } from './trade-validation.js';
 import { readCompactU16 } from './solana-tx.js';
 import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 export { readCompactU16 };
@@ -2780,7 +2780,11 @@ async function preflightTradeExecutionCandidate({
       CHAIN_RPCS.solana,
       async () => walletAddress,
     );
-    assertSolanaInstructionsSafe(txBase64, { walletAddress });
+    const safeTx = assertSolanaInstructionsSafe(txBase64, { walletAddress });
+    const feeCheck = await checkSolanaFeeBalance({ parsed: safeTx, walletAddress, log });
+    if (!feeCheck.proceed) {
+      throw new CommandError(`Insufficient SOL for this transaction: ${feeCheck.reason}`, 'INSUFFICIENT_GAS');
+    }
     if (!noVerifyOutcome) {
       const outcome = await verifySolanaSwapOutcome({
         chain,
@@ -3855,7 +3859,19 @@ EXAMPLES:
               // alone wouldn't see. The residual sibling-transfer gap is closed by
               // verifySolanaSwapOutcome below (degrades gracefully when no sim RPC
               // is available, so this static check remains a guard when sim is off).
-              assertSolanaInstructionsSafe(txBase64, { walletAddress });
+              const safeTx = assertSolanaInstructionsSafe(txBase64, { walletAddress });
+
+              // Check the wallet can pay this transaction's actual fee.
+              // Runs regardless of --no-verify-outcome: simulation would also
+              // catch an unpayable transaction, but not when it is skipped or
+              // degraded. Warns and proceeds if the balance read fails.
+              const feeCheck = await checkSolanaFeeBalance({ parsed: safeTx, walletAddress, log });
+              if (!feeCheck.proceed) {
+                log(`  ❌ ${quoteName} cannot be paid for: ${feeCheck.reason}`);
+                if (qi + 1 < endIndex) log('  Trying next quote...');
+                lastQuoteError = `${quoteName} insufficient SOL: ${feeCheck.reason}`;
+                continue;
+              }
 
               // Verify the swap's simulated on-chain outcome matches intent.
               // Degrades with a warning if no simulation endpoint is available.
@@ -4181,7 +4197,19 @@ EXAMPLES:
               // alone wouldn't see. The residual sibling-transfer gap is closed by
               // verifySolanaSwapOutcome below (degrades gracefully when no sim RPC
               // is available, so this static check remains a guard when sim is off).
-              assertSolanaInstructionsSafe(txBase64, { walletAddress: solanaWalletAddress });
+              const safeTx = assertSolanaInstructionsSafe(txBase64, { walletAddress: solanaWalletAddress });
+
+              // Check the wallet can pay this transaction's actual fee.
+              // Runs regardless of --no-verify-outcome: simulation would also
+              // catch an unpayable transaction, but not when it is skipped or
+              // degraded. Warns and proceeds if the balance read fails.
+              const feeCheck = await checkSolanaFeeBalance({ parsed: safeTx, walletAddress: solanaWalletAddress, log });
+              if (!feeCheck.proceed) {
+                log(`  ❌ ${quoteName} cannot be paid for: ${feeCheck.reason}`);
+                if (qi + 1 < endIndex) log('  Trying next quote...');
+                lastQuoteError = `${quoteName} insufficient SOL: ${feeCheck.reason}`;
+                continue;
+              }
 
               // Verify the swap's simulated on-chain outcome matches intent.
               // Degrades with a warning if no simulation endpoint is available.

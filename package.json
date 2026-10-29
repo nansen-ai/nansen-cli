@@ -14,6 +14,7 @@
     "skills/**",
     "scripts/postinstall.js",
     "CHANGELOG.md",
+    "docs/auth.md",
     "docs/browser-login.md",
     "docs/error-codes.md"
   ],
@@ -75,11 +76,11 @@
     "@changesets/changelog-github": "^0.5.1",
     "@changesets/cli": "^2.29.4",
     "@eslint/js": "^10.0.1",
-    "@vitest/coverage-v8": "^4.0.18",
+    "@vitest/coverage-v8": "^4.1.12",
     "clawhub": "^0.9.0",
     "eslint": "^10.0.2",
     "globals": "^17.4.0",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.12"
   },
   "dependencies": {
     "@ethereumjs/rlp": "^10.1.1",

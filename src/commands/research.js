@@ -156,7 +156,8 @@ USAGE:
 USAGE:
   nansen research historical-token-flow-summary --token-address <addr> --from-date <YYYY-MM-DD> --to-date <YYYY-MM-DD> [--chain <chain>]
 
-NOTE: This endpoint does not support pagination.`,
+NOTE: This endpoint does not support pagination.
+Whale, public figure, top PnL and exchange label history starts 2025-03-11, so those fields are null for an earlier --to-date.`,
   'historical-token-quant-scores': `nansen research historical-token-quant-scores — Historical token quantitative scores
 
 USAGE:
@@ -188,7 +189,8 @@ USAGE:
 USAGE:
   nansen research historical-tx-lookup --transaction-hash <hash> --as-of-date <YYYY-MM-DD> [--chain <chain>] [--block-timestamp "YYYY-MM-DD HH:MM:SS"]
 
-NOTE: Providing --block-timestamp skips a slow hash-resolution step and returns results much faster.`,
+NOTE: Providing --block-timestamp skips a slow hash-resolution step and returns results much faster.
+Entity labels are available from 2025-03-11 onward.`,
   'historical-wallet-transactions': `nansen research historical-wallet-transactions — Historical transactions for a wallet
 
 USAGE:

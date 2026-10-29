@@ -15,7 +15,12 @@ it('fails bounded without claiming termination when the OS never reports helper 
   child.stdout.emit('data', '{"ready":true}\n');
   expect(child.stdin.write).toHaveBeenCalledTimes(2);
   await vi.advanceTimersByTimeAsync(11000);
-  expect(await result).toMatchObject({ code: 'AUTH_STORE_UNAVAILABLE' });
+  const error = await result;
+  expect(error).toMatchObject({ code: 'AUTH_STORE_UNAVAILABLE' });
+  expect(error.message).toContain("export NANSEN_API_KEY='<your-api-key>'");
+  expect(error.message).toContain('nansen account');
+  expect(error.message).toContain("You don't need to run nansen login");
+  expect(error.message).not.toMatch(/[\r\n]/);
   expect(child.kill).toHaveBeenCalledWith('SIGKILL'); expect(child.unref).toHaveBeenCalledOnce();
   expect(child.stdin.destroy).toHaveBeenCalledOnce(); expect(child.stdout.destroy).toHaveBeenCalledOnce();
   // No late readiness can issue another operation after the failure deadline.
@@ -33,6 +38,9 @@ it('reports a missing native binding after helper termination without claiming s
   const error = await result;
   expect(error.code).toBe('AUTH_STORE_UNAVAILABLE');
   expect(error.message).toContain('optional dependencies');
+  expect(error.message).toContain('https://app.nansen.ai/api');
+  expect(error.message).toContain("export NANSEN_API_KEY='<your-api-key>'");
+  expect(error.message).not.toMatch(/[\r\n]/);
   expect(error.message).not.toContain('Unlock');
   expect(child.kill).not.toHaveBeenCalled();
 });

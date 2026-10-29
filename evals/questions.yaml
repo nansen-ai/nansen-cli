@@ -21,19 +21,19 @@ questions:
       - "--chain"
     skill: nansen-holder-analysis
 
-  # Smart money: --labels "Fund" on netflow (labels listed in help but usage on specific commands is skill knowledge)
-  - id: fund_netflow
-    question: What tokens are crypto funds accumulating on Ethereum?
+  # Smart money: --labels "Smart Trader" on netflow (labels listed in help but usage on specific commands is skill knowledge)
+  - id: smart_trader_netflow
+    question: What tokens are Smart Traders accumulating on Ethereum?
     expected_commands:
       - nansen research smart-money netflow
       - nansen research smart-money holdings
     expected_fragments:
       - "smart-money netflow"
       - '--labels'
-      - "Fund"
+      - "Smart Trader"
       - "--chain"
       - "ethereum"
-    skill: nansen-fund-tracker
+    skill: nansen-smart-money-tracker
 
   # Perp: leaderboard --days (skill-specific)
   - id: perp_leaderboard_week

@@ -138,6 +138,7 @@ nansen alerts create \
 - Chain aliases: Hyperliquid = `hyperevm`, BSC = `bnb`.
 - Multiple channels can be combined: `--telegram 123 --slack https://... --webhook https://...`
 - `--webhook <url>` sends a POST request with the alert payload to any HTTP/HTTPS endpoint. Useful for server deployments, Zapier, n8n, or custom integrations. The endpoint must be publicly reachable and return a 2xx response.
+- Alert output redacts channel credentials (Slack/Discord/webhook URLs and webhook signing secrets), e.g. `https://hooks.slack.com/services/T000/****`. Webhook URLs grant post access to the channel, so keep them out of shared output; pass `--reveal` only when the full value is needed. Never pass a redacted value back to `--slack`/`--discord`/`--webhook`; the CLI rejects it.
 - `--data '<json>'` merges raw JSON on top of named flags (escape hatch for fields without named flags).
 - Alert endpoints retain their normal ownership, plan and quota checks for both selected credentials.
 - Use single quotes for names with `$` or special characters: `--name 'SM >$1M'`

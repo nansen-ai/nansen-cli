@@ -1915,7 +1915,7 @@ export class NansenAPI {
     // Apply smart money filter via filters object
     if (onlySmartMoney) {
       filters.include_smart_money_labels = filters.include_smart_money_labels || 
-        ['Fund', 'Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader'];
+        ['Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader'];
     }
     
     return this.request('/api/v1/tgm/dex-trades', {

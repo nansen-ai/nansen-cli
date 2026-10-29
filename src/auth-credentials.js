@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { readLocalFile } from './local-file.js';
 
 export const DEFAULT_API_ORIGIN = 'https://api.nansen.ai';
+export const ENV_API_KEY_GUIDANCE = "You can still use the CLI with an API key. Get your API key from https://app.nansen.ai/api. On macOS/Linux, run: export NANSEN_API_KEY='<your-api-key>'. On Windows PowerShell, run: $env:NANSEN_API_KEY = '<your-api-key>'. Then check access with: nansen account. This works without a credential store or native authentication locking. You don't need to run nansen login. The variable stays set for this terminal session. For CI or automation, supply NANSEN_API_KEY through your platform's secret manager.";
 const DEV_CONFIG = fileURLToPath(new URL('../config.json', import.meta.url));
 export class AuthError extends Error {
   constructor(code, message) { super(message); this.code = code; }

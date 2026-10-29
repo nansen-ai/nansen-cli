@@ -22,7 +22,7 @@ nansen logout
 
 Plain `nansen login` always requests fresh browser approval, even when you already have a saved session or API key. Check the displayed code, account, client and requested access before approving. Visiting the link alone grants nothing. Email/password and Google are the documented sign-in methods; Apple device sign-in is not supported by this flow.
 
-Browser login needs both stdin and stdout connected to a terminal. In CI or another headless environment, set `NANSEN_API_KEY` and run `nansen login --human`, or pipe a key to `nansen login --api-key-stdin`. Plain login and `--no-browser` fail immediately without a terminal rather than waiting for device approval.
+Browser login needs both stdin and stdout connected to a terminal. Plain login and `--no-browser` fail immediately without a terminal rather than waiting for device approval.
 
 `--no-browser` runs the same flow without opening a browser automatically. You can approve on another device; the terminal needs no inbound callback and still needs usable native storage.
 
@@ -42,6 +42,26 @@ Explicit legacy key setup remains available through `nansen login --human`, `nan
 Login verifies the approved account without charging for research. Research uses the effective account's credits, plan and endpoint permissions. Login does not purchase credits or create a subscription. Existing server-side account billing settings remain separate.
 
 An invalid selected credential fails with an error. The CLI does not silently switch accounts, restore an older saved key or pay after authentication or authorization fails. A supported HTTP 402 payment challenge uses the same automatic x402 flow for API keys, browser sessions and anonymous requests, subject to existing wallet authorization, token/recipient policy and spending limits. The paid retry sends only the payment credential; it does not change saved authentication or top up account credits. Login verification never pays. Browser Bearer requests cannot be combined with an API key or a manually supplied payment signature. Explicit manual API-key payment remains supported.
+
+## Servers, containers and CI without secure storage
+
+Core API commands work without a credential store or native authentication locking when you supply `NANSEN_API_KEY`. Get your key from [the API page](https://app.nansen.ai/api), set it in your terminal, and check access:
+
+```bash
+export NANSEN_API_KEY='<your-api-key>'
+nansen account
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:NANSEN_API_KEY = '<your-api-key>'
+nansen account
+```
+
+You don't need to run `nansen login`. The variable stays set for this terminal session. In CI or automation, inject `NANSEN_API_KEY` through your platform's secret manager. The CLI uses it directly without saving the key to config or opening the browser-session store. The key overrides any saved session until you unset it.
+
+To deliberately save an API key, use `nansen login --human` or `nansen login --api-key-stdin`. Both require native authentication locking, so they are not a workaround when that binding is unavailable. Saved browser login also requires a working OS credential store and a supported terminal environment. See [preview platform scope](#preview-platform-scope) for recovery guidance. Wallet passwords have a separate, older plaintext-file fallback; browser-session secrets never use that fallback.
 
 ## Permissions and credential safety
 

@@ -127,6 +127,29 @@ describe('Package Integrity', () => {
     `], { cwd: tmpDir, encoding: 'utf8', env: childEnv });
     expect(smoke).toContain('key-auth-without-native-ok');
 
+    // Follow the recovery instructions through the installed CLI with both
+    // optional native dependencies absent, not just a directly constructed API.
+    const accountCapture = join(tmpDir, 'account-capture.mjs');
+    writeFileSync(accountCapture, `globalThis.fetch = async (input, options) => {
+      if (new URL(input).pathname !== '/api/v1/account' || options?.headers?.apikey !== 'synthetic-key') throw new Error('unexpected request or credential');
+      return new Response(JSON.stringify({user_id:'env-key-without-native'}));
+    };`);
+    const home = join(tmpDir, 'headless-home');
+    mkdirSync(home);
+    const envKey = { ...childEnv, HOME: home, USERPROFILE: home, NANSEN_API_KEY: 'synthetic-key', NANSEN_BASE_URL: 'https://api.nansen.ai', NO_UPDATE_NOTIFIER: '1', NODE_OPTIONS: `${childEnv.NODE_OPTIONS} --import=${accountCapture}` };
+    const account = invoke([join(packageRoot, 'src/index.js'), 'account'], envKey);
+    expect(account.status).toBe(0);
+    expect(account.stdout).toContain('env-key-without-native');
+    expect(account.stdout + account.stderr).not.toContain('synthetic-key');
+    expect(existsSync(join(home, '.nansen', 'config.json'))).toBe(false);
+    expect(existsSync(join(home, '.nansen', 'auth-operations'))).toBe(false);
+    const savedLogin = invoke([join(packageRoot, 'src/index.js'), 'login', '--human'], envKey);
+    expect(savedLogin.status).toBe(1);
+    expect(savedLogin.stdout + savedLogin.stderr).toContain('AUTH_LOCK_UNAVAILABLE');
+    expect(savedLogin.stdout + savedLogin.stderr).toContain("export NANSEN_API_KEY='<your-api-key>'");
+    expect(JSON.parse(savedLogin.stdout).error).not.toMatch(/[\r\n]/);
+    expect(savedLogin.stdout + savedLogin.stderr).not.toContain('synthetic-key');
+
     // Cleanup tarball
     rmSync(tgzPath, { force: true });
   }, 60000); // real installs take a few seconds; the margin is for a cold CI runner, not the audit hang above
