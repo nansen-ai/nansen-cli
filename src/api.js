@@ -458,6 +458,9 @@ export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL
       } else {
         result = { ...cached.data, _meta: meta };
       }
+      if (result !== null && typeof result === 'object' && typeof cached.warning === 'string' && cached.warning) {
+        result[RESPONSE_META] = { notices: { warning: cached.warning } };
+      }
     }
   } catch (error) {
     primaryError = error;
@@ -488,6 +491,7 @@ export function setCachedResponse(endpoint, body, data, context = {}) {
   const cached = {
     timestamp: Date.now(),
     endpoint,
+    warning: data?.[RESPONSE_META]?.notices?.warning,
     data
   };
   
@@ -1108,6 +1112,7 @@ export class NansenAPI {
       if (cached) {
         this.servedFromCache = true;
         traceCacheHit({ method, url });
+        this.lastResponseMeta = cached[RESPONSE_META] || null;
         return cached;
       }
     }
@@ -1448,18 +1453,13 @@ export class NansenAPI {
         data._meta = { ...(data._meta || {}), retriedAttempts: attempt };
       }
 
-      // Cache successful response
-      if (useCache && cacheContext) {
-        setCachedResponse(endpoint, body, data, cacheContext);
-      }
-
-      // Attach after caching so the cache stores the payload alone — quota
-      // numbers are per-response and would be stale on a cache hit.
-      // Guarded: a response body can be a primitive, which cannot take a property.
+      // Symbols do not serialize into the payload. The cache persists only the
+      // durable warning separately; quota and request metadata remain live-only.
       const meta = readResponseMeta(response);
       this.lastResponseMeta = meta;
-      if (meta) {
-        if (data !== null && typeof data === 'object') data[RESPONSE_META] = meta;
+      if (meta && data !== null && typeof data === 'object') data[RESPONSE_META] = meta;
+      if (useCache && cacheContext) {
+        setCachedResponse(endpoint, body, data, cacheContext);
       }
 
       return data;

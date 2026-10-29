@@ -301,3 +301,22 @@ describe('response cache file safety', () => {
     expect(fs.readdirSync(getCacheDir())).toEqual([path.basename(cacheFile)]);
   });
 });
+
+describe('cached API warnings', () => {
+  it('retains advisories while dropping live accounting and request IDs', async () => {
+    const api = await freshApi({ data: [{ chain: 'optimism' }] });
+    const warning = '299 - "optimism retires on 2027-02-01"';
+    fetch.mockImplementation(async () => ({
+      ok: true, status: 200,
+      headers: new Headers({ warning, 'x-request-id': 'live-id', 'x-nansen-credits-used': '5' }),
+      json: async () => ({ data: [{ chain: 'optimism' }] }),
+    }));
+    const live = await api.request('/api/v1/demo', {});
+    expect(api.lastResponseMeta.requestId).toBe('live-id');
+    const cached = await api.request('/api/v1/demo', {});
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(cached.data).toEqual(live.data);
+    expect(api.lastResponseMeta).toEqual({ notices: { warning } });
+    expect(JSON.stringify(cached)).not.toContain(warning);
+  });
+});
