@@ -3,6 +3,7 @@
  * by an inline fetch of the Nansen OpenAPI spec (at most once per 24h).
  *
  * getCostForEndpoint(endpoint)  — sync, reads cache, returns { free, pro } or null
+ * getCostVariants(endpoint)     — sync, reads cache, returns parameter-dependent costs or null
  * refreshCostMapIfStale()       — async, fetches inline if cache is missing or stale
  */
 
@@ -40,17 +41,40 @@ function writeAtomic(file, data) {
   }
 }
 
+function readCache() {
+  try {
+    if (!fs.existsSync(CACHE_FILE)) return null;
+    return JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Returns { free, pro } credit cost for the given API path, or null if unavailable.
  */
 export function getCostForEndpoint(endpoint) {
-  try {
-    if (!fs.existsSync(CACHE_FILE)) return null;
-    const { costs } = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-    return costs?.[endpoint] ?? null;
-  } catch {
-    return null;
-  }
+  return readCache()?.costs?.[endpoint] ?? null;
+}
+
+/**
+ * Returns the spec's x-credit-cost-variants for the given API path, e.g.
+ * { 'premium_labels=true': { pro: 150 }, ... }, or null if it has none.
+ */
+export function getCostVariants(endpoint) {
+  return readCache()?.variants?.[endpoint] ?? null;
+}
+
+const credits = n => `${n} credit${n === 1 ? '' : 's'}`;
+
+/**
+ * "5 credits" when both tiers pay the same, otherwise both prices. A cost
+ * with no free price (premium labels) is Pro-only.
+ */
+export function formatCost({ free, pro }) {
+  if (free === pro) return credits(free);
+  if (free == null) return `${credits(pro)} (Pro tier only)`;
+  return `${credits(free)} (Free tier) / ${credits(pro)} (Pro tier)`;
 }
 
 /**
@@ -105,17 +129,19 @@ export async function refreshCostMapIfStale() {
     if (!spec?.paths || typeof spec.paths !== 'object') return;
 
     const costs = {};
+    const variants = {};
     for (const [p, methods] of Object.entries(spec.paths)) {
       for (const op of Object.values(methods)) {
         if (op['x-credit-cost']) {
           costs[p] = op['x-credit-cost'];
+          if (op['x-credit-cost-variants']) variants[p] = op['x-credit-cost-variants'];
           break;
         }
       }
     }
 
     if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { mode: 0o700, recursive: true });
-    writeAtomic(CACHE_FILE, JSON.stringify({ costs, fetchedAt: Date.now() }));
+    writeAtomic(CACHE_FILE, JSON.stringify({ costs, variants, fetchedAt: Date.now() }));
   } catch {
     // silent — network failure, parse error, write error
   }

@@ -1913,7 +1913,7 @@ describe('NansenAPI', () => {
         });
         
         const body = expectFetchCalledWith('/api/v1/tgm/dex-trades');
-        expect(body.filters.include_smart_money_labels).toContain('Fund');
+        expect(body.filters.include_smart_money_labels).not.toContain('Fund');
         expect(body.filters.include_smart_money_labels).toContain('Smart Trader');
       });
 

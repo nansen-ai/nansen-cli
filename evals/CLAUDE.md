@@ -40,16 +40,16 @@ Good questions require knowledge that skills provide but `--help` alone does not
 
 ```yaml
   - id: my_question
-    question: What are crypto funds buying on Ethereum?
+    question: What are Smart Traders buying on Ethereum?
     expected_commands:
       - nansen research smart-money netflow
     expected_fragments:
       - "smart-money netflow"
       - "--labels"
-      - "Fund"
+      - "Smart Trader"
       - "--chain"
       - "ethereum"
-    skill: nansen-fund-tracker
+    skill: nansen-smart-money-tracker
 ```
 
 Bad questions (answerable from --help alone) don't test skill value — avoid them.

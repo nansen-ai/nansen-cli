@@ -437,7 +437,7 @@
       "notes": "Signed locally and submitted directly to Hyperliquid. apiEndpoints lists the Nansen API routes each command reads (compliance screening, market metadata, builder-fee status)."
     },
     "bridge": {
-      "description": "Move funds between Base and Hyperliquid",
+      "description": "Move funds between EVM chains and Hyperliquid",
       "notes": "Supported routes: base -> hyperliquid (deposit); hyperliquid -> base, hyperliquid -> ethereum, hyperliquid -> arbitrum (withdrawal). Any other combination is rejected. base -> hyperliquid deposits currently support USDC only — a non-USDC --from-token is rejected with INVALID_INPUT before the quote is created. Deposits broadcast an EVM transaction from the local wallet, so they require a locally signable origin chain; withdrawals sign a Hyperliquid action and never transact on the destination chain.",
       "routes": [
         {
@@ -1867,6 +1867,7 @@
             "jup-dca": {
               "endpoint": "/api/v1/tgm/jup-dca",
               "description": "Jupiter DCA orders for token",
+              "examples": ["nansen research token jup-dca --token So11111111111111111111111111111111111111112"],
               "options": {
                 "token": {
                   "type": "string",
@@ -2694,7 +2695,7 @@
         },
         "historical-token-flow-summary": {
           "endpoint": "/api/v1/tgm/historical-token-flow-summary",
-          "description": "Historical token flow summary (no pagination)",
+          "description": "Historical token flow summary (no pagination; whale, public figure, top PnL and exchange segments start 2025-03-11)",
           "options": {
             "token-address": {
               "required": true,
@@ -2712,7 +2713,7 @@
             },
             "to-date": {
               "required": true,
-              "description": "End of date range (YYYY-MM-DD)",
+              "description": "End of date range (YYYY-MM-DD). Whale, public figure, top PnL and exchange label history starts 2025-03-11, so those fields are null for an earlier date",
               "type": "string",
               "format": "date-time"
             },
@@ -2931,7 +2932,7 @@
         },
         "historical-tx-lookup": {
           "endpoint": "/api/v1/profiler/historical-transaction-lookup",
-          "description": "Lookup a historical transaction by hash",
+          "description": "Lookup a historical transaction by hash (entity labels start 2025-03-11)",
           "options": {
             "transaction-hash": {
               "required": true,
@@ -2940,7 +2941,7 @@
             },
             "as-of-date": {
               "required": true,
-              "description": "Reference date for label and pricing resolution (YYYY-MM-DD)",
+              "description": "Reference date for label and pricing resolution (YYYY-MM-DD). Entity labels are available from 2025-03-11 onward",
               "type": "string",
               "format": "date"
             },
@@ -4068,7 +4069,6 @@
     "viction"
   ],
   "smartMoneyLabels": [
-    "Fund",
     "Smart Trader",
     "30D Smart Trader",
     "90D Smart Trader",

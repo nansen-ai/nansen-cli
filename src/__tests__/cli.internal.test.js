@@ -2391,6 +2391,9 @@ describe('buildCommands', () => {
       const result = await commands['smart-money'](['help'], null, {}, {});
       expect(result.commands).toContain('netflow');
       expect(result.description).toBeDefined();
+      // Fund wallets left Smart Money on 2026-09-09; the example must not use it.
+      expect(result.example).toContain('--labels "Smart Trader"');
+      expect(result.example).not.toContain('Fund');
     });
 
     it('should call netflow with correct params', async () => {
@@ -2844,7 +2847,7 @@ describe('buildCommands', () => {
       await commands['token'](['screener'], mockApi, { 'smart-money': true }, {});
 
       expect(mockApi.tokenScreener).toHaveBeenCalledWith(
-        expect.objectContaining({ filters: { include_smart_money_labels: ['Fund', 'Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader'] } })
+        expect.objectContaining({ filters: { include_smart_money_labels: ['Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader'] } })
       );
     });
 
@@ -4160,7 +4163,7 @@ describe('SCHEMA', () => {
   });
 
   it('should list smart money labels', () => {
-    expect(SCHEMA.smartMoneyLabels).toContain('Fund');
+    expect(SCHEMA.smartMoneyLabels).not.toContain('Fund');
     expect(SCHEMA.smartMoneyLabels).toContain('Smart Trader');
   });
 });

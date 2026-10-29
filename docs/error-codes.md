@@ -7,13 +7,13 @@ Every failure exits with a non-zero status and prints one JSON envelope on stdou
 ```json
 {
   "success": false,
-  "error": "Option '--timefrme' is not recognized by nansen research token info. Did you mean '--timeframe'?",
+  "error": "Option '--timefrme' is not recognized by nansen research token info. Command-specific options: --chain, --token, --timeframe. Common options also apply; see: nansen schema.",
   "code": "INVALID_PARAMS",
   "status": null,
   "details": {
     "param": "--timefrme",
     "errors": [
-      { "field": "--timefrme", "message": "Option '--timefrme' is not recognized by nansen research token info. Did you mean '--timeframe'?", "code": "unknown_field" }
+      { "field": "--timefrme", "message": "Option '--timefrme' is not recognized by nansen research token info. Command-specific options: --chain, --token, --timeframe. Common options also apply; see: nansen schema.", "code": "unknown_field" }
     ]
   }
 }

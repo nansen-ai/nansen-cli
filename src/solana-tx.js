@@ -28,6 +28,8 @@ export function readCompactU16(buf, offset) {
  * [compact-u16 sigCount][sigCount * 64-byte signatures][message]) into its
  * header, static account keys, instructions, and (v0 only) address-table
  * lookups. `data` on instructions is returned undecoded (raw Buffer).
+ * `messageBase64` is the serialized message (everything after the
+ * signatures), the form RPC getFeeForMessage takes.
  */
 export function parseTransactionMessage(base64) {
   const bytes = Buffer.from(base64, 'base64');
@@ -41,6 +43,7 @@ export function parseTransactionMessage(base64) {
   };
   const { value: numSignatures, size: sigCountSize } = readCompactU16(bytes, 0);
   let offset = sigCountSize + numSignatures * 64;
+  const messageStart = offset;
 
   requireBytes(offset, 1);
   const first = bytes[offset];
@@ -136,6 +139,7 @@ export function parseTransactionMessage(base64) {
     recentBlockhash,
     instructions,
     addressTableLookups,
+    messageBase64: bytes.subarray(messageStart).toString('base64'),
   };
 }
 

@@ -151,7 +151,7 @@ describe('generateSubcommandHelp', () => {
 
   it('generates a runnable example that already carries every required option', () => {
     const example = lineStartingWith(helpLines('token', 'who-bought-sold'), 'Example:');
-    expect(example).toBe('Example: nansen research token who-bought-sold --token 0x... --chain solana');
+    expect(example).toBe('Example: nansen research token who-bought-sold --token So11111111111111111111111111111111111111112 --chain solana');
   });
 
   it('uses the schema example verbatim when one exists, and lists the returned fields', () => {
@@ -226,15 +226,15 @@ describe('generateSubcommandHelp', () => {
     };
 
     it('reports the cached per-tier cost for the endpoint the subcommand calls', async () => {
-      seedCosts({ '/api/v1/tgm/who-bought-sold': { free: 3, pro: 5 } });
+      seedCosts({ '/api/v1/tgm/who-bought-sold': { free: 1, pro: 0 } });
       const help = await freshHelp('token', 'who-bought-sold');
-      expect(help).toContain('Cost: 3 credits (Free tier) / 5 credits (Pro tier)');
+      expect(help).toContain('Cost: 1 credit (Free tier) / 0 credits (Pro tier)');
     });
 
     it('says "credit", not "credits", for a single credit', async () => {
       seedCosts({ '/api/v1/tgm/who-bought-sold': { free: 1, pro: 1 } });
       const help = await freshHelp('token', 'who-bought-sold');
-      expect(help).toContain('Cost: 1 credit (Free tier) / 1 credit (Pro tier)');
+      expect(help).toContain('Cost: 1 credit\n');
     });
 
     it('omits the cost line entirely when no cost is known, rather than printing a blank one', async () => {
@@ -282,7 +282,7 @@ describe('generateSubcommandHelp', () => {
       expect(combined).toContain('"nansen smart-money" is deprecated');
       expect(combined).toContain('smart-money netflow — Net capital flows');
       expect(combined).toContain('Params (* required): --chain (solana)');
-      expect(combined).toContain('Cost: 5 credits (Free tier) / 5 credits (Pro tier)');
+      expect(combined).toContain('Cost: 5 credits\n');
       expect(combined).toContain('Example: nansen research smart-money netflow --chain solana');
     });
 
@@ -404,5 +404,57 @@ describe('changelog --since filtering', () => {
       code: 'INVALID_PARAMS',
       message: 'Invalid --since value "1.11.0-beta.1": expected a version like 1.43 or 1.43.0.',
     });
+  });
+});
+
+
+describe('command-specific help', () => {
+  it.each(['quote', 'execute', 'bridge-status', 'limit-order', 'limit-order create'])(
+    'shows focused trade %s help without executing', async sub => {
+      const output = vi.fn();
+      const execute = vi.fn(() => { throw new Error('must not execute'); });
+      const result = await runCLI(['trade', ...sub.split(' '), '--help'], {
+        output, exit: vi.fn(), commandOverrides: { trade: execute },
+      });
+      expect(result.type).toBe('command-help');
+      expect(output.mock.calls[0][0]).toMatch(new RegExp(`^trade ${sub} —`));
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+  it('exposes quote controls and their units', () => {
+    const help = generateSubcommandHelp('trade', 'quote');
+    expect(help).toContain('--slippage — Slippage tolerance as a decimal');
+    expect(help).toContain('--swap-mode (exactIn) [exactIn|exactOut]');
+    expect(help).toContain('--max-input — exactOut only:');
+    expect(help).toContain('in base units');
+  });
+
+  it('uses the same directional bridge routes in root and group help', async () => {
+    const render = async args => {
+      const output = vi.fn();
+      await runCLI(args, { output, exit: vi.fn() });
+      return output.mock.calls.map(call => call[0]).join('\n');
+    };
+    const root = await render(['--help']);
+    const bridge = await render(['bridge', '--help']);
+    for (const route of ['base -> hyperliquid', 'hyperliquid -> base', 'hyperliquid -> ethereum', 'hyperliquid -> arbitrum']) {
+      expect(root).toContain(route);
+      expect(bridge).toContain(route);
+    }
+    const bridgeSection = root.split('BRIDGE (Hyperliquid):')[1].split('EXAMPLES:')[0];
+    expect(bridgeSection).not.toMatch(/polygon|bnb/);
+    expect(bridgeSection).toContain('base -> hyperliquid');
+  });
+});
+
+
+describe('example chain selection', () => {
+  it.each([['profiler', 'first-funder'], ['profiler', 'perp-positions'], ['profiler', 'perp-trades'], ['prediction-market', 'pnl-by-address'], ['prediction-market', 'trades-by-address'], ['prediction-market', 'address-summary']])('keeps EVM examples for %s %s', (group, sub) => {
+    const help = generateSubcommandHelp(group, sub);
+    expect(help).toContain('--address 0x...');
+    expect(help).not.toContain('So11111111111111111111111111111111111111112');
+  });
+  it('uses a Solana address for Solana-only jup-dca', () => {
+    expect(generateSubcommandHelp('token', 'jup-dca')).toContain('So11111111111111111111111111111111111111112');
   });
 });

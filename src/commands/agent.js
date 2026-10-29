@@ -5,7 +5,7 @@
 
 import crypto from 'crypto';
 import { NansenError, ErrorCode, statusToErrorCode, browserSessionError, browserSessionResponseMeta, telemetryHeaders, packageVersion } from '../api.js';
-import { getCostForEndpoint } from '../cost-cache.js';
+import { getCostForEndpoint, formatCost } from '../cost-cache.js';
 import { readResponseMeta } from '../response-meta.js';
 
 /**
@@ -167,11 +167,10 @@ export function buildAgentCommands(deps = {}) {
     'agent': async (args, apiInstance, flags, options) => {
       // ── Help ──
       if (flags.help || flags.h || args[0] === 'help' || args.length === 0) {
-        const fmtCost = (c) => `${c.free} credit${c.free === 1 ? '' : 's'} (Free tier) / ${c.pro} credit${c.pro === 1 ? '' : 's'} (Pro tier)`;
         const fastCost = getCostForEndpoint('/api/v1/agent/fast');
         const expertCost = getCostForEndpoint('/api/v1/agent/expert');
         const costSection = (fastCost || expertCost)
-          ? `\nCOST:\n${fastCost ? `  fast:   ${fmtCost(fastCost)}\n` : ''}${expertCost ? `  expert: ${fmtCost(expertCost)}\n` : ''}`
+          ? `\nCOST:\n${fastCost ? `  fast:   ${formatCost(fastCost)}\n` : ''}${expertCost ? `  expert: ${formatCost(expertCost)}\n` : ''}`
           : '';
         log(`nansen agent — Nansen Research Agent
 

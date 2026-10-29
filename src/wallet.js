@@ -6,6 +6,7 @@
 import { rejectBlankOption } from './query-options.js';
 import crypto from 'crypto';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import * as readline from 'readline';
 import { base58 } from '@scure/base';
@@ -313,6 +314,144 @@ function saveWalletConfig(config) {
   writeWalletJsonAtomic(getWalletConfigPath(), config);
 }
 
+// ============= Wallet Mutation Lock =============
+
+// Each JSON write above is atomic, but a mutation is a read-check-write across
+// config.json and the wallet files. Two overlapping `wallet create` runs could
+// both see an empty config, both set their own passwordHash, and the last
+// writer would strand the other wallet. Every mutation therefore runs under
+// one lock directory (mkdir is atomic on every platform).
+//
+// The owner is recorded with this machine's hostname and PID. A lock is
+// cleared automatically only when its owner on this machine no longer exists
+// (a crash, or Ctrl-C, which skips the release). Any other lock (owner still
+// running, owner not recorded or unreadable, owner on another machine) is
+// left alone, however old, since a suspended or slow holder would otherwise
+// write over its successor; the busy error tells the user to delete it. The
+// trade-offs: a crashed holder whose PID is reused by an unrelated process, a
+// crash between creating the lock and recording its owner, and a lock taken
+// from another machine sharing this directory (not supported) all need the
+// lock deleted by hand.
+const WALLET_LOCK_NAME = '.wallet.lock';
+const WALLET_LOCK_WAIT_MS = 30_000;
+const WALLET_LOCK_POLL_MS = 25;
+const lockSleepCell = new Int32Array(new SharedArrayBuffer(4));
+
+function newLockToken() {
+  return `${os.hostname()}\n${process.pid}\n${crypto.randomBytes(16).toString('hex')}`;
+}
+
+// Records the owner token in a lock directory this process just created; on
+// failure removes the directory so it is not left without an owner.
+function writeLockOwner(dirPath, token) {
+  try {
+    fs.chmodSync(dirPath, 0o700); // mkdir's mode is filtered through the umask
+    fs.writeFileSync(path.join(dirPath, 'owner'), token, { mode: 0o600 });
+  } catch (err) {
+    fs.rmSync(dirPath, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+function readLockToken(lockPath) {
+  try { return fs.readFileSync(path.join(lockPath, 'owner'), 'utf8'); } catch { return null; }
+}
+
+// The owner token is "<hostname>\n<pid>\n<random>". Returns { pid, alive }
+// for an owner on this machine, or null when the owner cannot be checked.
+function lockOwner(lockPath) {
+  const [host, pid] = (readLockToken(lockPath) || '').split('\n');
+  if (host !== os.hostname() || !/^\d+$/.test(pid || '')) return null;
+  try {
+    process.kill(Number(pid), 0);
+    return { pid, alive: true };
+  } catch (err) {
+    if (err.code === 'ESRCH') return { pid, alive: false };
+    if (err.code === 'EPERM') return { pid, alive: true };
+    return null;
+  }
+}
+
+function lockAbandoned(lockPath) {
+  return lockOwner(lockPath)?.alive === false;
+}
+
+// Moves an abandoned lock aside and deletes it. Only one process clears a
+// lock at a time (the .break directory, which records its owner the same
+// way), and it re-checks the lock while holding that, so it can never move
+// aside a fresh lock another process took after an earlier clear. A .break
+// left by a crashed clearer on this machine is removed by the same rule.
+function breakStaleWalletLock(lockPath) {
+  if (!lockAbandoned(lockPath)) return;
+  const breakPath = `${lockPath}.break`;
+  try {
+    fs.mkdirSync(breakPath, { mode: 0o700 });
+  } catch (err) {
+    if (err.code === 'EEXIST' && lockAbandoned(breakPath)) {
+      fs.rmSync(breakPath, { recursive: true, force: true });
+    }
+    return;
+  }
+  writeLockOwner(breakPath, newLockToken());
+  try {
+    if (!lockAbandoned(lockPath)) return;
+    const aside = `${lockPath}.stale-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+    try { fs.renameSync(lockPath, aside); } catch { return; }
+    fs.rmSync(aside, { recursive: true, force: true });
+  } finally {
+    fs.rmSync(breakPath, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Run fn() while holding the wallet mutation lock. fn must be synchronous:
+ * never hold the lock across a network call. The options exist for tests.
+ */
+export function withWalletLock(fn, { waitMs = WALLET_LOCK_WAIT_MS } = {}) {
+  ensureWalletsDir();
+  const lockPath = assertWalletsDirPath(path.join(getWalletsDir(), WALLET_LOCK_NAME));
+  const token = newLockToken();
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      fs.mkdirSync(lockPath, { mode: 0o700 });
+      break;
+    } catch (err) {
+      // Windows reports EPERM for a lock directory that is still being
+      // deleted; any other EPERM is a real permission error.
+      const busy = err.code === 'EEXIST'
+        || (process.platform === 'win32' && err.code === 'EPERM' && fs.existsSync(lockPath));
+      if (!busy) throw err;
+    }
+    breakStaleWalletLock(lockPath);
+    if (Date.now() > deadline) {
+      const owner = lockOwner(lockPath);
+      if (owner?.alive) {
+        throw new Error(`Another nansen wallet command (PID ${owner.pid}) is still running. Retry when it finishes. If no such command is running, delete ${lockPath}`);
+      }
+      throw new Error(`Another nansen wallet command is still running. Retry in a few seconds. If none is running, delete ${lockPath}`);
+    }
+    Atomics.wait(lockSleepCell, 0, 0, WALLET_LOCK_POLL_MS);
+  }
+  writeLockOwner(lockPath, token);
+  try {
+    return fn();
+  } finally {
+    // Move the lock aside first: the rename is atomic, so the lock whose
+    // token is checked is the one removed. Nothing clears a lock whose owner
+    // is still running, so it is ours; if not, put it back (or leave it
+    // aside) rather than delete another owner's lock.
+    const aside = `${lockPath}.release-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+    let moved = false;
+    try { fs.renameSync(lockPath, aside); moved = true; } catch { /* gone: nothing to release */ }
+    if (moved && readLockToken(aside) === token) {
+      fs.rmSync(aside, { recursive: true, force: true });
+    } else if (moved) {
+      try { fs.renameSync(aside, lockPath); } catch { /* leave it aside */ }
+    }
+  }
+}
+
 const WALLET_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
 function validateWalletName(name) {
@@ -494,12 +633,33 @@ export function listWallets() {
 }
 
 /**
- * Create a new wallet pair (EVM + Solana).
+ * Create a new wallet pair (EVM + Solana). beforeCommit runs inside the
+ * wallet lock once every check has passed and before anything is written;
+ * the CLI saves the password there so a racing create can't overwrite it.
  */
-export function createWallet(name, password) {
-  ensureWalletsDir();
-  const config = getWalletConfig();
+export function createWallet(name, password, { beforeCommit } = {}) {
   const walletFile = getWalletFile(name);
+  // Key generation and encryption (two scrypt runs) need no shared state, so
+  // they run before the lock to keep it short.
+  const evm = generateEvmWallet();
+  const solana = generateSolanaWallet();
+  const wallet = {
+    name,
+    createdAt: new Date().toISOString(),
+    evm: {
+      address: evm.address,
+      encrypted: encryptKey(evm.privateKey, password),
+    },
+    solana: {
+      address: solana.address,
+      encrypted: encryptKey(solana.privateKey, password),
+    },
+  };
+  return withWalletLock(() => createWalletLocked(name, password, walletFile, wallet, beforeCommit));
+}
+
+function createWalletLocked(name, password, walletFile, wallet, beforeCommit) {
+  const config = getWalletConfig();
 
   if (fs.existsSync(walletFile)) {
     throw new Error(`Wallet "${name}" already exists`);
@@ -529,25 +689,11 @@ export function createWallet(name, password) {
       }
       config.passwordHash = hashPassword(password);
     } else if (!verifyPassword(password, config)) {
-      throw new Error('Incorrect password');
+      throw new CommandError('Incorrect password — does not match existing wallets.', 'INCORRECT_PASSWORD');
     }
   }
 
-  const evm = generateEvmWallet();
-  const solana = generateSolanaWallet();
-
-  const wallet = {
-    name,
-    createdAt: new Date().toISOString(),
-    evm: {
-      address: evm.address,
-      encrypted: encryptKey(evm.privateKey, password),
-    },
-    solana: {
-      address: solana.address,
-      encrypted: encryptKey(solana.privateKey, password),
-    },
-  };
+  beforeCommit?.();
 
   writeWalletJsonAtomic(walletFile, wallet);
 
@@ -559,8 +705,8 @@ export function createWallet(name, password) {
 
   return {
     name,
-    evm: evm.address,
-    solana: solana.address,
+    evm: wallet.evm.address,
+    solana: wallet.solana.address,
     isDefault: config.defaultWallet === name,
   };
 }
@@ -624,6 +770,11 @@ export function exportWallet(name, password) {
  * Set the default wallet.
  */
 export function setDefaultWallet(name) {
+  requireWalletFile(name); // re-checked under the lock
+  return withWalletLock(() => setDefaultWalletLocked(name));
+}
+
+function setDefaultWalletLocked(name) {
   requireWalletFile(name);
 
   const config = getWalletConfig();
@@ -637,6 +788,11 @@ export function setDefaultWallet(name) {
  * Delete a wallet.
  */
 export async function deleteWallet(name, password) {
+  requireWalletFile(name); // re-checked under the lock
+  return withWalletLock(() => deleteWalletLocked(name, password));
+}
+
+function deleteWalletLocked(name, password) {
   const walletFile = requireWalletFile(name);
 
   const data = readWalletJson(walletFile);
@@ -776,22 +932,15 @@ export function buildWalletCommands(deps = {}) {
             }
           }
 
-          // Verify password matches existing wallets BEFORE touching keychain
-          if (password !== null) {
-            const config = getWalletConfig();
-            if (config.passwordHash && !verifyPassword(password, config)) {
-              throw new CommandError('❌ Incorrect password — does not match existing wallets.', 'INCORRECT_PASSWORD');
-            }
-          }
-
-          // Persist password BEFORE creating wallet so we know the storage situation
+          // Persist the password before the wallet is written, so we know the
+          // storage situation, but inside the wallet lock: a racing create
+          // must not overwrite it, nor a racing delete of the last wallet
+          // remove it.
           let storageResult = { stored: false, method: 'none' };
-          if (password !== null) {
-            storageResult = storePassword(password);
-          }
+          const beforeCommit = password === null ? undefined : () => { storageResult = storePassword(password); };
 
           try {
-            const result = createWallet(name, password);
+            const result = createWallet(name, password, { beforeCommit });
             log(`\n✓ Wallet "${result.name}" created\n`);
             log(`  EVM:    ${result.evm}`);
             log(`  Solana: ${result.solana}`);
@@ -825,7 +974,7 @@ export function buildWalletCommands(deps = {}) {
             log('');
             return;
           } catch (err) {
-            throw new CommandError(`❌ ${err.message}`, 'CREATE_FAILED');
+            throw new CommandError(`❌ ${err.message}`, err.code === 'INCORRECT_PASSWORD' ? 'INCORRECT_PASSWORD' : 'CREATE_FAILED');
           }
         },
 
@@ -1129,7 +1278,7 @@ export function buildWalletCommands(deps = {}) {
         },
 
         'forget-password': async () => {
-          const result = deletePassword();
+          const result = withWalletLock(() => deletePassword());
           if (result.keychain || result.file) {
             log('✓ Password removed from:');
             if (result.keychain) log('  - System keychain');
@@ -1157,28 +1306,33 @@ export function buildWalletCommands(deps = {}) {
             return;
           }
 
-          // Verify password actually decrypts wallets before overwriting keychain
-          const walletConfig = getWalletConfig();
-          if (walletConfig.passwordHash && !verifyPassword(password, walletConfig)) {
-            const resolution = source === 'file'
-              ? [
-                  'The password in ~/.nansen/wallets/.credentials is incorrect.',
-                  'Run: nansen wallet forget-password  then re-run with the correct password: NANSEN_WALLET_PASSWORD=<pw> nansen wallet secure',
-                ]
-              : [
-                  'Unset NANSEN_WALLET_PASSWORD if it is stale, then re-run: nansen wallet secure',
-                ];
-            throw new CommandError(`Password from '${source}' does not match the wallet's stored hash.`, 'INCORRECT_PASSWORD', {
-              error: 'INCORRECT_PASSWORD',
-              message: `Password from '${source}' does not match the wallet's stored hash.`,
-              resolution,
-            });
-          }
+          // Verify and store under the wallet lock, so a racing first create
+          // can't set a different password in between.
+          const { stored, method, fileRemoved } = withWalletLock(() => {
+            // Verify password actually decrypts wallets before overwriting keychain
+            const walletConfig = getWalletConfig();
+            if (walletConfig.passwordHash && !verifyPassword(password, walletConfig)) {
+              const resolution = source === 'file'
+                ? [
+                    'The password in ~/.nansen/wallets/.credentials is incorrect.',
+                    'Run: nansen wallet forget-password  then re-run with the correct password: NANSEN_WALLET_PASSWORD=<pw> nansen wallet secure',
+                  ]
+                : [
+                    'Unset NANSEN_WALLET_PASSWORD if it is stale, then re-run: nansen wallet secure',
+                  ];
+              throw new CommandError(`Password from '${source}' does not match the wallet's stored hash.`, 'INCORRECT_PASSWORD', {
+                error: 'INCORRECT_PASSWORD',
+                message: `Password from '${source}' does not match the wallet's stored hash.`,
+                resolution,
+              });
+            }
 
-          // Try to migrate to keychain
-          const { stored, method } = storePassword(password);
+            // Try to migrate to keychain
+            const result = storePassword(password);
+            const migrated = result.stored && result.method === 'keychain';
+            return { ...result, fileRemoved: migrated && deleteCredentialsFile() };
+          });
           if (stored && method === 'keychain') {
-            const fileRemoved = deleteCredentialsFile();
             const fromLabel = source === 'file'
               ? '~/.nansen/wallets/.credentials file'
               : 'NANSEN_WALLET_PASSWORD env var';

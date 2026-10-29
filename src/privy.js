@@ -11,7 +11,7 @@ import path from "path";
 import { parsePaymentRequirements } from "./x402.js";
 import { hasSufficientEvmPaymentBalance, hasSufficientSvmPaymentBalance } from "./x402-payment-balance.js";
 import { isEvmNetwork } from "./x402-evm.js";
-import { mkdirPrivateSync, readWalletJson, writeWalletJsonAtomic } from "./wallet.js";
+import { mkdirPrivateSync, readWalletJson, withWalletLock, writeWalletJsonAtomic } from "./wallet.js";
 import { evaluatePaymentRequirement, resolvePaymentAmount, resolvePayTo, signWithSessionCharge } from "./x402-policy.js";
 import {
   isSvmNetwork,
@@ -243,18 +243,48 @@ export async function createPrivyWalletPair(name) {
 
   mkdirPrivateSync(walletsDir);
 
-  // Write config before wallet file so a crash doesn't leave an orphan without a default entry
-  const configPath = path.join(walletsDir, "config.json");
-  let config = { defaultWallet: null, passwordHash: null };
-  if (fs.existsSync(configPath)) {
-    config = readWalletJson(configPath);
-  }
-  if (!config.defaultWallet) {
-    config.defaultWallet = name;
-    writeWalletJsonAtomic(configPath, config);
+  // Only the local save is locked; the Privy calls above stay outside it. So
+  // re-check the name here: another command may have taken it meanwhile.
+  const deleteRemote = async () => {
+    try { await client.deleteWallet(evmResult.id); } catch { /* best effort */ }
+    try { await client.deleteWallet(solanaResult.id); } catch { /* best effort */ }
+  };
+  let saved;
+  try {
+    saved = withWalletLock(() => {
+      if (fs.existsSync(walletFile)) return false;
+
+      const configPath = path.join(walletsDir, "config.json");
+      let config = { defaultWallet: null, passwordHash: null };
+      if (fs.existsSync(configPath)) {
+        config = readWalletJson(configPath);
+      }
+
+      // Wallet file first, as createWallet does: if the config write then
+      // fails, the file is removed, so config never names a missing wallet.
+      writeWalletJsonAtomic(walletFile, walletData);
+      if (!config.defaultWallet) {
+        config.defaultWallet = name;
+        try {
+          writeWalletJsonAtomic(configPath, config);
+        } catch (err) {
+          fs.rmSync(walletFile, { force: true });
+          throw err;
+        }
+      }
+      return true;
+    });
+  } catch (err) {
+    // Busy lock or unreadable config: nothing local references the new
+    // Privy wallets, so remove them rather than orphan them.
+    await deleteRemote();
+    throw err;
   }
 
-  writeWalletJsonAtomic(walletFile, walletData);
+  if (!saved) {
+    await deleteRemote();
+    throw new Error(`Wallet "${name}" already exists`);
+  }
 
   return walletData;
 }

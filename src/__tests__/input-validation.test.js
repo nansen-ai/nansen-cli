@@ -217,29 +217,49 @@ describe('resolveResearchCommand', () => {
 // ============= Option validation =============
 
 describe('validateResearchInput', () => {
-  it('rejects an unknown option with a did-you-mean hint (REST wording)', () => {
+  it('rejects an unknown option with the valid option list', () => {
     const error = check('research token info', { token: SOL_MINT, timefrme: '30d' });
     expect(error).toEqual({
-      message: "Option '--timefrme' is not recognized by nansen research token info. Did you mean '--timeframe'?",
+      message: "Option '--timefrme' is not recognized by nansen research token info. Command-specific options: --chain, --token, --timeframe. Common options also apply; see: nansen schema.",
       code: 'INVALID_PARAMS',
       details: {
         param: '--timefrme',
         errors: [{
           field: '--timefrme',
-          message: "Option '--timefrme' is not recognized by nansen research token info. Did you mean '--timeframe'?",
+          message: "Option '--timefrme' is not recognized by nansen research token info. Command-specific options: --chain, --token, --timeframe. Common options also apply; see: nansen schema.",
           code: 'unknown_field',
         }],
       },
     });
   });
 
-  it('lists the valid options when nothing is close (--turbo)', () => {
+  it('lists the valid options for an invented name (--turbo)', () => {
     const error = check('research token info', { token: SOL_MINT }, { turbo: true });
-    expect(error.message).toBe("Option '--turbo' is not recognized by nansen research token info. Valid options are: --chain, --token, --timeframe (plus output options; see: nansen schema).");
+    expect(error.message).toBe("Option '--turbo' is not recognized by nansen research token info. Command-specific options: --chain, --token, --timeframe. Common options also apply; see: nansen schema.");
   });
 
   it('rejects an unknown short flag', () => {
     expect(check('research token info', { token: SOL_MINT }, { x: true }).details.param).toBe('-x');
+  });
+
+  it('keeps common options valid alongside a command-specific option list', () => {
+    const options = {
+      token: SOL_MINT, retries: '2', 'cache-ttl': '60', 'x402-payment-signature': 'test-signature',
+    };
+    const flags = { cache: true, 'no-cache': true, debug: true, stream: true };
+    expect(check('research token info', options, flags)).toBeNull();
+    const error = check('research token info', options, { ...flags, turbo: true });
+    expect(error.details.errors).toHaveLength(1);
+    expect(error.message).toBe("Option '--turbo' is not recognized by nansen research token info. Command-specific options: --chain, --token, --timeframe. Common options also apply; see: nansen schema.");
+  });
+
+  it('lists all pagination controls only when the command supports them', () => {
+    const paginated = check('research profiler balance', { address: EVM }, { turbo: true });
+    const unpaginated = check('research token info', { token: SOL_MINT }, { turbo: true });
+    for (const option of ['--limit', '--page', '--paginate', '--all', '--max-pages']) {
+      expect(paginated.message).toContain(option);
+      expect(unpaginated.message).not.toContain(option);
+    }
   });
 
   it.each([
@@ -247,7 +267,7 @@ describe('validateResearchInput', () => {
     ['research token ohlcv', { token: SOL_MINT, limit: '4' }, "Option '--limit' is not supported by nansen research token ohlcv: this endpoint does not paginate."],
     ['research profiler perp-positions', { address: EVM, page: '2' }, "Option '--page' is not supported by nansen research profiler perp-positions: this endpoint does not paginate."],
     ['research smart-money holdings', { token: EVM }, null],
-    ['research prediction-market position-detail', { 'market-id': '1', address: EVM }, "Option '--address' is not recognized by nansen research prediction-market position-detail. Valid options are: --market-id, --limit, --page (plus output options; see: nansen schema)."],
+    ['research prediction-market position-detail', { 'market-id': '1', address: EVM }, "Option '--address' is not recognized by nansen research prediction-market position-detail. Command-specific options: --market-id, --limit, --page, --paginate, --all, --max-pages. Common options also apply; see: nansen schema."],
   ])('%s with %j: flags the command used to ignore', (path, args, message) => {
     const error = check(path, args);
     if (message === null) expect(error).toBeNull();
@@ -414,7 +434,7 @@ describe('validateFieldSelection', () => {
 
   it('rejects a dotted path that does not exist at that position', () => {
     expect(() => validateFieldSelection({ data: [{ token_symbol: 'ETH' }] }, ['results.token_symbol'])).toThrow(
-      "Field 'results.token_symbol' is not in the response. Did you mean 'token_symbol'?",
+      "Field 'results.token_symbol' is not in the response. Available fields: data, token_symbol",
     );
     expect(() => validateFieldSelection({ data: [{ token_symbol: 'ETH' }] }, ['data.token_symbol'])).not.toThrow();
   });
@@ -424,11 +444,11 @@ describe('validateFieldSelection', () => {
     expect(() => validateFieldSelection({ data: rows }, ['rare'])).not.toThrow();
   });
 
-  it('rejects a name that matches nothing, with a suggestion', () => {
+  it('rejects a name that matches nothing, with the field list', () => {
     expect(() => validateFieldSelection(data, ['token_symbl'], { path: 'nansen research token screener' })).toThrow(
       expect.objectContaining({
         code: 'INVALID_PARAMS',
-        message: "Field 'token_symbl' is not in the response from nansen research token screener. Did you mean 'token_symbol'?",
+        message: "Field 'token_symbl' is not in the response from nansen research token screener. Available fields: data, token_symbol, value_usd, token, address, pagination, page",
       }),
     );
   });
@@ -436,6 +456,27 @@ describe('validateFieldSelection', () => {
   it('does not guess when the response has no rows', () => {
     expect(() => validateFieldSelection({}, ['anything'])).not.toThrow();
     expect(() => validateFieldSelection({ data: [], pagination: { page: 1 } }, ['address'], { returns: ['name'] })).not.toThrow();
+  });
+
+  it.each([40, 41])('labels a field list as partial only above 40 candidates (%i)', count => {
+    const names = Array.from({ length: count }, (_, index) => `field_${index}`);
+    const response = Object.fromEntries(names.map(name => [name, 1]));
+    const listing = count > 40
+      ? `Available fields (first 40 of 41): ${names.slice(0, 40).join(', ')}. Run without --fields to inspect the full response; see nansen schema for documented fields.`
+      : `Available fields: ${names.join(', ')}`;
+    expect(() => validateFieldSelection(response, ['unknown'])).toThrow(
+      `Field 'unknown' is not in the response. ${listing}`,
+    );
+    // The display limit must not limit which fields can be selected.
+    expect(() => validateFieldSelection(response, [names.at(-1)])).not.toThrow();
+  });
+
+  it('counts documented fields in the partial list and points to the schema', () => {
+    const response = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`field_${i}`, 1]));
+    expect(() => validateFieldSelection(response, ['unknown'], { returns: ['documented_field'] })).toThrow(
+      /Available fields \(first 40 of 41\): .*see nansen schema for documented fields\./,
+    );
+    expect(() => validateFieldSelection(response, ['documented_field'], { returns: ['documented_field'] })).not.toThrow();
   });
 });
 
@@ -587,7 +628,7 @@ describe('runCLI failures always exit 1 with success:false (API-1080)', () => {
     expect(output).toMatchObject({
       success: false,
       code: 'INVALID_PARAMS',
-      error: "Field 'token_symbl' is not in the response from nansen research token screener. Did you mean 'token_symbol'?",
+      error: expect.stringMatching(/^Field 'token_symbl' is not in the response from nansen research token screener\. Available fields: /),
     });
   });
 

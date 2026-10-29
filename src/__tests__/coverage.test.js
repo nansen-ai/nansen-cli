@@ -224,19 +224,18 @@ describe('Supported Chains Coverage', () => {
 });
 
 describe('Smart Money Labels Coverage', () => {
-  const DOCUMENTED_LABELS = [
-    'Fund',
-    'Smart Trader',
-    '30D Smart Trader',
-    '90D Smart Trader',
-    '180D Smart Trader',
-    'Smart HL Perps Trader',
-  ];
+  // `nansen schema` is the source of truth for the Smart Money label list.
+  const DOCUMENTED_LABELS = SCHEMA.smartMoneyLabels;
 
   it('should document all smart money labels', () => {
-    expect(DOCUMENTED_LABELS).toContain('Fund');
-    expect(DOCUMENTED_LABELS).toContain('Smart Trader');
-    expect(DOCUMENTED_LABELS.length).toBeGreaterThanOrEqual(6);
+    // Fund wallets left Smart Money on 2026-09-09, so Fund is not listed.
+    expect(DOCUMENTED_LABELS).toEqual([
+      'Smart Trader',
+      '30D Smart Trader',
+      '90D Smart Trader',
+      '180D Smart Trader',
+      'Smart HL Perps Trader',
+    ]);
     
     console.log(`\n🏷️  Smart Money Labels: ${DOCUMENTED_LABELS.length}`);
     DOCUMENTED_LABELS.forEach(label => console.log(`   - ${label}`));

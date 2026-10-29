@@ -15,8 +15,7 @@
  * Every failure is a NansenError whose `details` mirrors the REST API's 422
  * body: `param` names the first bad option and `errors[]` lists each one as
  * { field, message, code } with the API's snake_case field codes. The wording
- * follows the API too ("... is not recognized. Did you mean ...?"), so a typo
- * reads the same from the CLI, the REST API and the MCP server.
+ * lists valid fields/options for unknown names, as REST and MCP do.
  */
 
 import { NansenError, ErrorCode, SERVER_CODE_MAP } from './api.js';
@@ -50,8 +49,7 @@ function matchingCharacters(a, b, alo, ahi, blo, bhi) {
 
 /**
  * Similarity in [0, 1]: Python's difflib.SequenceMatcher(None, a, b).ratio().
- * The REST API and the MCP server use difflib for their "did you mean" hint,
- * so the same typo gets the same suggestion everywhere.
+ * Used for command names and invalid values.
  */
 export function similarity(a, b) {
   const total = a.length + b.length;
@@ -382,7 +380,7 @@ export function validateResearchInput(resolved, { flags = {}, options = {}, endp
   const errors = [];
   const given = new Map(); // schema name -> raw value
   const accepted = [...names.keys()].filter(name => names.get(name) === name);
-  const visible = [...accepted, ...(pagination ? ['limit', 'page'] : [])].map(name => `--${name}`);
+  const visible = [...new Set([...accepted, ...(pagination ? PAGINATION_OPTIONS : [])])].map(name => `--${name}`);
 
   const supplied = [
     ...Object.entries(options).map(([name, value]) => [name, value]),
@@ -404,10 +402,8 @@ export function validateResearchInput(resolved, { flags = {}, options = {}, endp
       continue;
     }
     const field = raw.length === 1 ? `-${raw}` : `--${raw}`;
-    const suggestion = closestMatch(raw, accepted);
-    errors.push(fieldError(field, 'unknown_field', suggestion
-      ? `Option '${field}' is not recognized by ${path}. Did you mean '--${suggestion}'?`
-      : `Option '${field}' is not recognized by ${path}. Valid options are: ${visible.join(', ') || 'none'} (plus output options; see: nansen schema).`));
+    errors.push(fieldError(field, 'unknown_field',
+      `Option '${field}' is not recognized by ${path}. Command-specific options: ${visible.join(', ') || 'none'}. Common options also apply; see: nansen schema.`));
   }
 
   for (const [name, value] of given) {
@@ -503,17 +499,17 @@ export function validateFieldSelection(data, fields, { path, returns = [] } = {}
   // list may be incomplete, so an empty result never fails here.
   if (empty || names.size === 0) return;
   const candidates = [...new Set([...names, ...documented])].filter(name => !name.startsWith('_'));
+  const fieldList = candidates.length > 40
+    ? `Available fields (first 40 of ${candidates.length}): ${candidates.slice(0, 40).join(', ')}. Run without --fields to inspect the full response; see nansen schema for documented fields.`
+    : `Available fields: ${candidates.join(', ')}`;
   const errors = [];
   for (const field of fields) {
     const known = field.includes('.')
       ? paths.has(field) || documented.has(field)
       : names.has(field) || documented.has(field);
     if (known) continue;
-    const suggestion = closestMatch(field.split('.').pop(), candidates);
     const where = path ? ` from ${path}` : '';
-    errors.push(fieldError('--fields', 'unknown_field', suggestion
-      ? `Field '${field}' is not in the response${where}. Did you mean '${suggestion}'?`
-      : `Field '${field}' is not in the response${where}. Available fields: ${candidates.slice(0, 40).join(', ')}`));
+    errors.push(fieldError('--fields', 'unknown_field', `Field '${field}' is not in the response${where}. ${fieldList}`));
   }
   if (errors.length) throw validationError(errors);
 }
