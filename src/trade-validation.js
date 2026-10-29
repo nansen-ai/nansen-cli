@@ -1987,7 +1987,7 @@ const TOKEN_2022_MINT_EXTENSION_ACCOUNT_LEN = new Map([
   [10, null], // InterestBearingConfig
   [12, null], // PermanentDelegate
   [14, 1], // TransferHook → TransferHookAccount
-  [16, 64], // ConfidentialTransferFeeConfig → ConfidentialTransferFeeAmount
+  [16, null], // ConfidentialTransferFeeConfig (ConfidentialTransferFeeAmount is added later, on ConfigureAccount)
   [18, null], // MetadataPointer
   [19, null], // TokenMetadata
   [20, null], // GroupPointer
@@ -1997,6 +1997,7 @@ const TOKEN_2022_MINT_EXTENSION_ACCOUNT_LEN = new Map([
   [24, null], // ConfidentialMintBurn
   [25, null], // ScaledUiAmount
   [26, 0], // Pausable → PausableAccount
+  [28, null], // PermissionedBurn
 ]);
 
 function formatLamports(lamports) {
@@ -2038,7 +2039,9 @@ async function solanaRpc(rpcUrl, method, params) {
  * and returns { proceed: true }). A failed rent read drops only the rent.
  *
  * Limits, left to simulation (verifySolanaSwapOutcome): SOL the transaction
- * sends from the wallet (the swap's SOL input, transfers) is not counted.
+ * sends from the wallet (the swap's SOL input, transfers) is not counted,
+ * except what a System CreateAccount moves into a new account, which counts in
+ * full even when it also funds a wrapped-SOL input.
  *
  * The quote-time gate (validateGasBalance) can only apply a fixed floor because
  * the transaction does not exist yet, and validateBalance holds back a fee

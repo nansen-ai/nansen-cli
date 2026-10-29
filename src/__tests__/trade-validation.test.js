@@ -3581,6 +3581,18 @@ describe('checkSolanaFeeBalance', () => {
       expect((await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).proceed).toBe(false);
     });
 
+    it('adds nothing for mint extensions that force no account extension', async () => {
+      const wallet = addr();
+      const mint = addr();
+      const tx = txWith({ wallet, instructions: [ataCreate({ wallet, ata: addr(), mint, tokenProgram: TOKEN_2022 })] });
+      // ConfidentialTransferFeeConfig (16) and PermissionedBurn (28): the
+      // account stays at the 170-byte floor, with no warning.
+      const log = vi.fn();
+      mockRentRpc({ balance: FEE + rentFor(170), accounts: { [mint]: token2022Mint([[16, 65], [28, 32]]) } });
+      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet, log })).toEqual({ proceed: true });
+      expect(log).not.toHaveBeenCalled();
+    });
+
     it('charges a Token-2022 ATA for a mint with no extensions at the 170-byte floor', async () => {
       const wallet = addr();
       const mint = addr();
