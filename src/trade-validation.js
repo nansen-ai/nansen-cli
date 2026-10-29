@@ -41,8 +41,27 @@ const COMPUTE_BUDGET_PROGRAM = 'ComputeBudget111111111111111111111111111111';
 const COMPUTE_BUDGET_SET_UNIT_LIMIT = 2;
 const COMPUTE_BUDGET_SET_UNIT_PRICE = 3;
 const SOLANA_MAX_COMPUTE_UNITS = 1_400_000; // Solana's per-transaction compute-unit ceiling — the
-                                             // worst-case bound used when a price is set with no
-                                             // explicit limit instruction.
+                                             // worst-case bound the priority-fee cap assumes when a
+                                             // price is set with no explicit limit instruction. The
+                                             // runtime clamps any larger requested limit to it.
+// The runtime's default limit when none is set: 200,000 CU per instruction,
+// or 3,000 for a builtin program's instruction (Agave's builtin cost map).
+// Vote is mid-migration to on-chain BPF; counting it as a builtin can only
+// understate the fee, and an unpayable fee is dropped by the leader unsigned
+// and uncharged, whereas overstating it falsely rejects the transaction.
+const SOLANA_DEFAULT_INSTRUCTION_COMPUTE_UNITS = 200_000;
+const SOLANA_DEFAULT_BUILTIN_COMPUTE_UNITS = 3_000;
+const SOLANA_BUILTIN_PROGRAMS = new Set([
+  SYSTEM_PROGRAM,
+  COMPUTE_BUDGET_PROGRAM,
+  'BPFLoader1111111111111111111111111111111111',
+  'BPFLoader2111111111111111111111111111111111',
+  'BPFLoaderUpgradeab1e11111111111111111111111',
+  'LoaderV411111111111111111111111111111111111',
+  'KeccakSecp256k11111111111111111111111111111',
+  'Ed25519SigVerify111111111111111111111111111',
+  'Vote111111111111111111111111111111111111111',
+]);
 const MAX_PRIORITY_FEE_LAMPORTS = 10_000_000n; // 0.01 SOL sanity ceiling on the priority fee a
                                                 // single trade can be made to pay.
 
@@ -1800,7 +1819,11 @@ export function assertLimitOrderCancelOutcome(sim, { inputMint, amount } = {}) {
  * against SPL_TOKEN_PROGRAMS/COMPUTE_BUDGET_PROGRAM, so it's rejected outright
  * rather than silently skipped.
  *
- * Throws on any of those patterns. Returns the parsed transaction otherwise.
+ * Throws on any of those patterns. Otherwise returns the parsed transaction
+ * plus `priorityFeeLamports` (0n when no compute-unit price is set), which
+ * checkSolanaFeeBalance compares against the wallet's balance. With no limit
+ * instruction it is priced at the runtime's default limit, not the 1.4M
+ * ceiling the priority-fee cap assumes, so it is not a worst-case bound.
  */
 export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
   // Fail closed on a missing wallet address: every authority check below
@@ -1832,6 +1855,7 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
 
   let computeUnitLimit = null;
   let computeUnitPriceMicroLamports = null;
+  let builtinInstructions = 0;
 
   for (const ix of parsed.instructions) {
     const programId = resolveStaticAccount(parsed, ix.programIdIndex);
@@ -1847,6 +1871,7 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
         'Solana transaction invokes a program only resolvable via an address-lookup-table entry, which cannot be safety-classified. Refusing to sign.',
       );
     }
+    if (SOLANA_BUILTIN_PROGRAMS.has(programId)) builtinInstructions++;
 
     if (SPL_TOKEN_PROGRAMS.has(programId)) {
       // No discriminator byte — not a valid SPL Token instruction (the runtime
@@ -1893,17 +1918,151 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
     }
   }
 
+  let priorityFeeLamports = 0n;
   if (computeUnitPriceMicroLamports != null) {
-    const units = BigInt(computeUnitLimit ?? SOLANA_MAX_COMPUTE_UNITS);
-    const feeLamports = (computeUnitPriceMicroLamports * units) / 1_000_000n;
-    if (feeLamports > MAX_PRIORITY_FEE_LAMPORTS) {
+    // The runtime rounds the priority fee up to a whole lamport.
+    const feeAt = (units) =>
+      (computeUnitPriceMicroLamports * BigInt(Math.min(units, SOLANA_MAX_COMPUTE_UNITS)) + 999_999n) / 1_000_000n;
+    // Returned for checkSolanaFeeBalance's fallback. With no limit instruction
+    // it prices the runtime's default limit, so it doesn't reject a transaction
+    // the wallet can afford.
+    const defaultLimit =
+      SOLANA_DEFAULT_INSTRUCTION_COMPUTE_UNITS * (parsed.instructions.length - builtinInstructions) +
+      SOLANA_DEFAULT_BUILTIN_COMPUTE_UNITS * builtinInstructions;
+    priorityFeeLamports = feeAt(computeUnitLimit ?? defaultLimit);
+    // The cap guards against a hostile transaction, so with no limit
+    // instruction it assumes the 1.4M ceiling instead.
+    const worstCaseFeeLamports = computeUnitLimit != null ? priorityFeeLamports : feeAt(SOLANA_MAX_COMPUTE_UNITS);
+    if (worstCaseFeeLamports > MAX_PRIORITY_FEE_LAMPORTS) {
       throw new Error(
-        `Solana transaction sets an excessive priority fee (~${feeLamports} lamports, cap ${MAX_PRIORITY_FEE_LAMPORTS}). Refusing to sign.`,
+        `Solana transaction sets an excessive priority fee (~${worstCaseFeeLamports} lamports, cap ${MAX_PRIORITY_FEE_LAMPORTS}). Refusing to sign.`,
       );
     }
   }
 
-  return parsed;
+  return { ...parsed, priorityFeeLamports };
+}
+
+// Fallback only: the protocol's per-signature base fee, used when the cluster
+// can't price the message (getFeeForMessage failed or returned null because
+// the blockhash is unknown to that node). The live figure comes from the
+// cluster below.
+const SOLANA_LAMPORTS_PER_SIGNATURE = 5_000n;
+// Signature-verification precompiles. Each signature they verify is charged
+// like a transaction signature; the count is the instruction's first data byte.
+const SOLANA_SIGNATURE_PRECOMPILES = new Set([
+  'Ed25519SigVerify111111111111111111111111111',
+  'KeccakSecp256k11111111111111111111111111111',
+  'Secp256r1SigVerify1111111111111111111111111',
+]);
+// A hung read must not hold the transaction until its blockhash expires.
+const SOLANA_FEE_CHECK_RPC_TIMEOUT_MS = 10_000;
+// Account state the check reads. Finalized state lags ~13s, so SOL spent in
+// that window would still show.
+const SOLANA_FEE_CHECK_COMMITMENT = 'confirmed';
+
+function formatLamports(lamports) {
+  const whole = lamports / 1_000_000_000n;
+  const frac = (lamports % 1_000_000_000n).toString().padStart(9, '0').replace(/0+$/, '');
+  return frac ? `${whole}.${frac}` : `${whole}`;
+}
+
+async function solanaRpc(rpcUrl, method, params) {
+  const res = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    signal: AbortSignal.timeout(SOLANA_FEE_CHECK_RPC_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`${method} failed: HTTP ${res.status}`);
+  const body = await res.json();
+  if (body.error || body.result === undefined) {
+    throw new Error(`${method} failed: ${body.error?.message || 'no result'}`);
+  }
+  return body.result;
+}
+
+/**
+ * Check, before signing, that the wallet holds enough SOL to pay THIS
+ * transaction's network fee, when the wallet is the fee payer.
+ *
+ * The fee comes from the cluster (getFeeForMessage), so it follows the current
+ * fee schedule and includes the priority fee and precompile signatures. When
+ * the cluster can't price the message, it falls back to the protocol base fee
+ * (5,000 lamports per transaction and precompile signature) plus the priority
+ * fee assertSolanaInstructionsSafe parsed, rounded up.
+ *
+ * Only a missing Solana RPC or a failed balance read skips the check (warns
+ * and returns { proceed: true }).
+ *
+ * Limits, left to simulation (verifySolanaSwapOutcome): SOL the transaction
+ * takes from the wallet beyond the fee (account rent, the swap's SOL input,
+ * transfers) is not counted.
+ *
+ * The quote-time gate (validateGasBalance) can only apply a fixed floor because
+ * the transaction does not exist yet, and validateBalance holds back a fee
+ * buffer only when selling 95% or more of the SOL balance. Simulation also
+ * catches an unpayable transaction, but it is skipped by --no-verify-outcome
+ * and degrades when no simulation RPC is reachable. This check runs on every
+ * path regardless of that flag.
+ *
+ * REQUIRES `parsed` to be the return value of assertSolanaInstructionsSafe.
+ *
+ * @param {object} opts
+ * @param {object} opts.parsed
+ * @param {string} opts.walletAddress
+ * @returns {Promise<{ proceed: boolean, reason?: string }>}
+ */
+export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () => {} }) {
+  // The fee payer is the first static account. When another account pays (a
+  // sponsored transaction), the fee is not the wallet's to cover.
+  if (parsed.staticAccountKeys[0] !== walletAddress) return { proceed: true };
+
+  const rpcUrl = CHAIN_RPCS.solana;
+  if (!rpcUrl) {
+    log('  ⚠ SOL fee balance check could not run (no Solana RPC endpoint); proceeding without it.');
+    return { proceed: true };
+  }
+
+  let balance;
+  let feeResult;
+  try {
+    [balance, feeResult] = await Promise.all([
+      solanaRpc(rpcUrl, 'getBalance', [walletAddress, { commitment: SOLANA_FEE_CHECK_COMMITMENT }])
+        .then(r => BigInt(r.value)),
+      // A failed fee lookup falls back to the static estimate.
+      solanaRpc(rpcUrl, 'getFeeForMessage', [parsed.messageBase64, { commitment: 'processed' }]).catch(() => null),
+    ]);
+  } catch (e) {
+    log(`  ⚠ SOL fee balance check could not run (${e.message}); proceeding without it.`);
+    return { proceed: true };
+  }
+
+  const clusterFee = feeResult?.value;
+  const clusterPriced = Number.isSafeInteger(clusterFee) && clusterFee >= 0;
+  let feeLamports;
+  if (clusterPriced) {
+    feeLamports = BigInt(clusterFee);
+  } else {
+    let precompileSignatures = 0n;
+    for (const ix of parsed.instructions) {
+      if (SOLANA_SIGNATURE_PRECOMPILES.has(resolveStaticAccount(parsed, ix.programIdIndex)) && ix.data.length > 0) {
+        precompileSignatures += BigInt(ix.data[0]);
+      }
+    }
+    feeLamports = SOLANA_LAMPORTS_PER_SIGNATURE * (BigInt(parsed.header.numRequiredSignatures) + precompileSignatures) +
+      parsed.priorityFeeLamports;
+  }
+
+  if (balance < feeLamports) {
+    return {
+      proceed: false,
+      reason: `wallet has ${formatLamports(balance)} SOL but this transaction needs at least ${formatLamports(feeLamports)} SOL ` +
+        `for its ${clusterPriced ? '' : 'estimated '}network fee. Fund ${walletAddress} with SOL and retry.`,
+    };
+  }
+
+  return { proceed: true };
 }
 
 /**
