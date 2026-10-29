@@ -6544,6 +6544,7 @@ describe('Solana execute: SOL fee balance check', () => {
         text: () => Promise.resolve(JSON.stringify(body)),
       });
     }));
+    confirmSolanaSignatures();
 
     const quoteId = saveQuote({
       success: true,
