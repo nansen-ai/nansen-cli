@@ -21,3 +21,9 @@ it('distinguishes a loaded binding whose OS store is unavailable', async () => {
   await import('../auth-store-native.js');
   expect(postMessage).toHaveBeenCalledExactlyOnceWith({ error: 'STORE_UNAVAILABLE' });
 });
+
+it.skipIf(process.platform !== 'linux')('reports a dismissed Secret Service unlock prompt without native details', async () => {
+  vi.doMock('@napi-rs/keyring', () => ({ Entry: class { constructor() { throw new Error("Couldn't access platform storage: Secret Service: unlock prompt was dismissed private-details"); } } }));
+  await import('../auth-store-native.js');
+  expect(postMessage).toHaveBeenCalledExactlyOnceWith({ error: 'STORE_LOCKED' });
+});

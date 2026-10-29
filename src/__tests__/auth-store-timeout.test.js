@@ -44,3 +44,20 @@ it('reports a missing native binding after helper termination without claiming s
   expect(error.message).not.toContain('Unlock');
   expect(child.kill).not.toHaveBeenCalled();
 });
+
+it.each(['STORE_LOCKED', 'STORE_UNAVAILABLE'])('reports %s only after helper termination', async kind => {
+  const stream = () => Object.assign(new EventEmitter(), { write: vi.fn(), resume: vi.fn(), destroy: vi.fn() });
+  const child = Object.assign(new EventEmitter(), { stdin: stream(), stdout: stream(), stderr: stream(), kill: vi.fn(), unref: vi.fn() });
+  spawn.mockReturnValue(child);
+  let settled = false;
+  const result = nativeStoreOperation('get', '00000000-0000-4000-8000-000000000000.manifest', undefined, { directory: '/synthetic' }).catch(error => { settled = true; return error; });
+  child.stdout.emit('data', '{"ready":true}\n');
+  child.stdout.emit('data', JSON.stringify({ error: kind }) + '\n');
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  child.emit('close', 0);
+  const error = await result;
+  expect(error.code).toBe('AUTH_STORE_UNAVAILABLE');
+  expect(error.message).toContain(kind === 'STORE_LOCKED' ? 'Unlock the default collection' : 'check the user D-Bus session');
+  expect(child.kill).not.toHaveBeenCalled();
+});

@@ -4,11 +4,18 @@ Browser login saves a session after you approve the CLI in your browser. It is a
 
 ## Preview platform scope
 
-The initial preview is limited to macOS arm64, a local Terminal in a GUI login session, an unlocked login Keychain and a local home directory. Background agents, SSH sessions and network or synchronized home directories are not qualified by a successful local Terminal login.
+Saved browser login is qualified on the configurations below. Both require a local home directory and an unlocked persistent OS credential store. Network or synchronized home directories and unattended background agents are not qualified.
 
-Linux live remote-login qualification is pending. Windows is excluded from the initial preview. The presence of an OS adapter or native prebuilt package does not establish support. Desktop prompt cancellation and OS login/reboot persistence remain unverified.
+| OS / architecture | Terminal and storage | Qualification |
+| --- | --- | --- |
+| macOS arm64 | Local GUI Terminal, unlocked login Keychain, local home | Initial preview |
+| Debian 12 x64, glibc 2.36, Node 22.23.4 | SSH with a TTY, user D-Bus, GNOME Keyring 42.1, password-protected login collection, local home | Live approval, durable save, fresh-process account access, renewal, locked/unavailable recovery, reboot/unlock persistence and logout verified |
+| Linux desktop prompts, arm64 or other providers/distributions | Secret Service adapter exists | Not qualified |
+| Alpine/musl, Windows | See native compatibility below | Excluded |
 
-Browser login requires enabled server access and working native credential storage. If the store is locked, unlock it and retry from the supported Terminal context. Repeating browser approval does not repair Keychain access. If optional dependencies were omitted, reinstall with them enabled. A platform without a compatible prebuild still cannot use saved authentication. There is no plaintext session-storage fallback.
+Linux qualification used the packaged CLI on Debian 12.15 x64 in a disposable VM, kernel 6.1, a user systemd bus and a local ext4 home. The user manager was kept available between SSH connections with `loginctl enable-linger`; this does not unlock the keyring. A fresh SSH login after a real guest reboot recovered the same renewed session after manual unlock. Renewal was triggered by a near-expiry clock injected into the test state owner; proof signing, the issuer and account verification used real time. Concurrent renewal and interrupted-operation recovery are additionally covered by the real-store synthetic-issuer check and process tests. Desktop unlock prompts remain unqualified.
+
+Browser login requires enabled server access and working native credential storage. If the store is locked, unlock it and retry from the supported Terminal context. Repeating browser approval does not repair credential-store access. If optional dependencies were omitted, reinstall with them enabled. A platform without a compatible prebuild still cannot use saved authentication. There is no plaintext session-storage fallback.
 
 ## Commands and selection
 
@@ -42,6 +49,73 @@ Explicit legacy key setup remains available through `nansen login --human`, `nan
 Login verifies the approved account without charging for research. Research uses the effective account's credits, plan and endpoint permissions. Login does not purchase credits or create a subscription. Existing server-side account billing settings remain separate.
 
 An invalid selected credential fails with an error. The CLI does not silently switch accounts, restore an older saved key or pay after authentication or authorization fails. A supported HTTP 402 payment challenge uses the same automatic x402 flow for API keys, browser sessions and anonymous requests, subject to existing wallet authorization, token/recipient policy and spending limits. The paid retry sends only the payment credential; it does not change saved authentication or top up account credits. Login verification never pays. Browser Bearer requests cannot be combined with an API key or a manually supplied payment signature. Explicit manual API-key payment remains supported.
+
+## Linux Secret Service setup
+
+Linux browser sessions require the native binding, a user D-Bus, a running Secret Service provider and an unlocked default collection. These are separate requirements. The adapter explicitly selects `secret-service`; it never falls back to the kernel's memory-only keyring. The setup below targets Debian 12 x64 with GNOME Keyring and a local home directory. Qualification limits are listed above.
+
+1. Install the service and diagnostic tools, then install the CLI with optional dependencies:
+
+   ```bash
+   sudo apt-get update
+   sudo apt-get install --no-install-recommends dbus dbus-user-session gnome-keyring libsecret-tools libglib2.0-bin
+   npm install -g nansen-cli --include=optional
+   ```
+
+2. Run the remaining commands as your normal user. Check the user bus with `busctl --user list`. If your terminal has no user bus, start a private session and stay inside its shell:
+
+   ```bash
+   dbus-run-session -- bash
+   ```
+
+   For SSH, allocate a TTY and run the commands on the Linux host. An unlocked store on your laptop does not unlock the server's store. A private bus ends when its shell exits; a later shell needs its own service connection and unlock.
+
+3. Start or unlock GNOME Keyring from Bash. On first use, choose a non-empty keyring password; later, use the same password. This password protects the OS keyring, and is separate from your Nansen account password.
+
+   ```bash
+   (
+     set +x
+     IFS= read -r -s -p 'Keyring password: ' keyring_password </dev/tty || exit 1
+     printf '\n' >/dev/tty
+     [ -n "$keyring_password" ] || exit 1
+     printf '%s' "$keyring_password" |
+       gnome-keyring-daemon --daemonize --unlock --components=secrets
+   )
+   ```
+
+   The password goes through stdin, without being saved in a file or placed in process arguments. Keep the provider's encrypted keyring files in your persistent home directory. Do not use an empty password. On a desktop, use the provider's unlock UI instead. If another daemon owns the bus and the unlocked collection remains inaccessible, GNOME Keyring's `--replace` option can reconcile the daemon. It can interrupt other applications using that daemon; see its [manual](https://manpages.debian.org/bookworm/gnome-keyring/gnome-keyring-daemon.1.en.html).
+
+4. Check which collection the provider uses, then check its lock state:
+
+   ```bash
+   busctl --user call org.freedesktop.secrets \
+     /org/freedesktop/secrets org.freedesktop.Secret.Service ReadAlias s default
+   busctl --user get-property org.freedesktop.secrets \
+     /org/freedesktop/secrets/collection/login org.freedesktop.Secret.Collection Locked
+   ```
+
+   The second command assumes the first returned `/org/freedesktop/secrets/collection/login`; otherwise use the returned path. `b false` means unlocked. A default alias of `/` means no default collection exists. Create/select one using the provider's tools before login. See the [Secret Service specification](https://specifications.freedesktop.org/secret-service/latest-single/).
+
+5. In the same terminal, run `nansen login --no-browser`. Approve the displayed code in a trusted browser, then run `nansen account` in a fresh process. For a fresh shell, reconnect to the same user bus or repeat the private-bus setup and unlock the persisted keyring first. After OS login, reboot or provider restart, unlock again unless your distribution's login integration already does so. SSH public-key authentication does not itself provide the keyring password. The tested SSH setup keeps the user manager available with `sudo loginctl enable-linger "$USER"`; use this only when you want user services to continue after logout. It starts the user bus again after reboot, but the persisted keyring still needs unlocking. If no user bus is available, use the private-session setup above.
+
+### Linux storage recovery
+
+| Failure | Recovery |
+| --- | --- |
+| Native credential-store binding could not load | Reinstall with `--include=optional` on a listed architecture. Service installation cannot repair a missing native prebuild. `nansen doctor --offline` does not test the native bindings or open the credential store. |
+| User bus or Secret Service unavailable | Check `busctl --user list`, connect to your user bus, install/start GNOME Keyring and check the default alias. Run as the same user, without `sudo`. Installing the npm binding alone does not supply a service. |
+| Locked collection or dismissed unlock prompt | Unlock with the provider's UI or the stdin command above, on the same bus. A headless terminal cannot display GNOME's graphical unlock prompt. Starting the daemon alone does not unlock existing entries. |
+| Default collection missing or inconsistent | Check the alias and provider state. Reconcile competing daemons using provider tools. Preserve existing keyring files and auth journals. |
+
+The CLI recognizes GNOME Keyring's dismissed-unlock response. Other provider failures and timeouts retain the broader unavailable-or-locked message; it does not guess that credentials are absent. Fix storage before repeating approval. Login preflight fails before requesting a browser code and preserves the selected credential. A later failure still uses the existing journal and cleanup rules. `NANSEN_API_KEY` remains usable without either native dependency.
+
+Maintainers can run the isolated real-storage check from a checkout:
+
+```bash
+node src/__tests__/fixtures/linux-store-qualification.js
+```
+
+It creates a disposable password-protected GNOME keyring and private D-Bus, with no access to the invoking user's credentials. It tests save, fresh-process read, locked/unavailable preflight preservation, service restart/unlock, concurrent renewal and logout using a synthetic issuer. It does not establish live browser, SSH, graphical prompt or OS login/reboot support. The setup uses the same provider requirements described in [Git Credential Manager's headless guide](https://github.com/git-ecosystem/git-credential-manager/blob/main/docs/secretservice-headless.md).
 
 ## Servers, containers and CI without secure storage
 
@@ -88,11 +162,11 @@ Browser access tokens, refresh tokens and the private device key are stored in t
 
 The CLI coordinates reads and writes across processes with native locking. Only local filesystems are intended. A login approved earlier cannot overwrite a later completed login or logout. Failed approval or storage leaves the previous selected credential intact.
 
-Native lock and keyring bindings are optional package dependencies, but are required for saved-auth writes and browser-session storage. Help, offline diagnostics and direct environment/API-key requests do not open the browser-session store. macOS uses Keychain, Linux uses persistent Secret Service, and the Windows adapter uses Credential Manager. These implementations do not widen the preview platform scope above. Windows persistence may roam according to OS policy; device-local-only storage is not promised.
+Native lock and keyring bindings are optional package dependencies, but are required for saved-auth writes and browser-session storage. Help, offline diagnostics and direct environment/API-key requests do not open the browser-session store. macOS uses Keychain, Linux uses persistent Secret Service, and the Windows adapter uses Credential Manager. Only the combinations qualified above are supported. Windows persistence may roam according to OS policy; device-local-only storage is not promised.
 
-For `nansen-cli@2.0.0`, stock Alpine Linux on x64 cannot load native locking. Its musl install includes `fs-native-extensions@1.5.1`, but that package has no `linux-x64-musl` prebuild. `nansen login --human` and `nansen logout` return `AUTH_LOCK_UNAVAILABLE` even with optional dependencies enabled. The musl keyring binding loads, but this does not establish that a persistent Secret Service is available.
+Stock Alpine Linux on x64 remains excluded from saved authentication because it cannot load native locking. Its musl install includes `fs-native-extensions@1.5.1`, but that package has no `linux-x64-musl` prebuild. `nansen login --human` and `nansen logout` return `AUTH_LOCK_UNAVAILABLE` even with optional dependencies enabled. The musl keyring binding loads, but this does not establish that a persistent Secret Service is available. The published `fs-native-extensions@1.5.2` archive and upstream prebuild matrix also lack a musl target; upgrading to it does not close this gap. This change retains `1.5.1` and the existing lock protocol.
 
-On Alpine, pass `NANSEN_API_KEY` in the environment for ordinary commands and do not rely on saved-auth writes or logout. Follow the offline recovery guidance below if you already have saved authentication to remove. Linux browser-login qualification remains pending regardless of binding availability.
+On Alpine, pass `NANSEN_API_KEY` in the environment for ordinary commands and do not rely on saved-auth writes or logout. Follow the offline recovery guidance below if you already have saved authentication to remove. Other Linux configurations require the lifecycle qualification listed above, even when both native bindings load.
 
 The session format uses chunked secure entries and a manifest. Incomplete, mixed or corrupt entries are rejected. Larger-than-supported sessions fail without replacing the previous credential. Do not manually modify these entries.
 

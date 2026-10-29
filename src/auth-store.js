@@ -7,7 +7,7 @@ import { AuthError, authDirectory, ENV_API_KEY_GUIDANCE } from './auth-credentia
 export const CHUNK_BYTES = 2048;
 export const MAX_BUNDLE_BYTES = 16384;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-const unavailable = () => new AuthError('AUTH_STORE_UNAVAILABLE', `Secure credential storage is unavailable or locked. ${ENV_API_KEY_GUIDANCE} To use browser login, enable and unlock your OS credential store, then retry nansen login from a supported terminal. See docs/browser-login.md#preview-platform-scope. No file fallback is used.`);
+const unavailable = () => new AuthError('AUTH_STORE_UNAVAILABLE', `Secure credential storage is unavailable or locked. ${ENV_API_KEY_GUIDANCE} To use browser login, enable and unlock your OS credential store, then retry nansen login from a supported terminal. On Linux, check the user D-Bus session, Secret Service provider and default collection; installing the native binding alone does not start or unlock a service. See docs/browser-login.md#linux-secret-service-setup. No file fallback is used.`);
 export function nativeStoreOperation(operation, account, bytes, { directory = authDirectory(), signal } = {}) {
   signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
@@ -47,7 +47,7 @@ export function nativeStoreOperation(operation, account, bytes, { directory = au
             // The child already holds execution/cleanup exclusion. Keep the
             // pipe open as a parent-lifetime signal; never send secrets early.
             child.stdin.write(JSON.stringify({ operation, account, ...(bytes && { data: Buffer.from(bytes).toString('base64') }) }) + '\n');
-          } else if (ready && !result && (Object.hasOwn(message, 'value') || message.error === 'BINDING_MISSING')) result = message;
+          } else if (ready && !result && (Object.hasOwn(message, 'value') || ['BINDING_MISSING', 'STORE_LOCKED', 'STORE_UNAVAILABLE'].includes(message.error))) result = message;
           else throw new Error();
         } catch { stop(); }
       }
@@ -62,9 +62,14 @@ export function nativeStoreOperation(operation, account, bytes, { directory = au
       try {
         if (failed || code !== 0 || !ready || !result || output) throw new Error();
         if (result.error === 'BINDING_MISSING') {
-          reject(new AuthError('AUTH_STORE_UNAVAILABLE', `The native credential-store binding could not load. ${ENV_API_KEY_GUIDANCE} For saved browser login, reinstall nansen-cli with optional dependencies enabled on a supported OS and architecture. See nansen doctor --offline and docs/browser-login.md#preview-platform-scope.`));
+          reject(new AuthError('AUTH_STORE_UNAVAILABLE', `The native credential-store binding could not load. ${ENV_API_KEY_GUIDANCE} For saved browser login, reinstall nansen-cli with optional dependencies enabled on a supported OS and architecture. See docs/browser-login.md#preview-platform-scope.`));
           return;
         }
+        if (result.error === 'STORE_LOCKED') {
+          reject(new AuthError('AUTH_STORE_UNAVAILABLE', `The Linux Secret Service unlock prompt was dismissed or could not run in this terminal. Unlock the default collection using your provider's tools in the same user D-Bus session, then retry. Starting the service alone does not unlock it. See docs/browser-login.md#linux-secret-service-setup. ${ENV_API_KEY_GUIDANCE}`));
+          return;
+        }
+        if (result.error) { reject(unavailable()); return; }
         resolve(operation === 'get' && result.value !== null ? Buffer.from(result.value, 'base64') : result.value);
       } catch { reject(unavailable()); }
     });
