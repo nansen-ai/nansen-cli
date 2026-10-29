@@ -8,7 +8,7 @@ import crypto from 'crypto';
 import { validateAddress } from './api.js';
 import { CHAIN_RPCS } from './rpc-urls.js';
 import { base58Encode } from './wallet.js';
-import { parseTransactionMessage, resolveStaticAccount } from './solana-tx.js';
+import { parseTransactionMessage, resolveStaticAccount, parseAddressLookupTable } from './solana-tx.js';
 import { SOL_SENTINEL } from './solana-simulation.js';
 import { EVM_NATIVE_SENTINEL } from './swap-simulation.js';
 
@@ -34,7 +34,12 @@ const SPL_INITIALIZE_ACCOUNT3 = 18;
 
 const SYSTEM_PROGRAM = '11111111111111111111111111111111';
 const SYSTEM_INSTR_TRANSFER = 2;
+const SYSTEM_INSTR_CREATE_ACCOUNT = 0;
 const SYSTEM_INSTR_CREATE_ACCOUNT_WITH_SEED = 3;
+const ASSOCIATED_TOKEN_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+const ATA_CREATE = 0;
+const ATA_CREATE_IDEMPOTENT = 1;
+const TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 
 const COMPUTE_BUDGET_PROGRAM = 'ComputeBudget111111111111111111111111111111';
@@ -1961,6 +1966,39 @@ const SOLANA_FEE_CHECK_RPC_TIMEOUT_MS = 10_000;
 // that window would still show.
 const SOLANA_FEE_CHECK_COMMITMENT = 'confirmed';
 
+// An SPL token account is 165 bytes. A Token-2022 account adds an account-type
+// byte and a TLV entry (2-byte type, 2-byte length, data) per extension. The
+// ATA program always gives a Token-2022 account ImmutableOwner (no data), so
+// 170 bytes is the floor.
+const SPL_TOKEN_ACCOUNT_SIZE = 165;
+const TOKEN_2022_ATA_MIN_SIZE = SPL_TOKEN_ACCOUNT_SIZE + 1 + 4;
+const TOKEN_2022_MULTISIG_SIZE = 355; // a size Token-2022 pads by 2 so it can't be mistaken for a multisig
+const TOKEN_2022_MINT_ACCOUNT_TYPE = 1;
+const TOKEN_2022_BASE_MINT_SIZE = 82; // a mint with no extensions
+// Every mint extension type Token-2022 defines → data length of the account
+// extension it forces on every token account of that mint, or null when it
+// forces none (spl-token-2022 get_required_init_account_extensions).
+const TOKEN_2022_MINT_EXTENSION_ACCOUNT_LEN = new Map([
+  [1, 8], // TransferFeeConfig → TransferFeeAmount
+  [3, null], // MintCloseAuthority
+  [4, null], // ConfidentialTransferMint
+  [6, null], // DefaultAccountState
+  [9, 0], // NonTransferable → NonTransferableAccount
+  [10, null], // InterestBearingConfig
+  [12, null], // PermanentDelegate
+  [14, 1], // TransferHook → TransferHookAccount
+  [16, 64], // ConfidentialTransferFeeConfig → ConfidentialTransferFeeAmount
+  [18, null], // MetadataPointer
+  [19, null], // TokenMetadata
+  [20, null], // GroupPointer
+  [21, null], // TokenGroup
+  [22, null], // GroupMemberPointer
+  [23, null], // TokenGroupMember
+  [24, null], // ConfidentialMintBurn
+  [25, null], // ScaledUiAmount
+  [26, 0], // Pausable → PausableAccount
+]);
+
 function formatLamports(lamports) {
   const whole = lamports / 1_000_000_000n;
   const frac = (lamports % 1_000_000_000n).toString().padStart(9, '0').replace(/0+$/, '');
@@ -1983,8 +2021,9 @@ async function solanaRpc(rpcUrl, method, params) {
 }
 
 /**
- * Check, before signing, that the wallet holds enough SOL to pay THIS
- * transaction's network fee, when the wallet is the fee payer.
+ * Check, before signing, that the wallet holds enough SOL to pay for THIS
+ * transaction: its network fee, when the wallet is the fee payer, and the rent
+ * of the accounts the wallet funds.
  *
  * The fee comes from the cluster (getFeeForMessage), so it follows the current
  * fee schedule and includes the priority fee and precompile signatures. When
@@ -1992,12 +2031,14 @@ async function solanaRpc(rpcUrl, method, params) {
  * (5,000 lamports per transaction and precompile signature) plus the priority
  * fee assertSolanaInstructionsSafe parsed, rounded up.
  *
+ * Rent is counted by solanaRentLamports (System CreateAccount /
+ * CreateAccountWithSeed, and ATAs the transaction creates that don't exist yet).
+ *
  * Only a missing Solana RPC or a failed balance read skips the check (warns
- * and returns { proceed: true }).
+ * and returns { proceed: true }). A failed rent read drops only the rent.
  *
  * Limits, left to simulation (verifySolanaSwapOutcome): SOL the transaction
- * takes from the wallet beyond the fee (account rent, the swap's SOL input,
- * transfers) is not counted.
+ * sends from the wallet (the swap's SOL input, transfers) is not counted.
  *
  * The quote-time gate (validateGasBalance) can only apply a fixed floor because
  * the transaction does not exist yet, and validateBalance holds back a fee
@@ -2015,8 +2056,11 @@ async function solanaRpc(rpcUrl, method, params) {
  */
 export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () => {} }) {
   // The fee payer is the first static account. When another account pays (a
-  // sponsored transaction), the fee is not the wallet's to cover.
-  if (parsed.staticAccountKeys[0] !== walletAddress) return { proceed: true };
+  // sponsored transaction), the fee is not the wallet's to cover, but rent the
+  // wallet funds still is.
+  const walletPaysFee = parsed.staticAccountKeys[0] === walletAddress;
+  const walletFundsAccounts = parsed.instructions.some(ix => walletFundedCreation(parsed, ix, walletAddress));
+  if (!walletPaysFee && !walletFundsAccounts) return { proceed: true };
 
   const rpcUrl = CHAIN_RPCS.solana;
   if (!rpcUrl) {
@@ -2026,12 +2070,17 @@ export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () =>
 
   let balance;
   let feeResult;
+  let rentLamports;
   try {
-    [balance, feeResult] = await Promise.all([
+    [balance, feeResult, rentLamports] = await Promise.all([
       solanaRpc(rpcUrl, 'getBalance', [walletAddress, { commitment: SOLANA_FEE_CHECK_COMMITMENT }])
         .then(r => BigInt(r.value)),
       // A failed fee lookup falls back to the static estimate.
-      solanaRpc(rpcUrl, 'getFeeForMessage', [parsed.messageBase64, { commitment: 'processed' }]).catch(() => null),
+      walletPaysFee
+        ? solanaRpc(rpcUrl, 'getFeeForMessage', [parsed.messageBase64, { commitment: 'processed' }]).catch(() => null)
+        : null,
+      // Never throws: a failed rent read warns and counts no rent.
+      walletFundsAccounts ? solanaRentLamports({ parsed, walletAddress, rpcUrl, log }) : 0n,
     ]);
   } catch (e) {
     log(`  ⚠ SOL fee balance check could not run (${e.message}); proceeding without it.`);
@@ -2041,7 +2090,9 @@ export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () =>
   const clusterFee = feeResult?.value;
   const clusterPriced = Number.isSafeInteger(clusterFee) && clusterFee >= 0;
   let feeLamports;
-  if (clusterPriced) {
+  if (!walletPaysFee) {
+    feeLamports = 0n;
+  } else if (clusterPriced) {
     feeLamports = BigInt(clusterFee);
   } else {
     let precompileSignatures = 0n;
@@ -2054,15 +2105,216 @@ export async function checkSolanaFeeBalance({ parsed, walletAddress, log = () =>
       parsed.priorityFeeLamports;
   }
 
-  if (balance < feeLamports) {
+  const required = feeLamports + rentLamports;
+  if (balance < required) {
+    const feeLabel = `${clusterPriced ? '' : 'estimated '}network fee`;
+    let needs;
+    if (rentLamports === 0n) needs = `for its ${feeLabel}`;
+    else if (feeLamports === 0n) needs = 'for the rent of the accounts it creates';
+    else needs = `(${formatLamports(feeLamports)} SOL ${feeLabel} + ${formatLamports(rentLamports)} SOL rent for the accounts it creates)`;
     return {
       proceed: false,
-      reason: `wallet has ${formatLamports(balance)} SOL but this transaction needs at least ${formatLamports(feeLamports)} SOL ` +
-        `for its ${clusterPriced ? '' : 'estimated '}network fee. Fund ${walletAddress} with SOL and retry.`,
+      reason: `wallet has ${formatLamports(balance)} SOL but this transaction needs at least ${formatLamports(required)} SOL ` +
+        `${needs}. Fund ${walletAddress} with SOL and retry.`,
     };
   }
 
   return { proceed: true };
+}
+
+// Associated Token Account Create carries either no data or a 0 discriminator;
+// CreateIdempotent is 1. RecoverNested (2) creates nothing.
+function isAtaCreate(parsed, ix) {
+  return resolveStaticAccount(parsed, ix.programIdIndex) === ASSOCIATED_TOKEN_PROGRAM &&
+    (ix.data.length === 0 || ix.data[0] === ATA_CREATE || ix.data[0] === ATA_CREATE_IDEMPOTENT);
+}
+
+// Lamports a System CreateAccount / CreateAccountWithSeed moves into the new
+// account, or null for any other instruction (or a malformed one, which fails
+// on chain anyway).
+function systemCreateLamports(parsed, ix) {
+  if (resolveStaticAccount(parsed, ix.programIdIndex) !== SYSTEM_PROGRAM || ix.data.length < 4) return null;
+  const kind = ix.data.readUInt32LE(0);
+  if (kind === SYSTEM_INSTR_CREATE_ACCOUNT) {
+    // Layout: u32 index | u64 lamports | u64 space | 32 owner
+    return ix.data.length >= 12 ? ix.data.readBigUInt64LE(4) : null;
+  }
+  if (kind === SYSTEM_INSTR_CREATE_ACCOUNT_WITH_SEED && ix.data.length >= 44) {
+    // Layout: u32 index | 32 base | u64 seedLen | seed | u64 lamports | u64 space | 32 owner
+    const lamportsOffset = 44 + Number(ix.data.readBigUInt64LE(36));
+    return ix.data.length >= lamportsOffset + 8 ? ix.data.readBigUInt64LE(lamportsOffset) : null;
+  }
+  return null;
+}
+
+// Whether `ix` creates an account the wallet funds. The funder (account 0) is a
+// signer, so it is always a static account.
+function walletFundedCreation(parsed, ix, walletAddress) {
+  if (resolveStaticAccount(parsed, ix.accountIndexes[0]) !== walletAddress) return false;
+  return isAtaCreate(parsed, ix) || systemCreateLamports(parsed, ix) !== null;
+}
+
+/**
+ * Rent the wallet must have on hand for the accounts this transaction makes it
+ * fund: System CreateAccount / CreateAccountWithSeed (the lamports the
+ * instruction names), and Associated Token Account creation unless that ATA
+ * already exists (the cluster's rent-exempt minimum for the account's size,
+ * which for Token-2022 depends on the extensions its mint forces onto every
+ * token account).
+ *
+ * Rent is the peak the wallet has out at once, walked in instruction order: a
+ * CloseAccount that returns an account created earlier in this transaction to
+ * the wallet gives that rent back, so a transient account (a WSOL account
+ * opened and closed around the swap) does not add to the rent of an account
+ * created after it. Lamports the wallet must front before the close still
+ * count, because instructions run in order.
+ *
+ * Never throws. When a read it needs fails (address lookup tables, the ATAs
+ * and mints, the rent-exempt minimum), it warns and returns 0n, so the caller
+ * still checks the fee. When a Token-2022 ATA can't be sized exactly (its mint
+ * can't be read or has an extension this table doesn't know), it counts the
+ * size it can prove and warns: a short count costs at worst a failed
+ * transaction, and simulation still runs unless it was turned off.
+ */
+async function solanaRentLamports({ parsed, walletAddress, rpcUrl, log }) {
+  const skip = (why) => {
+    log(`  ⚠ Rent for the accounts this transaction creates was not counted (${why}); checking the network fee only.`);
+    return 0n;
+  };
+
+  try {
+    // The transaction's full account list: static keys, then each lookup's
+    // writable entries, then each lookup's readonly entries.
+    const accountKeys = [...parsed.staticAccountKeys];
+    const lookups = parsed.addressTableLookups;
+    if (lookups.length > 0) {
+      const result = await solanaRpc(rpcUrl, 'getMultipleAccounts', [
+        lookups.map(l => l.lookupTableAddress),
+        { encoding: 'base64', commitment: SOLANA_FEE_CHECK_COMMITMENT },
+      ]);
+      const tables = lookups.map((l, i) => {
+        const data = result.value?.[i]?.data?.[0];
+        if (!data) throw new Error(`address lookup table ${l.lookupTableAddress} not found`);
+        return parseAddressLookupTable(Buffer.from(data, 'base64')).addresses;
+      });
+      for (const field of ['writableIndexes', 'readonlyIndexes']) {
+        lookups.forEach((lookup, i) => {
+          for (const index of lookup[field]) {
+            if (index >= tables[i].length) throw new Error(`address lookup table ${lookup.lookupTableAddress} has no entry ${index}`);
+            accountKeys.push(tables[i][index]);
+          }
+        });
+      }
+    }
+    const accountAt = (ix, position) => accountKeys[ix.accountIndexes[position]] ?? null;
+
+    // ATAs the wallet funds. Accounts: funder, ATA, owner, mint, System
+    // program, token program.
+    const ataCreates = parsed.instructions
+      .filter(ix => isAtaCreate(parsed, ix) && walletFundedCreation(parsed, ix, walletAddress))
+      .map(ix => ({ ix, ata: accountAt(ix, 1), mint: accountAt(ix, 3), tokenProgram: accountAt(ix, 5) }));
+
+    // One read for whether each ATA exists and, for Token-2022, its mint.
+    const atas = [...new Set(ataCreates.map(c => c.ata))];
+    const mints = [...new Set(ataCreates.filter(c => c.tokenProgram === TOKEN_2022_PROGRAM).map(c => c.mint))];
+    const accounts = new Map(); // address → data Buffer, or null when it doesn't exist
+    if (atas.length + mints.length > 0) {
+      const addresses = [...atas, ...mints];
+      const result = await solanaRpc(rpcUrl, 'getMultipleAccounts', [
+        addresses,
+        { encoding: 'base64', commitment: SOLANA_FEE_CHECK_COMMITMENT },
+      ]);
+      addresses.forEach((address, i) => {
+        const data = result.value?.[i]?.data?.[0];
+        accounts.set(address, data == null ? null : Buffer.from(data, 'base64'));
+      });
+    }
+
+    // Size of every ATA this transaction must pay rent for. One that already
+    // exists, or that an earlier instruction here already created, costs nothing.
+    const ataSizes = new Map(); // instruction → bytes
+    const seen = new Set();
+    for (const { ix, ata, mint, tokenProgram } of ataCreates) {
+      if (accounts.get(ata) != null || seen.has(ata)) continue;
+      seen.add(ata);
+      if (tokenProgram !== TOKEN_2022_PROGRAM) {
+        ataSizes.set(ix, SPL_TOKEN_ACCOUNT_SIZE);
+        continue;
+      }
+      const { size, unknown } = token2022AtaSize(accounts.get(mint));
+      if (unknown) log(`  ⚠ Rent for the token account ${ata} may be higher than counted: its Token-2022 mint ${mint} ${unknown}.`);
+      ataSizes.set(ix, size);
+    }
+
+    // Rent-exempt minimum per size from the cluster, so a changed rent schedule
+    // is followed.
+    const sizes = [...new Set(ataSizes.values())];
+    const rents = await Promise.all(sizes.map(size => solanaRpc(rpcUrl, 'getMinimumBalanceForRentExemption', [size])));
+    const rentBySize = new Map();
+    sizes.forEach((size, i) => {
+      if (!Number.isSafeInteger(rents[i]) || rents[i] < 0) throw new Error(`malformed rent-exempt minimum for ${size} bytes`);
+      rentBySize.set(size, BigInt(rents[i]));
+    });
+
+    // Walk the instructions in order, tracking rent the wallet has out and the
+    // peak of it. Only rent this transaction funded is credited back on close.
+    const funded = new Map(); // account → lamports the wallet put into it here
+    let out = 0n;
+    let peak = 0n;
+    for (const ix of parsed.instructions) {
+      const programId = resolveStaticAccount(parsed, ix.programIdIndex);
+      if (SPL_TOKEN_PROGRAMS.has(programId) && ix.data[0] === SPL_CLOSE_ACCOUNT) {
+        const closed = accountAt(ix, 0);
+        if (accountAt(ix, 1) === walletAddress && funded.has(closed)) {
+          out -= funded.get(closed);
+          funded.delete(closed);
+        }
+        continue;
+      }
+      if (!walletFundedCreation(parsed, ix, walletAddress)) continue;
+      const lamports = ataSizes.has(ix) ? rentBySize.get(ataSizes.get(ix)) : (systemCreateLamports(parsed, ix) ?? 0n);
+      if (lamports === 0n) continue;
+      const created = accountAt(ix, 1);
+      out += lamports;
+      funded.set(created, (funded.get(created) ?? 0n) + lamports);
+      if (out > peak) peak = out;
+    }
+    return peak;
+  } catch (e) {
+    return skip(e.message);
+  }
+}
+
+// Size of the token account the ATA program creates for a Token-2022 mint:
+// ImmutableOwner plus every account extension the mint's extensions require.
+// `unknown` says why the size may be higher than returned, when the mint can't
+// be read or carries an extension this table doesn't know.
+function token2022AtaSize(mintData) {
+  let size = TOKEN_2022_ATA_MIN_SIZE;
+  if (mintData == null) return { size, unknown: 'could not be read' };
+  if (mintData.length > SPL_TOKEN_ACCOUNT_SIZE) {
+    if (mintData[SPL_TOKEN_ACCOUNT_SIZE] !== TOKEN_2022_MINT_ACCOUNT_TYPE) return { size, unknown: 'is not a mint account' };
+    const seen = new Set();
+    let unknown;
+    for (let offset = SPL_TOKEN_ACCOUNT_SIZE + 1; offset + 4 <= mintData.length;) {
+      const type = mintData.readUInt16LE(offset);
+      if (type === 0) break; // Uninitialized: the rest is padding
+      if (!TOKEN_2022_MINT_EXTENSION_ACCOUNT_LEN.has(type)) {
+        unknown = `has an extension this check does not know (type ${type})`;
+      } else {
+        const extensionLen = TOKEN_2022_MINT_EXTENSION_ACCOUNT_LEN.get(type);
+        if (extensionLen !== null && !seen.has(type)) {
+          seen.add(type);
+          size += 4 + extensionLen;
+        }
+      }
+      offset += 4 + mintData.readUInt16LE(offset + 2);
+    }
+    if (size === TOKEN_2022_MULTISIG_SIZE) size += 2;
+    return { size, unknown };
+  }
+  if (mintData.length !== TOKEN_2022_BASE_MINT_SIZE) return { size, unknown: 'is not a mint account' };
+  return { size };
 }
 
 /**

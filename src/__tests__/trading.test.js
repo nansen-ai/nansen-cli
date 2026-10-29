@@ -6506,9 +6506,13 @@ describe('Solana execute: SOL fee balance check', () => {
     return Buffer.from([(value & 0x7f) | 0x80, (value >> 7) & 0x7f]);
   }
 
+  // The rent-exempt minimum of a 165-byte SPL token account.
+  const SPL_ATA_RENT = 2_039_280;
+
   // A Jupiter-shaped transaction that pays a 1,000,000-lamport priority fee
-  // (1,000,000 micro-lamports x 1,000,000 units).
-  function buildPriorityFeeTransaction(walletAddress) {
+  // (1,000,000 micro-lamports x 1,000,000 units). With `createAta`, it also
+  // creates the wallet's USDC token account, paid for by the wallet.
+  function buildPriorityFeeTransaction(walletAddress, { createAta = false } = {}) {
     const COMPUTE_BUDGET = 'ComputeBudget111111111111111111111111111111';
     const accountKeys = [walletAddress, COMPUTE_BUDGET];
     const limit = Buffer.alloc(5);
@@ -6517,18 +6521,32 @@ describe('Solana execute: SOL fee balance check', () => {
     const price = Buffer.alloc(9);
     price[0] = 3;
     price.writeBigUInt64LE(1_000_000n, 1);
+    const instructions = [limit, price].map(data => ({ programIdIndex: 1, accountIndexes: [], data }));
+    if (createAta) {
+      const ata = generateSolanaWallet().address;
+      accountKeys.push(
+        ata,
+        SOL_USDC,
+        '11111111111111111111111111111111',
+        'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+        'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',
+      );
+      // CreateIdempotent: funder, ATA, owner, mint, System program, token program.
+      instructions.push({ programIdIndex: 6, accountIndexes: [0, 2, 0, 3, 4, 5], data: Buffer.from([1]) });
+    }
     const parts = [Buffer.from([1, 0, 1])];
     parts.push(encodeCompactU16(accountKeys.length));
     for (const k of accountKeys) parts.push(base58Decode(k));
     parts.push(base58Decode(walletAddress)); // recentBlockhash placeholder
-    parts.push(encodeCompactU16(2));
-    for (const data of [limit, price]) {
-      parts.push(Buffer.from([1]), encodeCompactU16(0), encodeCompactU16(data.length), data);
+    parts.push(encodeCompactU16(instructions.length));
+    for (const ix of instructions) {
+      parts.push(Buffer.from([ix.programIdIndex]), encodeCompactU16(ix.accountIndexes.length), Buffer.from(ix.accountIndexes));
+      parts.push(encodeCompactU16(ix.data.length), ix.data);
     }
     return Buffer.concat([Buffer.from([1]), Buffer.alloc(64), Buffer.concat(parts)]).toString('base64');
   }
 
-  async function runExecute(balanceLamports) {
+  async function runExecute(balanceLamports, { createAta = false } = {}) {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
     const wallet = showWallet('default');
@@ -6548,6 +6566,9 @@ describe('Solana execute: SOL fee balance check', () => {
       const rpc = opts?.body ? JSON.parse(opts.body) : {};
       let result = null;
       if (rpc.method === 'getBalance') result = { value: balanceLamports };
+      // The token account doesn't exist yet.
+      if (rpc.method === 'getMultipleAccounts') result = { value: rpc.params[0].map(() => null) };
+      if (rpc.method === 'getMinimumBalanceForRentExemption') result = SPL_ATA_RENT;
       const body = { jsonrpc: '2.0', id: 1, result };
       return Promise.resolve({
         ok: true,
@@ -6566,7 +6587,7 @@ describe('Solana execute: SOL fee balance check', () => {
         outputMint: SOL_USDC,
         inAmount: '1000000000',
         outAmount: '50000000',
-        transaction: buildPriorityFeeTransaction(wallet.solana),
+        transaction: buildPriorityFeeTransaction(wallet.solana, { createAta }),
       }],
     }, 'solana', 'local', null, null, { swapMode: 'exactIn', request: solanaIntent({ walletAddress: wallet.solana }) });
 
@@ -6598,6 +6619,21 @@ describe('Solana execute: SOL fee balance check', () => {
 
     expect(executeCalls).toHaveLength(1);
     expect(logs.some(l => l.includes('cannot be paid for'))).toBe(false);
+  });
+
+  it('refuses to sign when the wallet can pay the fee but not the rent of the token account it creates', async () => {
+    const { executeCalls, logs, error } = await runExecute(1_005_000 + SPL_ATA_RENT - 1, { createAta: true });
+
+    expect(error).toBeTruthy();
+    expect(executeCalls).toHaveLength(0);
+    expect(logs.some(l => l.includes('cannot be paid for') && l.includes('0.00203928 SOL rent for the accounts it creates'))).toBe(true);
+  });
+
+  it('signs and broadcasts when the wallet covers the fee and the rent exactly', async () => {
+    const { executeCalls, error } = await runExecute(1_005_000 + SPL_ATA_RENT, { createAta: true });
+
+    expect(error).toBeNull();
+    expect(executeCalls).toHaveLength(1);
   });
 });
 

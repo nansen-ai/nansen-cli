@@ -3910,7 +3910,7 @@ EXAMPLES:
               // is available, so this static check remains a guard when sim is off).
               const safeTx = assertSolanaInstructionsSafe(txBase64, { walletAddress });
 
-              // Check the wallet can pay this transaction's actual fee.
+              // Check the wallet can pay this transaction's fee and account rent.
               // Runs regardless of --no-verify-outcome: simulation would also
               // catch an unpayable transaction, but not when it is skipped or
               // degraded. Warns and proceeds if the balance read fails.
@@ -4248,7 +4248,7 @@ EXAMPLES:
               // is available, so this static check remains a guard when sim is off).
               const safeTx = assertSolanaInstructionsSafe(txBase64, { walletAddress: solanaWalletAddress });
 
-              // Check the wallet can pay this transaction's actual fee.
+              // Check the wallet can pay this transaction's fee and account rent.
               // Runs regardless of --no-verify-outcome: simulation would also
               // catch an unpayable transaction, but not when it is skipped or
               // degraded. Warns and proceeds if the balance read fails.
