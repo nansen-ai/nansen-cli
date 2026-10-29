@@ -1115,7 +1115,12 @@ export class NansenAPI {
       let hit = false;
       const cached = getCachedResponse(endpoint, body, cacheTtl, cacheContext, meta => {
         hit = true;
-        this.lastResponseMeta = meta;
+        const warning = meta?.notices?.warning;
+        if (warning) {
+          const previous = this.lastResponseMeta;
+          const combined = [...new Set([previous?.notices?.warning, warning].filter(Boolean))].join(', ');
+          this.lastResponseMeta = { ...previous, notices: { ...previous?.notices, warning: combined } };
+        }
       });
       if (hit) {
         this.servedFromCache = true;
@@ -1697,7 +1702,7 @@ export class NansenAPI {
     const { address, chain = 'ethereum', orderBy, pagination } = params;
     if (address) requireValidAddress(address, chain);
     return this.request('/api/v1/profiler/address/related-wallets', {
-      address,
+      wallet_address: address,
       chain,
       order_by: orderBy,
       pagination
@@ -1813,7 +1818,7 @@ export class NansenAPI {
     const { address, chain = 'ethereum', days = 30 } = params;
     if (address) requireValidAddress(address, chain);
     return this.request('/api/v1/profiler/address/pnl-summary', {
-      address,
+      wallet_address: address,
       chain,
       date: buildDateRange(days)
     });
@@ -2162,12 +2167,11 @@ export class NansenAPI {
   async pmMarketScreener(params = {}) {
     const { orderBy, sortBy = 'volume_24hr', query = '', status = '', tags, minLiquidity, maxLiquidity, maxUniqueTraders24h, minVolume24hr, negRisk, minOpenInterest, maxOpenInterest, endDateBefore, endDateAfter, minPrice, maxPrice, pagination } = params;
     const body = {
-      sort_by: sortBy,
+      order_by: orderBy || [{ field: sortBy, direction: 'DESC' }],
       query,
       status,
       pagination
     };
-    if (orderBy) body.order_by = orderBy;
     if (tags && tags.length) body.tags = tags;
     if (minLiquidity != null) body.min_liquidity = minLiquidity;
     if (maxLiquidity != null) body.max_liquidity = maxLiquidity;
@@ -2186,12 +2190,11 @@ export class NansenAPI {
   async pmEventScreener(params = {}) {
     const { orderBy, sortBy = 'volume_24hr', query = '', status = '', tags, minLiquidity, maxLiquidity, maxUniqueTraders24h, minVolume24hr, negRisk, minOpenInterest, maxOpenInterest, endDateBefore, endDateAfter, pagination } = params;
     const body = {
-      sort_by: sortBy,
+      order_by: orderBy || [{ field: sortBy, direction: 'DESC' }],
       query,
       status,
       pagination
     };
-    if (orderBy) body.order_by = orderBy;
     if (tags && tags.length) body.tags = tags;
     if (minLiquidity != null) body.min_liquidity = minLiquidity;
     if (maxLiquidity != null) body.max_liquidity = maxLiquidity;
