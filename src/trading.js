@@ -128,7 +128,9 @@ export function resolveTokenAddress(symbolOrAddress, chainName) {
 //   - RPC_NETWORK_ERROR — request left but no response (reset/timeout): ambiguous
 //   - RPC_HTTP_ERROR    — non-JSON HTTP response (e.g. a 502 gateway page): ambiguous
 //   - RPC_JSON_ERROR    — a JSON-RPC { error }: the node definitively rejected it
-export async function evmRpcCall(chain, method, params = []) {
+// `timeoutMs` (optional) aborts a request that has not completed in time; it
+// surfaces as RPC_NETWORK_ERROR. Without it a request has no time limit.
+export async function evmRpcCall(chain, method, params = [], { timeoutMs } = {}) {
   const rpcUrl = CHAIN_RPCS[chain];
   if (!rpcUrl) throw Object.assign(new Error(`No RPC URL configured for chain: ${chain}`), { code: 'RPC_UNCONFIGURED' });
   let res;
@@ -137,6 +139,7 @@ export async function evmRpcCall(chain, method, params = []) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     });
   } catch (netErr) {
     // The request left this process but no response came back. A reset or
@@ -1482,6 +1485,8 @@ export async function waitForReceipt(chain, txHash, timeoutMs = 180000, pollMs =
 // usually means the transaction was dropped. It is still reported as
 // unconfirmed, never as failed: the CLI has not proven it cannot land.
 export const SOLANA_CONFIRM_TIMEOUT_MS = 90000;
+// Upper bound on a single status request inside that window.
+const SOLANA_RPC_REQUEST_TIMEOUT_MS = 10000;
 
 /**
  * Wait for a Solana signature to reach `confirmed` commitment. The Solana
@@ -1506,8 +1511,12 @@ export async function waitForSolanaSignature(chain, signature, timeoutMs = SOLAN
     let status = null;
     try {
       // evmRpcCall is a plain JSON-RPC POST to CHAIN_RPCS[chain]; nothing in it
-      // is EVM-specific.
-      const result = await evmRpcCall(chain, 'getSignatureStatuses', [[signature]]);
+      // is EVM-specific. Each request is bounded by the time left, so a hung
+      // request cannot outlive the deadline; an abort is a transient failure.
+      const remainingMs = Math.max(1, timeoutMs - (Date.now() - start));
+      const result = await evmRpcCall(chain, 'getSignatureStatuses', [[signature]], {
+        timeoutMs: Math.min(SOLANA_RPC_REQUEST_TIMEOUT_MS, remainingMs),
+      });
       status = result?.value?.[0] ?? null;
     } catch {
       // Transient RPC failure: keep polling until the deadline.
@@ -1621,6 +1630,46 @@ function assertTxHashMatch(signedTxHex, broadcasterTxHash, label = '') {
     }
   }
   return localHash;
+}
+
+/**
+ * The Solana counterpart of assertTxHashMatch. A Solana transaction id is its
+ * first signature (the fee payer's), so it is read straight out of the signed
+ * bytes: [signatures_count (compact-u16)] [signatures (64 bytes each)...] ...
+ *
+ * Fails closed (TXHASH_MISMATCH) when the execute API reported a different
+ * signature, and with INVALID_SIGNED_TX when none can be read from our bytes.
+ *
+ * @param {string} signedTxBase64 - the signed transaction we sent to /execute
+ * @param {string} broadcasterSignature - the signature /execute returned (may be empty)
+ * @returns {string} our locally-derived base58 signature
+ */
+function assertSolanaSignatureMatch(signedTxBase64, broadcasterSignature) {
+  let localSignature;
+  try {
+    const txBytes = Buffer.from(signedTxBase64 || '', 'base64');
+    const { value: sigCount, size: sigCountSize } = readCompactU16(txBytes, 0);
+    if (sigCount < 1) throw new Error('transaction has no signature slots');
+    if (txBytes.length < sigCountSize + 64) throw new Error('transaction is too short to hold a signature');
+    localSignature = base58Encode(txBytes.subarray(sigCountSize, sigCountSize + 64));
+  } catch (sigErr) {
+    throw new CommandError(
+      `Aborting: cannot derive a local signature for the transaction this CLI signed: ${sigErr.message}. `
+      + `The transaction may already have been broadcast, so nothing further will run — `
+      + `check your wallet before retrying.`,
+      'INVALID_SIGNED_TX',
+    );
+  }
+  if (broadcasterSignature && broadcasterSignature !== localSignature) {
+    throw new CommandError(
+      `Aborting: the broadcaster reported transaction ${broadcasterSignature}, but the transaction this CLI signed `
+      + `has signature ${localSignature}. These must match — a mismatch means the confirmation would be for `
+      + `a transaction you did not sign, so nothing has been verified and no further steps will `
+      + `run. Check both signatures on a block explorer to see what was actually broadcast before retrying.`,
+      'TXHASH_MISMATCH',
+    );
+  }
+  return localSignature;
 }
 
 /**
@@ -5095,6 +5144,11 @@ EXAMPLES:
               // the quote stays marked as spent.
               if (chainType === 'solana') {
                 log('  Verifying on-chain status...');
+                // Poll the signature of the transaction we signed, not the one
+                // the API reported: a confirmed status for some other
+                // transaction must not count as ours landing.
+                txId = assertSolanaSignatureMatch(signedTransaction, txId);
+                explorerUrl = chainConfig.explorer + txId;
                 try {
                   await waitForSolanaSignature(chain, txId);
                 } catch (statusErr) {
