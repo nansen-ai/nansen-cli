@@ -320,3 +320,15 @@ describe('cached API warnings', () => {
     expect(JSON.stringify(cached)).not.toContain(warning);
   });
 });
+
+it.each(['plain-text-body', null, false, 0])('preserves warnings for cached primitive %j', async payload => {
+  const api = await freshApi(payload);
+  const warning = '299 - "Retirement notice"';
+  fetch.mockImplementation(async () => ({
+    ok: true, status: 200, headers: new Headers({ warning }), json: async () => payload,
+  }));
+  expect(await api.request('/api/v1/demo', {})).toBe(payload);
+  expect(await api.request('/api/v1/demo', {})).toBe(payload);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(api.lastResponseMeta).toEqual({ notices: { warning } });
+});
