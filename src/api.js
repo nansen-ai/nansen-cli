@@ -423,7 +423,7 @@ function getCacheKey(endpoint, body, context = {}) {
 /**
  * Get cached response if valid
  */
-export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL, context = {}) {
+export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL, context = {}, onHit = null) {
   const cacheKey = getCacheKey(endpoint, body, context);
   const cacheFile = path.join(CACHE_DIR, `${cacheKey}.json`);
   
@@ -458,9 +458,10 @@ export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL
       } else {
         result = { ...cached.data, _meta: meta };
       }
-      if (result !== null && typeof result === 'object' && typeof cached.warning === 'string' && cached.warning) {
-        result[RESPONSE_META] = { notices: { warning: cached.warning } };
-      }
+      const warningMeta = typeof cached.warning === 'string' && cached.warning
+        ? { notices: { warning: cached.warning } } : null;
+      if (result !== null && typeof result === 'object' && warningMeta) result[RESPONSE_META] = warningMeta;
+      onHit?.(warningMeta);
     }
   } catch (error) {
     primaryError = error;
@@ -480,7 +481,7 @@ export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL
 /**
  * Save response to cache
  */
-export function setCachedResponse(endpoint, body, data, context = {}) {
+export function setCachedResponse(endpoint, body, data, context = {}, responseMeta = data?.[RESPONSE_META]) {
   if (!fs.existsSync(CACHE_DIR)) {
     fs.mkdirSync(CACHE_DIR, { mode: 0o700, recursive: true });
   }
@@ -491,7 +492,7 @@ export function setCachedResponse(endpoint, body, data, context = {}) {
   const cached = {
     timestamp: Date.now(),
     endpoint,
-    warning: data?.[RESPONSE_META]?.notices?.warning,
+    warning: responseMeta?.notices?.warning,
     data
   };
   
@@ -1108,11 +1109,14 @@ export class NansenAPI {
 
     let cacheContext = credentialContext();
     if (useCache && cacheContext) {
-      const cached = getCachedResponse(endpoint, body, cacheTtl, cacheContext);
-      if (cached) {
+      let hit = false;
+      const cached = getCachedResponse(endpoint, body, cacheTtl, cacheContext, meta => {
+        hit = true;
+        this.lastResponseMeta = meta;
+      });
+      if (hit) {
         this.servedFromCache = true;
         traceCacheHit({ method, url });
-        this.lastResponseMeta = cached[RESPONSE_META] || null;
         return cached;
       }
     }
@@ -1459,7 +1463,7 @@ export class NansenAPI {
       this.lastResponseMeta = meta;
       if (meta && data !== null && typeof data === 'object') data[RESPONSE_META] = meta;
       if (useCache && cacheContext) {
-        setCachedResponse(endpoint, body, data, cacheContext);
+        setCachedResponse(endpoint, body, data, cacheContext, meta);
       }
 
       return data;
