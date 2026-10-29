@@ -165,9 +165,9 @@ A connection failure is `NETWORK_ERROR` and never `UNAUTHORIZED`: the CLI could 
 | `AMOUNT_MISMATCH` | The quote or bridge amount differs from the requested amount. | No |
 | `INVALID_SIGNED_TX` | The signed transaction is not valid. | No |
 | `BROADCAST_FAILED` | The transaction could not be broadcast. | No |
-| `TX_REVERTED` | The transaction reverted on chain. | No |
+| `TX_REVERTED` | The transaction reverted or failed on chain. | No |
 | `TXHASH_MISMATCH` | The RPC returned a different transaction hash than the one signed. | No |
-| `RECEIPT_TIMEOUT` | No transaction receipt arrived in time. Check the transaction before retrying. | No |
+| `RECEIPT_TIMEOUT` | The transaction was not confirmed in time and may still land. Check the transaction before retrying. | No |
 | `OUTCOME_VERIFICATION_FAILED` | The CLI could not verify the trade outcome. | No |
 | `SWAP_OUTCOME_MISMATCH` | The simulated swap outcome does not match the quote; nothing was signed. | No |
 | `LIMIT_ORDER_DESTINATION_MISMATCH` | The limit order sends funds to an unexpected destination; nothing was signed. | No |

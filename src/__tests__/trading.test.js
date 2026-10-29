@@ -28,6 +28,8 @@ import {
   evmTxHash,
   confirmEvmBroadcast,
   waitForReceipt,
+  waitForSolanaSignature,
+  SOLANA_CONFIRM_TIMEOUT_MS,
   buildApprovalTransaction,
   approvalAmountForSwap,
   approvalCapForQuote,
@@ -129,6 +131,39 @@ const LIFI_ROUTER = '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae';
 // 'SolSig' or '0xApprovalHash' are rejected as unusable -- see assertUsableTxId.
 const FIXTURE_SOL_SIG = base58Encode(Buffer.alloc(64, 7));
 const FIXTURE_EVM_HASH = '0x' + 'a7'.repeat(32);
+
+// A Solana transaction id is its first signature, and the CLI confirms the one
+// it reads from the bytes it signed. solanaSignedTxWithSig builds signed bytes
+// carrying `sig`, for signer stubs (Privy); solanaSigOf reads it back, for
+// execute stubs answering a transaction the local key signed.
+function solanaSignedTxWithSig(sig) {
+  return Buffer.concat([Buffer.from([0x01]), base58Decode(sig)]).toString('base64');
+}
+function solanaSigOf(signedTxBase64) {
+  return base58Encode(Buffer.from(signedTxBase64, 'base64').subarray(1, 65));
+}
+
+// A Solana swap is only reported successful once getSignatureStatuses says the
+// signature is confirmed. Tests about something else call this after stubbing
+// fetch: it answers that poll with `status` and hands every other request to
+// the stub that was installed.
+const CONFIRMED_SOL_STATUS = { slot: 1, confirmations: 1, err: null, confirmationStatus: 'confirmed' };
+function solanaStatusResponse(id, status) {
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id, result: { context: { slot: 1 }, value: [status] } })),
+  });
+}
+function confirmSolanaSignatures(status = CONFIRMED_SOL_STATUS) {
+  const inner = globalThis.fetch;
+  vi.stubGlobal('fetch', vi.fn((url, opts) => {
+    let body = null;
+    try { body = typeof opts?.body === 'string' ? JSON.parse(opts.body) : null; } catch { /* not JSON */ }
+    if (body?.method === 'getSignatureStatuses') return solanaStatusResponse(body.id, status);
+    return inner(url, opts);
+  }));
+}
 
 const RELAY_ROUTER = '0xf5042e6ffac5a625d4e7848e0b01373d8eb9e222';
 
@@ -3057,7 +3092,7 @@ describe('Privy execute support', () => {
       if (urlStr.includes('privy.io')) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ data: { signed_transaction: 'c2lnbmVkVHg=' } }),
+          json: () => Promise.resolve({ data: { signed_transaction: solanaSignedTxWithSig(FIXTURE_SOL_SIG) } }),
         });
       }
       // Trading API executeTransaction
@@ -3077,6 +3112,7 @@ describe('Privy execute support', () => {
     });
 
     delete process.env.NANSEN_WALLET_PASSWORD;
+    confirmSolanaSignatures();
     await cmds.execute([], screenApi, {}, { quote: quoteId });
 
     expect(logs.some(l => l.includes('Signing Solana transaction via Privy'))).toBe(true);
@@ -6501,9 +6537,10 @@ describe('Solana execute: SOL fee balance check', () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
       if (urlStr.includes('trading-api') && isExecutePath(urlStr)) {
-        executeCalls.push(JSON.parse(opts.body));
+        const execBody = JSON.parse(opts.body);
+        executeCalls.push(execBody);
         const response = asRouteResponse(
-          { status: 'Success', signature: '4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj', chainType: 'solana' },
+          { status: 'Success', signature: solanaSigOf(execBody.signedTransaction), chainType: 'solana' },
           isStandardExecutePath(urlStr),
         );
         return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(response)) });
@@ -6519,6 +6556,7 @@ describe('Solana execute: SOL fee balance check', () => {
         text: () => Promise.resolve(JSON.stringify(body)),
       });
     }));
+    confirmSolanaSignatures();
 
     const quoteId = saveQuote({
       success: true,
@@ -6628,6 +6666,7 @@ describe('Relay aggregator: Solana omits requestId', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    confirmSolanaSignatures();
     try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* bridge poll may fail, ok */ }
 
     expect(executeBodies.length).toBeGreaterThanOrEqual(1);
@@ -6680,6 +6719,7 @@ describe('Relay aggregator: Solana omits requestId', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    confirmSolanaSignatures();
     try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* ok */ }
 
     expect(executeBodies.length).toBeGreaterThanOrEqual(1);
@@ -6734,6 +6774,7 @@ describe('Relay aggregator: Solana omits requestId', () => {
     });
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    confirmSolanaSignatures();
     try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* ok */ }
 
     expect(executeBodies.length).toBeGreaterThanOrEqual(1);
@@ -7487,10 +7528,11 @@ describe('Solana intent binding (adversarial)', () => {
     const message = Buffer.from([0x01, 0x00, 0x01, 0x02, ...Buffer.alloc(32), ...Buffer.alloc(32), ...Buffer.alloc(32), 0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00]);
     const txBase64 = Buffer.concat([sigCount, emptySig, message]).toString('base64');
 
-    vi.stubGlobal('fetch', vi.fn().mockImplementation((url) => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
       if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'jupiter' })) });
+        const signature = solanaSigOf(JSON.parse(opts.body).signedTransaction);
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature, chainType: 'solana', broadcaster: 'jupiter' })) });
       }
       return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null })) });
     }));
@@ -7505,6 +7547,7 @@ describe('Solana intent binding (adversarial)', () => {
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    confirmSolanaSignatures();
     await cmds.execute([], screenApi, {}, { quote: quoteId });
 
     expect(logs.some(l => l.includes('Transaction successful'))).toBe(true);
@@ -7922,7 +7965,8 @@ describe('Solana execute: swap-outcome verification blocks signing (adversarial)
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
       if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'jupiter' })) });
+        const signature = solanaSigOf(JSON.parse(opts.body).signedTransaction);
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature, chainType: 'solana', broadcaster: 'jupiter' })) });
       }
       return rpcMock(url, opts);
     }));
@@ -7938,6 +7982,7 @@ describe('Solana execute: swap-outcome verification blocks signing (adversarial)
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    confirmSolanaSignatures();
     await cmds.execute([], screenApi, {}, { quote: quoteId });
 
     expect(logs.some((l) => l.includes('Swap outcome verified'))).toBe(true);
@@ -8068,6 +8113,7 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    confirmSolanaSignatures();
     try { await cmds.execute([], screenApi, {}, { quote: quoteId }); } catch { /* bridge polling may fail in test, that's fine */ }
 
     expect(executeBodies.length).toBeGreaterThanOrEqual(1);
@@ -9560,7 +9606,7 @@ describe('standard execution route — swap command flow', () => {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: 'SolPrivyAddr1111111111111111111111111111', chain_type: 'solana' }) });
       }
       if (urlStr.startsWith('https://api.privy.io/')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: 'c2lnbmVkVHg=' } }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: solanaSignedTxWithSig('4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj') } }) });
       }
       if (urlStr.includes('trading-api') && urlStr.endsWith('/execution/standard')) {
         return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ success: true, txHash: '4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj' })) });
@@ -9573,15 +9619,16 @@ describe('standard execution route — swap command flow', () => {
     delete process.env.NANSEN_WALLET_PASSWORD;
     process.env.PRIVY_APP_ID = 'test-app-id';
     process.env.PRIVY_APP_SECRET = 'test-secret';
+    confirmSolanaSignatures();
     await cmds.execute([], screenApi, {}, { quote: quoteId });
 
     expect(logs.some(l => l.includes('Signature:') && l.includes('4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj'))).toBe(true);
     expect(logs.some(l => l.includes('Tx Hash:'))).toBe(false);
   });
 
-  // The EVM soft-fail test above is resolved by the receipt poll. Solana has no
-  // such poll, so a node-rejected broadcast would otherwise print the success
-  // banner and exit 0 for a transaction that may never have propagated.
+  // The EVM soft-fail test above is resolved by the receipt poll. Solana fails
+  // closed before its signature poll: a node-rejected broadcast must never print
+  // the success banner and exit 0 for a transaction that may not have propagated.
   it('fails closed on a Solana node-rejected broadcast instead of reporting success', async () => {
     const sigCount = Buffer.from([0x01]);
     const emptySig = Buffer.alloc(64);
@@ -10003,5 +10050,240 @@ describe('standard execution route — swap command flow', () => {
 
     expect(executeCalls[0].path).toBe('/execute');
     expect(executeCalls[0].body.quoteId).toBe('aggregator-lifi-id:0');
+  });
+});
+
+// The execute API's success for a Solana swap only means the transaction was
+// submitted. Solana drops transactions without leaving a record, and one that
+// lands can still fail, so the CLI must read the signature status before it
+// prints the success banner. Same three outcomes as the EVM receipt poll.
+describe('Solana swap: on-chain confirmation after broadcast', () => {
+  const SIG = '4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj';
+  const PRIVY_SOL_ADDR = 'SolPrivyAddr1111111111111111111111111111';
+
+  function solanaTx() {
+    const messageBytes = Buffer.from([
+      0x01, 0x00, 0x01, 0x02,
+      ...Buffer.alloc(32), ...Buffer.alloc(32), ...Buffer.alloc(32),
+      0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00,
+    ]);
+    return Buffer.concat([Buffer.from([0x01]), Buffer.alloc(64), messageBytes]).toString('base64');
+  }
+
+  // Two candidates, so a test can prove the loop never signs the second one.
+  function saveTwoCandidateQuote() {
+    const candidate = { aggregator: 'jupiter', inputMint: SOL_MINT, outputMint: SOL_USDC, inAmount: '1000000000', outAmount: '50000000', transaction: solanaTx(), metadata: { requestId: 'req-1' } };
+    return saveQuote(
+      { success: true, metadata: { quoteId: 'backend-quote-id' }, quotes: [candidate, { ...candidate }] },
+      'solana',
+      'privy',
+      { evm: 'wl_evm_1', solana: 'wl_sol_1' },
+      null,
+      { swapMode: 'exactIn', request: solanaIntent({ walletAddress: PRIVY_SOL_ADDR }) },
+    );
+  }
+
+  // `statuses` is the sequence getSignatureStatuses returns (the last entry
+  // repeats). An Error entry makes that poll fail at the transport.
+  // `signedSig` is the signature in the bytes Privy signs; the execute API
+  // always reports SIG.
+  function stubFetch({ route, statuses, signedSig = SIG }) {
+    const executeCalls = [];
+    const statusCalls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.startsWith('https://api.privy.io/') && opts?.method === 'GET') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: PRIVY_SOL_ADDR, chain_type: 'solana' }) });
+      }
+      if (urlStr.startsWith('https://api.privy.io/')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: solanaSignedTxWithSig(signedSig) } }) });
+      }
+      if (urlStr.includes('trading-api') && (urlStr.endsWith('/execution/standard') || urlStr.endsWith('/execute'))) {
+        executeCalls.push(urlStr);
+        const body = route === 'standard'
+          ? { success: true, txHash: SIG }
+          : { status: 'Success', signature: SIG, chainType: 'solana', broadcaster: 'jupiter' };
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) });
+      }
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      if (body.method === 'getSignatureStatuses') {
+        statusCalls.push(body.params);
+        const next = statuses[Math.min(statusCalls.length - 1, statuses.length - 1)];
+        if (next instanceof Error) return Promise.reject(next);
+        return solanaStatusResponse(body.id, next);
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: null })) });
+    }));
+    return { executeCalls, statusCalls };
+  }
+
+  beforeEach(() => {
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    process.env.PRIVY_APP_ID = 'test-app-id';
+    process.env.PRIVY_APP_SECRET = 'test-secret';
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    delete process.env.NANSEN_TRADING_EXECUTION_ROUTE;
+    delete process.env.PRIVY_APP_ID;
+    delete process.env.PRIVY_APP_SECRET;
+  });
+
+  describe.each(['standard', 'legacy'])('on the %s execution route', (route) => {
+    beforeEach(() => { process.env.NANSEN_TRADING_EXECUTION_ROUTE = route; });
+
+    it('reports success only after the signature is confirmed', async () => {
+      const { executeCalls, statusCalls } = stubFetch({
+        route,
+        statuses: [null, { ...CONFIRMED_SOL_STATUS, confirmationStatus: 'processed' }, CONFIRMED_SOL_STATUS],
+      });
+      const quoteId = saveTwoCandidateQuote();
+      const logs = [];
+      const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+      vi.useFakeTimers();
+      const p = cmds.execute([], screenApi, {}, { quote: quoteId });
+      await vi.advanceTimersByTimeAsync(10000);
+      await p;
+
+      expect(executeCalls).toHaveLength(1);
+      // Polled the signature the execute API returned, until it was confirmed.
+      expect(statusCalls).toHaveLength(3);
+      expect(statusCalls[0]).toEqual([[SIG]]);
+      expect(logs.some(l => l.includes('Transaction successful'))).toBe(true);
+    });
+
+    it('reports a transaction that landed with an error as failed, and tries no other quote', async () => {
+      const { executeCalls } = stubFetch({
+        route,
+        statuses: [{ ...CONFIRMED_SOL_STATUS, err: { InstructionError: [2, { Custom: 6001 }] } }],
+      });
+      const quoteId = saveTwoCandidateQuote();
+      const logs = [];
+      const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+      const err = await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(e => e);
+
+      expect(err).toMatchObject({ code: 'TX_REVERTED' });
+      expect(err.message).toContain('FAILED on-chain');
+      expect(err.message).toContain(`Signature: ${SIG}`);
+      expect(err.message).toContain(`Explorer:  https://solscan.io/tx/${SIG}`);
+      expect(err.message).toContain('Custom');
+      expect(executeCalls).toHaveLength(1);
+      expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+      expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+      // The quote is spent: a rerun of the same quote is refused.
+      expect(() => loadQuote(quoteId)).toThrow();
+    });
+
+    it('reports a signature that never confirms as unverified, not failed, and keeps the quote spent', async () => {
+      const { executeCalls, statusCalls } = stubFetch({ route, statuses: [null] });
+      const quoteId = saveTwoCandidateQuote();
+      const logs = [];
+      const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+      vi.useFakeTimers();
+      const p = cmds.execute([], screenApi, {}, { quote: quoteId });
+      const settle = p.catch(e => e);
+      await vi.advanceTimersByTimeAsync(SOLANA_CONFIRM_TIMEOUT_MS + 10000);
+      const err = await settle;
+
+      expect(err).toMatchObject({ code: 'RECEIPT_TIMEOUT' });
+      expect(err.message).toContain('NOT confirmed');
+      expect(err.message).toContain('Do NOT assume it failed');
+      expect(err.message).toContain(SIG);
+      expect(err.message).not.toContain('FAILED on-chain');
+      expect(statusCalls.length).toBeGreaterThan(1);
+      expect(executeCalls).toHaveLength(1);
+      expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+      expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+      expect(() => loadQuote(quoteId)).toThrow();
+      expect(() => claimQuoteForExecution(quoteId)).toThrow();
+    });
+
+    it('refuses a reported signature that is not the one this CLI signed, without polling it', async () => {
+      // The API reports SIG, which may well be confirmed, but the transaction
+      // Privy signed carries a different signature.
+      const { executeCalls, statusCalls } = stubFetch({ route, statuses: [CONFIRMED_SOL_STATUS], signedSig: FIXTURE_SOL_SIG });
+      const quoteId = saveTwoCandidateQuote();
+      const logs = [];
+      const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+      const err = await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(e => e);
+
+      expect(err).toMatchObject({ code: 'TXHASH_MISMATCH' });
+      expect(err.message).toContain(SIG);
+      expect(err.message).toContain(FIXTURE_SOL_SIG);
+      expect(statusCalls).toHaveLength(0);
+      expect(executeCalls).toHaveLength(1);
+      expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
+      expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
+      expect(() => loadQuote(quoteId)).toThrow();
+    });
+  });
+
+  describe('waitForSolanaSignature', () => {
+    function stubStatuses(statuses) {
+      const calls = [];
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+        const body = JSON.parse(opts.body);
+        calls.push(body);
+        const next = statuses[Math.min(calls.length - 1, statuses.length - 1)];
+        if (next instanceof Error) return Promise.reject(next);
+        return solanaStatusResponse(body.id, next);
+      }));
+      return calls;
+    }
+
+    it('returns the status once it reaches confirmed', async () => {
+      const calls = stubStatuses([CONFIRMED_SOL_STATUS]);
+      await expect(waitForSolanaSignature('solana', SIG, 1000, 1)).resolves.toMatchObject({ confirmationStatus: 'confirmed' });
+      expect(calls[0]).toMatchObject({ method: 'getSignatureStatuses', params: [[SIG]] });
+    });
+
+    it('accepts finalized, and a rooted status from a node that omits confirmationStatus', async () => {
+      stubStatuses([{ ...CONFIRMED_SOL_STATUS, confirmationStatus: 'finalized' }]);
+      await expect(waitForSolanaSignature('solana', SIG, 1000, 1)).resolves.toBeTruthy();
+      stubStatuses([{ slot: 1, confirmations: null, err: null }]);
+      await expect(waitForSolanaSignature('solana', SIG, 1000, 1)).resolves.toBeTruthy();
+    });
+
+    it('throws TX_REVERTED for a confirmed status carrying an error', async () => {
+      stubStatuses([{ ...CONFIRMED_SOL_STATUS, err: { InstructionError: [0, 'Custom'] } }]);
+      await expect(waitForSolanaSignature('solana', SIG, 1000, 1)).rejects.toMatchObject({ code: 'TX_REVERTED' });
+    });
+
+    it('does not trust an error seen at processed, which can still be rolled back', async () => {
+      const calls = stubStatuses([
+        { ...CONFIRMED_SOL_STATUS, confirmationStatus: 'processed', err: { InstructionError: [0, 'Custom'] } },
+        CONFIRMED_SOL_STATUS,
+      ]);
+      await expect(waitForSolanaSignature('solana', SIG, 1000, 1)).resolves.toMatchObject({ err: null });
+      expect(calls).toHaveLength(2);
+    });
+
+    it('keeps polling through RPC failures', async () => {
+      const calls = stubStatuses([new Error('ECONNRESET'), CONFIRMED_SOL_STATUS]);
+      await expect(waitForSolanaSignature('solana', SIG, 1000, 1)).resolves.toBeTruthy();
+      expect(calls).toHaveLength(2);
+    });
+
+    it('throws RECEIPT_TIMEOUT when the signature is never confirmed', async () => {
+      stubStatuses([null]);
+      await expect(waitForSolanaSignature('solana', SIG, 20, 1)).rejects.toMatchObject({ code: 'RECEIPT_TIMEOUT' });
+    });
+
+    it('throws RECEIPT_TIMEOUT when a status request never completes', async () => {
+      // A request that hangs until it is aborted: the deadline must still win.
+      const fetchMock = vi.fn((url, opts) => new Promise((_, reject) => {
+        opts.signal?.addEventListener('abort', () => reject(opts.signal.reason));
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+      await expect(waitForSolanaSignature('solana', SIG, 50, 1)).rejects.toMatchObject({ code: 'RECEIPT_TIMEOUT' });
+      expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    });
   });
 });
