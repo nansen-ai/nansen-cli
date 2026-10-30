@@ -3427,8 +3427,9 @@ describe('checkSolanaFeeBalance', () => {
     const rentFor = (size) => (128 + size) * 6_960;
     const SPL_ATA_RENT = rentFor(165); // 2,039,280
 
-    // `accounts` maps an address to its base64 data; missing means it doesn't
-    // exist. `failMethod` makes one method return an RPC error.
+    // `accounts` maps an address to its base64 data, or to { data, owner,
+    // lamports }; missing means it doesn't exist. `failMethod` makes one method
+    // return an RPC error.
     function mockRentRpc({ balance, accounts = {}, failMethod }) {
       const reply = (body) => ({ ok: true, json: async () => body });
       global.fetch = vi.fn(async (_url, init) => {
@@ -3438,17 +3439,26 @@ describe('checkSolanaFeeBalance', () => {
         if (method === 'getFeeForMessage') return reply({ result: { value: FEE } });
         if (method === 'getMinimumBalanceForRentExemption') return reply({ result: rentFor(params[0]) });
         if (method === 'getMultipleAccounts') {
-          return reply({ result: { value: params[0].map(a => (accounts[a] ? { data: [accounts[a], 'base64'] } : null)) } });
+          return reply({
+            result: {
+              value: params[0].map((a) => {
+                const account = accounts[a];
+                if (!account) return null;
+                if (typeof account === 'string') return { data: [account, 'base64'] };
+                return { data: [account.data, 'base64'], owner: account.owner, lamports: account.lamports };
+              }),
+            },
+          });
         }
         throw new Error(`unexpected method ${method}`);
       });
     }
 
-    function createAccount(lamports) {
+    function createAccount(lamports, space = 165) {
       const data = Buffer.alloc(52);
       data.writeUInt32LE(0, 0);
       data.writeBigUInt64LE(BigInt(lamports), 4);
-      data.writeBigUInt64LE(165n, 12);
+      data.writeBigUInt64LE(BigInt(space), 12);
       base58Decode(TOKEN).copy(data, 20);
       return data;
     }
@@ -3565,6 +3575,30 @@ describe('checkSolanaFeeBalance', () => {
       expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
     });
 
+    it('charges a prefunded ATA address the System program still owns the rest of its rent', async () => {
+      const wallet = addr();
+      const ata = addr();
+      const tx = txWith({ wallet, instructions: [ataCreate({ wallet, ata, mint: addr() })] });
+      const prefunded = 1_000_000;
+      const accounts = { [ata]: { data: '', owner: SYSTEM, lamports: prefunded } };
+      mockRentRpc({ balance: FEE + SPL_ATA_RENT - prefunded, accounts });
+      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
+
+      mockRentRpc({ balance: FEE + SPL_ATA_RENT - prefunded - 1, accounts });
+      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+      expect(result.proceed).toBe(false);
+      expect(result.reason).toContain('0.00103928 SOL rent');
+    });
+
+    it('charges nothing for an ATA a token program already owns', async () => {
+      const wallet = addr();
+      const ata = addr();
+      const tx = txWith({ wallet, instructions: [ataCreate({ wallet, ata, mint: addr() })] });
+      const accounts = { [ata]: { data: Buffer.alloc(165).toString('base64'), owner: TOKEN, lamports: SPL_ATA_RENT } };
+      mockRentRpc({ balance: FEE, accounts });
+      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
+    });
+
     it('sizes a Token-2022 ATA from the extensions its mint forces on token accounts', async () => {
       const wallet = addr();
       const mint = addr();
@@ -3630,6 +3664,28 @@ describe('checkSolanaFeeBalance', () => {
       });
       mockRentRpc({ balance: FEE + SPL_ATA_RENT });
       expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
+    });
+
+    it('gives back only the rent of a closed account, not the wrapped SOL the swap spent', async () => {
+      const wallet = addr();
+      const wsol = addr();
+      const wrapped = 5_000_000;
+      // CreateAccount(rent + wrapped SOL) → swap → close → two new ATAs: the
+      // close returns the rent only, so the wallet needs wrapped + 2 x rent.
+      const tx = txWith({
+        wallet,
+        instructions: [
+          { program: SYSTEM, accounts: [wallet, wsol], data: createAccount(SPL_ATA_RENT + wrapped) },
+          { program: TOKEN, accounts: [wsol, wallet, wallet], data: CLOSE },
+          ataCreate({ wallet, ata: addr(), mint: addr() }),
+          ataCreate({ wallet, ata: addr(), mint: addr() }),
+        ],
+      });
+      mockRentRpc({ balance: FEE + wrapped + 2 * SPL_ATA_RENT });
+      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
+
+      mockRentRpc({ balance: FEE + wrapped + 2 * SPL_ATA_RENT - 1 });
+      expect((await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).proceed).toBe(false);
     });
 
     it('counts both accounts when the close comes after the second one is created', async () => {

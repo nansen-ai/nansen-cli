@@ -2132,22 +2132,33 @@ function isAtaCreate(parsed, ix) {
     (ix.data.length === 0 || ix.data[0] === ATA_CREATE || ix.data[0] === ATA_CREATE_IDEMPOTENT);
 }
 
+// Offset of the lamports a System CreateAccount / CreateAccountWithSeed moves
+// into the new account (the u64 space follows them), or null for any other
+// instruction.
+function systemCreateLamportsOffset(parsed, ix) {
+  if (resolveStaticAccount(parsed, ix.programIdIndex) !== SYSTEM_PROGRAM || ix.data.length < 4) return null;
+  const kind = ix.data.readUInt32LE(0);
+  // Layout: u32 index | u64 lamports | u64 space | 32 owner
+  if (kind === SYSTEM_INSTR_CREATE_ACCOUNT) return 4;
+  if (kind === SYSTEM_INSTR_CREATE_ACCOUNT_WITH_SEED && ix.data.length >= 44) {
+    // Layout: u32 index | 32 base | u64 seedLen | seed | u64 lamports | u64 space | 32 owner
+    return 44 + Number(ix.data.readBigUInt64LE(36));
+  }
+  return null;
+}
+
 // Lamports a System CreateAccount / CreateAccountWithSeed moves into the new
 // account, or null for any other instruction (or a malformed one, which fails
 // on chain anyway).
 function systemCreateLamports(parsed, ix) {
-  if (resolveStaticAccount(parsed, ix.programIdIndex) !== SYSTEM_PROGRAM || ix.data.length < 4) return null;
-  const kind = ix.data.readUInt32LE(0);
-  if (kind === SYSTEM_INSTR_CREATE_ACCOUNT) {
-    // Layout: u32 index | u64 lamports | u64 space | 32 owner
-    return ix.data.length >= 12 ? ix.data.readBigUInt64LE(4) : null;
-  }
-  if (kind === SYSTEM_INSTR_CREATE_ACCOUNT_WITH_SEED && ix.data.length >= 44) {
-    // Layout: u32 index | 32 base | u64 seedLen | seed | u64 lamports | u64 space | 32 owner
-    const lamportsOffset = 44 + Number(ix.data.readBigUInt64LE(36));
-    return ix.data.length >= lamportsOffset + 8 ? ix.data.readBigUInt64LE(lamportsOffset) : null;
-  }
-  return null;
+  const offset = systemCreateLamportsOffset(parsed, ix);
+  return offset !== null && ix.data.length >= offset + 8 ? ix.data.readBigUInt64LE(offset) : null;
+}
+
+// Bytes a System CreateAccount / CreateAccountWithSeed allocates, or null.
+function systemCreateSpace(parsed, ix) {
+  const offset = systemCreateLamportsOffset(parsed, ix);
+  return offset !== null && ix.data.length >= offset + 16 ? ix.data.readBigUInt64LE(offset + 8) : null;
 }
 
 // Whether `ix` creates an account the wallet funds. The funder (account 0) is a
@@ -2163,14 +2174,18 @@ function walletFundedCreation(parsed, ix, walletAddress) {
  * instruction names), and Associated Token Account creation unless that ATA
  * already exists (the cluster's rent-exempt minimum for the account's size,
  * which for Token-2022 depends on the extensions its mint forces onto every
- * token account).
+ * token account). An ATA address that holds lamports but is still owned by the
+ * System program does not exist yet: the ATA program tops it up to the
+ * rent-exempt minimum, so the wallet pays the shortfall.
  *
  * Rent is the peak the wallet has out at once, walked in instruction order: a
  * CloseAccount that returns an account created earlier in this transaction to
- * the wallet gives that rent back, so a transient account (a WSOL account
- * opened and closed around the swap) does not add to the rent of an account
- * created after it. Lamports the wallet must front before the close still
- * count, because instructions run in order.
+ * the wallet gives back at most the rent-exempt minimum for its size, so a
+ * transient account (a WSOL account opened and closed around the swap) does
+ * not add to the rent of an account created after it. Lamports funded beyond
+ * that minimum (wrapped SOL the swap spends) are not given back. Lamports the
+ * wallet must front before the close still count, because instructions run in
+ * order.
  *
  * Never throws. When a read it needs fails (address lookup tables, the ATAs
  * and mints, the rent-exempt minimum), it warns and returns 0n, so the caller
@@ -2220,7 +2235,7 @@ async function solanaRentLamports({ parsed, walletAddress, rpcUrl, log }) {
     // One read for whether each ATA exists and, for Token-2022, its mint.
     const atas = [...new Set(ataCreates.map(c => c.ata))];
     const mints = [...new Set(ataCreates.filter(c => c.tokenProgram === TOKEN_2022_PROGRAM).map(c => c.mint))];
-    const accounts = new Map(); // address → data Buffer, or null when it doesn't exist
+    const accounts = new Map(); // address → { data, owner, lamports }, or null when it doesn't exist
     if (atas.length + mints.length > 0) {
       const addresses = [...atas, ...mints];
       const result = await solanaRpc(rpcUrl, 'getMultipleAccounts', [
@@ -2228,30 +2243,50 @@ async function solanaRentLamports({ parsed, walletAddress, rpcUrl, log }) {
         { encoding: 'base64', commitment: SOLANA_FEE_CHECK_COMMITMENT },
       ]);
       addresses.forEach((address, i) => {
-        const data = result.value?.[i]?.data?.[0];
-        accounts.set(address, data == null ? null : Buffer.from(data, 'base64'));
+        const account = result.value?.[i];
+        const data = account?.data?.[0];
+        accounts.set(address, data == null ? null : { data: Buffer.from(data, 'base64'), owner: account.owner, lamports: account.lamports });
       });
     }
 
     // Size of every ATA this transaction must pay rent for. One that already
     // exists, or that an earlier instruction here already created, costs nothing.
+    // One still owned by the System program is only prefunded: the wallet pays
+    // the rest of its rent.
     const ataSizes = new Map(); // instruction → bytes
+    const ataPrefunded = new Map(); // instruction → lamports already at the ATA address
     const seen = new Set();
     for (const { ix, ata, mint, tokenProgram } of ataCreates) {
-      if (accounts.get(ata) != null || seen.has(ata)) continue;
+      const existing = accounts.get(ata);
+      if ((existing != null && existing.owner !== SYSTEM_PROGRAM) || seen.has(ata)) continue;
       seen.add(ata);
+      if (existing != null && Number.isSafeInteger(existing.lamports) && existing.lamports > 0) {
+        ataPrefunded.set(ix, BigInt(existing.lamports));
+      }
       if (tokenProgram !== TOKEN_2022_PROGRAM) {
         ataSizes.set(ix, SPL_TOKEN_ACCOUNT_SIZE);
         continue;
       }
-      const { size, unknown } = token2022AtaSize(accounts.get(mint));
+      const { size, unknown } = token2022AtaSize(accounts.get(mint)?.data ?? null);
       if (unknown) log(`  ⚠ Rent for the token account ${ata} may be higher than counted: its Token-2022 mint ${mint} ${unknown}.`);
       ataSizes.set(ix, size);
     }
 
+    // Space of each System-created account that is later closed to the wallet:
+    // the close gives back only the rent-exempt minimum for that space.
+    const isCloseToWallet = (ix) => SPL_TOKEN_PROGRAMS.has(resolveStaticAccount(parsed, ix.programIdIndex)) &&
+      ix.data[0] === SPL_CLOSE_ACCOUNT && accountAt(ix, 1) === walletAddress;
+    const closedToWallet = new Set(parsed.instructions.filter(isCloseToWallet).map(ix => accountAt(ix, 0)));
+    const createSpaces = new Map(); // instruction → bytes
+    for (const ix of parsed.instructions) {
+      if (isAtaCreate(parsed, ix) || !walletFundedCreation(parsed, ix, walletAddress)) continue;
+      const space = systemCreateSpace(parsed, ix);
+      if (space !== null && closedToWallet.has(accountAt(ix, 1))) createSpaces.set(ix, Number(space));
+    }
+
     // Rent-exempt minimum per size from the cluster, so a changed rent schedule
     // is followed.
-    const sizes = [...new Set(ataSizes.values())];
+    const sizes = [...new Set([...ataSizes.values(), ...createSpaces.values()])];
     const rents = await Promise.all(sizes.map(size => solanaRpc(rpcUrl, 'getMinimumBalanceForRentExemption', [size])));
     const rentBySize = new Map();
     sizes.forEach((size, i) => {
@@ -2260,8 +2295,11 @@ async function solanaRentLamports({ parsed, walletAddress, rpcUrl, log }) {
     });
 
     // Walk the instructions in order, tracking rent the wallet has out and the
-    // peak of it. Only rent this transaction funded is credited back on close.
+    // peak of it. On close, only rent this transaction funded is credited back,
+    // and no more than the account's rent-exempt minimum: lamports above it
+    // may have been spent by the swap.
     const funded = new Map(); // account → lamports the wallet put into it here
+    const refundable = new Map(); // account → most a close gives back
     let out = 0n;
     let peak = 0n;
     for (const ix of parsed.instructions) {
@@ -2269,17 +2307,30 @@ async function solanaRentLamports({ parsed, walletAddress, rpcUrl, log }) {
       if (SPL_TOKEN_PROGRAMS.has(programId) && ix.data[0] === SPL_CLOSE_ACCOUNT) {
         const closed = accountAt(ix, 0);
         if (accountAt(ix, 1) === walletAddress && funded.has(closed)) {
-          out -= funded.get(closed);
+          const fundedLamports = funded.get(closed);
+          const cap = refundable.get(closed) ?? 0n;
+          out -= fundedLamports < cap ? fundedLamports : cap;
           funded.delete(closed);
+          refundable.delete(closed);
         }
         continue;
       }
       if (!walletFundedCreation(parsed, ix, walletAddress)) continue;
-      const lamports = ataSizes.has(ix) ? rentBySize.get(ataSizes.get(ix)) : (systemCreateLamports(parsed, ix) ?? 0n);
+      let lamports;
+      let rent;
+      if (ataSizes.has(ix)) {
+        rent = rentBySize.get(ataSizes.get(ix));
+        const prefunded = ataPrefunded.get(ix) ?? 0n;
+        lamports = rent > prefunded ? rent - prefunded : 0n;
+      } else {
+        lamports = systemCreateLamports(parsed, ix) ?? 0n;
+        rent = createSpaces.has(ix) ? rentBySize.get(createSpaces.get(ix)) : 0n;
+      }
       if (lamports === 0n) continue;
       const created = accountAt(ix, 1);
       out += lamports;
       funded.set(created, (funded.get(created) ?? 0n) + lamports);
+      refundable.set(created, rent);
       if (out > peak) peak = out;
     }
     return peak;
