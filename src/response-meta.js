@@ -66,6 +66,7 @@ export function readResponseMeta(response) {
   const planNotice = stringHeader(response, PLAN_NOTICE);
   const apiKeyNotice = stringHeader(response, API_KEY_NOTICE);
   const requestId = stringHeader(response, REQUEST_ID);
+  const warning = stringHeader(response, 'warning');
 
   const meta = {};
   if (requestId !== null) {
@@ -83,8 +84,9 @@ export function readResponseMeta(response) {
     // drain — not a wall-clock timestamp.
     meta.rateLimit = { limit, remaining: rateRemaining, resetSeconds };
   }
-  if (upgradeHint !== null || planNotice !== null || apiKeyNotice !== null) {
+  if (upgradeHint !== null || planNotice !== null || apiKeyNotice !== null || warning !== null) {
     meta.notices = {
+      ...(warning !== null && { warning }),
       ...(upgradeHint !== null && { upgradeHint }),
       ...(planNotice !== null && { planNotice }),
       ...(apiKeyNotice !== null && { apiKeyNotice }),
@@ -102,11 +104,13 @@ export function readResponseMeta(response) {
 export function aggregatePaginatedResponseMeta(pages) {
   if (!Array.isArray(pages) || pages.length === 0) return null;
 
+  const warning = [...new Set(pages.map(page => page.meta?.notices?.warning).filter(Boolean))].join(', ');
   const livePages = pages.filter(page => !page.cached);
   const metas = livePages.map(page => page.meta);
   const present = metas.filter(Boolean);
   if (livePages.length === 0) {
     return {
+      ...(warning && { notices: { warning } }),
       credits: { used: 0, remaining: null, cost: 0 },
       pagination: { pagesFetched: pages.length, livePages: 0, cachedPages: pages.length },
     };
@@ -134,6 +138,7 @@ export function aggregatePaginatedResponseMeta(pages) {
 
   const notices = {};
   for (const meta of present) Object.assign(notices, meta.notices || {});
+  if (warning) notices.warning = warning;
   if (Object.keys(notices).length > 0) result.notices = notices;
 
   result.pagination = {
@@ -147,12 +152,13 @@ export function aggregatePaginatedResponseMeta(pages) {
 /**
  * Yield notice strings for any server-set advisory headers.
  * Each yields a `⚠️  <message>` line for stderr.
- * Order: apiKeyNotice (most urgent) → upgradeHint → planNotice.
+ * Order: API warning → apiKeyNotice → upgradeHint → planNotice.
  */
 export function noticeWarnings(meta) {
   const notices = meta?.notices;
   if (!notices) return [];
   const out = [];
+  if (notices.warning) out.push(`⚠️  ${notices.warning}`);
   if (notices.apiKeyNotice) out.push(`⚠️  ${notices.apiKeyNotice}`);
   if (notices.upgradeHint) out.push(`ℹ️  ${notices.upgradeHint}`);
   if (notices.planNotice) out.push(`ℹ️  ${notices.planNotice}`);

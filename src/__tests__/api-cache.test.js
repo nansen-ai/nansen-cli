@@ -301,3 +301,57 @@ describe('response cache file safety', () => {
     expect(fs.readdirSync(getCacheDir())).toEqual([path.basename(cacheFile)]);
   });
 });
+
+describe('cached API warnings', () => {
+  it.each(['optimism', 'sui'])('retains %s advisories while dropping live accounting and request IDs', async chain => {
+    const api = await freshApi({ data: [{ chain }] });
+    const warning = `299 - "${chain} retires on 2027-02-01"`;
+    fetch.mockImplementation(async () => ({
+      ok: true, status: 200,
+      headers: new Headers({ warning, 'x-request-id': 'live-id', 'x-nansen-credits-used': '5' }),
+      json: async () => ({ data: [{ chain }] }),
+    }));
+    const live = await api.request('/api/v1/demo', {});
+    expect(api.lastResponseMeta.requestId).toBe('live-id');
+    const cached = await api.request('/api/v1/demo', {});
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(cached.data).toEqual(live.data);
+    expect(api.lastResponseMeta).toMatchObject({ requestId: 'live-id', notices: { warning } });
+    const cold = new api.constructor('test-key', 'https://api.nansen.ai', { cache: { enabled: true, ttl: 300 } });
+    await cold.request('/api/v1/demo', {});
+    expect(cold.lastResponseMeta).toEqual({ notices: { warning } });
+    expect(JSON.stringify(cached)).not.toContain(warning);
+  });
+});
+
+it.each(['plain-text-body', null, false, 0])('preserves warnings for cached primitive %j', async payload => {
+  const api = await freshApi(payload);
+  const warning = '299 - "Retirement notice"';
+  fetch.mockImplementation(async () => ({
+    ok: true, status: 200, headers: new Headers({ warning }), json: async () => payload,
+  }));
+  expect(await api.request('/api/v1/demo', {})).toBe(payload);
+  expect(await api.request('/api/v1/demo', {})).toBe(payload);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(api.lastResponseMeta).toEqual({ notices: { warning } });
+});
+
+
+it.each([null, '299 - "Cached advisory"'])('preserves live credit warnings after a cached auxiliary call with %s', async cachedWarning => {
+  const { creditWarning } = await import('../response-meta.js');
+  const api = await freshApi({ data: [] });
+  fetch.mockImplementation(async url => ({
+    ok: true, status: 200,
+    headers: new Headers(url.endsWith('/aux')
+      ? (cachedWarning ? { warning: cachedWarning } : {})
+      : { 'x-nansen-credits-used': '5', 'x-nansen-credits-cost': '5', 'x-nansen-credits-remaining': '2', warning: '299 - "Live advisory"' }),
+    json: async () => ({ data: [] }),
+  }));
+  await api.request('/aux', {});
+  await api.request('/primary', {});
+  await api.request('/aux', {});
+  expect(api.lastResponseMeta.credits).toEqual({ used: 5, cost: 5, remaining: 2 });
+  expect(creditWarning(api.lastResponseMeta)).toContain('2 API credits');
+  expect(api.lastResponseMeta.notices.warning).toContain('Live advisory');
+  if (cachedWarning) expect(api.lastResponseMeta.notices.warning).toContain('Cached advisory');
+});

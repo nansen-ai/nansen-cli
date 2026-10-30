@@ -513,3 +513,27 @@ describe('statusToErrorCode', () => {
     expect(statusToErrorCode(422, { code: 42, detail: { code: 'unsupported_filter' } })).toBe(ErrorCode.UNSUPPORTED_FILTER);
   });
 });
+
+// The API producer uses Warning: 299 with JSON-quoted messages. Preserve all
+// warn-values, including commas and escapes, without inventing a second parser.
+describe('API warning headers', () => {
+  it('keeps warnings in metadata and stderr notices', () => {
+    const warning = '299 - "Chains optimism, mantle retire on 2027-02-01. See https://docs.nansen.ai"';
+    const meta = readResponseMeta({ headers: new Headers({ warning }) });
+    expect(meta).toEqual({ notices: { warning } });
+    expect(noticeWarnings(meta)).toEqual([`⚠️  ${warning}`]);
+    expect(readResponseMeta({ headers: new Headers() })).toBeNull();
+  });
+});
+
+it('retains warnings from cached pages without using their credit metadata', async () => {
+  const { aggregatePaginatedResponseMeta } = await import('../response-meta.js');
+  const warning = '299 - "optimism retires on 2027-02-01"';
+  const cached = { cached: true, meta: { notices: { warning }, credits: { used: 99, remaining: 1, cost: 99 } } };
+  expect(aggregatePaginatedResponseMeta([cached])).toMatchObject({
+    notices: { warning }, credits: { used: 0, remaining: null, cost: 0 },
+  });
+  expect(aggregatePaginatedResponseMeta([cached, { cached: false, meta: { credits: { used: 5, remaining: 20, cost: 5 } } }])).toMatchObject({
+    notices: { warning }, credits: { used: 5, remaining: 20, cost: 5 },
+  });
+});
