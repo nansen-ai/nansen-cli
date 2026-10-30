@@ -303,13 +303,13 @@ describe('response cache file safety', () => {
 });
 
 describe('cached API warnings', () => {
-  it('retains advisories while dropping live accounting and request IDs', async () => {
-    const api = await freshApi({ data: [{ chain: 'optimism' }] });
-    const warning = '299 - "optimism retires on 2027-02-01"';
+  it.each(['optimism', 'sui'])('retains %s advisories while dropping live accounting and request IDs', async chain => {
+    const api = await freshApi({ data: [{ chain }] });
+    const warning = `299 - "${chain} retires on 2027-02-01"`;
     fetch.mockImplementation(async () => ({
       ok: true, status: 200,
       headers: new Headers({ warning, 'x-request-id': 'live-id', 'x-nansen-credits-used': '5' }),
-      json: async () => ({ data: [{ chain: 'optimism' }] }),
+      json: async () => ({ data: [{ chain }] }),
     }));
     const live = await api.request('/api/v1/demo', {});
     expect(api.lastResponseMeta.requestId).toBe('live-id');
