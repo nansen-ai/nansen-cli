@@ -705,3 +705,31 @@ describe('runCLI failures always exit 1 with success:false (API-1080)', () => {
     expect(calls[0].body.filters.from_address).toBe(EVM);
   });
 });
+
+describe('--chain takes one chain', () => {
+  it('rejects a comma-separated --chain instead of sending it as one chain name', async () => {
+    const { calls, exitCode, output } = await runCaptured(['research', 'smart-money', 'netflow', '--chain', 'eth,sol']);
+    expect(exitCode).toBe(1);
+    expect(calls).toEqual([]);
+    expect(output).toMatchObject({
+      success: false,
+      code: 'INVALID_PARAMS',
+      error: expect.stringContaining("Option '--chain' takes one chain; received: eth,sol. Use --chains for several chains."),
+      details: { param: '--chain' },
+    });
+  });
+
+  it.each(['eth,', ','])('rejects --chain %j with an empty list element', async (value) => {
+    const { calls, exitCode, output } = await runCaptured(['research', 'smart-money', 'netflow', '--chain', value]);
+    expect(exitCode).toBe(1);
+    expect(calls).toEqual([]);
+    expect(output).toMatchObject({ code: 'INVALID_PARAMS', details: { param: '--chain' } });
+  });
+
+  it('still accepts --chains with several chains and a single --chain', async () => {
+    const many = await runCaptured(['research', 'smart-money', 'netflow', '--chains', 'eth,sol']);
+    expect(many.calls[0].body.chains).toEqual(['ethereum', 'solana']);
+    const one = await runCaptured(['research', 'smart-money', 'netflow', '--chain', 'eth']);
+    expect(one.calls[0].body.chains).toEqual(['ethereum']);
+  });
+});
