@@ -1,5 +1,57 @@
 # Changelog
 
+## 2.4.0
+
+### Minor Changes
+
+- [#773](https://github.com/nansen-ai/nansen-cli/pull/773) [`47eb68d`](https://github.com/nansen-ai/nansen-cli/commit/47eb68db976b140be32fc776c7b44dcc630ea7bf) Thanks [@gulshngill](https://github.com/gulshngill)! - Every failure now exits 1 with `success: false`, and research commands check their input before calling the API (API-1080, API-1081).
+
+  - Subcommand typos (also with `--fields`) and unknown commands return `UNKNOWN_COMMAND` with the closest match, instead of `success: true` with the error inside `data`.
+  - Unknown options (`--turbo`), options a command used to ignore (`--limit` on `token ohlcv`, `--address` on `prediction-market position-detail`), options without a value (`--chain` with nothing after it), `--page 0`, `--format xml`, bad enum values and invalid dates (`--from-date 2024-13-45`) are rejected with the option named, in the REST API's wording ("Option '--timefrme' is not recognized by ... Did you mean '--timeframe'?").
+  - Missing required options (for example `--address`) fail locally instead of returning "API request failed (422)".
+  - `--chain`/`--chains` are checked against the chains each endpoint accepts; `nansen schema` lists them as `supportedChains`. Case and the API's chain aliases (`bsc`, `eth`, ...) are normalised first, as the API does. An invalid bitcoin token address now names native BTC (`1111111111111111111114oLvT2`).
+  - `--fields` names that match nothing in the response are an error instead of `{}`.
+  - `profiler balance` now sends `--limit`/`--page`, and `smart-money holdings --token` filters by token. Mixed-case EVM addresses in `--filters` are lowercased, so they match.
+  - List options are sent as lists, whether given comma-separated, repeated or as a JSON array: `token screener --chains ethereum,solana` no longer sends one `"ethereum,solana"` string, `smart-money --labels` accepts a comma-separated list, and a repeated `--addresses` or `research ... --chains` value that itself holds a comma-separated list is split. An empty list (`--chains ,`) is rejected.
+  - `prediction-market market-screener` and `event-screener` no longer accept `--min-unique-traders-24h` or `--max-volume-24hr`. The REST API has no such filters and rejected every request that used them; the CLI now says so before the request. `--max-unique-traders-24h` and `--min-volume-24hr` are unchanged.
+  - API validation errors keep the field name (`details.param`, `details.errors[]`), also for browser-session logins, and the message is no longer repeated inside `details`.
+  - A connection failure (`NETWORK_ERROR`) now says the API key was not checked; a rejected key (`UNAUTHORIZED`) says the connection works.
+  - All error codes are listed in `docs/error-codes.md`.
+
+### Patch Changes
+
+- [#768](https://github.com/nansen-ai/nansen-cli/pull/768) [`3600f66`](https://github.com/nansen-ai/nansen-cli/commit/3600f66c95977cf048555c077c3f586dbef20c0a) Thanks [@kome12](https://github.com/kome12)! - `nansen alerts` now redacts channel credentials (Slack, Discord and webhook URLs, webhook signing secrets) in its output and error messages by default. Pass `--reveal` to show the full values; scripts that read `channels[].data` values from `nansen alerts` output need it.
+
+- [#760](https://github.com/nansen-ai/nansen-cli/pull/760) [`c776ae0`](https://github.com/nansen-ai/nansen-cli/commit/c776ae0310bc5c7dd2143a8509c9338b57a200ae) Thanks [@Kewe63](https://github.com/Kewe63)! - Bind Privy wallet IDs to their authoritative addresses before previews, screening, or signing wallet sends, limit orders, perp actions, and Hyperliquid bridge withdrawals.
+
+- [#787](https://github.com/nansen-ai/nansen-cli/pull/787) [`3830386`](https://github.com/nansen-ai/nansen-cli/commit/383038637c52385934c16b13fc60615ab3aa646e) Thanks [@Ravan002](https://github.com/Ravan002)! - Reject a comma-separated `--chain` (for example `--chain eth,sol`) with a message pointing to `--chains`, instead of sending it to the API as one unresolvable chain name.
+
+- [#781](https://github.com/nansen-ai/nansen-cli/pull/781) [`5002e66`](https://github.com/nansen-ai/nansen-cli/commit/5002e664d603706a5ccb553bc393edbe30567ac8) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Use chain-valid research examples, consistent bridge routes, command-specific trade help with option descriptions, and explicit wallet naming in doctor guidance.
+
+- [#775](https://github.com/nansen-ai/nansen-cli/pull/775) [`3185171`](https://github.com/nansen-ai/nansen-cli/commit/3185171d1e5de1820853b234de22ef0d38ca8eab) Thanks [@kome12](https://github.com/kome12)! - `trade execute` on Solana now waits for the transaction signature to be confirmed on chain before it reports success, as EVM swaps already do. A transaction that lands with an error fails with `TX_REVERTED`, and one that is not confirmed within 90 seconds fails with `RECEIPT_TIMEOUT` (it may still land, so check the explorer before retrying). Previously both cases printed "Transaction successful" and exited 0.
+
+- [#770](https://github.com/nansen-ai/nansen-cli/pull/770) [`cdc4094`](https://github.com/nansen-ai/nansen-cli/commit/cdc4094e7163d72afa0e219fa16dc14ce4518005) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - List the feedback report categories and fields in `feedback submit --help`, the schema, the README and the agent skill. Show the feedback ID in `feedback get --help`, name a rejected API key when feedback cannot verify the account or read the preference, trace feedback requests with `--debug`, and drop explicit-ID advice from generated-ID recovery messages.
+
+- [#766](https://github.com/nansen-ai/nansen-cli/pull/766) [`19c80ef`](https://github.com/nansen-ai/nansen-cli/commit/19c80efa3e1b73e8e5a392628acf87106de15db9) Thanks [@Kewe63](https://github.com/Kewe63)! - Harden response-cache reads against linked or non-regular entries, and atomically publish private cache writes without following linked destinations.
+
+- [#777](https://github.com/nansen-ai/nansen-cli/pull/777) [`ff846d5`](https://github.com/nansen-ai/nansen-cli/commit/ff846d50af6de61645753011cb66d1902c16dea4) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Explain how to use NANSEN_API_KEY directly when browser login lacks an interactive terminal, secure credential storage, or native authentication locking.
+
+- [#784](https://github.com/nansen-ai/nansen-cli/pull/784) [`c6fcb27`](https://github.com/nansen-ai/nansen-cli/commit/c6fcb27b680733fdca950f604f09521e16f25eec) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Help and `nansen schema` now show when label history starts: 2025-03-11 for the whale, public figure, top PnL and exchange segments of `research historical-token-flow-summary`, and for entity labels in `research historical-tx-lookup`.
+
+- [#778](https://github.com/nansen-ai/nansen-cli/pull/778) [`f5209cb`](https://github.com/nansen-ai/nansen-cli/commit/f5209cb7add6fbf5e736ea0506bd8bab551b8e9a) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Qualify saved browser login on Debian 12 x64 over SSH with GNOME Keyring, document setup and reboot recovery, and distinguish dismissed unlock prompts from missing native bindings.
+
+- [#785](https://github.com/nansen-ai/nansen-cli/pull/785) [`3543112`](https://github.com/nansen-ai/nansen-cli/commit/354311207d06c6f45351eac8a0ee7c8e3110ec94) Thanks [@gulshngill](https://github.com/gulshngill)! - List valid options and response fields for unknown input names instead of suggesting a similar name that can mean something else. Clarify that common options also apply, list all supported pagination controls, and label truncated response-field lists with their total count.
+
+- [#780](https://github.com/nansen-ai/nansen-cli/pull/780) [`6f83f98`](https://github.com/nansen-ai/nansen-cli/commit/6f83f989513340b8b215911f54c2d9a74db5fd4d) Thanks [@kome12](https://github.com/kome12)! - Wallet create, default and delete now wait for each other instead of racing. Two overlapping first `wallet create` runs with different passwords could both report success while leaving one wallet impossible to unlock.
+
+- [#786](https://github.com/nansen-ai/nansen-cli/pull/786) [`eb30fc8`](https://github.com/nansen-ai/nansen-cli/commit/eb30fc8612f3e0f4af9c2d8423a63232423b8698) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Show one credit cost in help and post-call estimates when Free and Pro pay the same, and show the 150-credit `--premium-labels` price on commands that have it.
+
+- [#779](https://github.com/nansen-ai/nansen-cli/pull/779) [`bdbab83`](https://github.com/nansen-ai/nansen-cli/commit/bdbab834a3a38899a7ebda0473ed02cca34c127c) Thanks [@kome12](https://github.com/kome12)! - Drop `Fund` from the Smart Money label list in `nansen schema`, the examples and the default labels for `--smart-money`. The help text now says `Fund` is no longer a Smart Money label. Fund wallets left the Smart Money cohort on 2026-09-09, so `Fund` matched no wallets there.
+
+- [#752](https://github.com/nansen-ai/nansen-cli/pull/752) [`d074c1d`](https://github.com/nansen-ai/nansen-cli/commit/d074c1d9d1033a6772a7634335446b947b5b0a8b) Thanks [@kome12](https://github.com/kome12)! - `trade execute` on Solana now checks, before signing, that the wallet holds enough SOL for the transaction's actual network fee (base plus priority fee, priced by the cluster). A quote the wallet cannot pay the fee for is skipped with an actionable error instead of being broadcast to fail on-chain. The check runs even with `--no-verify-outcome`, and if the balance lookup fails it warns and proceeds.
+
+- [#771](https://github.com/nansen-ai/nansen-cli/pull/771) [`6a24e25`](https://github.com/nansen-ai/nansen-cli/commit/6a24e259893ad659e8af1960e7667acd09fbb542) Thanks [@kome12](https://github.com/kome12)! - The update notice and `nansen doctor` now say when the latest release needs a newer Node.js than the one running, instead of suggesting `npm i -g nansen-cli`, which npm resolves back to the installed version on an older Node.
+
 ## 2.3.0
 
 ### Minor Changes
