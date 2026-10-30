@@ -518,7 +518,7 @@ describe('statusToErrorCode', () => {
 // warn-values, including commas and escapes, without inventing a second parser.
 describe('API warning headers', () => {
   it('keeps warnings in metadata and stderr notices', () => {
-    const warning = '299 - "Chains optimism, avalanche retire on 2027-02-01. See https://docs.nansen.ai"';
+    const warning = '299 - "Chains optimism, mantle retire on 2027-02-01. See https://docs.nansen.ai"';
     const meta = readResponseMeta({ headers: new Headers({ warning }) });
     expect(meta).toEqual({ notices: { warning } });
     expect(noticeWarnings(meta)).toEqual([`⚠️  ${warning}`]);
