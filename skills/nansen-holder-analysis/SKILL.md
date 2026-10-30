@@ -38,7 +38,7 @@ nansen research token flow-intelligence --token $TOKEN --chain $CHAIN
 # → net_flow_usd and wallet_count per label: smart_trader, whale, exchange, fresh_wallets
 
 nansen research token who-bought-sold --token $TOKEN --chain $CHAIN --limit 20
-# → address, address_label, bought/sold_volume_usd, bought/sold_token_volume, trade_volume_usd
+# → address, address_label, bought/sold_volume_usd, bought/sold_token_volume, trade_volume_usd (total: bought + sold), net_volume_usd
 ```
 
 Red flag: high fresh_wallets flow + low SM holders. Green flag: Fund/Smart Trader labels in top 20.
