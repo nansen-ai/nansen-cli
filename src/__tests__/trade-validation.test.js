@@ -3417,7 +3417,7 @@ describe('checkSolanaFeeBalance', () => {
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/SOL fee balance check could not run \(getBalance failed: rpc down\)/));
   });
 
-  describe('account rent', () => {
+  describe('token account rent', () => {
     const SYSTEM = '11111111111111111111111111111111';
     const TOKEN = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
     const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
@@ -3427,9 +3427,9 @@ describe('checkSolanaFeeBalance', () => {
     const rentFor = (size) => (128 + size) * 6_960;
     const SPL_ATA_RENT = rentFor(165); // 2,039,280
 
-    // `accounts` maps an address to its base64 data, or to { data, owner,
-    // lamports }; missing means it doesn't exist. `failMethod` makes one method
-    // return an RPC error.
+    // `accounts` maps an address to base64 data (owned by the SPL Token
+    // program) or to { data, owner }; missing means it doesn't exist.
+    // `failMethod` makes one method return an RPC error.
     function mockRentRpc({ balance, accounts = {}, failMethod }) {
       const reply = (body) => ({ ok: true, json: async () => body });
       global.fetch = vi.fn(async (_url, init) => {
@@ -3444,8 +3444,8 @@ describe('checkSolanaFeeBalance', () => {
               value: params[0].map((a) => {
                 const account = accounts[a];
                 if (!account) return null;
-                if (typeof account === 'string') return { data: [account, 'base64'] };
-                return { data: [account.data, 'base64'], owner: account.owner, lamports: account.lamports };
+                if (typeof account === 'string') return { data: [account, 'base64'], owner: TOKEN };
+                return { data: [account.data, 'base64'], owner: account.owner };
               }),
             },
           });
@@ -3453,52 +3453,16 @@ describe('checkSolanaFeeBalance', () => {
         throw new Error(`unexpected method ${method}`);
       });
     }
-
-    function createAccount(lamports, space = 165) {
-      const data = Buffer.alloc(52);
-      data.writeUInt32LE(0, 0);
-      data.writeBigUInt64LE(BigInt(lamports), 4);
-      data.writeBigUInt64LE(BigInt(space), 12);
-      base58Decode(TOKEN).copy(data, 20);
-      return data;
-    }
-    function createAccountWithSeed(lamports, seed, base) {
-      const seedBytes = Buffer.from(seed);
-      const data = Buffer.alloc(4 + 32 + 8 + seedBytes.length + 8 + 8 + 32);
-      let off = 0;
-      data.writeUInt32LE(3, off); off += 4;
-      base58Decode(base).copy(data, off); off += 32;
-      data.writeBigUInt64LE(BigInt(seedBytes.length), off); off += 8;
-      seedBytes.copy(data, off); off += seedBytes.length;
-      data.writeBigUInt64LE(BigInt(lamports), off); off += 8;
-      data.writeBigUInt64LE(165n, off); off += 8;
-      base58Decode(TOKEN).copy(data, off);
-      return data;
-    }
-    const CLOSE = Buffer.from([9]);
-
-    // A Token-2022 mint padded to 165 bytes, then the account-type byte and
-    // one TLV entry per extension ([type, dataLength]).
-    function token2022Mint(extensions) {
-      const parts = [Buffer.alloc(165), Buffer.from([1])];
-      for (const [type, len] of extensions) {
-        const header = Buffer.alloc(4);
-        header.writeUInt16LE(type, 0);
-        header.writeUInt16LE(len, 2);
-        parts.push(header, Buffer.alloc(len));
-      }
-      return Buffer.concat(parts).toString('base64');
-    }
+    const rpcMethods = () => global.fetch.mock.calls.map(([, init]) => JSON.parse(init.body).method);
 
     // A legacy transaction paid by `wallet`, with `instructions` given as
     // { program, accounts: [address...], data } over a shared key list.
-    function txWith({ wallet, feePayer = wallet, instructions }) {
-      const keys = [feePayer];
+    function txWith({ wallet, instructions }) {
+      const keys = [wallet];
       const idx = (k) => {
         if (!keys.includes(k)) keys.push(k);
         return keys.indexOf(k);
       };
-      if (feePayer !== wallet) idx(wallet);
       const built = instructions.map(ix => ({
         programIdIndex: idx(ix.program),
         accountIndexes: ix.accounts.map(idx),
@@ -3507,228 +3471,109 @@ describe('checkSolanaFeeBalance', () => {
       return buildTransaction({ accountKeys: keys, instructions: built });
     }
 
-    function ataCreate({ wallet, ata, mint, tokenProgram = TOKEN, kind = 1 }) {
-      return { program: ATA_PROGRAM, accounts: [wallet, ata, wallet, mint, SYSTEM, tokenProgram], data: Buffer.from([kind]) };
+    function ataCreate({ funder, ata, tokenProgram = TOKEN, kind = 1 }) {
+      return { program: ATA_PROGRAM, accounts: [funder, ata, funder, addr(), SYSTEM, tokenProgram], data: Buffer.from([kind]) };
     }
 
     const addr = () => generateSolanaWallet().address;
-
-    it('counts the lamports a System CreateAccount takes from the wallet', async () => {
-      const wallet = addr();
-      const tx = txWith({ wallet, instructions: [{ program: SYSTEM, accounts: [wallet, addr()], data: createAccount(2_039_280) }] });
-      mockRentRpc({ balance: FEE + 2_039_280 });
-      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
-
-      mockRentRpc({ balance: FEE + 2_039_280 - 1 });
-      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
-      expect(result.proceed).toBe(false);
-      expect(result.reason).toContain(
-        'needs at least 0.00204428 SOL (0.000005 SOL network fee + 0.00203928 SOL rent for the accounts it creates)',
-      );
-    });
-
-    it('reads CreateAccountWithSeed lamports after a u64 seed length', async () => {
-      const wallet = addr();
-      const data = createAccountWithSeed(3_000_000, 'order-seed-123', wallet);
-      const tx = txWith({ wallet, instructions: [{ program: SYSTEM, accounts: [wallet, addr(), wallet], data }] });
-      mockRentRpc({ balance: FEE + 3_000_000 - 1 });
-      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
-      expect(result.proceed).toBe(false);
-      expect(result.reason).toContain('0.003 SOL rent');
-    });
-
-    it('does not count an account another address funds', async () => {
-      const wallet = addr();
-      const other = addr();
-      const tx = txWith({ wallet, instructions: [{ program: SYSTEM, accounts: [other, addr()], data: createAccount(2_039_280) }] });
-      mockRentRpc({ balance: FEE });
-      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
-    });
+    const check = (tx, wallet, log) => checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet, log });
 
     it("charges a new SPL ATA the cluster's rent-exempt minimum for 165 bytes", async () => {
       const wallet = addr();
-      const tx = txWith({ wallet, instructions: [ataCreate({ wallet, ata: addr(), mint: addr() })] });
+      const tx = txWith({ wallet, instructions: [ataCreate({ funder: wallet, ata: addr() })] });
       mockRentRpc({ balance: FEE + SPL_ATA_RENT });
-      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
+      expect(await check(tx, wallet)).toEqual({ proceed: true });
 
       mockRentRpc({ balance: FEE + SPL_ATA_RENT - 1 });
-      expect((await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).proceed).toBe(false);
+      const result = await check(tx, wallet);
+      expect(result.proceed).toBe(false);
+      expect(result.reason).toContain(
+        'needs at least 0.00204428 SOL (0.000005 SOL network fee + 0.00203928 SOL rent for the token accounts it creates)',
+      );
       const rentCall = global.fetch.mock.calls.map(([, init]) => JSON.parse(init.body))
         .find(r => r.method === 'getMinimumBalanceForRentExemption');
       expect(rentCall.params).toEqual([165]);
+    });
+
+    it('counts Create (no data and 0) as well as CreateIdempotent', async () => {
+      const wallet = addr();
+      const tx = txWith({
+        wallet,
+        instructions: [
+          { ...ataCreate({ funder: wallet, ata: addr() }), data: Buffer.alloc(0) },
+          ataCreate({ funder: wallet, ata: addr(), kind: 0 }),
+        ],
+      });
+      mockRentRpc({ balance: FEE + 2 * SPL_ATA_RENT - 1 });
+      expect((await check(tx, wallet)).proceed).toBe(false);
+    });
+
+    it('charges a Token-2022 ATA at its 170-byte minimum', async () => {
+      const wallet = addr();
+      const tx = txWith({ wallet, instructions: [ataCreate({ funder: wallet, ata: addr(), tokenProgram: TOKEN_2022 })] });
+      mockRentRpc({ balance: FEE + rentFor(170) });
+      expect(await check(tx, wallet)).toEqual({ proceed: true });
+
+      mockRentRpc({ balance: FEE + rentFor(170) - 1 });
+      expect((await check(tx, wallet)).proceed).toBe(false);
     });
 
     it('charges nothing for an ATA that already exists, and an ATA created twice once', async () => {
       const wallet = addr();
       const existing = addr();
       const fresh = addr();
-      const mint = addr();
       const tx = txWith({
         wallet,
         instructions: [
-          ataCreate({ wallet, ata: existing, mint }),
-          ataCreate({ wallet, ata: fresh, mint: addr() }),
-          ataCreate({ wallet, ata: fresh, mint: addr(), kind: 1 }),
+          ataCreate({ funder: wallet, ata: existing }),
+          ataCreate({ funder: wallet, ata: fresh }),
+          ataCreate({ funder: wallet, ata: fresh }),
         ],
       });
-      mockRentRpc({ balance: FEE + SPL_ATA_RENT, accounts: { [existing]: Buffer.alloc(165).toString('base64') } });
-      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
+      mockRentRpc({ balance: FEE + SPL_ATA_RENT, accounts: { [existing]: 'AA==' } });
+      expect(await check(tx, wallet)).toEqual({ proceed: true });
     });
 
-    it('charges a prefunded ATA address the System program still owns the rest of its rent', async () => {
+    it('counts an ATA address the System program still owns as new', async () => {
       const wallet = addr();
       const ata = addr();
-      const tx = txWith({ wallet, instructions: [ataCreate({ wallet, ata, mint: addr() })] });
-      const prefunded = 1_000_000;
-      const accounts = { [ata]: { data: '', owner: SYSTEM, lamports: prefunded } };
-      mockRentRpc({ balance: FEE + SPL_ATA_RENT - prefunded, accounts });
-      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
-
-      mockRentRpc({ balance: FEE + SPL_ATA_RENT - prefunded - 1, accounts });
-      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
-      expect(result.proceed).toBe(false);
-      expect(result.reason).toContain('0.00103928 SOL rent');
+      const tx = txWith({ wallet, instructions: [ataCreate({ funder: wallet, ata })] });
+      mockRentRpc({ balance: FEE + SPL_ATA_RENT - 1, accounts: { [ata]: { data: '', owner: SYSTEM } } });
+      expect((await check(tx, wallet)).proceed).toBe(false);
     });
 
-    it('charges nothing for an ATA a token program already owns', async () => {
+    it('does not count an ATA another address funds, or SOL a System CreateAccount moves', async () => {
       const wallet = addr();
-      const ata = addr();
-      const tx = txWith({ wallet, instructions: [ataCreate({ wallet, ata, mint: addr() })] });
-      const accounts = { [ata]: { data: Buffer.alloc(165).toString('base64'), owner: TOKEN, lamports: SPL_ATA_RENT } };
-      mockRentRpc({ balance: FEE, accounts });
-      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
-    });
-
-    it('sizes a Token-2022 ATA from the extensions its mint forces on token accounts', async () => {
-      const wallet = addr();
-      const mint = addr();
-      const tx = txWith({ wallet, instructions: [ataCreate({ wallet, ata: addr(), mint, tokenProgram: TOKEN_2022 })] });
-      // TransferFeeConfig (108 bytes) forces TransferFeeAmount (8 bytes);
-      // MetadataPointer forces nothing: 170 + 4 + 8 = 182 bytes.
-      const accounts = { [mint]: token2022Mint([[1, 108], [18, 64]]) };
-      mockRentRpc({ balance: FEE + rentFor(182), accounts });
-      const log = vi.fn();
-      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet, log })).toEqual({ proceed: true });
-      expect(log).not.toHaveBeenCalled();
-
-      mockRentRpc({ balance: FEE + rentFor(182) - 1, accounts });
-      expect((await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).proceed).toBe(false);
-    });
-
-    it('adds nothing for mint extensions that force no account extension', async () => {
-      const wallet = addr();
-      const mint = addr();
-      const tx = txWith({ wallet, instructions: [ataCreate({ wallet, ata: addr(), mint, tokenProgram: TOKEN_2022 })] });
-      // ConfidentialTransferFeeConfig (16) and PermissionedBurn (28): the
-      // account stays at the 170-byte floor, with no warning.
-      const log = vi.fn();
-      mockRentRpc({ balance: FEE + rentFor(170), accounts: { [mint]: token2022Mint([[16, 65], [28, 32]]) } });
-      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet, log })).toEqual({ proceed: true });
-      expect(log).not.toHaveBeenCalled();
-    });
-
-    it('charges a Token-2022 ATA for a mint with no extensions at the 170-byte floor', async () => {
-      const wallet = addr();
-      const mint = addr();
-      const tx = txWith({ wallet, instructions: [ataCreate({ wallet, ata: addr(), mint, tokenProgram: TOKEN_2022 })] });
-      mockRentRpc({ balance: FEE + rentFor(170) - 1, accounts: { [mint]: Buffer.alloc(82).toString('base64') } });
-      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
-      expect(result.proceed).toBe(false);
-    });
-
-    it('counts the size it can prove for an unknown Token-2022 extension, and warns', async () => {
-      const wallet = addr();
-      const mint = addr();
-      const ata = addr();
-      const tx = txWith({ wallet, instructions: [ataCreate({ wallet, ata, mint, tokenProgram: TOKEN_2022 })] });
-      const accounts = { [mint]: token2022Mint([[99, 16]]) };
-      const log = vi.fn();
-      mockRentRpc({ balance: FEE + rentFor(170) - 1, accounts });
-      expect((await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet, log })).proceed).toBe(false);
-      expect(log).toHaveBeenCalledWith(expect.stringContaining(`Rent for the token account ${ata} may be higher than counted`));
-      expect(log).toHaveBeenCalledWith(expect.stringContaining('extension this check does not know (type 99)'));
-    });
-
-    it('counts the peak rent out at once, giving back a transient account closed to the wallet', async () => {
-      const wallet = addr();
-      const wsol = addr();
-      // Open a WSOL account, close it back to the wallet, then open an ATA:
-      // the peak is one account's rent, not two.
+      const createAccount = Buffer.alloc(52);
+      createAccount.writeBigUInt64LE(2_039_280n, 4);
+      createAccount.writeBigUInt64LE(165n, 12);
       const tx = txWith({
         wallet,
         instructions: [
-          { program: SYSTEM, accounts: [wallet, wsol], data: createAccount(SPL_ATA_RENT) },
-          { program: TOKEN, accounts: [wsol, wallet, wallet], data: CLOSE },
-          ataCreate({ wallet, ata: addr(), mint: addr() }),
+          ataCreate({ funder: addr(), ata: addr() }),
+          { program: SYSTEM, accounts: [wallet, addr()], data: createAccount },
         ],
       });
-      mockRentRpc({ balance: FEE + SPL_ATA_RENT });
-      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
+      mockRentRpc({ balance: FEE });
+      expect(await check(tx, wallet)).toEqual({ proceed: true });
+      expect(rpcMethods()).not.toContain('getMultipleAccounts');
     });
 
-    it('gives back only the rent of a closed account, not the wrapped SOL the swap spent', async () => {
-      const wallet = addr();
-      const wsol = addr();
-      const wrapped = 5_000_000;
-      // CreateAccount(rent + wrapped SOL) → swap → close → two new ATAs: the
-      // close returns the rent only, so the wallet needs wrapped + 2 x rent.
-      const tx = txWith({
-        wallet,
-        instructions: [
-          { program: SYSTEM, accounts: [wallet, wsol], data: createAccount(SPL_ATA_RENT + wrapped) },
-          { program: TOKEN, accounts: [wsol, wallet, wallet], data: CLOSE },
-          ataCreate({ wallet, ata: addr(), mint: addr() }),
-          ataCreate({ wallet, ata: addr(), mint: addr() }),
-        ],
-      });
-      mockRentRpc({ balance: FEE + wrapped + 2 * SPL_ATA_RENT });
-      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).toEqual({ proceed: true });
-
-      mockRentRpc({ balance: FEE + wrapped + 2 * SPL_ATA_RENT - 1 });
-      expect((await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).proceed).toBe(false);
-    });
-
-    it('counts both accounts when the close comes after the second one is created', async () => {
-      const wallet = addr();
-      const wsol = addr();
-      const tx = txWith({
-        wallet,
-        instructions: [
-          { program: SYSTEM, accounts: [wallet, wsol], data: createAccount(SPL_ATA_RENT) },
-          ataCreate({ wallet, ata: addr(), mint: addr() }),
-          { program: TOKEN, accounts: [wsol, wallet, wallet], data: CLOSE },
-        ],
-      });
-      mockRentRpc({ balance: FEE + 2 * SPL_ATA_RENT - 1 });
-      expect((await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).proceed).toBe(false);
-    });
-
-    it('checks rent the wallet funds even when another account pays the fee', async () => {
-      const wallet = addr();
-      const sponsor = addr();
-      const tx = txWith({ wallet, feePayer: sponsor, instructions: [ataCreate({ wallet, ata: addr(), mint: addr() })] });
-      mockRentRpc({ balance: SPL_ATA_RENT - 1 });
-      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
-      expect(result.proceed).toBe(false);
-      expect(result.reason).toContain('needs at least 0.00203928 SOL for the rent of the accounts it creates');
-      expect(global.fetch.mock.calls.map(([, init]) => JSON.parse(init.body).method)).not.toContain('getFeeForMessage');
-    });
-
-    it('resolves an ATA and mint referenced through an address lookup table', async () => {
+    it('resolves an ATA and its token program referenced through an address lookup table', async () => {
       const wallet = addr();
       const ata = addr();
-      const mint = addr();
       const table = addr();
-      // v0 message: static [wallet, System, Token-2022, ATA program]; the ATA
-      // (writable) and the mint (readonly) come from the table.
-      const statics = [wallet, SYSTEM, TOKEN_2022, ATA_PROGRAM];
+      // v0 message: static [wallet, System, ATA program, mint]; the ATA
+      // (writable) and Token-2022 (readonly) come from the table.
+      const mint = addr();
+      const statics = [wallet, SYSTEM, ATA_PROGRAM, mint];
       const message = Buffer.concat([
         Buffer.from([0x80, 1, 0, 3]),
         encodeCompactU16(statics.length), ...statics.map(base58Decode),
         base58Decode(wallet),
         encodeCompactU16(1),
-        // accounts: funder 0, ATA 4 (writable lookup), owner 0, mint 5 (readonly lookup), System 1, Token-2022 2
-        Buffer.from([3]), encodeCompactU16(6), Buffer.from([0, 4, 0, 5, 1, 2]), encodeCompactU16(1), Buffer.from([1]),
+        // accounts: funder 0, ATA 4 (writable lookup), owner 0, mint 3, System 1, Token-2022 5 (readonly lookup)
+        Buffer.from([2]), encodeCompactU16(6), Buffer.from([0, 4, 0, 3, 1, 5]), encodeCompactU16(1), Buffer.from([1]),
         encodeCompactU16(1), base58Decode(table),
         encodeCompactU16(1), Buffer.from([0]),
         encodeCompactU16(1), Buffer.from([1]),
@@ -3738,12 +3583,11 @@ describe('checkSolanaFeeBalance', () => {
       tableData.writeUInt32LE(1, 0);
       tableData.writeBigUInt64LE(0xffffffffffffffffn, 4);
       base58Decode(ata).copy(tableData, 56);
-      base58Decode(mint).copy(tableData, 88);
-      const accounts = { [table]: tableData.toString('base64'), [mint]: token2022Mint([[1, 108]]) };
-      mockRentRpc({ balance: FEE + rentFor(182) - 1, accounts });
-      const result = await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet });
+      base58Decode(TOKEN_2022).copy(tableData, 88);
+      mockRentRpc({ balance: FEE + rentFor(170) - 1, accounts: { [table]: tableData.toString('base64') } });
+      const result = await check(tx, wallet);
       expect(result.proceed).toBe(false);
-      expect(result.reason).toContain(`rent for the accounts it creates`);
+      expect(result.reason).toContain('0.00207408 SOL rent for the token accounts it creates');
     });
 
     it.each([
@@ -3751,14 +3595,15 @@ describe('checkSolanaFeeBalance', () => {
       ['getMultipleAccounts'],
     ])('drops only the rent, with a warning, when %s fails', async (failMethod) => {
       const wallet = addr();
-      const tx = txWith({ wallet, instructions: [ataCreate({ wallet, ata: addr(), mint: addr() })] });
+      const tx = txWith({ wallet, instructions: [ataCreate({ funder: wallet, ata: addr() })] });
       const log = vi.fn();
       mockRentRpc({ balance: FEE, failMethod });
-      expect(await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet, log })).toEqual({ proceed: true });
-      expect(log).toHaveBeenCalledWith(expect.stringContaining(`Rent for the accounts this transaction creates was not counted (${failMethod} failed`));
+      expect(await check(tx, wallet, log)).toEqual({ proceed: true });
+      expect(log).toHaveBeenCalledWith(expect.stringContaining(`Rent for the token accounts this transaction creates was not counted (${failMethod} failed`));
 
       mockRentRpc({ balance: FEE - 1, failMethod });
-      expect((await checkSolanaFeeBalance({ parsed: parse(tx, wallet), walletAddress: wallet })).proceed).toBe(false);
+      expect((await check(tx, wallet)).proceed).toBe(false);
     });
+
   });
 });

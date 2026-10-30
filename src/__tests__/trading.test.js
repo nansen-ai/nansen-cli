@@ -6626,7 +6626,7 @@ describe('Solana execute: SOL fee balance check', () => {
 
     expect(error).toBeTruthy();
     expect(executeCalls).toHaveLength(0);
-    expect(logs.some(l => l.includes('cannot be paid for') && l.includes('0.00203928 SOL rent for the accounts it creates'))).toBe(true);
+    expect(logs.some(l => l.includes('cannot be paid for') && l.includes('0.00203928 SOL rent for the token accounts it creates'))).toBe(true);
   });
 
   it('signs and broadcasts when the wallet covers the fee and the rent exactly', async () => {
