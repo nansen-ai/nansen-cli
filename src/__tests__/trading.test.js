@@ -1616,6 +1616,21 @@ describe('buildTradingCommands', () => {
 
     await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/transaction data/);
   });
+
+  it('rejects a --quote-index that is not a whole number', async () => {
+    const quoteId = saveQuote({
+      success: true,
+      quotes: [{ aggregator: 'a', inAmount: '100' }, { aggregator: 'b', inAmount: '100' }],
+    }, 'solana');
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+
+    for (const index of ['1.9', '1abc', '1e0', '-0', true]) {
+      await expect(cmds.execute([], screenApi, {}, { quote: quoteId, 'quote-index': index }))
+        .rejects.toMatchObject({ code: 'INVALID_QUOTE_INDEX' });
+    }
+    // A valid index gets past the pin check (and then fails on the missing transaction).
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId, 'quote-index': '1' })).rejects.toThrow(/transaction data/);
+  });
 });
 
 // ============= WalletConnect Integration =============
