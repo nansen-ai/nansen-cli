@@ -139,13 +139,19 @@ export function buildPaymentSignatureHeader({ signature, authorization, resource
 
 /**
  * Format amount for human-readable display (e.g., "0.01 USDC")
+ *
+ * Prefers the policy decision, which scaled the amount with the known token's
+ * decimals; the server's `extra` rarely carries decimals, and the BSC tokens
+ * use 18, not 6.
  */
-function formatPaymentAmount(requirement) {
+function formatPaymentAmount(requirement, payment) {
   const { extra } = requirement;
-  const rawAmount = resolvePaymentAmount(requirement);
-  const symbol = extra.symbol || extra.name || 'tokens';
-  const decimals = extra.decimals || 6;
-  const amount = Number(rawAmount) / Math.pow(10, decimals);
+  const symbol = payment?.symbol || extra.symbol || extra.name || 'tokens';
+  let amount = payment?.usd;
+  if (typeof amount !== 'number') {
+    const decimals = extra.decimals || 6;
+    amount = Number(resolvePaymentAmount(requirement)) / Math.pow(10, decimals);
+  }
   const chain = requirement.network || requirement.chain || 'unknown';
   return `${amount} ${symbol} on ${chain}`;
 }
@@ -213,11 +219,11 @@ async function prepareRequirement(requirement) {
  * A rejected, timed-out, or malformed signature throws: the user was already
  * prompted, so the caller must not prompt again for another option.
  */
-async function signRequirement(requirement, fromAddress, typedData, resource) {
+async function signRequirement(requirement, fromAddress, typedData, resource, payment) {
   const typedDataJson = JSON.stringify(typedData);
 
   // Log payment info to stderr (stdout is for JSON output)
-  const amountStr = formatPaymentAmount(requirement);
+  const amountStr = formatPaymentAmount(requirement, payment);
   process.stderr.write(`x402: Requesting payment approval (${amountStr})...\n`);
 
   // Sign via walletconnect CLI (120s timeout for user approval)
@@ -302,7 +308,7 @@ export async function* createWalletConnectPaymentSignatures(paymentRequirements,
       continue;
     }
     // The charge comes before the approval prompt, so an over-cap option never prompts.
-    const signed = await signWithSessionCharge(payment, () => signRequirement(requirement, fromAddress, typedData, resource));
+    const signed = await signWithSessionCharge(payment, () => signRequirement(requirement, fromAddress, typedData, resource, payment));
     if (!signed.ok) {
       console.error(`[x402] Skipping ${requirement.network} WalletConnect option: ${signed.reason}`);
       options.onCapRefusal?.(signed.reason);
