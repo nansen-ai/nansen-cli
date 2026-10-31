@@ -151,6 +151,29 @@ describe('estimated credits after a call with no cost header', () => {
     });
     expect(errors.filter(line => line.startsWith('Credits:'))).toEqual(['Credits: 0 (cached)']);
   });
+
+  it('attributes the charge to the earlier live call when the last call was cached', async () => {
+    await loadSpec();
+    const cli = await import('../cli.js');
+    const run = async cost => {
+      const errors = [];
+      await cli.runCLI(['research', 'token', 'holders', '--token', 'So11111111111111111111111111111111111111112', '--chain', 'solana'], {
+        output: () => {},
+        errorOutput: msg => errors.push(msg),
+        exit: () => {},
+        NansenAPIClass: function MockAPI() {
+          // A live call left its meta and endpoint, then a later call hit the cache.
+          this.lastResponseMeta = { credits: { used: 5, remaining: 100, cost } };
+          this.lastEndpoint = '/api/v1/tgm/holders';
+          this.servedFromCache = true;
+          this.tokenHolders = vi.fn().mockResolvedValue({ data: [] });
+        },
+      });
+      return errors.filter(line => line.startsWith('Credits:'));
+    };
+    expect(await run(5)).toEqual(['Credits: 5 (live call; the cached call was free)']);
+    expect(await run(null)).toEqual(['Credits: ~5 (estimated, live call; the cached call was free)']);
+  });
 });
 
 describe('cost cache', () => {

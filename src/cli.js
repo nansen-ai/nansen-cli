@@ -2598,9 +2598,12 @@ function emitResponseMetadata(api, errorOutput) {
     return;
   }
   const charged = creditsCharged(responseMeta, endpoint);
+  // The meta (and endpoint) belong to an earlier live call when the last call
+  // was a cache hit; say so instead of attributing the charge to "this call".
+  const laterCacheHit = !api.paginatedResponseMeta && api.servedFromCache === true;
   if (charged?.source === 'header') {
     const paginationMeta = responseMeta?.pagination;
-    let scope = 'this call';
+    let scope = laterCacheHit ? 'live call; the cached call was free' : 'this call';
     if (paginationMeta?.cachedPages > 0 && paginationMeta.livePages > 0) {
       scope = `${paginationMeta.livePages} live of ${paginationMeta.pagesFetched} page requests`;
     } else if (paginationMeta?.livePages > 1) scope = `${paginationMeta.livePages} page requests`;
@@ -2610,7 +2613,7 @@ function emitResponseMetadata(api, errorOutput) {
   } else if (charged?.source === 'estimate') {
     const { free, pro } = charged.estimate;
     const amount = free === pro ? free : `${free} free / ${pro} pro`;
-    errorOutput(`Credits: ~${amount} (estimated)`);
+    errorOutput(`Credits: ~${amount} (estimated${laterCacheHit ? ', live call; the cached call was free' : ''})`);
   }
 }
 
