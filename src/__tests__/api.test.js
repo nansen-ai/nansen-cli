@@ -504,6 +504,24 @@ describe('NansenAPI', () => {
       expect(resultACached._meta.fromCache).toBe(true);
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
+
+    it('keeps lastEndpoint on the live request whose metadata it pairs with', async () => {
+      if (LIVE_TEST) return;
+
+      const cachedApi = new NansenAPI('key-a', 'https://api.nansen.ai', { cache: { enabled: true } });
+      const creditHeaders = { get: name => ({ 'content-type': 'application/json', 'x-nansen-credits-used': '5', 'x-nansen-credits-remaining': '100' })[name.toLowerCase()] ?? null };
+      mockFetch.mockResolvedValue({ ok: true, headers: creditHeaders, json: async () => ({ data: [] }) });
+
+      await cachedApi.request('/api/v1/cached-endpoint', {});
+      await cachedApi.request('/api/v1/live-endpoint', {});
+      const liveMeta = cachedApi.lastResponseMeta;
+
+      await cachedApi.request('/api/v1/cached-endpoint', {});
+      expect(cachedApi.servedFromCache).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(cachedApi.lastResponseMeta).toBe(liveMeta);
+      expect(cachedApi.lastEndpoint).toBe('/api/v1/live-endpoint');
+    });
   });
 
   // =================== Account Endpoint ===================

@@ -860,7 +860,11 @@ export class NansenAPI {
     this.paginatedResponseMeta = null;
     /** API path paired with paginatedResponseMeta for fallback cost estimates. */
     this.paginatedEndpoint = null;
-    /** API path of the most recent request(), for pairing lastResponseMeta with a cost estimate. */
+    /**
+     * API path of the most recent live request(), for pairing lastResponseMeta
+     * with a cost estimate. A cache hit leaves both alone, so a cached call
+     * after a live one never borrows the live call's metadata for its own path.
+     */
     this.lastEndpoint = null;
     /**
      * Whether the most recent request() was answered from the local response
@@ -1074,7 +1078,6 @@ export class NansenAPI {
   }
 
   async request(endpoint, body = {}, options = {}) {
-    this.lastEndpoint = endpoint;
     const extraHeaders = { ...this.defaultHeaders, ...options.headers };
     let credentialHeaders = await this.requestCredentials(extraHeaders);
     // Keys and browser sessions share the same payment policy. Explicit raw
@@ -1112,6 +1115,7 @@ export class NansenAPI {
       }
     }
     this.servedFromCache = false;
+    this.lastEndpoint = endpoint;
 
     let lastError;
 
