@@ -1091,6 +1091,40 @@ describe('buildLimitOrderCommands', () => {
       expect(ordersUrl).toContain('limit=5');
       expect(ordersUrl).toContain('offset=10');
     });
+
+    it('computes the next-page hint from a string --offset', async () => {
+      createTestWallet('lo-list-offset');
+      const logs = [];
+      const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit: vi.fn() });
+      const orders = Array.from({ length: 5 }, (_, i) => ({ id: `o${i}`, status: 'open', fills: [] }));
+
+      mockFetchSequence([
+        { body: { challenge: 'sign' } },
+        { body: { token: 'jwt' } },
+        { body: { orders, pagination: { total: 100, limit: 5, offset: 20 } } },
+      ]);
+
+      // parseArgs passes numeric option values through as strings.
+      await cmds.list([], null, {}, { wallet: 'lo-list-offset', limit: '5', offset: '20' });
+
+      expect(logs.some(l => l.includes('Showing 21-25 of 100. Use --offset 25 to see more.'))).toBe(true);
+    });
+
+    it('rejects a non-integer --offset before any request', async () => {
+      const logs = [];
+      const exit = vi.fn();
+      const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+      global.fetch = vi.fn();
+
+      for (const offset of ['-1', '1.5', 'abc', true]) {
+        logs.length = 0;
+        exit.mockClear();
+        await cmds.list([], null, {}, { wallet: 'w', offset });
+        expect(exit).toHaveBeenCalledWith(1);
+        expect(logs.some(l => l.includes('--offset must be a non-negative integer'))).toBe(true);
+      }
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
   });
 
   // ---- cancel ----
