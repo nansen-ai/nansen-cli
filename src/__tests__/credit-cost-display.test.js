@@ -133,6 +133,24 @@ describe('estimated credits after a call with no cost header', () => {
     await loadSpec();
     expect(await run('/api/v1/search/token-sectors', 'tokenSectors')).toBe('Credits: ~1 free / 0 pro (estimated)');
   });
+
+  it('does not estimate a call served from the response cache', async () => {
+    await loadSpec();
+    const cli = await import('../cli.js');
+    const errors = [];
+    await cli.runCLI(['research', 'token', 'holders', '--token', 'So11111111111111111111111111111111111111112', '--chain', 'solana'], {
+      output: () => {},
+      errorOutput: msg => errors.push(msg),
+      exit: () => {},
+      NansenAPIClass: function MockAPI() {
+        this.lastResponseMeta = null;
+        this.lastEndpoint = '/api/v1/tgm/holders';
+        this.servedFromCache = true;
+        this.tokenHolders = vi.fn().mockResolvedValue({ data: [] });
+      },
+    });
+    expect(errors.filter(line => line.startsWith('Credits:'))).toEqual(['Credits: 0 (cached)']);
+  });
 });
 
 describe('cost cache', () => {

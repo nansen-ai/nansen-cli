@@ -2591,6 +2591,12 @@ function emitResponseMetadata(api, errorOutput) {
   // An aggregate belongs to the primary paginated endpoint even if a composite
   // handler made auxiliary requests afterward and changed lastEndpoint.
   const endpoint = api.paginatedResponseMeta ? api.paginatedEndpoint : api.lastEndpoint;
+  // A cache hit records no response meta; with no live call at all there is
+  // nothing to estimate.
+  if (!responseMeta && api.servedFromCache === true) {
+    errorOutput('Credits: 0 (cached)');
+    return;
+  }
   const charged = creditsCharged(responseMeta, endpoint);
   if (charged?.source === 'header') {
     const paginationMeta = responseMeta?.pagination;
