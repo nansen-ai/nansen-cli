@@ -3473,7 +3473,7 @@
             },
             "human": {
               "type": "boolean",
-              "description": "Prompt for the password in an interactive terminal (for humans; agents set NANSEN_WALLET_PASSWORD instead)"
+              "description": "Prompt for the password in an interactive terminal when none is set or saved (for humans; agents set NANSEN_WALLET_PASSWORD instead)"
             }
           },
           "examples": [

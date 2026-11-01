@@ -1366,8 +1366,8 @@ COMMANDS:
   create [--name <label>] [--provider <local|privy>] [--unsafe-no-password] [--human]
                              Create a new wallet pair (EVM + Solana). A local wallet needs a
                              password of at least 12 characters: set NANSEN_WALLET_PASSWORD
-                             (a password saved by an earlier create is reused), or pass
-                             --human to be prompted. Without one it fails with
+                             (a password saved by an earlier create is reused); when neither
+                             exists, --human prompts for one. Without one it fails with
                              PASSWORD_REQUIRED (it never prompts on its own). The password is
                              then saved to the OS keychain, or to ~/.nansen/wallets/.credentials
                              (plaintext) when no keychain is available
