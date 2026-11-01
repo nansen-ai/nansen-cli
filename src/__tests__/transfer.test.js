@@ -1581,7 +1581,7 @@ describe('sendTokens --token symbols', () => {
   test('rejects an unknown symbol with the accepted ones, before any RPC call', async () => {
     mockStrictEvmRpc();
     await expect(sendTokens({ to: TO_EVM, amount: '1', chain: 'base', token: 'PEPE', password: 'test', dryRun: true }))
-      .rejects.toThrow('Unknown token "PEPE" on base. Pass the token\'s contract address, or one of: USDC, USDT.');
+      .rejects.toThrow('Unknown token "PEPE" on base. Pass the token\'s contract address, or one of: USDC, USDT. Omit --token to send the native currency.');
     expect(fetch).not.toHaveBeenCalled();
   });
 

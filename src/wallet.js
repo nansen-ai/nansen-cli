@@ -1196,7 +1196,7 @@ export function buildWalletCommands(deps = {}) {
           }
 
           if (!options.chain) {
-            throw new CommandError('--chain <evm|solana> is required', 'MISSING_ARGS');
+            throw new CommandError('--chain <evm|ethereum|base|solana> is required', 'MISSING_ARGS');
           }
 
           if (!['evm', 'solana', 'ethereum', 'base'].includes(options.chain)) {

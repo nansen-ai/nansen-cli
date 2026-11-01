@@ -86,7 +86,7 @@ function resolveSendToken(token, chain) {
   const kind = chain === 'solana' ? 'mint address' : 'contract address';
   const names = Object.keys(symbols);
   const choices = names.length ? `, or one of: ${names.join(', ')}` : '';
-  throw new Error(`Unknown token "${token}" on ${chain}. Pass the token's ${kind}${choices}.`);
+  throw new Error(`Unknown token "${token}" on ${chain}. Pass the token's ${kind}${choices}. Omit --token to send the native currency.`);
 }
 
 // ============= Amount Parsing =============
