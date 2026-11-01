@@ -353,7 +353,7 @@ nansen wallet secure                         # move a password from .credentials
 nansen wallet forget-password                # drop the saved password from every store
 ```
 
-**Local wallets** are encrypted with a password of at least 12 characters. `wallet create` reads it from `NANSEN_WALLET_PASSWORD` and does not prompt; without it the command fails with `PASSWORD_REQUIRED` (agents: ask the user for a password, never make one up). Pass `--human` to be prompted in an interactive terminal instead. On success the CLI saves the password to the OS keychain, or to `~/.nansen/wallets/.credentials` (plaintext) when no keychain is available, and later wallet commands read it from there. `nansen wallet secure` moves a password from that file or the env var into the keychain.
+**Local wallets** are encrypted with a password of at least 12 characters. `wallet create` reads it from `NANSEN_WALLET_PASSWORD`, or reuses the password an earlier `wallet create` saved, and does not prompt; without one the command fails with `PASSWORD_REQUIRED` (agents: ask the user for a password, never make one up). Pass `--human` to be prompted in an interactive terminal instead. On success the CLI saves the password to the OS keychain, or to `~/.nansen/wallets/.credentials` (plaintext) when no keychain is available, and later wallet commands read it from there. `nansen wallet secure` moves a password from that file or the env var into the keychain.
 
 ```bash
 NANSEN_WALLET_PASSWORD='<password-from-user>' nansen wallet create --name my-wallet
