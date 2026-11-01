@@ -144,6 +144,9 @@ nansen wallet default <name>
 # Send native token (SOL, ETH) — password auto-resolved from keychain
 nansen wallet send --to <addr> --amount 1.5 --chain solana
 
+# Send a token: USDC, USDT, or the token's contract/mint address
+nansen wallet send --to <addr> --amount 25 --chain base --token USDC
+
 # Send entire balance
 nansen wallet send --to <addr> --chain evm --max
 
@@ -192,7 +195,8 @@ For detailed migration steps (from `~/.nansen/.env`, `.credentials`, or env-var-
 |------|---------|
 | `--to` | Recipient address |
 | `--amount` | Amount to send |
-| `--chain` | `evm` or `solana` |
+| `--chain` | `evm` (Ethereum), `ethereum`, `base` or `solana` |
+| `--token` | Token to send: `USDC`, `USDT`, or a contract/mint address (native if omitted) |
 | `--max` | Send entire balance |
 | `--dry-run` | Preview without broadcasting |
 | `--provider` | Wallet provider: `local` (default, encrypted on disk) or `privy` (server-side via Privy API) |

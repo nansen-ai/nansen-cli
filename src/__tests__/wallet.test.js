@@ -1046,3 +1046,42 @@ describe('Path traversal vulnerability mitigation', () => {
     expect(() => showWallet('safe-wallet')).toThrow(/not found/);
   });
 });
+
+// `wallet create --help` and `nansen schema` render from schema.json, which
+// listed only --unsafe-no-password and said nothing about the password flow.
+describe('wallet create/send help', () => {
+  it('create help lists every option and says how the password is supplied and saved', async () => {
+    const { generateSubcommandHelp } = await import('../cli.js');
+    const help = generateSubcommandHelp('wallet', 'create');
+    expect(help).toMatch(/--name \(default\)/);
+    expect(help).toMatch(/--provider \[local\|privy\]/);
+    expect(help).toMatch(/--unsafe-no-password/);
+    expect(help).toMatch(/--human/);
+    expect(help).toMatch(/NANSEN_WALLET_PASSWORD/);
+    expect(help).toMatch(/does not prompt unless --human/);
+    expect(help).toMatch(/PASSWORD_REQUIRED/);
+    expect(help).toMatch(/OS keychain/);
+    expect(help).toMatch(/~\/\.nansen\/wallets\/\.credentials/);
+  });
+
+  it('send help lists --token (with its symbols), --wallet and --dry-run', async () => {
+    const { generateSubcommandHelp } = await import('../cli.js');
+    const help = generateSubcommandHelp('wallet', 'send');
+    expect(help).toMatch(/--token/);
+    expect(help).toMatch(/--wallet/);
+    expect(help).toMatch(/--dry-run/);
+    expect(help).toMatch(/USDC, USDT/);
+  });
+
+  it('wallet help lists the .credentials fallback in the password resolution order', async () => {
+    const logs = [];
+    const { buildWalletCommands } = await import('../wallet.js');
+    const cmds = buildWalletCommands({ log: (m) => logs.push(m), exit: () => {} });
+    await cmds.wallet(['help'], null, {}, {});
+    const help = logs.join('\n');
+    const resolution = help.slice(help.indexOf('PASSWORD RESOLUTION'), help.indexOf('ENVIRONMENT:'));
+    expect(resolution).toMatch(/3\. ~\/\.nansen\/wallets\/\.credentials/);
+    expect(resolution).toMatch(/4\. Interactive prompt \(only with --human flag\)/);
+    expect(help).toMatch(/--token <symbol\|address>/);
+  });
+});

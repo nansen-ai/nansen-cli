@@ -17,6 +17,7 @@ import {
   bigIntToHex,
   buildUnsignedSolanaTransaction,
   getTokenInfo,
+  resolveSendToken,
 } from '../transfer.js';
 import { signSecp256k1, rlpEncode } from '../crypto.js';
 import { base58Encode } from '../wallet.js';
@@ -1482,5 +1483,113 @@ describe('sendTokens via Privy', () => {
     expect(result.from).toBe('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
     expect(result.chain).toBe('solana');
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+// ============= --token symbols =============
+
+// `wallet send --token USDC` used to pass the literal string "USDC" to the RPC
+// as a contract address, and the node answered with a bare "Invalid params".
+describe('sendTokens --token symbols', () => {
+  const TO_EVM = '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4';
+  const TO_SOL = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+  const ETH_USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+  const ETH_USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
+  const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+  const SOL_USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(wallet, 'getWalletConfig').mockReturnValue({ defaultWallet: 'test', passwordHash: { salt: 'test', hash: 'test' } });
+    vi.spyOn(wallet, 'verifyPassword').mockReturnValue(true);
+    vi.spyOn(wallet, 'showWallet').mockReturnValue({ name: 'test', provider: 'local', evm: TO_EVM, solana: TO_SOL });
+    vi.spyOn(wallet, 'exportWallet').mockReturnValue({
+      name: 'test',
+      evm: { address: TO_EVM, privateKey: '0123456789abcdef'.repeat(4) },
+      solana: { address: TO_SOL, privateKey: '0123456789abcdef'.repeat(8) },
+    });
+  });
+
+  // An RPC that rejects anything but a 0x address, like a real node does.
+  function mockStrictEvmRpc() {
+    fetch.mockImplementation(async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      if (body.method === 'eth_getCode' && !/^0x[0-9a-fA-F]{40}$/.test(body.params[0])) {
+        return { json: () => Promise.resolve({ error: { code: -32602, message: 'Invalid params' } }) };
+      }
+      const responses = {
+        'eth_getTransactionCount': '0x0',
+        'eth_feeHistory': { baseFeePerGas: ['0x1', '0x1', '0x1', '0x1', '0x1'] },
+        'eth_maxPriorityFeePerGas': '0x1',
+        'eth_estimateGas': '0xfe00',
+        'eth_getBalance': '0x8AC7230489E80000',
+        'eth_getCode': '0x6080604052',
+      };
+      if (body.method === 'eth_call') {
+        // decimals() → 6, balanceOf() → large
+        const result = body.params[0].data === '0x313ce567' ? '0x' + '6'.padStart(64, '0') : '0x' + 'f'.repeat(64);
+        return { json: () => Promise.resolve({ result }) };
+      }
+      return { json: () => Promise.resolve({ result: responses[body.method] || '0x0' }) };
+    });
+  }
+
+  const calledWith = (method) => fetch.mock.calls
+    .map(([, opts]) => JSON.parse(opts.body))
+    .filter(b => b.method === method);
+
+  test.each([
+    ['evm', 'USDC', ETH_USDC],
+    ['ethereum', 'USDC', ETH_USDC],
+    ['ethereum', 'USDT', ETH_USDT],
+    ['base', 'USDC', BASE_USDC],
+    ['base', 'usdc', BASE_USDC],
+  ])('resolves --chain %s --token %s to its contract address', async (chain, symbol, address) => {
+    mockStrictEvmRpc();
+    const result = await sendTokens({ to: TO_EVM, amount: '25', chain, token: symbol, password: 'test', dryRun: true });
+    expect(result.token).toBe(address);
+    expect(calledWith('eth_getCode')[0].params[0]).toBe(address);
+  });
+
+  test('resolves --token USDC to the USDC mint on Solana', async () => {
+    fetch.mockImplementation(async (url, opts) => {
+      const { method } = JSON.parse(opts.body);
+      const result = method === 'getLatestBlockhash'
+        ? { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } }
+        : { value: null }; // mint lookup: stop after the address is checked
+      return { json: () => Promise.resolve({ result }) };
+    });
+    await expect(sendTokens({ to: TO_SOL, amount: '1', chain: 'solana', token: 'USDC', password: 'test', dryRun: true }))
+      .rejects.toThrow('not found');
+    expect(calledWith('getAccountInfo')[0].params[0]).toBe(SOL_USDC);
+  });
+
+  test('resolves a symbol for WalletConnect sends too', async () => {
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(TO_EVM);
+    mockStrictEvmRpc();
+    const result = await sendTokens({ to: TO_EVM, amount: '25', chain: 'base', token: 'USDC', walletconnect: true, dryRun: true });
+    expect(result.token).toBe(BASE_USDC);
+    vi.restoreAllMocks();
+  });
+
+  test('passes a contract address through unchanged', async () => {
+    mockStrictEvmRpc();
+    const result = await sendTokens({ to: TO_EVM, amount: '25', chain: 'evm', token: ETH_USDC.toLowerCase(), password: 'test', dryRun: true });
+    expect(result.token).toBe(ETH_USDC.toLowerCase());
+  });
+
+  test('rejects an unknown symbol with the accepted ones, before any RPC call', async () => {
+    mockStrictEvmRpc();
+    await expect(sendTokens({ to: TO_EVM, amount: '1', chain: 'base', token: 'PEPE', password: 'test', dryRun: true }))
+      .rejects.toThrow('Unknown token "PEPE" on base. Pass the token\'s contract address, or one of: USDC, USDT.');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  test('names a mint address, not a contract, on Solana', () => {
+    expect(() => resolveSendToken('BONK', 'solana')).toThrow('Pass the token\'s mint address, or one of: USDC, USDT.');
+  });
+
+  test('leaves a missing token as native', () => {
+    expect(resolveSendToken(null, 'base')).toBeNull();
   });
 });

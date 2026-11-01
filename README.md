@@ -348,11 +348,18 @@ nansen wallet create --name my-wallet --provider privy  # server-side via Privy
 nansen wallet list
 nansen wallet default <name>
 nansen wallet send --wallet <name> --to <addr> --amount <n> --chain <chain>
-nansen wallet secure                         # move a saved password into the OS keychain
+nansen wallet send --to <addr> --amount 25 --chain base --token USDC  # USDC, USDT or a token address
+nansen wallet secure                         # move a password from .credentials or the env var into the OS keychain
 nansen wallet forget-password                # drop the saved password from every store
 ```
 
-**Local wallets** are password-encrypted. Set `NANSEN_WALLET_PASSWORD` to skip the prompt.
+**Local wallets** are encrypted with a password of at least 12 characters. `wallet create` reads it from `NANSEN_WALLET_PASSWORD` and does not prompt; without it the command fails with `PASSWORD_REQUIRED` (agents: ask the user for a password, never make one up). Pass `--human` to be prompted in an interactive terminal instead. On success the CLI saves the password to the OS keychain, or to `~/.nansen/wallets/.credentials` (plaintext) when no keychain is available, and later wallet commands read it from there. `nansen wallet secure` moves a password from that file or the env var into the keychain.
+
+```bash
+NANSEN_WALLET_PASSWORD='<password-from-user>' nansen wallet create --name my-wallet
+```
+
+`wallet send --token` takes `USDC`, `USDT` or a token contract (EVM) or mint (Solana) address; omit it to send the native currency. `--chain` is `evm` (Ethereum), `ethereum`, `base` or `solana`.
 
 **Privy wallets** are server-side — no password, no local key storage. Requires `PRIVY_APP_ID` and `PRIVY_APP_SECRET` env vars. Get credentials at [dashboard.privy.io](https://dashboard.privy.io).
 
