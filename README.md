@@ -324,7 +324,7 @@ nansen perp positions
 nansen perp account                                            # value, unrealized PnL, margin, spot USDC
 ```
 
-`--side` is `buy`/`long` or `sell`/`short` to open (`buy`/`sell` to close); `--tif` is `Gtc`/`Ioc`/`Alo`; `--slippage` is a decimal in `[0,1]`; `--leverage` is a whole integer capped at the asset max. Perp orders are irreversible once signed. USDC sent to a wallet via Hyperliquid's **Send** lands in the **Spot** balance (shown as `Spot USDC`); move it to Perps with `perp transfer` before trading. See the `nansen-trading` skill for details.
+`--side` is `buy`/`long` or `sell`/`short` to open (`buy`/`sell` to close); `--tif` is `Gtc`/`Ioc`/`Alo`; `--slippage` is a decimal in `[0,1]`; `--leverage` is a whole integer capped at the asset max. Perp orders are irreversible once signed. USDC sent to a wallet via Hyperliquid's **Send** lands in the **Spot** balance (shown as `Spot USDC`); move it to Perps with `perp transfer` before trading. `perp positions` prints each position's leverage and margin mode next to Hyperliquid's liquidation price (`lev=1x cross liq=1.37`). On cross margin the liquidation price depends on the whole account's equity, so even a 1x position can have one close to the market price; `liq=n/a` means the exchange reports no liquidation price. See the `nansen-trading` skill for details.
 
 ## Bridge
 

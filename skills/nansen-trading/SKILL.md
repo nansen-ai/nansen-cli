@@ -262,6 +262,8 @@ nansen perp account     # account value, unrealized PnL, margin used, withdrawab
 
 `--leverage` must be a whole integer and is capped at the asset's maximum (see `perp meta`).
 
+**Reading `perp positions`:** each line shows the leverage setting and margin mode before the liquidation price, e.g. `lev=1x cross liq=1.37`. The liquidation price is Hyperliquid's own figure. On cross margin it depends on the whole account's equity (fees, losses on other positions, withdrawn margin), so a 1x position can still have a liquidation price near the market. `liq=n/a` means the exchange reports none.
+
 **Spot vs Perps:** perp trading draws from the **Perps** balance, but USDC sent to a wallet via Hyperliquid's **Send** lands in **Spot** (and shows as `Spot USDC` in `perp account`). Move it across with `perp transfer --direction spot-to-perp --amount <usdc>` before trading. (Deposits via the bridge land in Perps directly.)
 
 ## Source

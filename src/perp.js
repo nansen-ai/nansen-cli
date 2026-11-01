@@ -660,6 +660,20 @@ function resolveCoin(options) {
 
 // ── Command builder ──────────────────────────────────────────────────
 
+// Hyperliquid reports each position's leverage setting as { type, value }
+// (type is "cross" or "isolated"). The liquidation price is the exchange's own
+// figure and only makes sense next to it: on cross margin it depends on the
+// whole account's equity, so even a 1x position can have a liquidation price
+// near the current price. Returns e.g. "1x cross", or null when absent.
+export function formatPositionLeverage(leverage) {
+  if (!leverage || typeof leverage !== 'object') return null;
+  const value = Number(leverage.value);
+  const hasValue = leverage.value !== null && leverage.value !== '' && Number.isFinite(value);
+  const type = typeof leverage.type === 'string' && leverage.type ? leverage.type : null;
+  if (!hasValue && !type) return null;
+  return [hasValue ? `${value}x` : null, type].filter(Boolean).join(' ');
+}
+
 export function buildPerpCommands(deps = {}) {
   const {
     log = console.log,
@@ -985,7 +999,8 @@ OPTIONS:
       log(`\n  Open Positions (${positions.length}):`);
       for (const p of positions) {
         const side = parseFloat(p.szi) >= 0 ? 'LONG' : 'SHORT';
-        log(`    ${p.coin} ${side} size=${p.szi} entry=${p.entryPx} pnl=${p.unrealizedPnl} liq=${p.liquidationPx || 'n/a'}`);
+        const lev = formatPositionLeverage(p.leverage);
+        log(`    ${p.coin} ${side} size=${p.szi} entry=${p.entryPx} pnl=${p.unrealizedPnl}${lev ? ` lev=${lev}` : ''} liq=${p.liquidationPx || 'n/a'}`);
       }
       log('');
       return undefined;
