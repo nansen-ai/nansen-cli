@@ -134,7 +134,7 @@ describe('estimated credits after a call with no cost header', () => {
     expect(await run('/api/v1/search/token-sectors', 'tokenSectors')).toBe('Credits: ~1 free / 0 pro (estimated)');
   });
 
-  it('does not estimate a call served from the response cache', async () => {
+  it.each([null, { notices: { warning: '299 - "sui retires on 2027-02-01"' } }])('does not estimate a cached call with metadata %j', async meta => {
     await loadSpec();
     const cli = await import('../cli.js');
     const errors = [];
@@ -143,13 +143,14 @@ describe('estimated credits after a call with no cost header', () => {
       errorOutput: msg => errors.push(msg),
       exit: () => {},
       NansenAPIClass: function MockAPI() {
-        this.lastResponseMeta = null;
-        this.lastEndpoint = '/api/v1/tgm/holders';
+        this.lastResponseMeta = meta;
+        this.lastEndpoint = meta ? null : '/api/v1/tgm/holders';
         this.servedFromCache = true;
         this.tokenHolders = vi.fn().mockResolvedValue({ data: [] });
       },
     });
     expect(errors.filter(line => line.startsWith('Credits:'))).toEqual(['Credits: 0 (cached)']);
+    if (meta) expect(errors).toContain(`⚠️  ${meta.notices.warning}`);
   });
 
   it('attributes the charge to the earlier live call when the last call was cached', async () => {

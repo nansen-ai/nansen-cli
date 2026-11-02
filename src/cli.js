@@ -2591,9 +2591,10 @@ function emitResponseMetadata(api, errorOutput) {
   // An aggregate belongs to the primary paginated endpoint even if a composite
   // handler made auxiliary requests afterward and changed lastEndpoint.
   const endpoint = api.paginatedResponseMeta ? api.paginatedEndpoint : api.lastEndpoint;
-  // A cache hit records no response meta; with no live call at all there is
-  // nothing to estimate.
-  if (!responseMeta && api.servedFromCache === true) {
+  // Cached advisories can supply metadata without any live accounting.
+  // With no live call at all there is nothing to estimate.
+  if (api.servedFromCache === true && !api.paginatedResponseMeta
+    && (!responseMeta || (!responseMeta.credits && !api.lastEndpoint))) {
     errorOutput('Credits: 0 (cached)');
     return;
   }
