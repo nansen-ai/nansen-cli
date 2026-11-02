@@ -142,6 +142,59 @@ describe('from_cache telemetry', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  const PAGED_ROWS = [{ symbol: 'ETH' }, { symbol: 'SOL' }, { symbol: 'BTC' }];
+
+  async function loadPagedCli() {
+    const loaded = await loadCli(null);
+    fetch.mockImplementation(async (_url, init) => {
+      const { page, per_page } = JSON.parse(init.body).pagination;
+      const data = PAGED_ROWS.slice((page - 1) * per_page, page * per_page);
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ data }) };
+    });
+    return loaded;
+  }
+
+  it('reports a --paginate run with a live page as a miss', async () => {
+    const { runCLI, deps } = await loadPagedCli();
+    const outputs = [];
+    const argv = ['research', 'token', 'screener', '--cache', '--limit', '2'];
+
+    // Page 1 is cached by a plain run; --paginate then fetches page 2 live.
+    await runCLI(argv, deps);
+    await runCLI([...argv, '--paginate'], { ...deps, output: text => outputs.push(text) });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(trackedFromCache()).toEqual([false, false]);
+    const merged = JSON.parse(outputs.at(-1));
+    expect(merged.data.data).toEqual(PAGED_ROWS);
+    expect(merged.data._meta?.fromCache).toBeUndefined();
+  });
+
+  it('reports a --paginate run served entirely from the cache as a hit', async () => {
+    const { runCLI, deps } = await loadPagedCli();
+    const outputs = [];
+    const argv = ['research', 'token', 'screener', '--cache', '--limit', '2', '--paginate'];
+
+    await runCLI(argv, deps);
+    await runCLI(argv, { ...deps, output: text => outputs.push(text) });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(trackedFromCache()).toEqual([false, true]);
+    expect(JSON.parse(outputs.at(-1)).data._meta.fromCache).toBe(true);
+  });
+
+  it('reports a --paginate run whose last page was cached as a miss', async () => {
+    const { runCLI, deps } = await loadPagedCli();
+    const argv = ['research', 'token', 'screener', '--cache', '--limit', '2'];
+
+    // Page 2 is cached by a plain run; --paginate then fetches page 1 live.
+    await runCLI([...argv, '--page', '2'], deps);
+    await runCLI([...argv, '--paginate'], deps);
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(trackedFromCache()).toEqual([false, false]);
+  });
+
   it('reports a live response as a miss', async () => {
     const { runCLI, deps } = await loadCli({ data: [{ symbol: 'ETH' }] });
     const argv = ['research', 'token', 'screener'];

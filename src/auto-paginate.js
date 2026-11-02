@@ -214,6 +214,16 @@ export async function collectPages(fetchPage, pagination, { maxPages = DEFAULT_M
 }
 
 /**
+ * The merged result reuses page 1's envelope, so its `_meta.fromCache` and
+ * `cacheAge` describe page 1 only. Keep them only when every page was cached.
+ */
+function withMergedCacheMarker(result, pages) {
+  if (result?._meta?.fromCache !== true || pages.every(page => page.cached)) return result;
+  const { fromCache: _fromCache, cacheAge: _cacheAge, ...meta } = result._meta;
+  return { ...result, _meta: meta };
+}
+
+/**
  * Make `api.request` traverse pages for list bodies. Returns the same
  * instance. NansenAPI never calls request() recursively (x402 retries use
  * fetch() directly), so the override cannot nest.
@@ -238,7 +248,7 @@ export function enableAutoPagination(api, opts = {}) {
         pageMetadata.push({ cached, meta: cached ? null : meta });
       };
       try {
-        return await collectPages(async pagination => {
+        const result = await collectPages(async pagination => {
           const previousMeta = api.lastResponseMeta;
           try {
             const pageResult = await request(endpoint, { ...body, pagination }, options);
@@ -271,6 +281,7 @@ export function enableAutoPagination(api, opts = {}) {
             throw error;
           }
         }, body.pagination, opts);
+        return withMergedCacheMarker(result, pageMetadata);
       } finally {
         api.paginatedResponseMeta = aggregatePaginatedResponseMeta(pageMetadata);
         api.paginatedEndpoint = endpoint;
