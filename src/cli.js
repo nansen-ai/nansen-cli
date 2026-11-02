@@ -224,7 +224,7 @@ export function compactSchema(schema) {
 // rather than swallowing the token after it.
 export const VALUELESS_FLAGS = new Set([
   'pretty', 'help', 'version', 'table', 'no-retry', 'cache', 'no-cache', 'stream',
-  'enrich', 'full', 'human', 'no-browser', 'api-key-stdin', 'enabled', 'disabled', 'expert', 'json', 'offline',
+  'enrich', 'full', 'human', 'no-browser', 'api-key-stdin', 'webhook-secret-stdin', 'enabled', 'disabled', 'expert', 'json', 'offline',
   'no-simulate', 'no-verify-outcome', 'no-revoke-excessive-allowance', 'dry-run',
   'send-api-key', 'all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password',
   'reveal', 'yes', 'paginate', 'debug', 'new',

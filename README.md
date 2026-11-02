@@ -171,6 +171,16 @@ Plus the `historical-*` point-in-time commands — run `nansen research help` fo
 
 **Wallet:** `create`, `list`, `show`, `export`, `default`, `delete`, `send`, `forget-password`, `secure` — local or Privy server-side wallets (EVM + Solana).
 
+**Alerts:** `list`, `create`, `update`, `toggle`, `delete` — smart alerts delivered to Telegram, Slack, Discord or a webhook. Give a webhook's signing secret through stdin or the environment, not on the command line, so it stays out of shell history and the process list:
+
+```bash
+nansen alerts create --name 'ETH SM inflow' --type sm-token-flows --chains ethereum --inflow-1h-min 1000000 \
+  --webhook https://example.com/hook --webhook-secret-stdin < webhook-secret.txt
+NANSEN_WEBHOOK_SECRET="$(cat webhook-secret.txt)" nansen alerts update <id> --webhook https://example.com/hook
+```
+
+`--webhook-secret <secret>` still works. It cannot be combined with `--webhook-secret-stdin`, and either flag overrides `NANSEN_WEBHOOK_SECRET`, which is read only when `--webhook` is given. Alerts output redacts channel credentials unless you pass `--reveal`.
+
 Run `nansen schema --pretty` for the full subcommand and field reference.
 
 ## MCP

@@ -3041,7 +3041,11 @@
             },
             "webhook-secret": {
               "type": "string",
-              "description": "Signing secret for webhook payload verification (optional, webhook only)"
+              "description": "Signing secret for webhook payload verification (optional, webhook only, minimum 16 characters). Visible in shell history and the process list; prefer --webhook-secret-stdin or the NANSEN_WEBHOOK_SECRET env var. Cannot combine with --webhook-secret-stdin; overrides NANSEN_WEBHOOK_SECRET."
+            },
+            "webhook-secret-stdin": {
+              "type": "boolean",
+              "description": "Read the webhook signing secret from a pipe or redirected file (maximum 4096 bytes; input must close within 30 seconds). Surrounding whitespace is trimmed; the secret is never echoed. Requires --webhook. Cannot combine with --webhook-secret; overrides NANSEN_WEBHOOK_SECRET, which is read only when --webhook is given."
             },
             "data": {
               "type": "string",
@@ -3096,7 +3100,11 @@
             },
             "webhook-secret": {
               "type": "string",
-              "description": "Signing secret for webhook payload verification (optional, webhook only)"
+              "description": "Signing secret for webhook payload verification (optional, webhook only, minimum 16 characters). Visible in shell history and the process list; prefer --webhook-secret-stdin or the NANSEN_WEBHOOK_SECRET env var. Cannot combine with --webhook-secret-stdin; overrides NANSEN_WEBHOOK_SECRET."
+            },
+            "webhook-secret-stdin": {
+              "type": "boolean",
+              "description": "Read the webhook signing secret from a pipe or redirected file (maximum 4096 bytes; input must close within 30 seconds). Surrounding whitespace is trimmed; the secret is never echoed. Requires --webhook. Cannot combine with --webhook-secret; overrides NANSEN_WEBHOOK_SECRET, which is read only when --webhook is given."
             },
             "data": {
               "type": "string",
