@@ -240,8 +240,8 @@ export function enableAutoPagination(api, opts = {}) {
       try {
         return await collectPages(async pagination => {
           const previousMeta = api.lastResponseMeta;
+          let requestMetadata;
           try {
-            let requestMetadata;
             const pageResult = await request(endpoint, { ...body, pagination }, {
               ...options,
               onResponseMeta(meta, cached) {
@@ -272,7 +272,7 @@ export function enableAutoPagination(api, opts = {}) {
             // A transport failure may leave the prior page's metadata in place;
             // count the attempt, but only use shared state when the error itself
             // carries no metadata and this request demonstrably replaced it.
-            recordPageMetadata(hasErrorMeta
+            recordPageMetadata(requestMetadata ? requestMetadata.meta : hasErrorMeta
               ? errorMeta
               : (api.lastResponseMeta === previousMeta ? null : api.lastResponseMeta));
             throw error;

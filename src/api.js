@@ -1227,6 +1227,7 @@ export class NansenAPI {
           lastError = error;
           continue;
         }
+        options.onResponseMeta?.(meta, false);
         throw error;
       }
 
@@ -1460,6 +1461,7 @@ export class NansenAPI {
           continue;
         }
         
+        options.onResponseMeta?.(meta, false);
         throw lastError;
       }
 

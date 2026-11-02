@@ -379,3 +379,34 @@ it.each(['text', null, false, 0])('preserves paginated cached primitive metadata
     pagination: { pagesFetched: 1, livePages: 0, cachedPages: 1 },
   });
 });
+
+
+it.each([[422, false], [503, false], [503, true]])('retains warnings from a failed page (%i, malformed=%s)', async (status, malformed) => {
+  const api = await freshApi({});
+  const { enableAutoPagination } = await import('../auto-paginate.js');
+  const { noticeWarnings } = await import('../response-meta.js');
+  const warning = '299 - "sui retires on 2027-02-01"';
+  fetch.mockImplementation(async (_url, options) => {
+    const page = JSON.parse(options.body).pagination.page;
+    if (page === 1) return {
+      ok: true, status: 200,
+      headers: new Headers({ 'x-nansen-credits-used': '2', 'x-nansen-credits-cost': '2' }),
+      json: async () => ({ data: [{ id: 1 }], pagination: { page: 1, total_pages: 2 } }),
+    };
+    return {
+      ok: false, status,
+      headers: new Headers({ warning, 'x-request-id': 'failed-page', 'x-nansen-credits-used': '3', 'x-nansen-credits-cost': '3' }),
+      json: async () => { if (malformed) throw new SyntaxError('bad JSON'); return { message: 'failed page' }; },
+      text: async () => 'bad JSON',
+    };
+  });
+  enableAutoPagination(api);
+  await expect(api.request('/api/v1/demo', { pagination: { page: 1, per_page: 1 } }, { retry: false })).rejects.toMatchObject({ status });
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(api.paginatedResponseMeta).toMatchObject({
+    requestId: 'failed-page', notices: { warning },
+    credits: { used: 5, cost: 5 },
+    pagination: { pagesFetched: 2, livePages: 2, cachedPages: 0 },
+  });
+  expect(noticeWarnings(api.paginatedResponseMeta)).toContain(`⚠️  ${warning}`);
+});
