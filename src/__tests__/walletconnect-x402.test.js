@@ -286,6 +286,15 @@ describe('createWalletConnectPaymentSignatures — option fallback', () => {
     expect(items[0].payment).toEqual(decision);
   });
 
+  it('shows the approval amount in the token units the policy priced, not 6 decimals', async () => {
+    evaluatePaymentRequirement.mockReturnValue({ ok: true, usd: 0.01, symbol: 'USD1', network: 'eip155:56', asset: USD1, amountRaw: '10000000000000000' });
+
+    await collect([bsc(USD1)]);
+
+    const stderr = process.stderr.write.mock.calls.map(c => c[0]).join('');
+    expect(stderr).toContain('x402: Requesting payment approval (0.01 USD1 on eip155:56)');
+  });
+
   it('offers the next option after the server rejects the first', async () => {
     const generator = createWalletConnectPaymentSignatures({ accepts: [bsc(U), bsc(USD1)] });
     expect((await generator.next()).value.asset).toBe(U);
