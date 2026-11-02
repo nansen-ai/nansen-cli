@@ -448,6 +448,14 @@ export function validateResearchInput(resolved, { flags = {}, options = {}, endp
 
 /** Reject an output format the CLI cannot write. */
 export function validateOutputOptions({ flags = {}, options = {} } = {}) {
+  // --fields is applied after the response arrives; check its shape here so
+  // a bad value fails before the (billed) request instead of after it.
+  if (flags.fields === true || (typeof options.fields === 'string' && options.fields.split(',').every(f => f.trim() === ''))) {
+    throw validationError([fieldError('--fields', 'missing_field', "Option '--fields' requires a value. Usage: --fields name,value_usd")]);
+  }
+  if (options.fields !== undefined && typeof options.fields !== 'string') {
+    throw validationError([fieldError('--fields', 'invalid_field_value', "Option '--fields' takes one comma-separated list. Usage: --fields name,value_usd")]);
+  }
   if (flags.format === true || (typeof options.format === 'string' && options.format.trim() === '')) {
     throw validationError([fieldError('--format', 'missing_field', "Option '--format' requires a value. Valid options are: 'json' or 'csv'")]);
   }

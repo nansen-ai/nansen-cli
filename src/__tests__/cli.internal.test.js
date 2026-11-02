@@ -3466,15 +3466,31 @@ describe('runCLI', () => {
       NansenAPIClass: function MockAPI() {
         this.lastResponseMeta = { credits: { used: 5, remaining: 100, cost: 7 } };
         this.lastEndpoint = '/api/v1/smart-money/netflow';
-        this.smartMoneyNetflow = vi.fn().mockResolvedValue({ data: [] });
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue({ data: [{ token_symbol: 'SOL' }] });
       },
     };
 
-    const result = await runCLI(['smart-money', 'netflow', '--fields', '[]'], deps);
+    const result = await runCLI(['smart-money', 'netflow', '--fields', 'no_such_field'], deps);
 
     expect(result.type).toBe('error');
     expect(errors).toEqual(['Credits: 7 (this call)']);
     expect(outputs).toHaveLength(1);
+  });
+
+  it('rejects a repeated or blank --fields before making the request', async () => {
+    const netflow = vi.fn().mockResolvedValue({ data: [] });
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI() {
+        this.smartMoneyNetflow = netflow;
+      },
+    };
+
+    for (const fields of [['--fields', 'token_symbol', '--fields', 'value_usd'], ['--fields', ' , ']]) {
+      const result = await runCLI(['research', 'smart-money', 'netflow', '--chain', 'ethereum', ...fields], deps);
+      expect(result.type).toBe('error');
+    }
+    expect(netflow).not.toHaveBeenCalled();
   });
 });
 

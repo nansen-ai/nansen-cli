@@ -422,6 +422,14 @@ describe('validateOutputOptions', () => {
     expect(() => validateOutputOptions({ flags: { format: true } })).toThrow("Option '--format' requires a value.");
     expect(() => validateOutputOptions({ options: { format: 'csv' } })).not.toThrow();
   });
+
+  it('rejects a blank or repeated --fields', () => {
+    expect(() => validateOutputOptions({ flags: { fields: true } })).toThrow("Option '--fields' requires a value.");
+    expect(() => validateOutputOptions({ options: { fields: '' } })).toThrow("Option '--fields' requires a value.");
+    expect(() => validateOutputOptions({ options: { fields: ' , ' } })).toThrow("Option '--fields' requires a value.");
+    expect(() => validateOutputOptions({ options: { fields: ['id', 'name'] } })).toThrow("Option '--fields' takes one comma-separated list.");
+    expect(() => validateOutputOptions({ options: { fields: 'id, name' } })).not.toThrow();
+  });
 });
 
 describe('validateFieldSelection', () => {
