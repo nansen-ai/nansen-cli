@@ -37,7 +37,9 @@
  *                         working while new code uses the standardised NANSEN_BASE_RPC name.
  */
 
-const DEFAULT_EVM_RPC      = 'https://eth.public-rpc.com';
+// eth.public-rpc.com started requiring an API key (HTTP 403), which broke every
+// `wallet send --chain ethereum|evm` that had no NANSEN_EVM_RPC override.
+const DEFAULT_EVM_RPC      = 'https://ethereum-rpc.publicnode.com';
 const DEFAULT_BASE_RPC     = 'https://mainnet.base.org';
 const DEFAULT_BSC_RPC      = 'https://bsc-dataseed.binance.org';
 const DEFAULT_XLAYER_RPC   = 'https://rpc.xlayer.tech';
