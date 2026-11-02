@@ -41,7 +41,7 @@ vi.mock('../privy.js', async (importOriginal) => ({
 import { showWallet, getWalletConfig, exportWallet } from '../wallet.js';
 import { submitExchange } from '../hl-client.js';
 import { CommandError } from '../api.js';
-import { buildPerpCommands, summarizeOrderResult } from '../perp.js';
+import { buildPerpCommands, summarizeOrderResult, formatPositionLeverage } from '../perp.js';
 
 // These tests exercise client-side input validation only. Validation runs
 // before any wallet resolution or network call, so a rejected input throws
@@ -1039,5 +1039,70 @@ describe('summarizeOrderResult', () => {
   it('returns [] when the response carries no statuses', () => {
     expect(summarizeOrderResult({ response: { type: 'default' } }, order())).toEqual([]);
     expect(summarizeOrderResult({}, order())).toEqual([]);
+  });
+});
+
+// The liquidation price on a positions line is Hyperliquid's own figure. On
+// cross margin it depends on the whole account's equity, so a 1x long can have
+// one close to the market. Without the leverage and margin mode next to it the
+// number read as a bug.
+describe('perp positions leverage context', () => {
+  beforeEach(() => {
+    showWallet.mockReturnValue({ name: 'x', evm: '0x' + '1'.repeat(40), provider: 'local' });
+  });
+
+  async function positionLines(positions) {
+    const lines = [];
+    const c = buildPerpCommands({ log: (m) => lines.push(m) });
+    const api = { request: vi.fn(async () => ({ positions })) };
+    const ret = await c.positions([], api, {}, { wallet: 'x' });
+    expect(ret).toBeUndefined();
+    return lines.filter((l) => /size=/.test(l));
+  }
+
+  it('shows leverage and margin mode next to the liquidation price on a 1x cross long', async () => {
+    const [line] = await positionLines([{
+      coin: 'HYPE', szi: '10', entryPx: '40.1', unrealizedPnl: '-2.5',
+      leverage: { type: 'cross', value: 1 }, liquidationPx: '1.37',
+    }]);
+    expect(line).toBe('    HYPE LONG size=10 entry=40.1 pnl=-2.5 lev=1x cross liq=1.37');
+  });
+
+  it('shows isolated margin and keeps the exchange liquidation price unchanged', async () => {
+    const [line] = await positionLines([{
+      coin: 'ETH', szi: '-0.5', entryPx: '2263.53', unrealizedPnl: '10.2',
+      leverage: { type: 'isolated', value: 5, rawUsd: '1500.0' }, liquidationPx: '2701.123456',
+    }]);
+    expect(line).toContain('ETH SHORT');
+    expect(line).toContain('lev=5x isolated liq=2701.123456');
+  });
+
+  it('keeps liq=n/a when the exchange reports no liquidation price', async () => {
+    const [line] = await positionLines([{
+      coin: 'BTC', szi: '0.1', entryPx: '77836.2', unrealizedPnl: '-10.8',
+      leverage: { type: 'cross', value: 20 }, liquidationPx: null,
+    }]);
+    expect(line).toContain('lev=20x cross liq=n/a');
+  });
+
+  it('omits lev= rather than printing a placeholder when leverage is missing', async () => {
+    const [line] = await positionLines([{
+      coin: 'SOL', szi: '1', entryPx: '150', unrealizedPnl: '0', liquidationPx: '90',
+    }]);
+    expect(line).toBe('    SOL LONG size=1 entry=150 pnl=0 liq=90');
+  });
+
+  it.each([
+    [{ type: 'cross', value: 1 }, '1x cross'],
+    [{ type: 'isolated', value: '3' }, '3x isolated'],
+    [{ value: 2 }, '2x'],
+    [{ type: 'cross' }, 'cross'],
+    [{ type: 'cross', value: null }, 'cross'],
+    [{}, null],
+    [null, null],
+    [undefined, null],
+    ['cross', null],
+  ])('formats leverage %j as %j', (input, expected) => {
+    expect(formatPositionLeverage(input)).toBe(expected);
   });
 });
