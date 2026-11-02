@@ -241,13 +241,20 @@ export function enableAutoPagination(api, opts = {}) {
         return await collectPages(async pagination => {
           const previousMeta = api.lastResponseMeta;
           try {
-            const pageResult = await request(endpoint, { ...body, pagination }, options);
+            let requestMetadata;
+            const pageResult = await request(endpoint, { ...body, pagination }, {
+              ...options,
+              onResponseMeta(meta, cached) {
+                requestMetadata = { meta, cached };
+                options.onResponseMeta?.(meta, cached);
+              },
+            });
             // The payload belongs to this exact request, unlike the instance's
             // last-* fields which concurrent non-list calls can overwrite.
-            const cached = pageResult?._meta?.fromCache === true
-              || (api.responseMetadataOnPayload !== true && api.servedFromCache === true);
+            const cached = requestMetadata?.cached ?? (pageResult?._meta?.fromCache === true
+              || (api.responseMetadataOnPayload !== true && api.servedFromCache === true));
             const payloadMeta = pageResult?.[RESPONSE_META];
-            const meta = payloadMeta ?? (
+            const meta = requestMetadata ? requestMetadata.meta : payloadMeta ?? (
               api.responseMetadataOnPayload === true ? null : api.lastResponseMeta
             );
             recordPageMetadata(meta, cached);

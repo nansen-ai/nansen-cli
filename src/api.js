@@ -1078,6 +1078,7 @@ export class NansenAPI {
     }
     const meta = readResponseMeta(paidResponse);
     this.lastResponseMeta = meta;
+    options.onResponseMeta?.(meta, false);
     if (meta && data !== null && typeof data === 'object') data[RESPONSE_META] = meta;
     return data;
   }
@@ -1115,6 +1116,7 @@ export class NansenAPI {
       let hit = false;
       const cached = getCachedResponse(endpoint, body, cacheTtl, cacheContext, meta => {
         hit = true;
+        options.onResponseMeta?.(meta, true);
         const warning = meta?.notices?.warning;
         if (warning) {
           const previous = this.lastResponseMeta;
@@ -1470,6 +1472,7 @@ export class NansenAPI {
       // durable warning separately; quota and request metadata remain live-only.
       const meta = readResponseMeta(response);
       this.lastResponseMeta = meta;
+      options.onResponseMeta?.(meta, false);
       if (meta && data !== null && typeof data === 'object') data[RESPONSE_META] = meta;
       if (useCache && cacheContext) {
         setCachedResponse(endpoint, body, data, cacheContext, meta);

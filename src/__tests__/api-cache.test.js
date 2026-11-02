@@ -355,3 +355,27 @@ it.each([null, '299 - "Cached advisory"'])('preserves live credit warnings after
   expect(api.lastResponseMeta.notices.warning).toContain('Live advisory');
   if (cachedWarning) expect(api.lastResponseMeta.notices.warning).toContain('Cached advisory');
 });
+
+
+it.each(['text', null, false, 0])('preserves paginated cached primitive metadata for %j', async payload => {
+  const api = await freshApi(payload);
+  const { enableAutoPagination } = await import('../auto-paginate.js');
+  const warning = '299 - "sui retires on 2027-02-01"';
+  fetch.mockImplementation(async () => ({
+    ok: true, status: 200,
+    headers: new Headers({ warning, 'x-request-id': 'live-id', 'x-nansen-credits-used': '5' }),
+    json: async () => payload,
+  }));
+  enableAutoPagination(api);
+  const body = { pagination: { page: 1, per_page: 10 } };
+  expect(await api.request('/api/v1/demo', body)).toBe(payload);
+  expect(api.paginatedResponseMeta.notices.warning).toBe(warning);
+  expect(api.paginatedResponseMeta.credits.used).toBe(5);
+  expect(await api.request('/api/v1/demo', body)).toBe(payload);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(api.paginatedResponseMeta).toEqual({
+    notices: { warning },
+    credits: { used: 0, remaining: null, cost: 0 },
+    pagination: { pagesFetched: 1, livePages: 0, cachedPages: 1 },
+  });
+});
