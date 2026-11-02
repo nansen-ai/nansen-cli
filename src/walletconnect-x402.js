@@ -47,6 +47,18 @@ function parseChainId(network) {
   return match ? Number(match[1]) : null;
 }
 
+// The local signer (x402-evm.js) authorizes for an hour; a server-supplied
+// timeout never gets a longer window than that.
+const MAX_PAYMENT_TIMEOUT_SECONDS = 3600;
+
+function paymentTimeoutSeconds(maxTimeoutSeconds) {
+  const seconds = typeof maxTimeoutSeconds === 'string' && /^\d+$/.test(maxTimeoutSeconds)
+    ? Number(maxTimeoutSeconds)
+    : maxTimeoutSeconds;
+  if (!Number.isSafeInteger(seconds) || seconds <= 0) return 120;
+  return Math.min(seconds, MAX_PAYMENT_TIMEOUT_SECONDS);
+}
+
 /**
  * Build EIP-712 typed data for TransferWithAuthorization (EIP-3009).
  */
@@ -112,7 +124,7 @@ export function buildEIP712TypedData({ fromAddress, requirement }) {
       to: payTo,
       value: amount,
       validAfter: now - 600, // 10 min in the past to tolerate clock skew between client and verifier
-      validBefore: now + (maxTimeoutSeconds || 120),
+      validBefore: now + paymentTimeoutSeconds(maxTimeoutSeconds),
       nonce,
     },
   };
