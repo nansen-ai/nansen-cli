@@ -12,8 +12,9 @@
  * and they are not printed either.
  *
  * Safety: clearing only ever unlinks regular files at the three paths above —
- * `.json` entries directly inside the response cache directory, and the two
- * named files. Directories and symlinks are skipped rather than followed, so a
+ * `.json` entries directly inside the response cache directory (plus temp
+ * files that a killed write left behind, once they are 10 minutes old), and
+ * the two named files. Directories and symlinks are skipped rather than followed, so a
  * clear cannot reach outside the cache it was pointed at. Everything else under
  * ~/.nansen (config.json, wallets/, quotes/, telemetry-id, saved auth) is never
  * read or deleted by the inspector. CLI startup loads config separately.
@@ -22,13 +23,13 @@
 import fs from 'fs';
 import path from 'path';
 import { openLocalFile } from './local-file.js';
+import { RESPONSE_ENTRY, RESPONSE_TEMP, isStaleTemp } from './response-cache-files.js';
 
 import { getCacheDir, getConfigDir, DEFAULT_CACHE_TTL, NansenError, ErrorCode } from './api.js';
 import { getCostMapFile, COST_MAP_TTL_MS } from './cost-cache.js';
 import { getUpdateCheckFile, UPDATE_CHECK_TTL_MS } from './update-check.js';
 
 const SECOND = 1000;
-const RESPONSE_ENTRY = /^[0-9a-f]{64}\.json$/;
 
 /** Cache names, in report order. */
 export const CACHE_NAMES = ['responses', 'cost-map', 'update-check'];
@@ -106,7 +107,7 @@ function readTimestamp(file, field) {
   }
 }
 
-function listDirEntries(dir, { readMetadata = false } = {}) {
+function listDirEntries(dir, { readMetadata = false, includeStaleTemps = false } = {}) {
   let names;
   try {
     const dirStat = fs.lstatSync(dir);
@@ -123,16 +124,25 @@ function listDirEntries(dir, { readMetadata = false } = {}) {
     throw fsError('list', dir, error);
   }
   const entries = [];
+  const now = Date.now();
   for (const name of names) {
     // `name` comes from this directory's own listing, not from a caller. The
     // strict digest shape both identifies files written by api.js and prevents
     // path separators or traversal segments from reaching path.join(). The
     // lstat below then rejects a final-component symlink before any read/delete.
-    if (!RESPONSE_ENTRY.test(name)) continue;
+    // A temp file is a write that never finished renaming onto its entry.
+    // Only stale ones are listed (for clearing), so a write in progress is
+    // never deleted, and they have no timestamp metadata to read.
+    const isTemp = includeStaleTemps && RESPONSE_TEMP.test(name);
+    if (!isTemp && !RESPONSE_ENTRY.test(name)) continue;
     const file = path.join(dir, name);
     try {
       const stat = fs.lstatSync(file);
       if (!stat.isFile()) continue;
+      if (isTemp) {
+        if (isStaleTemp(name, stat, now)) entries.push({ file, bytes: stat.size });
+        continue;
+      }
       const metadata = readMetadata ? readTimestamp(file, 'timestamp') : {};
       if (metadata.raced) continue;
       entries.push({ file, bytes: stat.size, ...metadata });
@@ -256,7 +266,7 @@ export function clearCaches(target) {
     if (!wanted.includes(ns.name)) continue;
     let entries = 0;
     let bytes = 0;
-    for (const entry of listEntries(ns, { readMetadata: false })) {
+    for (const entry of listEntries(ns, { readMetadata: false, includeStaleTemps: true })) {
       try {
         fs.unlinkSync(entry.file);
       } catch (error) {
