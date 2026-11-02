@@ -90,7 +90,7 @@ After creation, the CLI automatically saves the password:
 - **OS keychain** (macOS Keychain, Linux secret-tool, Windows Credential Manager) — secure, preferred
 - **~/.nansen/wallets/.credentials file** — insecure fallback when no keychain is available (e.g. containers, CI)
 
-**All future wallet operations retrieve the password automatically** — no env var or human input needed.
+**Once the password is saved, future wallet operations retrieve it automatically** — no env var or human input needed (unless it could not be saved; see below).
 
 If neither store can be written, `wallet create` still succeeds but prints `CRITICAL: Password could not be saved anywhere`. The password is then not persisted: keep `NANSEN_WALLET_PASSWORD` set for every later wallet command, or the wallet cannot be decrypted.
 
@@ -108,7 +108,7 @@ If the `.credentials` file fallback is used, the CLI prints a warning on every o
 - **NEVER generate a password yourself** — always ask the human user
 - **NEVER store the password** in files, memory, logs, or conversation history
 - **NEVER use `--human` flag** — that enables interactive prompts which agents cannot handle
-- After wallet creation, you do NOT need the password for future operations — the keychain handles it
+- After wallet creation, you do NOT need the password for future operations if it was saved (keychain or `.credentials`). If create printed `CRITICAL: Password could not be saved anywhere`, keep `NANSEN_WALLET_PASSWORD` set
 - If you get a `PASSWORD_REQUIRED` error, ask the user to provide their password again
 
 ## Create
@@ -211,7 +211,7 @@ For detailed migration steps (from `~/.nansen/.env`, `.credentials`, or env-var-
 
 | Var | Purpose |
 |-----|---------|
-| `NANSEN_WALLET_PASSWORD` | Wallet encryption password — only needed for initial `wallet create`. After that, the OS keychain handles it. |
+| `NANSEN_WALLET_PASSWORD` | Wallet encryption password — only needed for initial `wallet create` when the password is saved (keychain or `.credentials`). If it could not be saved, keep it set for every wallet command. |
 | `NANSEN_API_KEY` | API key (can also be saved via `nansen login --human`) |
 | `PRIVY_APP_ID` | Privy application ID (required for `--provider privy`) |
 | `PRIVY_APP_SECRET` | Privy application secret (required for `--provider privy`) |
