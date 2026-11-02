@@ -2298,7 +2298,7 @@ export function buildCommands(deps = {}) {
   };
 
   // 'research' delegates to the category handlers defined above
-  const RESEARCH_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'points', 'prediction-market']);
+  const RESEARCH_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'perp', 'portfolio', 'prediction-market']);
 
   // The analytics-only perp handler, captured before the trading wrapper below
   // replaces cmds['perp']. Both the wrapper and the research dispatch route to
@@ -2323,7 +2323,7 @@ export function buildCommands(deps = {}) {
       return researchSub(args, apiInstance, flags, options);
     }
     const category = RESEARCH_CATEGORY_ALIASES[rawCategory] || rawCategory;
-    if (!RESEARCH_CATEGORIES.has(category)) {
+    if (!RESEARCH_CATEGORIES.has(category) && !UNAVAILABLE_COMMANDS.has(category)) {
       throw unknownCommandError('research category', rawCategory, [...RESEARCH_CATEGORIES, ...RESEARCH_SUBCOMMANDS]);
     }
     // `research perp` reaches only the analytics half (screener/leaderboard) —
@@ -2455,6 +2455,11 @@ USAGE:
   return cmds;
 }
 
+// Commands whose endpoint was removed. Their handler still answers with
+// COMMAND_UNAVAILABLE, both as `nansen <name>` and `nansen research <name>`,
+// but they are left out of the schema, help listings and "did you mean"
+// suggestions so agents do not spend a call on them.
+export const UNAVAILABLE_COMMANDS = new Set(['points']);
 // Categories that moved under 'research'
 export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'portfolio']);
 // Subcommands that moved under 'trade'
@@ -2735,7 +2740,11 @@ export async function runCLI(rawArgs, deps = {}) {
     return { type: 'version', data: VERSION };
   }
 
-  if (command === 'help' || flags.help || flags.h) {
+  // A removed command has no help to show: let its handler answer --help with
+  // the same COMMAND_UNAVAILABLE error, rather than printing a generic listing.
+  const unavailableCommand = UNAVAILABLE_COMMANDS.has(command)
+    || (command === 'research' && UNAVAILABLE_COMMANDS.has(subcommand));
+  if (command === 'help' || ((flags.help || flags.h) && !unavailableCommand)) {
     // Help for an offline command still owes the zero-network contract: the
     // cost-map refresh fetches the OpenAPI spec and writes ~/.nansen/cost-map.json.
     if (!isOfflineCommand && !isAuthMutation) await refreshCostMapIfStale();
@@ -2861,7 +2870,7 @@ export async function runCLI(rawArgs, deps = {}) {
     // or an unquoted shell variable under zsh (which, unlike bash, does not
     // word-split `$var`). Point the user straight at the cause instead of a bare
     // "Unknown command" that reads like a spurious failure.
-    const available = Object.keys(commands);
+    const available = Object.keys(commands).filter(name => !UNAVAILABLE_COMMANDS.has(name));
     const error = /\s/.test(command)
       ? new NansenError(
         `Unknown command: "${command}". This looks like multiple words passed as one argument — check your shell quoting (use \`nansen trade --help\`, not \`nansen "trade --help"\`).`,

@@ -105,7 +105,11 @@ describe('CLI Smoke Tests', () => {
     expect(combined).toContain('trade quote');
   });
 
-  it.each(['points leaderboard', 'research points leaderboard'])('%s fails without suggesting another unavailable command', (command) => {
+  it.each([
+    'points leaderboard', 'research points leaderboard',
+    // --help on a removed command gives the same answer, not a help page for it.
+    'points --help', 'research points --help', 'research points leaderboard --help', 'points leaderboard -h',
+  ])('%s fails without suggesting another unavailable command', (command) => {
     const { stdout, stderr, exitCode } = runCLI(command, {
       env: { NO_UPDATE_NOTIFIER: '1', NANSEN_NO_TELEMETRY: '1' }
     });
@@ -117,6 +121,28 @@ describe('CLI Smoke Tests', () => {
       error: 'The points leaderboard endpoint has been removed. Run "nansen research" to explore other analytics commands.'
     });
     expect(stderr).toBe('');
+  });
+
+  it('keeps the removed points leaderboard out of the schema and lists --stream', () => {
+    const env = { NO_UPDATE_NOTIFIER: '1', NANSEN_NO_TELEMETRY: '1' };
+    const compact = JSON.parse(runCLI('schema', { env }).stdout);
+    expect(compact.commands.map(c => c.command).filter(c => c.includes('points'))).toEqual([]);
+    expect(compact.globalOptions.split(', ')).toContain('stream');
+
+    const full = JSON.parse(runCLI('schema --full', { env }).stdout);
+    expect(full.commands.research.subcommands.points).toBeUndefined();
+    expect(full.globalOptions.stream.type).toBe('boolean');
+
+    const research = JSON.parse(runCLI('research', { env }).stdout);
+    expect(research.data.categories).not.toContain('points');
+    expect(runCLI('research --help', { env }).stdout).not.toMatch(/\bpoints\b/);
+
+    // A typo is not steered towards the removed command.
+    const typo = JSON.parse(runCLI('research pointz', { env }).stdout);
+    expect(typo.code).toBe('UNKNOWN_COMMAND');
+    expect(typo.error).not.toMatch(/\bpoints\b/);
+    const topLevelTypo = JSON.parse(runCLI('pointz', { env }).stdout);
+    expect(topLevelTypo.details.available).not.toContain('points');
   });
 
   // =================== JSON Output Format ===================

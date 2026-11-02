@@ -127,7 +127,9 @@ const CATEGORY_ALIASES = { tgm: 'token', sm: 'smart-money', prof: 'profiler', po
 const TOP_LEVEL_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'portfolio', 'prediction-market']);
 // Subcommand spellings a handler accepts besides the schema name.
 const SUBCOMMAND_ALIASES = { portfolio: { 'defi-holdings': 'defi' } };
-// Categories whose handler does its own routing and never calls the API.
+// Categories whose endpoint was removed. They are left out of the schema so
+// agents do not call them, but the handler still answers with
+// COMMAND_UNAVAILABLE, so they must skip validation instead of failing it.
 const UNVALIDATED_CATEGORIES = new Set(['points']);
 
 /**
@@ -147,6 +149,7 @@ export function resolveResearchCommand(schema, command, subArgs) {
     const raw = subArgs[0];
     if (!raw || raw === 'help') return null;
     category = Object.hasOwn(CATEGORY_ALIASES, raw) ? CATEGORY_ALIASES[raw] : raw;
+    if (UNVALIDATED_CATEGORIES.has(category)) return null;
     if (!Object.hasOwn(research, category)) {
       throw unknownCommandError('research category', raw, Object.keys(research));
     }

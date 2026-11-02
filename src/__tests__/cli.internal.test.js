@@ -6806,8 +6806,16 @@ describe('SCHEMA structure', () => {
     expect(researchSubs).toContain('search');
     expect(researchSubs).toContain('perp');
     expect(researchSubs).toContain('portfolio');
-    expect(researchSubs).toContain('points');
     expect(researchSubs).toContain('prediction-market');
+  });
+
+  it('leaves the removed points leaderboard out of the schema', () => {
+    expect(SCHEMA.commands.research.subcommands.points).toBeUndefined();
+  });
+
+  it('lists --stream as a global option', () => {
+    expect(SCHEMA.globalOptions.stream).toMatchObject({ type: 'boolean' });
+    expect(SCHEMA.globalOptions.stream.description).toContain('NDJSON');
   });
 
   it('should populate research subcommands from deprecated entries', () => {

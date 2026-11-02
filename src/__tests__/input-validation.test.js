@@ -52,7 +52,6 @@ function check(path, args = {}, flags = {}) {
 function researchLeaves() {
   const leaves = [];
   for (const [category, entry] of Object.entries(SCHEMA.commands.research.subcommands)) {
-    if (category === 'points') continue;
     if (entry.subcommands) {
       for (const [sub, leaf] of Object.entries(entry.subcommands)) leaves.push([['research', category, sub], leaf]);
     } else {
@@ -199,6 +198,12 @@ describe('resolveResearchCommand', () => {
     expect(resolveResearchCommand(SCHEMA, 'research', ['token', 'help'])).toBeNull();
     expect(resolveResearchCommand(SCHEMA, 'perp', ['order'])).toBeNull();
     expect(resolveResearchCommand(SCHEMA, 'wallet', ['list'])).toBeNull();
+  });
+
+  it('leaves the removed points category to its handler although the schema omits it', () => {
+    expect(SCHEMA.commands.research.subcommands.points).toBeUndefined();
+    expect(resolveResearchCommand(SCHEMA, 'research', ['points', 'leaderboard'])).toBeNull();
+    expect(resolveResearchCommand(SCHEMA, 'research', ['points'])).toBeNull();
   });
 
   it('rejects a subcommand typo with the closest match', () => {

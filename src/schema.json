@@ -2388,14 +2388,6 @@
           },
           "description": "Polymarket prediction market analytics"
         },
-        "points": {
-          "description": "Nansen Points analytics",
-          "subcommands": {
-            "leaderboard": {
-              "description": "Points leaderboard (unavailable)"
-            }
-          }
-        },
         "chain-rank": {
           "endpoint": "/api/v1/chains/chain-rank",
           "description": "Rank chains by growth metrics",
@@ -3944,6 +3936,10 @@
     "table": {
       "type": "boolean",
       "description": "Format output as human-readable table"
+    },
+    "stream": {
+      "type": "boolean",
+      "description": "Print one JSON object per line (NDJSON), one line per result row, instead of the {success, data} envelope (alias: -s). Takes precedence over --table and --format csv. A response without a row list prints as one line; an empty row list prints nothing. Errors are not streamed and print the usual error envelope."
     },
     "fields": {
       "type": "string",
