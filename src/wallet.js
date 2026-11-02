@@ -1182,7 +1182,7 @@ export function buildWalletCommands(deps = {}) {
         },
 
         'send': async () => {
-          rejectBlankOption(options.token, 'token', '<token-address>');
+          rejectBlankOption(options.token, 'token', '<symbol|address>');
           rejectBlankOption(options.wallet, 'wallet', '<name>');
           const { sendTokens } = await import('./transfer.js');
 
@@ -1196,7 +1196,7 @@ export function buildWalletCommands(deps = {}) {
           }
 
           if (!options.chain) {
-            throw new CommandError('--chain <evm|solana> is required', 'MISSING_ARGS');
+            throw new CommandError('--chain <evm|ethereum|base|solana> is required', 'MISSING_ARGS');
           }
 
           if (!['evm', 'solana', 'ethereum', 'base'].includes(options.chain)) {
@@ -1252,7 +1252,7 @@ export function buildWalletCommands(deps = {}) {
               log(`  From:   ${result.from}`);
               log(`  To:     ${options.to}`);
               log(`  Amount: ${result.amount || (isMax ? 'max' : String(options.amount))}`);
-              log(`  Token:  ${options.token || '(native)'}`);
+              log(`  Token:  ${result.token || '(native)'}`);
               log(`  Chain:  ${options.chain}`);
               if (result.estimatedFee) log(`  Fee:    ${result.estimatedFee}`);
               log('');
@@ -1266,7 +1266,7 @@ export function buildWalletCommands(deps = {}) {
             log(`  From:    ${result.from}`);
             log(`  To:      ${result.to}`);
             log(`  Amount:  ${result.amount}`);
-            log(`  Token:   ${result.token}`);
+            log(`  Token:   ${result.token || '(native)'}`);
             if (result.blockNumber) log(`  Block:   ${result.blockNumber}`);
             log(`  Status:  ${result.confirmed ? 'confirmed' : 'pending'}`);
             log(`  Explorer: ${result.explorer}`);
@@ -1363,8 +1363,15 @@ USAGE:
   nansen wallet <command> [options]
 
 COMMANDS:
-  create [--name <label>] [--provider <local|privy>] [--unsafe-no-password]
-                             Create a new wallet pair (EVM + Solana)
+  create [--name <label>] [--provider <local|privy>] [--unsafe-no-password] [--human]
+                             Create a new wallet pair (EVM + Solana). A local wallet needs a
+                             password of at least 12 characters: set NANSEN_WALLET_PASSWORD
+                             (a password saved by an earlier create is reused); when neither
+                             exists, --human prompts for one. Without one it fails with
+                             PASSWORD_REQUIRED (it never prompts on its own). The password is
+                             then saved to the OS keychain, or to ~/.nansen/wallets/.credentials
+                             (plaintext) when no keychain is available. If neither can be
+                             written, keep NANSEN_WALLET_PASSWORD set for later commands
   list                       List all wallets
   show <name>                Show wallet addresses
   export <name> [--reveal | --file <path>]
@@ -1373,10 +1380,11 @@ COMMANDS:
                              --file writes them to a new file only you can read (0600)
   default <name>             Set the default wallet
   delete <name>              Delete a wallet
-  send --to <address> --amount <number> --chain <evm|solana> [--token <address>] [--wallet <name>] [--max] [--dry-run]
+  send --to <address> --amount <number> --chain <evm|ethereum|base|solana> [--token <symbol|address>] [--wallet <name>] [--max] [--dry-run]
                              Send tokens or native currency (--max sends entire balance, --dry-run previews without sending)
   forget-password            Remove saved password from all stores
-  secure                     Migrate password from insecure storage to OS keychain
+  secure                     Move a password from ~/.nansen/wallets/.credentials or NANSEN_WALLET_PASSWORD
+                             into the OS keychain (wallet create already uses the keychain when it can)
 
 OPTIONS:
   --name <label>             Wallet name (default: "default")
@@ -1384,19 +1392,23 @@ OPTIONS:
                              "privy" creates server-side wallets via Privy API
   --to <address>             Recipient address (required for send)
   --amount <number>          Amount to send in human-readable format (required unless --max)
-  --chain <evm|solana>       Blockchain to use (required for send)
-  --token <address>          Token contract/mint address (optional, sends native if omitted)
+  --chain <chain>            Blockchain to use (required for send): evm (Ethereum), ethereum, base, solana
+  --token <symbol|address>   Token to send: USDC, USDT, or a token contract/mint address
+                             (optional, sends native if omitted)
   --wallet <name>            Wallet to use (optional, uses default if omitted; use "walletconnect" or "wc" for WalletConnect, EVM only)
   --max                      Send entire balance (deducts gas for native transfers)
   --reveal                   Export: print private keys in plaintext to stdout (explicit acknowledgement)
   --file <path>              Export: write private keys to <path> (created 0600, refuses to overwrite)
   --unsafe-no-password       Skip encryption — private keys stored UNENCRYPTED on disk (local only)
   --human                    Enable interactive prompts (for human terminal use only)
+  --dry-run                  Send: preview the transaction without broadcasting
 
 PASSWORD RESOLUTION (automatic, in order):
   1. NANSEN_WALLET_PASSWORD env var
   2. OS keychain (saved automatically on wallet create)
-  3. Interactive prompt (only with --human flag)
+  3. ~/.nansen/wallets/.credentials (plaintext fallback, saved on wallet create when no
+     keychain is available; run \`nansen wallet secure\` to move it to the keychain)
+  4. Interactive prompt (only with --human flag)
 
 ENVIRONMENT:
   NANSEN_WALLET_PASSWORD     Wallet encryption password
@@ -1428,6 +1440,7 @@ EXAMPLES:
   nansen wallet default trading
   nansen wallet send --to 0x742d35Cc... --amount 1.5 --chain evm
   nansen wallet send --to 9WzDXw... --amount 0.1 --chain solana --token So11...
+  nansen wallet send --to 0x742d35Cc... --amount 25 --chain base --token USDC
   nansen wallet forget-password
 `);
           return;

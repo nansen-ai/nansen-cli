@@ -46,6 +46,49 @@ function validateSolanaAddress(address) {
   } catch { return { valid: false, error: 'Invalid Solana address' }; }
 }
 
+// ============= Token Symbols =============
+
+// Well-known stablecoin symbols `wallet send --token` accepts in place of a
+// contract address or mint, per chain the command supports. `evm` signs for
+// chain ID 1, so it takes the Ethereum addresses. Base and Solana match the
+// `trade` symbol map (trading.js TOKEN_SYMBOLS), so a symbol means the same
+// token in both commands.
+const ETHEREUM_STABLECOINS = {
+  USDC: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+  USDT: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+};
+const SEND_TOKEN_SYMBOLS = {
+  ethereum: ETHEREUM_STABLECOINS,
+  evm: ETHEREUM_STABLECOINS,
+  base: {
+    USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    USDT: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
+  },
+  solana: {
+    USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+  },
+};
+
+/**
+ * Turn a `--token` value into a token address for `chain`. A known symbol
+ * (case-insensitive) maps to its address; an address passes through as given.
+ * Anything else fails here, before an RPC call, instead of reaching the node as
+ * a malformed address (which answered with a bare "Invalid params").
+ */
+function resolveSendToken(token, chain) {
+  if (token == null) return null;
+  const symbols = SEND_TOKEN_SYMBOLS[chain] || {};
+  const known = symbols[String(token).toUpperCase()];
+  if (known) return known;
+  const check = chain === 'solana' ? validateSolanaAddress(token) : validateEvmAddress(token);
+  if (check.valid) return token;
+  const kind = chain === 'solana' ? 'mint address' : 'contract address';
+  const names = Object.keys(symbols);
+  const choices = names.length ? `, or one of: ${names.join(', ')}` : '';
+  throw new Error(`Unknown token "${token}" on ${chain}. Pass the token's ${kind}${choices}. Omit --token to send the native currency.`);
+}
+
 // ============= Amount Parsing =============
 
 function parseAmount(amountStr, decimals) {
@@ -657,7 +700,7 @@ async function broadcastTransaction(signedTx, chain) {
 
 // ============= Public API =============
 
-export { parseAmount, formatAmount, signEd25519, encodeCompactU16, base58Decode, base58DecodePubkey, deriveATA, isOnEd25519Curve, validateEvmAddress, validateSolanaAddress, bigIntToHex };
+export { parseAmount, formatAmount, signEd25519, encodeCompactU16, base58Decode, base58DecodePubkey, deriveATA, isOnEd25519Curve, validateEvmAddress, validateSolanaAddress, bigIntToHex, resolveSendToken };
 
 /**
  * Send tokens via Privy server wallet. EVM uses Privy's sendTransaction (handles gas/nonce).
@@ -779,6 +822,7 @@ export async function sendTokens({ to, amount, chain, token = null, wallet = nul
   const validate = chain === 'solana' ? validateSolanaAddress : validateEvmAddress;
   const v = validate(to);
   if (!v.valid) throw new Error(`Invalid recipient: ${v.error}`);
+  token = resolveSendToken(token, chain);
 
   if (walletconnect) {
     if (chain === 'solana') {

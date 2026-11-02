@@ -3455,11 +3455,25 @@
       "description": "Wallet management. x402 auto-payments are guarded by a client-side policy: per-payment USD cap via NANSEN_X402_MAX_AMOUNT (default 1.00; 'unlimited' to disable), an optional cumulative cap on what one CLI process signs via NANSEN_X402_SESSION_MAX_AMOUNT (environment only; unset or 'unlimited' = no limit, an invalid value refuses every payment; a payment the server cleanly rejects is not counted; it resets with every process), and an optional recipient allowlist via NANSEN_X402_ALLOWED_PAYTO (comma-separated addresses). Each auto-payment and its outcome are recorded in ~/.nansen/x402/payments.jsonl.",
       "subcommands": {
         "create": {
-          "description": "Create a new wallet. Explicitly blank --name values are rejected for local and Privy wallets.",
+          "description": "Create a new wallet (EVM + Solana). A local wallet needs a password of at least 12 characters from NANSEN_WALLET_PASSWORD (or the password an earlier wallet create saved); the command does not prompt unless --human is passed, and without a password it fails with PASSWORD_REQUIRED. The password is then saved to the OS keychain, or to ~/.nansen/wallets/.credentials (plaintext) when no keychain is available, so later wallet commands find it. If neither can be written, the wallet is still created but the password is not saved, and NANSEN_WALLET_PASSWORD must stay set for every later wallet command. Privy wallets need no password. Explicitly blank --name values are rejected for local and Privy wallets.",
           "options": {
+            "name": {
+              "type": "string",
+              "default": "default",
+              "description": "Wallet name"
+            },
+            "provider": {
+              "type": "string",
+              "enum": ["local", "privy"],
+              "description": "local (default) stores encrypted keys on disk; privy creates a server-side wallet and needs PRIVY_APP_ID and PRIVY_APP_SECRET. NANSEN_WALLET_PROVIDER=privy also selects privy"
+            },
             "unsafe-no-password": {
               "type": "boolean",
               "description": "Skip encryption; private keys are stored unencrypted on disk (local only)"
+            },
+            "human": {
+              "type": "boolean",
+              "description": "Prompt for the password in an interactive terminal when none is set or saved (for humans; agents set NANSEN_WALLET_PASSWORD instead)"
             }
           },
           "examples": [
@@ -3505,7 +3519,7 @@
           ]
         },
         "send": {
-          "description": "Send tokens or native currency. Explicitly blank --token and --wallet values are rejected; omit them for native currency and the default wallet.",
+          "description": "Send tokens or native currency. --token takes USDC, USDT or a token contract/mint address. Explicitly blank --token and --wallet values are rejected; omit them for native currency and the default wallet.",
           "options": {
             "to": {
               "type": "string",
@@ -3525,10 +3539,23 @@
             "max": {
               "type": "boolean",
               "description": "Send the entire spendable balance instead of --amount"
+            },
+            "token": {
+              "type": "string",
+              "description": "Token to send: USDC, USDT, or a token contract/mint address. Omit to send the chain's native currency"
+            },
+            "wallet": {
+              "type": "string",
+              "description": "Wallet to send from (default wallet if omitted); walletconnect or wc for a WalletConnect session (EVM only)"
+            },
+            "dry-run": {
+              "type": "boolean",
+              "description": "Preview the transaction without broadcasting it"
             }
           },
           "examples": [
             "nansen wallet send --to <address> --amount 1.5 --chain evm",
+            "nansen wallet send --to <address> --amount 25 --chain base --token USDC",
             "nansen wallet send --to <address> --max --chain solana"
           ]
         },
