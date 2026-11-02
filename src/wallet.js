@@ -1370,7 +1370,8 @@ COMMANDS:
                              exists, --human prompts for one. Without one it fails with
                              PASSWORD_REQUIRED (it never prompts on its own). The password is
                              then saved to the OS keychain, or to ~/.nansen/wallets/.credentials
-                             (plaintext) when no keychain is available
+                             (plaintext) when no keychain is available. If neither can be
+                             written, keep NANSEN_WALLET_PASSWORD set for later commands
   list                       List all wallets
   show <name>                Show wallet addresses
   export <name> [--reveal | --file <path>]

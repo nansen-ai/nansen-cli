@@ -92,6 +92,8 @@ After creation, the CLI automatically saves the password:
 
 **All future wallet operations retrieve the password automatically** — no env var or human input needed.
 
+If neither store can be written, `wallet create` still succeeds but prints `CRITICAL: Password could not be saved anywhere`. The password is then not persisted: keep `NANSEN_WALLET_PASSWORD` set for every later wallet command, or the wallet cannot be decrypted.
+
 If the `.credentials` file fallback is used, the CLI prints a warning on every operation. To migrate to secure storage later, run `nansen wallet secure`.
 
 ### Password resolution order (automatic)
