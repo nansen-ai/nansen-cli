@@ -907,9 +907,16 @@ EXAMPLES:
       const state = options.state;
       const mint = options.mint ? resolveTokenAddress(options.mint, 'solana') : undefined;
       const limit = options.limit || 20;
-      const offset = options.offset || 0;
+      // parseArgs keeps numbers as strings; the footer below adds to offset.
+      const offset = options.offset == null ? 0 : Number(options.offset);
       const sort = options.sort;
       const dir = options.dir || 'desc';
+
+      if (!/^\d+$/.test(String(options.offset ?? 0)) || !Number.isSafeInteger(offset)) {
+        log(`Error: --offset must be a non-negative integer; received: ${options.offset}`);
+        exit(1);
+        return;
+      }
 
       if (mint) {
         const mintValidation = validateTokenAddress(mint, 'solana');
