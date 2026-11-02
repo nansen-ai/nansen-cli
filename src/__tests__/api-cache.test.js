@@ -338,16 +338,46 @@ describe('response cache housekeeping', () => {
     expect(left.filter(name => /^[0-9a-f]{64}\.json$/.test(name))).toHaveLength(2);
   });
 
-  it('sweeps once per process, not on every write', async () => {
+  it('does not sweep again within the sweep interval', async () => {
     const { getCacheDir, setCachedResponse } = await freshCache();
     const dir = getCacheDir();
     setCachedResponse('/api/v1/first', {}, { n: 1 });
     const readdir = vi.spyOn(fs, 'readdirSync');
+    const start = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(start + 59 * 60 * 1000);
 
     setCachedResponse('/api/v1/second', {}, { n: 2 });
 
     expect(readdir).not.toHaveBeenCalled();
+    vi.mocked(Date.now).mockRestore();
     expect(fs.readdirSync(dir)).toHaveLength(2);
+  });
+
+  it('sweeps again once the sweep interval has passed', async () => {
+    const { getCacheDir, setCachedResponse } = await freshCache();
+    const dir = getCacheDir();
+    setCachedResponse('/api/v1/first', {}, { n: 1 });
+    const start = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(start + 61 * 60 * 1000);
+    const readdir = vi.spyOn(fs, 'readdirSync');
+
+    setCachedResponse('/api/v1/second', {}, { n: 2 });
+
+    expect(readdir).toHaveBeenCalledWith(dir);
+  });
+
+  it('keeps entries a longer --cache-ttl in this process may still read', async () => {
+    const { getCacheDir, getCachedResponse, setCachedResponse } = await freshCache();
+    const dir = getCacheDir();
+    expect(getCachedResponse('/api/v1/long-ttl', {}, 259200)).toBeNull();
+    const twoDays = plant(dir, entryName('a'), 48 * HOUR);
+    const fourDays = plant(dir, entryName('b'), 96 * HOUR);
+
+    setCachedResponse('/api/v1/new', {}, { fresh: true });
+
+    const left = fs.readdirSync(dir);
+    expect(left).toContain(twoDays);
+    expect(left).not.toContain(fourDays);
   });
 
   it('keeps the request successful when the sweep fails', async () => {
@@ -386,7 +416,7 @@ describe('response cache housekeeping', () => {
     const staleTemp = plant(dir, tempName('b'), 11 * 60 * 1000);
     const liveTemp = plant(dir, tempName('c'), 1000);
 
-    clearCache();
+    expect(clearCache()).toBe(2);
 
     expect(fs.readdirSync(dir)).toEqual([liveTemp]);
     expect(fs.readdirSync(dir)).not.toContain(staleTemp);
