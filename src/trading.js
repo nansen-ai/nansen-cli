@@ -3602,7 +3602,9 @@ EXAMPLES:
         // --quote-index pins a specific quote (no fallback)
         let pinIndex = null;
         if (options['quote-index'] != null) {
-          pinIndex = parseInt(options['quote-index'], 10);
+          // parseInt alone would read "1.9" or "1abc" as 1 and pin a quote the user did not pick.
+          const rawIndex = String(options['quote-index']).trim();
+          pinIndex = /^\d+$/.test(rawIndex) ? Number(rawIndex) : NaN;
           if (!Number.isInteger(pinIndex) || pinIndex < 0 || pinIndex >= allQuotes.length) {
             throw new CommandError(
               `❌ Invalid --quote-index "${options['quote-index']}". Must be an integer between 0 and ${allQuotes.length - 1}.`,
