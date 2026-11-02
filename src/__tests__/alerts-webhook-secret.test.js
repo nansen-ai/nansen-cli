@@ -103,6 +103,12 @@ describe('webhook secret from stdin', () => {
     expect(err.message).toContain('looks like a redacted value');
   });
 
+  it('accepts a real secret that contains asterisks', async () => {
+    const { api, cmd } = setup({ stdin: Readable.from(['abc****defghijklmnop']) });
+    await cmd(['create'], api, { 'webhook-secret-stdin': true }, { ...CREATE, webhook: HOOK });
+    expect(sentSecret(api)).toBe('abc****defghijklmnop');
+  });
+
   it('requires --webhook and does not read stdin without it', async () => {
     const stdin = new PassThrough();
     const { api, cmd } = setup({ stdin });
@@ -153,6 +159,14 @@ describe('webhook secret from the environment', () => {
     expect(JSON.stringify(api.alertsCreate.mock.calls[0][0])).not.toContain(ENV_SECRET);
     await cmd(['update', 'a1'], api, {}, { name: 'renamed' });
     expect(api.alertsUpdate.mock.calls[0][0].channels).toBeUndefined();
+  });
+
+  it.each([`${ENV_SECRET}\nsecond-line`, `${ENV_SECRET}\u0007`])('rejects a multi-line or control-character value without echoing it', async (value) => {
+    const { api, cmd } = setup({ env: { [WEBHOOK_SECRET_ENV]: value } });
+    const err = await failure(cmd(['create'], api, {}, { ...CREATE, webhook: HOOK }));
+    expect(err.code).toBe('INVALID_PARAMS');
+    expect(JSON.stringify(formatError(err))).not.toContain(ENV_SECRET);
+    expect(api.alertsCreate).not.toHaveBeenCalled();
   });
 
   it('treats a blank variable as unset', async () => {
@@ -236,20 +250,29 @@ describe('webhook secret is never printed', () => {
     expect(JSON.stringify(formatError(err))).not.toContain(ENV_SECRET);
   });
 
-  it('prints neither the stdin secret nor the environment secret through runCLI', async () => {
+  async function runCreate(extraArgs, deps) {
     const out = [];
     const record = (...a) => out.push(a.join(' '));
+    const sent = [];
     class FakeAPI {
-      async alertsCreate(p) { return { id: 'new', ...p }; }
+      async alertsCreate(p) { sent.push(p); return { id: 'new', ...p }; }
     }
     await runCLI(['alerts', 'create', '--name', 'x', '--type', 'sm-token-flows', '--chains', 'ethereum', '--inflow-1h-min', '1',
-      '--webhook', HOOK, '--webhook-secret-stdin'], {
-      output: record, errorOutput: record, exit: vi.fn(), NansenAPIClass: FakeAPI,
-      env: { [WEBHOOK_SECRET_ENV]: ENV_SECRET }, stdin: Readable.from([STDIN_SECRET]),
-    });
-    const text = out.join('\n');
+      '--webhook', HOOK, ...extraArgs], { output: record, errorOutput: record, exit: vi.fn(), NansenAPIClass: FakeAPI, ...deps });
+    return { text: out.join('\n'), sent };
+  }
+
+  it('sends the stdin secret but does not print it through runCLI', async () => {
+    const { text, sent } = await runCreate(['--webhook-secret-stdin'], { env: {}, stdin: Readable.from([`${STDIN_SECRET}\n`]) });
+    expect(sent[0].channels[0].data.secret).toBe(STDIN_SECRET);
     expect(text).toContain('new');
     expect(text).not.toContain(STDIN_SECRET);
+  });
+
+  it('sends the environment secret but does not print it through runCLI', async () => {
+    const { text, sent } = await runCreate([], { env: { [WEBHOOK_SECRET_ENV]: ENV_SECRET }, stdin: Readable.from([]) });
+    expect(sent[0].channels[0].data.secret).toBe(ENV_SECRET);
+    expect(text).toContain('new');
     expect(text).not.toContain(ENV_SECRET);
   });
 });

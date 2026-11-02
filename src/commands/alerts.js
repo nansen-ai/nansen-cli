@@ -6,7 +6,7 @@
 import { NansenError, ErrorCode } from '../api.js';
 import { parseCsvOption } from '../query-options.js';
 import { unknownCommandError } from '../input-validation.js';
-import { readWebhookSecretInput } from '../auth-key-input.js';
+import { hasControlChars, readWebhookSecretInput } from '../auth-key-input.js';
 
 // ============= Webhook signing secret input =============
 
@@ -48,8 +48,12 @@ export async function resolveWebhookSecret(options, flags, { env = process.env, 
     return { value, source: '--webhook-secret-stdin' };
   }
   const value = typeof env?.[WEBHOOK_SECRET_ENV] === 'string' ? env[WEBHOOK_SECRET_ENV].trim() : '';
-  if (value && options.webhook) return { value, source: WEBHOOK_SECRET_ENV };
-  return undefined;
+  if (!value || !options.webhook) return undefined;
+  // Same rule as stdin: a line break means more than one value.
+  if (hasControlChars(value)) {
+    throw new NansenError(`${WEBHOOK_SECRET_ENV} must be a single line without control characters.`, ErrorCode.INVALID_PARAMS);
+  }
+  return { value, source: WEBHOOK_SECRET_ENV };
 }
 
 // ============= Channel secret redaction =============
@@ -915,7 +919,9 @@ USAGE:
         if (options.telegram) channels.push({ type: 'telegram', data: { chatId: String(options.telegram) } });
         if (options.slack) channels.push({ type: 'slack', data: { webhookUrl: options.slack } });
         if (options.discord) channels.push({ type: 'discord', data: { webhookUrl: options.discord } });
-        if (webhookSecret && webhookSecret.source !== '--webhook-secret' && webhookSecret.value.includes(REDACTED)) {
+        // Output masks a secret as a whole (REDACTED), so only an all-asterisk
+        // value is a pasted-back redaction; a real secret may contain `****`.
+        if (webhookSecret && webhookSecret.source !== '--webhook-secret' && /^\*+$/.test(webhookSecret.value)) {
           throw new NansenError(
             `The webhook secret from ${webhookSecret.source} looks like a redacted value from alerts output. Pass the full value (nansen alerts list --reveal shows it).`,
             ErrorCode.INVALID_PARAMS,

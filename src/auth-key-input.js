@@ -47,7 +47,7 @@ async function readSecretBytes(input, isTTY, { timeoutMs, maxBytes, errors }) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function hasControlChars(value) {
+export function hasControlChars(value) {
   return /�/u.test(value) || [...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
 }
 
