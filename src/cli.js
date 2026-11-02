@@ -19,7 +19,7 @@ import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
 import { buildPagination, parseSort, parseCsvOption, rejectBlankOption, parseFiltersOption } from './query-options.js';
-import { resolveResearchCommand, validateResearchInput, validateOutputOptions, validateFieldSelection, unknownCommandError, normalizeFilterAddresses } from './input-validation.js';
+import { resolveResearchCommand, validateResearchInput, UNAVAILABLE_COMMANDS, validateOutputOptions, validateFieldSelection, unknownCommandError, normalizeFilterAddresses } from './input-validation.js';
 import { enableAutoPagination, DEFAULT_MAX_PAGES, MAX_PAGES_LIMIT, locateRows } from './auto-paginate.js';
 export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
@@ -2455,11 +2455,6 @@ USAGE:
   return cmds;
 }
 
-// Commands whose endpoint was removed. Their handler still answers with
-// COMMAND_UNAVAILABLE, both as `nansen <name>` and `nansen research <name>`,
-// but they are left out of the schema, help listings and "did you mean"
-// suggestions so agents do not spend a call on them.
-export const UNAVAILABLE_COMMANDS = new Set(['points']);
 // Categories that moved under 'research'
 export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'portfolio']);
 // Subcommands that moved under 'trade'
@@ -2743,7 +2738,7 @@ export async function runCLI(rawArgs, deps = {}) {
   // A removed command has no help to show: let its handler answer --help with
   // the same COMMAND_UNAVAILABLE error, rather than printing a generic listing.
   const unavailableCommand = UNAVAILABLE_COMMANDS.has(command)
-    || (command === 'research' && UNAVAILABLE_COMMANDS.has(subcommand));
+    || (command === 'research' && UNAVAILABLE_COMMANDS.has(RESEARCH_CATEGORY_ALIASES[subcommand] || subcommand));
   if (command === 'help' || ((flags.help || flags.h) && !unavailableCommand)) {
     // Help for an offline command still owes the zero-network contract: the
     // cost-map refresh fetches the OpenAPI spec and writes ~/.nansen/cost-map.json.

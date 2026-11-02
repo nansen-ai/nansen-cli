@@ -10,6 +10,7 @@
  */
 
 import { CommandError } from '../api.js';
+import { UNAVAILABLE_COMMANDS } from '../input-validation.js';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
@@ -41,7 +42,9 @@ export const UNSCHEMA_COMMANDS = {
  * teaches the spelling we are trying to retire.
  */
 export const EXCLUDED_COMMANDS = new Set([
-  'smart-money', 'profiler', 'token', 'search', 'portfolio', 'points', 'prediction-market',
+  'smart-money', 'profiler', 'token', 'search', 'portfolio', 'prediction-market',
+  // Removed commands that still answer COMMAND_UNAVAILABLE.
+  ...UNAVAILABLE_COMMANDS,
   'quote', 'execute',
   // Undocumented top-level alias of `trade bridge-status`: reachable because
   // runCLI spreads buildTradingCommands over the root, absent from HELP.

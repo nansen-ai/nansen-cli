@@ -3939,7 +3939,7 @@
     },
     "stream": {
       "type": "boolean",
-      "description": "Print one JSON object per line (NDJSON), one line per result row, instead of the {success, data} envelope (alias: -s). Takes precedence over --format csv, and over --table everywhere except alerts list, which keeps its table. A response without a row list prints as one line; an empty row list prints nothing. Errors are not streamed and print the usual error envelope."
+      "description": "Print one JSON object per line (NDJSON), one line per result row, instead of the {success, data} envelope (alias: -s). Applies to commands that return data, such as research commands; schema, feedback and commands that print their own text (trade, wallet, perp trading) ignore it. Takes precedence over --format csv, and over --table except for alerts list, which keeps its table. A single object prints as one line; an empty row list or a non-object result prints nothing. Errors are not streamed and print as they would without --stream."
     },
     "fields": {
       "type": "string",
