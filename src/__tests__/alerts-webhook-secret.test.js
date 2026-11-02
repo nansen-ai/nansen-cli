@@ -170,6 +170,14 @@ describe('webhook secret from the environment', () => {
 });
 
 describe('webhook secret precedence', () => {
+  it('rejects repeated bare --webhook-secret flags instead of falling back to the environment', async () => {
+    const parsed = parseArgs(['alerts', 'create', '--webhook', HOOK, '--webhook-secret', '--webhook-secret']);
+    const { api, cmd } = setup({ env: { [WEBHOOK_SECRET_ENV]: ENV_SECRET } });
+    const err = await failure(cmd(['create'], api, parsed.flags, { ...CREATE, ...parsed.options }));
+    expect(err.code).toBe('MISSING_PARAM');
+    expect(api.alertsCreate).not.toHaveBeenCalled();
+  });
+
   it('rejects --webhook-secret together with --webhook-secret-stdin', async () => {
     const stdin = new PassThrough();
     const { api, cmd } = setup({ stdin });
@@ -200,6 +208,8 @@ describe('webhook secret precedence', () => {
 
   it.each([
     [{ 'webhook-secret': true }, {}, 'MISSING_PARAM'],
+    [{ 'webhook-secret': [true, true] }, {}, 'MISSING_PARAM'],
+    [{ 'webhook-secret': true }, { 'webhook-secret': FLAG_SECRET }, 'INVALID_PARAMS'],
     [{}, { 'webhook-secret': '' }, 'INVALID_PARAMS'],
   ])('rejects --webhook-secret without a usable value (flags %j, options %j)', async (flags, opts, code) => {
     const { api, cmd } = setup({ env: { [WEBHOOK_SECRET_ENV]: ENV_SECRET } });

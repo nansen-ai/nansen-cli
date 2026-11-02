@@ -24,13 +24,19 @@ export const WEBHOOK_SECRET_ENV = 'NANSEN_WEBHOOK_SECRET';
  * Errors never quote the secret.
  */
 export async function resolveWebhookSecret(options, flags, { env = process.env, stdin = process.stdin, stdinTTY } = {}) {
-  const fromFlag = Object.hasOwn(options, 'webhook-secret') || flags['webhook-secret'] === true;
-  const fromStdin = flags['webhook-secret-stdin'] === true;
+  // A bare `--webhook-secret` (no value) lands in flags, possibly as
+  // `[true, true]` when repeated; any presence counts as the flag being given.
+  const bareFlag = flags['webhook-secret'] !== undefined;
+  const fromFlag = Object.hasOwn(options, 'webhook-secret') || bareFlag;
+  const fromStdin = flags['webhook-secret-stdin'] !== undefined;
   if (fromFlag && fromStdin) {
     throw new NansenError('Use either --webhook-secret or --webhook-secret-stdin, not both.', ErrorCode.INVALID_PARAMS);
   }
   if (fromFlag) {
-    if (flags['webhook-secret'] === true && !Object.hasOwn(options, 'webhook-secret')) {
+    if (bareFlag && Object.hasOwn(options, 'webhook-secret')) {
+      throw new NansenError('--webhook-secret can only be passed once', ErrorCode.INVALID_PARAMS);
+    }
+    if (bareFlag) {
       throw new NansenError('--webhook-secret requires a value. To keep the secret out of shell history, use --webhook-secret-stdin or NANSEN_WEBHOOK_SECRET instead.', ErrorCode.MISSING_PARAM);
     }
     if (!options.webhook) throw new NansenError('--webhook-secret requires --webhook', ErrorCode.INVALID_PARAMS);
