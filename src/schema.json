@@ -615,6 +615,9 @@
             },
             "yes": {
               "type": "boolean",
+              "aliases": [
+                "y"
+              ],
               "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
           },
@@ -3320,6 +3323,9 @@
             },
             "yes": {
               "type": "boolean",
+              "aliases": [
+                "y"
+              ],
               "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
           },

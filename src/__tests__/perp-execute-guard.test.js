@@ -142,7 +142,7 @@ describe('perp --dry-run', () => {
     expect(out).toMatch(/Price:\s+2000 reference, worst fill 2060 \(3% slippage\)/);
     expect(out).toMatch(/Take-profit:\s+2200/);
     expect(out).toMatch(/Stop-loss:\s+1800/);
-    expect(out).toMatch(/Est\. notional:\s+~\$20\.00/);
+    expect(out).toMatch(/Est\. notional:\s+~\$20\.00 at the reference price, ~\$20\.60 at the worst fill/);
     expect(out).toMatch(/Leverage:\s+10x cross/);
     expect(out).toMatch(/Open position:\s+long 0\.5 @ 1900, 10x cross/);
     expect(out).toMatch(/Builder fee:.*Not yet approved/);
@@ -185,6 +185,14 @@ describe('perp --dry-run', () => {
     expectNothingSigned();
   });
 
+  it('order: a Privy wallet whose id does not match its address fails the preview', async () => {
+    showWallet.mockReturnValue({ name: 'x', evm: WALLET, provider: 'privy', privyWalletIds: { evm: 'pw-1' } });
+    privyMocks.getWallet.mockResolvedValue({ id: 'pw-1', address: '0x' + '2'.repeat(40) });
+    const { cmds } = capture();
+    await expect(cmds.order([], mockApi(), { 'dry-run': true }, ORDER)).rejects.toThrow(/does not match/);
+    expectNothingSigned();
+  });
+
   it('order: a Privy wallet is never asked to sign', async () => {
     showWallet.mockReturnValue({ name: 'x', evm: WALLET, provider: 'privy', privyWalletIds: { evm: 'pw-1' } });
     const { cmds } = capture();
@@ -201,6 +209,7 @@ describe('perp --dry-run', () => {
     expect(out).toContain('Perp close plan — ETH');
     expect(out).toMatch(/Side:\s+sell \(closes a long, reduce-only\)/);
     expect(out).toMatch(/Price:\s+2000 reference, worst fill 1940 \(3% slippage\)/);
+    expect(out).toMatch(/Est\. notional:\s+~\$20\.00 at the reference price, ~\$19\.40 at the worst fill/);
     expect(out).toMatch(/Open position:\s+long 0\.02 @ 1950/);
   });
 
@@ -266,6 +275,20 @@ describe('perp confirmation prompt (stdin is a terminal)', () => {
     // The plan is shown on the prompt's channel, not stdout.
     expect(errText()).toContain(`Perp ${name} plan — ETH`);
     expect(text()).not.toContain('plan — ETH');
+    // A declined action never decrypts the wallet.
+    expect(exportWallet).not.toHaveBeenCalled();
+  });
+
+  it('loads the wallet key only after the user confirms', async () => {
+    const promptFn = vi.fn(async () => {
+      expect(exportWallet).not.toHaveBeenCalled();
+      return 'yes';
+    });
+    const { cmds } = capture({ isTTY: true, promptFn });
+    await cmds.leverage([], mockApi(), {}, LEVERAGE);
+    expect(promptFn).toHaveBeenCalledTimes(1);
+    expect(exportWallet).toHaveBeenCalledTimes(1);
+    expect(submitExchange).toHaveBeenCalledTimes(1);
   });
 
   it('accepting the prompt signs and submits, approval first', async () => {
@@ -316,6 +339,14 @@ describe('perp off a terminal (agents, CI, pipes)', () => {
     // The unprompted path makes no extra reads for a plan.
     if (name !== 'close') expect(called(api, '/api/v1/perp/positions')).toBe(false);
     expect(called(api, '/api/v1/perp/orders')).toBe(false);
+  });
+
+  it('still reports a missing password before a metadata outage', async () => {
+    getWalletConfig.mockReturnValue({ passwordHash: 'hash', defaultWallet: 'x' });
+    const { cmds } = capture({ isTTY: false });
+    const api = { request: vi.fn(async () => { throw new Error('proxy down'); }) };
+    await expect(cmds.order([], api, {}, ORDER)).rejects.toMatchObject({ code: 'PASSWORD_REQUIRED' });
+    expectNothingSigned();
   });
 });
 

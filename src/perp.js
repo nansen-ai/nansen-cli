@@ -677,6 +677,14 @@ function formatUsd(value) {
   return Number.isFinite(value) ? `~$${value.toFixed(2)}` : null;
 }
 
+// Notional of an IOC order at the reference price and at its worst fill (the
+// limit price encoded after slippage), so a buy's worst-case cost is visible.
+function formatIocNotional(size, referencePrice, worstPrice) {
+  const atReference = formatUsd(size * referencePrice);
+  const atWorst = formatUsd(size * worstPrice);
+  return atReference && atWorst ? `${atReference} at the reference price, ${atWorst} at the worst fill` : null;
+}
+
 function formatSlippage(slippage) {
   return `${Number((slippage * 100).toFixed(4))}%`;
 }
@@ -726,18 +734,32 @@ function describeOrderLeverage(pos, coin) {
   return `your current ${coin} setting, unchanged by this order (change it with: nansen perp leverage)`;
 }
 
+// When to load the signing key. Unprompted (off a terminal, or --yes): before
+// the gate, exactly where it always was, so a missing or wrong password is
+// still reported before a metadata outage. Prompted: only after the user says
+// yes, so a declined action never decrypts the wallet. Dry run: never for a
+// local key (no password needed); a Privy wallet still has its id/address
+// binding checked, which loads no key, so the preview fails the way the real
+// run would. Returns null when the caller resolves the context after the gate.
+async function signingCtxBeforeGate(wallet, guard, log) {
+  if (guard.dryRun) return wallet.provider === 'privy' ? resolveSigningCtx(wallet, log) : null;
+  if (guard.isTTY && !guard.assumeYes) return null;
+  return resolveSigningCtx(wallet, log);
+}
+
 // Print the plan and ask for confirmation when needed. Returns false when a
 // dry run has finished, true to go on and sign. The plan (and the reads it
 // makes) is only built when it will be shown, so the unprompted path makes no
 // extra requests.
 async function guardPerpAction(apiInstance, { guard, walletAddress, buildPlan, question }, deps) {
   const showPlan = guard.dryRun || (guard.isTTY && !guard.assumeYes);
-  const plan = showPlan ? await buildPlan() : '';
-  if (guard.dryRun) {
-    // Same verdict a real run would hit right before signing, so a preview of a
-    // blocked wallet fails the same way instead of looking clean.
-    await screenOrThrow(apiInstance, [walletAddress]);
-  }
+  // On a dry run, screen as a real run would right before signing, so a
+  // preview of a blocked wallet fails the same way instead of looking clean.
+  // The plan's reads fail open, so only the screen can throw here.
+  const [plan] = await Promise.all([
+    showPlan ? buildPlan() : '',
+    guard.dryRun ? screenOrThrow(apiInstance, [walletAddress]) : undefined,
+  ]);
   return guardExecution({
     plan,
     ...guard,
@@ -829,8 +851,7 @@ OPTIONS:
       warnImpreciseValue(coin, assetMeta?.szDecimals, { sizeRaw: options.size, priceRaw: options.price }, warn);
 
       const wallet = resolveWalletAddress(walletName);
-      // A dry run signs nothing, so it never loads the key (no password needed).
-      const ctx = guard.dryRun ? null : await resolveSigningCtx(wallet, log);
+      let ctx = await signingCtxBeforeGate(wallet, guard, log);
 
       const { assetId, szDecimals } = requireAsset(assetMeta, coin);
 
@@ -867,7 +888,6 @@ OPTIONS:
         question: 'Submit this order to Hyperliquid? [y/N] ',
         buildPlan: async () => {
           const position = await readOpenPosition(apiInstance, wallet.address, coin);
-          const notionalPrice = orderType === 'market' ? price : effPrice;
           return formatPlan(`Perp order plan — ${coin}`, [
             ['Wallet', wallet.address],
             ['Side', `${isBuy ? 'buy' : 'sell'} (${isBuy ? 'long' : 'short'})`],
@@ -878,7 +898,9 @@ OPTIONS:
               : String(effPrice)],
             ['Take-profit', triggerPrice(action, 'tp')],
             ['Stop-loss', triggerPrice(action, 'sl')],
-            ['Est. notional', formatUsd(effSize * notionalPrice)],
+            ['Est. notional', orderType === 'market'
+              ? formatIocNotional(effSize, price, effPrice)
+              : formatUsd(effSize * effPrice)],
             ['Leverage', describeOrderLeverage(position, coin)],
             ['Open position', describePosition(position)],
             ['Builder fee', builderFeeLine(builderStatus)],
@@ -886,6 +908,7 @@ OPTIONS:
         },
       }, guardDeps);
       if (!proceed) return undefined;
+      ctx ??= await resolveSigningCtx(wallet, log);
 
       log(`\n  Perp Order: ${coin} ${isBuy ? 'LONG' : 'SHORT'} ${size} @ ${price} (${orderType})`);
 
@@ -928,7 +951,7 @@ OPTIONS:
 
       const assetMeta = await fetchAssetMeta(apiInstance, coin);
       const wallet = resolveWalletAddress(walletName);
-      const ctx = guard.dryRun ? null : await resolveSigningCtx(wallet, log);
+      let ctx = await signingCtxBeforeGate(wallet, guard, log);
       const { assetId } = requireAsset(assetMeta, coin);
 
       const { action } = buildCancelAction({ orderId: oid }, { assetId });
@@ -958,6 +981,7 @@ OPTIONS:
         },
       }, guardDeps);
       if (!proceed) return undefined;
+      ctx ??= await resolveSigningCtx(wallet, log);
 
       log(`\n  Cancel: ${coin} order #${oid}`);
 
@@ -1021,7 +1045,7 @@ OPTIONS:
         }
       }
 
-      const ctx = guard.dryRun ? null : await resolveSigningCtx(wallet, log);
+      let ctx = await signingCtxBeforeGate(wallet, guard, log);
       const { assetId, szDecimals } = requireAsset(assetMeta, coin);
 
       const builderStatus = await fetchBuilderFee(apiInstance, wallet.address);
@@ -1041,12 +1065,13 @@ OPTIONS:
           ['Size', `${effSize} ${coin}`],
           ['Type', 'market (IOC)'],
           ['Price', `${price} reference, worst fill ${effPrice} (${formatSlippage(slippage)} slippage)`],
-          ['Est. notional', formatUsd(effSize * price)],
+          ['Est. notional', formatIocNotional(effSize, price, effPrice)],
           ['Open position', describePosition(openPosition)],
           ['Builder fee', builderFeeLine(builderStatus)],
         ]),
       }, guardDeps);
       if (!proceed) return undefined;
+      ctx ??= await resolveSigningCtx(wallet, log);
 
       log(`\n  Close: ${coin} ${isBuy ? 'buy-to-close' : 'sell-to-close'} ${size} @ ${price}`);
 
@@ -1099,7 +1124,7 @@ OPTIONS:
 
       const isCross = marginType === 'cross';
       const wallet = resolveWalletAddress(walletName);
-      const ctx = guard.dryRun ? null : await resolveSigningCtx(wallet, log);
+      let ctx = await signingCtxBeforeGate(wallet, guard, log);
       const { assetId } = requireAsset(assetMeta, coin);
 
       const { action } = buildLeverageAction({ leverage, isCross }, { assetId });
@@ -1120,6 +1145,7 @@ OPTIONS:
         },
       }, guardDeps);
       if (!proceed) return undefined;
+      ctx ??= await resolveSigningCtx(wallet, log);
 
       log(`\n  Leverage: ${coin} ${leverage}x ${isCross ? 'cross' : 'isolated'}`);
 
