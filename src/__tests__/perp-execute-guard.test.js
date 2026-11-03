@@ -220,6 +220,30 @@ describe('perp --dry-run', () => {
     expect(text()).toMatch(/Open position:\s+short 12345678\.123456789 @ 1950/);
   });
 
+  it('reads the position side from the size string, even when a float would round it to zero', async () => {
+    const { cmds, text } = capture();
+    const tiny = `0.${'0'.repeat(330)}1`;
+    const api = mockApi({ positions: [{ coin: 'ETH', szi: `-${tiny}`, entryPx: '1950' }] });
+    await cmds.leverage([], api, { 'dry-run': true }, LEVERAGE);
+    expect(text()).toMatch(new RegExp(`Open position:\\s+short ${tiny.replace('.', '\\.')} @ 1950`));
+  });
+
+  it('treats a zero or malformed position size as no position', async () => {
+    for (const szi of ['0.000', '-0', '12abc', '']) {
+      const { cmds, text } = capture();
+      await cmds.leverage([], mockApi({ positions: [{ coin: 'ETH', szi, entryPx: '1950' }] }), { 'dry-run': true }, LEVERAGE);
+      expect(text()).toMatch(/Open position:\s+none/);
+    }
+  });
+
+  it('close: the direction check rejects the wrong side of a short', async () => {
+    const { cmds } = capture();
+    const api = mockApi({ positions: [{ coin: 'ETH', szi: '-0.02' }] });
+    await expect(cmds.close([], api, { 'dry-run': true }, CLOSE))
+      .rejects.toThrow(/Cannot close a short ETH position with --side sell/);
+    expectNothingSigned();
+  });
+
   it('describes the builder-fee approval as what a real run would do', async () => {
     const { cmds, text } = capture();
     await cmds.order([], mockApi({ approved: false }), { 'dry-run': true }, ORDER);

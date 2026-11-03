@@ -712,20 +712,26 @@ async function readOpenPosition(apiInstance, walletAddress, coin) {
   }
 }
 
+// Side and unsigned size of a position, read from the exchange's own szi
+// string, so no float conversion can round a tiny size to zero or lose its
+// sign. null for a zero, missing or malformed size.
+function positionSide(szi) {
+  const match = /^\s*([-+]?)(\d*\.?\d+)\s*$/.exec(String(szi ?? ''));
+  if (!match || !/[1-9]/.test(match[2])) return null;
+  return { side: match[1] === '-' ? 'short' : 'long', size: match[2] };
+}
+
 function findPosition(positions, coin) {
   const pos = positions.find(p => String(p.coin).toUpperCase() === coin);
-  const szi = pos ? parseFloat(pos.szi) : NaN;
-  return Number.isFinite(szi) && szi !== 0 ? pos : null;
+  return pos && positionSide(pos.szi) ? pos : null;
 }
 
 function describePosition(pos) {
   if (pos === undefined) return 'could not be loaded';
   if (pos === null) return 'none';
-  // Direction from the sign; the size is the exchange's own string, so the
-  // plan shows it exactly as reported instead of a float round-trip.
-  const size = String(pos.szi).trim().replace(/^[-+]/, '');
+  const { side, size } = positionSide(pos.szi);
   const lev = formatPositionLeverage(pos.leverage);
-  return `${parseFloat(pos.szi) > 0 ? 'long' : 'short'} ${size}${pos.entryPx ? ` @ ${pos.entryPx}` : ''}${lev ? `, ${lev}` : ''}`;
+  return `${side} ${size}${pos.entryPx ? ` @ ${pos.entryPx}` : ''}${lev ? `, ${lev}` : ''}`;
 }
 
 // Leverage that applies to an order in `coin`: Hyperliquid uses the wallet's
@@ -1037,10 +1043,9 @@ OPTIONS:
       }
       const openPosition = openPositions ? findPosition(openPositions, coin) : undefined;
       if (openPosition) {
-        const szi = parseFloat(openPosition.szi);
-        const requiredSide = szi > 0 ? 'sell' : 'buy';
+        const posSide = positionSide(openPosition.szi).side;
+        const requiredSide = posSide === 'long' ? 'sell' : 'buy';
         if (side !== requiredSide) {
-          const posSide = szi > 0 ? 'long' : 'short';
           throw invalid(
             `Cannot close a ${posSide} ${coin} position with --side ${side}. Use --side ${requiredSide} (sell closes a long, buy closes a short).`,
           );
