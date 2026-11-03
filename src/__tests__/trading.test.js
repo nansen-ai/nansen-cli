@@ -9224,18 +9224,118 @@ describe('executeTransaction — standard execution route', () => {
     expect(res.code).toBe('TRANSACTION_REVERTED');
   });
 
-  // Even a backend code that reads like a pre-broadcast rejection does not prove
-  // one: the message is surfaced for diagnosis, but the outcome stays ambiguous.
-  it('surfaces a 400 pre-broadcast message while still failing closed', async () => {
+  // The route documents a short list of codes it returns before any broadcast,
+  // as a 400 with no hash. That is the same "failed, no transaction" statement
+  // as a 200 `success: false` body, so it comes back as the same result.
+  it('returns a 400 pre-broadcast rejection as a Failed result with no hash', async () => {
     const { executeTransaction } = await import('../trading.js');
     stubExecuteFetch([{ status: 400, body: { code: 'QUOTE_EXPIRED', message: 'Quote expired' } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    );
+    expect(res).toMatchObject({ status: 'Failed', error: 'QUOTE_EXPIRED: Quote expired' });
+    expect(res.txHash).toBeUndefined();
+    expect(res.signature).toBeUndefined();
+  });
+
+  it.each([
+    'QUOTE_EXPIRED',
+    'INPUT_TRANSFER_FAILED',
+    'SIMULATION_FAILED',
+    'SIMULATION_MIN_RETURN_NOT_REACHED',
+    'INSUFFICIENT_BALANCE',
+    'APPROVAL_BROADCAST_FAILED',
+  ])('returns a 400 pre-broadcast %s as Failed without retrying', async (code) => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([{ status: 400, body: { code, message: 'rejected before broadcast' } }]);
+
+    for (const chain of ['base', 'solana']) {
+      const res = await executeTransaction(
+        { signedTransaction: chain === 'base' ? '0xsigned' : 'c2lnbmVk', chain },
+        { route: 'standard', retryDelayMs: 0 },
+      );
+      expect(res).toMatchObject({ status: 'Failed', error: `${code}: rejected before broadcast` });
+      expect(res.txHash).toBeUndefined();
+      expect(res.signature).toBeUndefined();
+    }
+    // One POST per call: the default retries were available and not used.
+    expect(calls).toHaveLength(2);
+  });
+
+  it.each([
+    ['an unknown code', 400, { code: 'SOMETHING_ELSE', message: 'nope' }],
+    ['no code', 400, { message: 'nope' }],
+    ['a non-string code', 400, { code: ['QUOTE_EXPIRED'], message: 'nope' }],
+    ['a listed code with a txHash', 400, { code: 'SIMULATION_FAILED', txHash: '0x' + 'ab'.repeat(32) }],
+    ['a listed code with a signature', 400, { code: 'SIMULATION_FAILED', signature: 'sig' }],
+    ['a listed code claiming success', 400, { code: 'SIMULATION_FAILED', success: true }],
+    ['a listed code on a 422', 422, { code: 'QUOTE_EXPIRED', message: 'nope' }],
+    ['a listed code on a 403', 403, { code: 'INSUFFICIENT_BALANCE', message: 'nope' }],
+  ])('keeps a 4xx pre-broadcast lookalike with %s fail-closed', async (_label, status, body) => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status, body }]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    ).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('keeps a 500 carrying a pre-broadcast code fail-closed', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([{ status: 500, body: { code: 'SIMULATION_FAILED', message: 'nope' } }]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retryDelayMs: 0 },
+    ).catch(e => e);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 500 });
+    expect(calls).toHaveLength(3);
+  });
+
+  it('keeps a non-JSON 400 that names a pre-broadcast code fail-closed', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 400, text: 'SIMULATION_FAILED' }]);
 
     const err = await executeTransaction(
       { signedTransaction: '0xsigned', chain: 'base' },
       { route: 'standard', retries: 0 },
     ).catch(e => e);
     expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 400 });
-    expect(err.message).toContain('Quote expired');
+  });
+
+  // A retry follows a 5xx or a dropped connection whose outcome is unknown. The
+  // retry's "never broadcast" speaks for the retry only, not the earlier POST.
+  it('keeps a pre-broadcast 400 that answers an internal retry fail-closed', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([
+      { status: 502, body: { code: 'UPSTREAM' } },
+      { status: 400, body: { code: 'QUOTE_EXPIRED', message: 'Quote expired' } },
+    ]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retryDelayMs: 0 },
+    ).catch(e => e);
+    expect(calls).toHaveLength(2);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 400 });
+    expect(err.broadcastRuledOut).toBeUndefined();
+  });
+
+  it('keeps a pre-broadcast 400 on the legacy route fail-closed', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    const calls = stubExecuteFetch([{ status: 400, body: { code: 'SIMULATION_MIN_RETURN_NOT_REACHED', message: 'nope' } }]);
+
+    const err = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { retries: 0 },
+    ).catch(e => e);
+    expect(calls[0].url).toMatch(/\/execute$/);
+    expect(err).toMatchObject({ code: 'BROADCAST_FAILED', status: 400 });
     expect(err.broadcastRuledOut).toBeUndefined();
   });
 
@@ -9550,6 +9650,47 @@ describe('standard execution route — swap command flow', () => {
 
     expect(executeCalls).toHaveLength(2);
     expect(logs.some(l => l.includes('Trying next quote'))).toBe(true);
+  });
+
+  it('falls through to the next quote after a pre-broadcast 400 and succeeds on it', async () => {
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [
+        { status: 400, body: { code: 'SIMULATION_MIN_RETURN_NOT_REACHED', message: 'Minimum return not reached' } },
+        { body: { success: true } },
+      ],
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+    await cmds.execute([], screenApi, {}, { quote: quoteId });
+
+    expect(executeCalls).toHaveLength(2);
+    expect(executeCalls.every(c => c.path === '/execution/standard')).toBe(true);
+    expect(logs.some(l => l.includes('SIMULATION_MIN_RETURN_NOT_REACHED: Minimum return not reached'))).toBe(true);
+    expect(logs.some(l => l.includes('Trying next quote'))).toBe(true);
+    // The second candidate broadcast, so the quote is spent by it.
+    expect(() => loadQuote(quoteId)).toThrow(/already executed/);
+  });
+
+  it('releases the quote when every candidate gets a pre-broadcast 400', async () => {
+    const { executeCalls } = stubStandardSwapFetch({
+      responses: [{ status: 400, body: { code: 'INSUFFICIENT_BALANCE', message: 'Insufficient balance' } }],
+    });
+    const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
+
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    const err = await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(e => e);
+
+    expect(err).toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+    expect(err.message).toContain('INSUFFICIENT_BALANCE: Insufficient balance');
+    expect(executeCalls).toHaveLength(2);
+    // Not marked executed and no claim left behind: a rerun is not refused.
+    expect(() => loadQuote(quoteId)).not.toThrow();
+    expect(fs.existsSync(path.join(tempDir, '.nansen', 'quotes', `${quoteId}.executing.json`))).toBe(false);
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED' });
+    expect(executeCalls).toHaveLength(4);
   });
 
   // The hash-bearing-failure rule is not route-conditional: a legacy response
@@ -9939,10 +10080,11 @@ describe('standard execution route — swap command flow', () => {
 
   // An HTTP status is not the endpoint stating it never broadcast — it describes
   // the response, and a 4xx can be produced after the payload was forwarded. So a
-  // typed 4xx code stops the command and the claim is KEPT, rather than releasing
-  // a quote whose transaction may be live.
+  // typed 4xx code outside the documented pre-broadcast list stops the command
+  // and the claim is KEPT, rather than releasing a quote whose transaction may be
+  // live.
   it('keeps the local claim and stops when the endpoint returns a typed 4xx', async () => {
-    const { executeCalls } = stubStandardSwapFetch({ responses: [{ status: 400, body: { code: 'QUOTE_EXPIRED', message: 'quote expired' } }] });
+    const { executeCalls } = stubStandardSwapFetch({ responses: [{ status: 400, body: { code: 'SOMETHING_ELSE', message: 'quote expired' } }] });
     const quoteId = saveNativeEthQuote([nativeEthQuote(), nativeEthQuote()]);
 
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });

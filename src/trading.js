@@ -322,15 +322,54 @@ function fromStandardResponse(body, chainType) {
  * `ambiguousBroadcast` is the default for every failure after the signed payload
  * is handed to fetch. An HTTP status describes the response, not whether the
  * backend forwarded the transaction before producing it: 408/429 and even an
- * intermediary-generated 400/409 can arrive after processing began. Until the
- * execute API has a documented, authenticated field that explicitly guarantees
- * pre-broadcast rejection, no response from this endpoint may authorize signing
- * the next candidate.
+ * intermediary-generated 400/409 can arrive after processing began, so no
+ * non-2xx response may authorize signing the next candidate.
+ *
+ * The one exception is the standard route's documented pre-broadcast rejection:
+ * a 400 carrying a code from STANDARD_PRE_BROADCAST_CODES and no transaction
+ * identifier (see isStandardPreBroadcastRejection). That is the same "failed, no
+ * transaction" statement the route makes in a 200 body, so it gets the same
+ * treatment.
  */
 function ambiguousBroadcast(message, { status, details } = {}) {
   // Deliberately never carries broadcastRuledOut. BROADCAST_FAILED is classified
   // fatal by isFatalBroadcastError, so the caller aborts the whole execute.
   return Object.assign(new Error(message), { code: 'BROADCAST_FAILED', status, details });
+}
+
+/**
+ * Codes the trading API documents as returned before any broadcast on
+ * `/execution/standard`. The route answers them as `400 { code, message }` and
+ * releases its single-flight lock on the quote, because the swap never left the
+ * backend. Kept as an explicit list rather than a pattern: adding a code here
+ * lets the candidate loop sign the next quote after it, so it must be a
+ * deliberate edit that matches the API's own published list.
+ */
+const STANDARD_PRE_BROADCAST_CODES = Object.freeze([
+  'QUOTE_EXPIRED',
+  'INPUT_TRANSFER_FAILED',
+  'SIMULATION_FAILED',
+  'SIMULATION_MIN_RETURN_NOT_REACHED',
+  'INSUFFICIENT_BALANCE',
+  'APPROVAL_BROADCAST_FAILED',
+]);
+
+const isAbsentTxId = (value) => value === undefined || value === null || value === '';
+
+/**
+ * True only for the standard route's documented "never broadcast" answer: a 400
+ * whose JSON body names a listed code, carries no transaction identifier and
+ * does not claim success. Anything short of all of that stays ambiguous.
+ */
+function isStandardPreBroadcastRejection(status, parsed, body) {
+  return status === 400
+    && parsed
+    && isReadableBody(body)
+    && typeof body.code === 'string'
+    && STANDARD_PRE_BROADCAST_CODES.includes(body.code)
+    && isAbsentTxId(body.txHash)
+    && isAbsentTxId(body.signature)
+    && body.success !== true;
 }
 
 /**
@@ -524,10 +563,26 @@ export async function executeTransaction(params, { retries = 2, retryDelayMs = 1
       );
     }
 
-    // A non-2xx status does not prove the signed transaction stayed put. The
-    // backend or an intermediary may have produced the response after forwarding
-    // it, so preserve any structured error only as diagnostic detail and fail
-    // closed. Do not allow the candidate loop to sign another transaction.
+    // The standard route's documented pre-broadcast rejection. Returned as the
+    // same "Failed, no hash" result a 200 `success: false` body produces, so the
+    // candidate loop releases the claim and tries the next quote exactly as it
+    // already does for that body.
+    //
+    // First attempt only: a retry follows a 5xx or a dropped connection whose
+    // outcome is unknown, and a later "never broadcast" speaks for the retry,
+    // not for the earlier POST that may have gone out.
+    if (isStandard && attempt === 0 && isStandardPreBroadcastRejection(res.status, parsed, body)) {
+      return fromStandardResponse(
+        { ...body, success: false, txHash: undefined, signature: undefined },
+        chainConfigFor(params.chain)?.type,
+      );
+    }
+
+    // Every other non-2xx status does not prove the signed transaction stayed
+    // put. The backend or an intermediary may have produced the response after
+    // forwarding it, so preserve any structured error only as diagnostic detail
+    // and fail closed. Do not allow the candidate loop to sign another
+    // transaction.
     if (!res.ok) {
       const readableBody = parsed && isReadableBody(body);
       throw ambiguousBroadcast(
