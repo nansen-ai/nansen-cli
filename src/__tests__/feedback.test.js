@@ -14,7 +14,7 @@ import { memoryOperation, sessionFixture } from './fixtures/auth-fixture.js';
 
 const examples = JSON.parse(fs.readFileSync(new URL('./fixtures/feedback-v1.json', import.meta.url)));
 const root = fileURLToPath(new URL('../../', import.meta.url));
-// Preference retries wait 1 + 2 + 4 seconds; leave process startup and shutdown headroom.
+// Leave startup and shutdown headroom on slower hosts; matches feedback-recovery.test.js.
 const CLI_TIMEOUT_MS = 15000;
 const dirs = [], servers = [];
 afterEach(async () => {
@@ -378,13 +378,17 @@ it.each([
   expect(h.requests).toHaveLength(2); expect(h.requests.every(r => r.method === 'GET')).toBe(true);
 });
 
-it.each([{ flags: [] }, { flags: ['--json'] }])('keeps ask-first guidance after all preference retries %j', async ({ flags }) => {
-  const h = await harness([{ status: 503, body: { message: 'Service Unavailable' } }]);
-  const r = await h.run(['preferences', ...flags]);
-  expect(r.code).toBe(1); expect(h.requests).toHaveLength(4);
-  expect(r.stdout).toContain('Feedback preference unavailable. Show the report and ask before sending.');
-  if (flags.length) expect(JSON.parse(r.stdout)).toMatchObject({ code: 'SERVICE_UNAVAILABLE', status: 503,
-    details: { reason: 'preference_unavailable' } });
+// Runs in-process so the 1 + 2 + 4 second retry waits can be set to zero.
+// The CLI exit code and printed guidance are covered by the --no-retry test above.
+it('keeps ask-first guidance after all preference retries', async () => {
+  const api = new NansenAPI(undefined, 'http://127.0.0.1:1', { credential: resolveCredential({ explicitKey: 'synthetic-key' }), retry: { baseDelayMs: 0 } });
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ message: 'Service Unavailable' }), { status: 503, headers: { 'Content-Type': 'application/json' } }));
+  vi.stubGlobal('fetch', fetch);
+  await expect(buildFeedbackCommands().feedback(['preferences'], api, {}, {})).rejects.toMatchObject({
+    message: 'Feedback preference unavailable. Show the report and ask before sending.',
+    code: 'SERVICE_UNAVAILABLE', status: 503, details: { reason: 'preference_unavailable' },
+  });
+  expect(fetch).toHaveBeenCalledTimes(4);
 });
 
 it.each([401, 403])('adds preference guidance while preserving HTTP %s diagnostics', async status => {
