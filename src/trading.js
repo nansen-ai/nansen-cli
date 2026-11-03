@@ -359,7 +359,7 @@ const isAbsentTxId = (value) => value === undefined || value === null || value =
 /**
  * True only for the standard route's documented "never broadcast" answer: a 400
  * whose JSON body names a listed code, carries no transaction identifier and
- * does not claim success. Anything short of all of that stays ambiguous.
+ * has no `success` other than `false`. Anything short of all of that stays ambiguous.
  */
 function isStandardPreBroadcastRejection(status, parsed, body) {
   return status === 400
@@ -369,7 +369,9 @@ function isStandardPreBroadcastRejection(status, parsed, body) {
     && STANDARD_PRE_BROADCAST_CODES.includes(body.code)
     && isAbsentTxId(body.txHash)
     && isAbsentTxId(body.signature)
-    && body.success !== true;
+    // The documented body has no `success`; an explicit `false` says the same.
+    // Any other value is not this shape, so it stays ambiguous.
+    && (body.success === undefined || body.success === false);
 }
 
 /**

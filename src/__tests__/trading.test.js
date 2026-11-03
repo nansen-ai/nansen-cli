@@ -9240,6 +9240,17 @@ describe('executeTransaction — standard execution route', () => {
     expect(res.signature).toBeUndefined();
   });
 
+  it('accepts an explicit success: false on a 400 pre-broadcast rejection', async () => {
+    const { executeTransaction } = await import('../trading.js');
+    stubExecuteFetch([{ status: 400, body: { success: false, code: 'SIMULATION_FAILED', message: 'Simulation failed' } }]);
+
+    const res = await executeTransaction(
+      { signedTransaction: '0xsigned', chain: 'base' },
+      { route: 'standard', retries: 0 },
+    );
+    expect(res).toMatchObject({ status: 'Failed', error: 'SIMULATION_FAILED: Simulation failed' });
+  });
+
   it.each([
     'QUOTE_EXPIRED',
     'INPUT_TRANSFER_FAILED',
@@ -9271,6 +9282,9 @@ describe('executeTransaction — standard execution route', () => {
     ['a listed code with a txHash', 400, { code: 'SIMULATION_FAILED', txHash: '0x' + 'ab'.repeat(32) }],
     ['a listed code with a signature', 400, { code: 'SIMULATION_FAILED', signature: 'sig' }],
     ['a listed code claiming success', 400, { code: 'SIMULATION_FAILED', success: true }],
+    ['a listed code with a string success', 400, { code: 'SIMULATION_FAILED', success: 'true' }],
+    ['a listed code with a numeric success', 400, { code: 'SIMULATION_FAILED', success: 1 }],
+    ['a listed code with a null success', 400, { code: 'SIMULATION_FAILED', success: null }],
     ['a listed code on a 422', 422, { code: 'QUOTE_EXPIRED', message: 'nope' }],
     ['a listed code on a 403', 403, { code: 'INSUFFICIENT_BALANCE', message: 'nope' }],
   ])('keeps a 4xx pre-broadcast lookalike with %s fail-closed', async (_label, status, body) => {
