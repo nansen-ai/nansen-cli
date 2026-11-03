@@ -32,6 +32,7 @@ import { collectCacheStats, clearCaches, formatCacheStats, formatCacheClear } fr
 import { creditWarning, noticeWarnings } from './response-meta.js';
 import { trackCommandSucceeded, trackCommandFailed, trackAuthCommand } from './telemetry.js';
 import { setDebugEnabled } from './debug.js';
+import { telemetryFlagNames } from './telemetry-flags.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
 
@@ -2852,7 +2853,10 @@ export async function runCLI(rawArgs, deps = {}) {
   const fullCommand = subcommand ? `${command} ${subcommand}` : command;
   const flagNames = Object.keys(flags).filter(k => flags[k]).map(k => `--${k}`);
   const optionNames = Object.keys(options).map(k => `--${k}`);
-  const usedFlags = [...flagNames, ...optionNames];
+  // Only names the CLI defines reach telemetry (login/logout keep their own set).
+  const usedFlags = isAuthMutation
+    ? [...flagNames, ...optionNames]
+    : telemetryFlagNames({ schema: SCHEMA, command, subArgs, switches: VALUELESS_FLAGS }, [...flagNames, ...optionNames]);
   const chain = options.chain || null;
 
   if (!commands[command]) {
