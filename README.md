@@ -154,7 +154,7 @@ nansen cache stats                    # what the local caches hold (no API key n
 
 **Research categories:** `smart-money` (`sm`), `token` (`tgm`), `profiler` (`prof`), `portfolio` (`port`), `prediction-market` (`pm`), `search`, `perp`
 
-The points leaderboard API has been removed. `nansen research points leaderboard` and the legacy command `nansen points leaderboard` return `success: false` with code `COMMAND_UNAVAILABLE` and exit status `1`, without making an API request.
+The points leaderboard API has been removed. `nansen research points leaderboard` and the legacy command `nansen points leaderboard` return `success: false` with code `COMMAND_UNAVAILABLE` and exit status `1`, without making an API request (with `--help` too). The command is no longer listed in `nansen schema`, help or completions.
 
 **Direct research subcommands:**
 - `nansen research chain-rank [--timeframe-days 7|30|365] [--chain-type all|evm]` — rank chains by growth metrics

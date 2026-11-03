@@ -2388,14 +2388,6 @@
           },
           "description": "Polymarket prediction market analytics"
         },
-        "points": {
-          "description": "Nansen Points analytics",
-          "subcommands": {
-            "leaderboard": {
-              "description": "Points leaderboard (unavailable)"
-            }
-          }
-        },
         "chain-rank": {
           "endpoint": "/api/v1/chains/chain-rank",
           "description": "Rank chains by growth metrics",
@@ -3952,6 +3944,10 @@
     "table": {
       "type": "boolean",
       "description": "Format output as human-readable table"
+    },
+    "stream": {
+      "type": "boolean",
+      "description": "Print one JSON object per line (NDJSON), one line per result row, instead of the {success, data} envelope (alias: -s). Applies to commands that return data, such as research commands; schema, feedback and commands that print their own text (trade, wallet, perp trading) ignore it. Takes precedence over --format csv, and over --table except for alerts list, which keeps its table. A single object prints as one line; an empty row list or a non-object result prints nothing. Errors are not streamed and print as they would without --stream."
     },
     "fields": {
       "type": "string",

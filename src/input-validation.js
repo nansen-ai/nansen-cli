@@ -127,8 +127,12 @@ const CATEGORY_ALIASES = { tgm: 'token', sm: 'smart-money', prof: 'profiler', po
 const TOP_LEVEL_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'portfolio', 'prediction-market']);
 // Subcommand spellings a handler accepts besides the schema name.
 const SUBCOMMAND_ALIASES = { portfolio: { 'defi-holdings': 'defi' } };
-// Categories whose handler does its own routing and never calls the API.
-const UNVALIDATED_CATEGORIES = new Set(['points']);
+// Commands whose endpoint was removed. Their handler still answers with
+// COMMAND_UNAVAILABLE, both as `nansen <name>` and `nansen research <name>`,
+// but they are left out of the schema, help listings, completions and "did
+// you mean" suggestions so agents do not spend a call on them. Validation
+// skips them, since the schema no longer has an entry to check against.
+export const UNAVAILABLE_COMMANDS = new Set(['points']);
 
 /**
  * The research schema entry a command line runs, or null when the command is
@@ -147,6 +151,7 @@ export function resolveResearchCommand(schema, command, subArgs) {
     const raw = subArgs[0];
     if (!raw || raw === 'help') return null;
     category = Object.hasOwn(CATEGORY_ALIASES, raw) ? CATEGORY_ALIASES[raw] : raw;
+    if (UNAVAILABLE_COMMANDS.has(category)) return null;
     if (!Object.hasOwn(research, category)) {
       throw unknownCommandError('research category', raw, Object.keys(research));
     }
@@ -163,7 +168,6 @@ export function resolveResearchCommand(schema, command, subArgs) {
   } else {
     return null;
   }
-  if (UNVALIDATED_CATEGORIES.has(category)) return null;
 
   const entry = research[category];
   if (!entry.subcommands) {

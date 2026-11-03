@@ -31,6 +31,7 @@ import {
   parseAddressList
 } from '../cli.js';
 import { parseCsvOption, parseObjectOption } from '../query-options.js';
+import { UNAVAILABLE_COMMANDS } from '../input-validation.js';
 import { enableAutoPagination, MAX_PAGES_LIMIT } from '../auto-paginate.js';
 import {
   formatAlertsTable,
@@ -6806,8 +6807,25 @@ describe('SCHEMA structure', () => {
     expect(researchSubs).toContain('search');
     expect(researchSubs).toContain('perp');
     expect(researchSubs).toContain('portfolio');
-    expect(researchSubs).toContain('points');
     expect(researchSubs).toContain('prediction-market');
+  });
+
+  it('leaves the removed points leaderboard out of the schema', () => {
+    expect(SCHEMA.commands.research.subcommands.points).toBeUndefined();
+  });
+
+  it('keeps a handler for every unavailable command and no schema entry', () => {
+    const commands = buildCommands({});
+    for (const name of UNAVAILABLE_COMMANDS) {
+      expect(typeof commands[name], `${name} needs a handler that answers COMMAND_UNAVAILABLE`).toBe('function');
+      expect(SCHEMA.commands[name]).toBeUndefined();
+      expect(SCHEMA.commands.research.subcommands[name]).toBeUndefined();
+    }
+  });
+
+  it('lists --stream as a global option', () => {
+    expect(SCHEMA.globalOptions.stream).toMatchObject({ type: 'boolean' });
+    expect(SCHEMA.globalOptions.stream.description).toContain('NDJSON');
   });
 
   it('should populate research subcommands from deprecated entries', () => {
