@@ -2944,7 +2944,13 @@ export async function runCLI(rawArgs, deps = {}) {
     // on the instance next to the cache-hit early return in request(), so it
     // survives that reshaping. Compared against `true` so a stubbed API whose
     // every property is a mock function doesn't read as a hit.
-    const fromCache = !!result?._meta?.fromCache || api.servedFromCache === true;
+    //
+    // A --paginate result mixes pages, and both of those describe a single
+    // page; it was served from the cache only if no page went to the API.
+    const paginatedPages = api.paginatedResponseMeta?.pagination;
+    const fromCache = paginatedPages
+      ? paginatedPages.livePages === 0
+      : !!result?._meta?.fromCache || api.servedFromCache === true;
 
     // Credit balance warning, from the headers on the call just made. Goes to
     // stderr so it never contaminates the JSON on stdout that agents parse.
