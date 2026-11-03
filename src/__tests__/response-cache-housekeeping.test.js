@@ -153,4 +153,18 @@ describe('response cache housekeeping', () => {
     expect(fs.readdirSync(dir)).toEqual([liveTemp]);
     expect(fs.readdirSync(dir)).not.toContain(staleTemp);
   });
+
+  it.skipIf(process.platform === 'win32')('clearCache does not follow a symlinked cache directory', async () => {
+    const { getCacheDir, clearCache } = await freshCache();
+    const dir = getCacheDir();
+    const target = path.join(tempHome, 'elsewhere');
+    const entry = plant(target, entryName('a'), 1000);
+    const staleTemp = plant(target, tempName('b'), 11 * 60 * 1000);
+    fs.mkdirSync(path.dirname(dir), { recursive: true });
+    fs.symlinkSync(target, dir);
+
+    expect(clearCache()).toBe(0);
+
+    expect(fs.readdirSync(target).sort()).toEqual([entry, staleTemp].sort());
+  });
 });

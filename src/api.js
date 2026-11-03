@@ -555,27 +555,28 @@ function sweepResponseCache(writtenFile) {
  * Clear all cached responses
  */
 export function clearCache() {
-  if (fs.existsSync(CACHE_DIR)) {
-    const files = fs.readdirSync(CACHE_DIR);
-    const now = Date.now();
-    let removed = 0;
-    for (const file of files) {
-      const full = path.join(CACHE_DIR, file);
-      if (file.endsWith('.json')) {
+  // Like the sweep and `nansen cache clear`, never follow a symlinked cache
+  // directory: deletes stay inside the directory itself.
+  const dirStat = fs.lstatSync(CACHE_DIR, { throwIfNoEntry: false });
+  if (!dirStat?.isDirectory()) return 0;
+  const files = fs.readdirSync(CACHE_DIR);
+  const now = Date.now();
+  let removed = 0;
+  for (const file of files) {
+    const full = path.join(CACHE_DIR, file);
+    if (file.endsWith('.json')) {
+      fs.unlinkSync(full);
+      removed += 1;
+    } else {
+      // A temp file younger than this may belong to a write in progress.
+      const stat = fs.lstatSync(full, { throwIfNoEntry: false });
+      if (stat?.isFile() && isStaleTemp(file, stat, now)) {
         fs.unlinkSync(full);
         removed += 1;
-      } else {
-        // A temp file younger than this may belong to a write in progress.
-        const stat = fs.lstatSync(full, { throwIfNoEntry: false });
-        if (stat?.isFile() && isStaleTemp(file, stat, now)) {
-          fs.unlinkSync(full);
-          removed += 1;
-        }
       }
     }
-    return removed;
   }
-  return 0;
+  return removed;
 }
 
 /**
