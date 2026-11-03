@@ -11,6 +11,7 @@
 
 import { CommandError } from './api.js';
 import { signSecp256k1 } from './crypto.js';
+import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 import {
   buildApproveBuilderFeeAction,
   buildCancelAction,
@@ -658,6 +659,96 @@ function resolveCoin(options) {
   return String(raw ?? '').toUpperCase();
 }
 
+// ── Preview + confirmation (--dry-run / --yes) ───────────────────────
+//
+// order/close/cancel/leverage share the acknowledgement gate of trade and
+// bridge execute (src/execute-guard.js): --dry-run prints the plan and stops
+// before anything is signed; an interactive terminal is asked to confirm;
+// --yes / -y / NANSEN_YES=1 skips the question. Off a terminal the command
+// proceeds unprompted, exactly as before.
+
+const PERP_DRY_RUN_NOTICE = [
+  '\n  DRY RUN — nothing was sent to Hyperliquid. No action was signed.',
+  '  Re-run without --dry-run to sign and submit it.\n',
+];
+
+// Display-only USD estimate; the signed action carries the exact strings.
+function formatUsd(value) {
+  return Number.isFinite(value) ? `~$${value.toFixed(2)}` : null;
+}
+
+function formatSlippage(slippage) {
+  return `${Number((slippage * 100).toFixed(4))}%`;
+}
+
+function builderFeeLine(status) {
+  const rate = builderMaxFeeRate(status.required_fee);
+  if (status.approved) return `${rate} of the order value (approved)`;
+  return `${rate} of the order value. Not yet approved: a one-time approval (max ${rate} to ${String(status.builder_address).toLowerCase()}) is signed and submitted first`;
+}
+
+// The encoded trigger price of an attached take-profit/stop-loss leg.
+function triggerPrice(action, tpsl) {
+  return action.orders?.find(o => o?.t?.trigger?.tpsl === tpsl)?.t.trigger.triggerPx;
+}
+
+// Read-only lookup of the wallet's open position in `coin`, for the plan only.
+// Returns the position, null when there is none, or undefined when the read
+// failed (the plan then says so instead of guessing).
+async function readOpenPosition(apiInstance, walletAddress, coin) {
+  try {
+    const result = await perpRead(apiInstance, 'positions', { wallet_address: walletAddress });
+    return findPosition(result.positions || [], coin);
+  } catch {
+    return undefined;
+  }
+}
+
+function findPosition(positions, coin) {
+  const pos = positions.find(p => String(p.coin).toUpperCase() === coin);
+  const szi = pos ? parseFloat(pos.szi) : NaN;
+  return Number.isFinite(szi) && szi !== 0 ? pos : null;
+}
+
+function describePosition(pos) {
+  if (pos === undefined) return 'could not be loaded';
+  if (pos === null) return 'none';
+  const szi = parseFloat(pos.szi);
+  const lev = formatPositionLeverage(pos.leverage);
+  return `${szi > 0 ? 'long' : 'short'} ${Math.abs(szi)}${pos.entryPx ? ` @ ${pos.entryPx}` : ''}${lev ? `, ${lev}` : ''}`;
+}
+
+// Leverage that applies to an order in `coin`: Hyperliquid uses the wallet's
+// per-asset setting, which an open position reports.
+function describeOrderLeverage(pos, coin) {
+  const lev = pos ? formatPositionLeverage(pos.leverage) : null;
+  if (lev) return `${lev} (current ${coin} setting, unchanged by this order)`;
+  return `your current ${coin} setting, unchanged by this order (change it with: nansen perp leverage)`;
+}
+
+// Print the plan and ask for confirmation when needed. Returns false when a
+// dry run has finished, true to go on and sign. The plan (and the reads it
+// makes) is only built when it will be shown, so the unprompted path makes no
+// extra requests.
+async function guardPerpAction(apiInstance, { guard, walletAddress, buildPlan, question }, deps) {
+  const showPlan = guard.dryRun || (guard.isTTY && !guard.assumeYes);
+  const plan = showPlan ? await buildPlan() : '';
+  if (guard.dryRun) {
+    // Same verdict a real run would hit right before signing, so a preview of a
+    // blocked wallet fails the same way instead of looking clean.
+    await screenOrThrow(apiInstance, [walletAddress]);
+  }
+  return guardExecution({
+    plan,
+    ...guard,
+    promptFn: deps.promptFn,
+    log: deps.log,
+    confirmationLog: deps.confirmationLog,
+    question,
+    dryRunNotice: PERP_DRY_RUN_NOTICE,
+  });
+}
+
 // ── Command builder ──────────────────────────────────────────────────
 
 // Hyperliquid reports each position's leverage setting as { type, value }
@@ -679,7 +770,14 @@ export function buildPerpCommands(deps = {}) {
     log = console.log,
     warn = (m) => process.stderr.write(`${m}\n`),
     track = trackPerpOrderCompleted,
+    // Confirmation seams, wired by the CLI exactly as for trade/bridge execute.
+    // A library caller that passes none is non-interactive (isTTY false).
+    promptFn,
+    confirmationLog = log,
+    isTTY = false,
+    env = process.env,
   } = deps;
+  const guardDeps = { promptFn, log, confirmationLog };
 
   return {
     'order': async (args, apiInstance, flags, options) => {
@@ -700,7 +798,9 @@ OPTIONS:
   --slippage      Slippage for market orders (default 0.03 = 3%)
   --take-profit   Take-profit trigger price
   --stop-loss     Stop-loss trigger price
-  --wallet        Wallet name`, 'MISSING_PARAM');
+  --wallet        Wallet name
+  --dry-run       Validate and print the order plan; sign and send nothing
+  --yes, -y       Skip the confirmation prompt (same as NANSEN_YES=1)`, 'MISSING_PARAM');
       }
 
       const side = assertSide(options.side, ORDER_SIDES);
@@ -712,6 +812,7 @@ OPTIONS:
       const tp = options['take-profit'] !== undefined ? parsePositiveNumber(options['take-profit'], 'take-profit') : undefined;
       const sl = options['stop-loss'] !== undefined ? parsePositiveNumber(options['stop-loss'], 'stop-loss') : undefined;
       const isBuy = side === 'buy' || side === 'long';
+      const guard = resolveExecuteGuard(flags, { env, isTTY });
 
       // buildOrderAction re-checks this, but that call happens after the signing
       // context is resolved and after ensureBuilderApproved has already signed
@@ -728,11 +829,10 @@ OPTIONS:
       warnImpreciseValue(coin, assetMeta?.szDecimals, { sizeRaw: options.size, priceRaw: options.price }, warn);
 
       const wallet = resolveWalletAddress(walletName);
-      const ctx = await resolveSigningCtx(wallet, log);
+      // A dry run signs nothing, so it never loads the key (no password needed).
+      const ctx = guard.dryRun ? null : await resolveSigningCtx(wallet, log);
 
       const { assetId, szDecimals } = requireAsset(assetMeta, coin);
-
-      log(`\n  Perp Order: ${coin} ${isBuy ? 'LONG' : 'SHORT'} ${size} @ ${price} (${orderType})`);
 
       // Single source of truth for the builder code + approval gate (D1).
       // On the first trade this screens the wallet once for the builder-fee
@@ -740,8 +840,9 @@ OPTIONS:
       // deliberate: each signed action re-screens the signer, so this is not
       // duplication to collapse.
       const builderStatus = await fetchBuilderFee(apiInstance, wallet.address);
-      await ensureBuilderApproved(apiInstance, builderStatus, ctx);
 
+      // Built (pure, nothing signed) before the gate so the plan shows the
+      // rounded size and price that will actually be encoded.
       const { action, size: effSize, price: effPrice } = buildOrderAction(
         {
           isBuy,
@@ -757,6 +858,39 @@ OPTIONS:
         },
         { assetId, szDecimals },
       );
+
+      // Before the builder-fee approval: a dry run or a declined prompt must not
+      // put that one-time approval on-chain either.
+      const proceed = await guardPerpAction(apiInstance, {
+        guard,
+        walletAddress: wallet.address,
+        question: 'Submit this order to Hyperliquid? [y/N] ',
+        buildPlan: async () => {
+          const position = await readOpenPosition(apiInstance, wallet.address, coin);
+          const notionalPrice = orderType === 'market' ? price : effPrice;
+          return formatPlan(`Perp order plan — ${coin}`, [
+            ['Wallet', wallet.address],
+            ['Side', `${isBuy ? 'buy' : 'sell'} (${isBuy ? 'long' : 'short'})`],
+            ['Size', `${effSize} ${coin}`],
+            ['Type', orderType === 'market' ? 'market (IOC)' : `limit (${tif})`],
+            ['Price', orderType === 'market'
+              ? `${price} reference, worst fill ${effPrice} (${formatSlippage(slippage)} slippage)`
+              : String(effPrice)],
+            ['Take-profit', triggerPrice(action, 'tp')],
+            ['Stop-loss', triggerPrice(action, 'sl')],
+            ['Est. notional', formatUsd(effSize * notionalPrice)],
+            ['Leverage', describeOrderLeverage(position, coin)],
+            ['Open position', describePosition(position)],
+            ['Builder fee', builderFeeLine(builderStatus)],
+          ]);
+        },
+      }, guardDeps);
+      if (!proceed) return undefined;
+
+      log(`\n  Perp Order: ${coin} ${isBuy ? 'LONG' : 'SHORT'} ${size} @ ${price} (${orderType})`);
+
+      await ensureBuilderApproved(apiInstance, builderStatus, ctx);
+
       const nonce = hlNonce();
       const eip712 = l1Eip712(action, null, nonce);
 
@@ -786,19 +920,47 @@ OPTIONS:
       const walletName = scalar(options.wallet, 'wallet');
 
       if (!coin || options.oid === undefined) {
-        throw new CommandError('Usage: nansen perp cancel --coin <symbol> --oid <orderId> [--wallet <name>]', 'MISSING_PARAM');
+        throw new CommandError('Usage: nansen perp cancel --coin <symbol> --oid <orderId> [--wallet <name>] [--dry-run] [--yes]', 'MISSING_PARAM');
       }
 
       const oid = parsePositiveInt(options.oid, 'oid');
+      const guard = resolveExecuteGuard(flags, { env, isTTY });
 
       const assetMeta = await fetchAssetMeta(apiInstance, coin);
       const wallet = resolveWalletAddress(walletName);
-      const ctx = await resolveSigningCtx(wallet, log);
+      const ctx = guard.dryRun ? null : await resolveSigningCtx(wallet, log);
       const { assetId } = requireAsset(assetMeta, coin);
+
+      const { action } = buildCancelAction({ orderId: oid }, { assetId });
+
+      const proceed = await guardPerpAction(apiInstance, {
+        guard,
+        walletAddress: wallet.address,
+        question: 'Submit this cancel to Hyperliquid? [y/N] ',
+        buildPlan: async () => {
+          let order;
+          try {
+            const result = await perpRead(apiInstance, 'orders', { wallet_address: wallet.address });
+            const match = (result.orders || []).find(o => Number(o.oid) === oid && String(o.coin).toUpperCase() === coin);
+            // Hyperliquid reports a resting order's side as B (bid) or A (ask).
+            const orderSide = { B: 'buy', A: 'sell' }[match?.side] ?? match?.side;
+            order = match
+              ? `${orderSide} ${match.sz} @ ${match.limitPx}`
+              : `not among the open ${coin} orders (Hyperliquid rejects the cancel if the order is not open)`;
+          } catch {
+            order = 'could not load open orders';
+          }
+          return formatPlan(`Perp cancel plan — ${coin}`, [
+            ['Wallet', wallet.address],
+            ['Order id', String(oid)],
+            ['Order', order],
+          ]);
+        },
+      }, guardDeps);
+      if (!proceed) return undefined;
 
       log(`\n  Cancel: ${coin} order #${oid}`);
 
-      const { action } = buildCancelAction({ orderId: oid }, { assetId });
       const nonce = hlNonce();
       const eip712 = l1Eip712(action, null, nonce);
 
@@ -816,7 +978,9 @@ OPTIONS:
 `Usage: nansen perp close --coin <symbol> --size <amount> --price <markPrice> --side <buy|sell> [options]
 
   --side    buy (closing a short) or sell (closing a long)
-  --slippage  Slippage tolerance (default 0.03 = 3%)`, 'MISSING_PARAM');
+  --slippage  Slippage tolerance (default 0.03 = 3%)
+  --dry-run   Validate and print the close plan; sign and send nothing
+  --yes, -y   Skip the confirmation prompt (same as NANSEN_YES=1)`, 'MISSING_PARAM');
       }
 
       const side = assertSide(options.side, CLOSE_SIDES);
@@ -824,6 +988,7 @@ OPTIONS:
       const price = parsePositiveNumber(options.price, 'price');
       const slippage = options.slippage !== undefined ? parseSlippage(options.slippage) : 0.03;
       const isBuy = side === 'buy';
+      const guard = resolveExecuteGuard(flags, { env, isTTY });
 
       // Advisory: warn before signing if the close size is finer than the asset
       // allows (Hyperliquid rounds rather than rejects). --price here is only a
@@ -844,32 +1009,49 @@ OPTIONS:
       } catch {
         // positions lookup failed — skip the direction pre-check.
       }
-      if (openPositions) {
-        const pos = openPositions.find(p => String(p.coin).toUpperCase() === coin);
-        const szi = pos ? parseFloat(pos.szi) : NaN;
-        if (Number.isFinite(szi) && szi !== 0) {
-          const requiredSide = szi > 0 ? 'sell' : 'buy';
-          if (side !== requiredSide) {
-            const posSide = szi > 0 ? 'long' : 'short';
-            throw invalid(
-              `Cannot close a ${posSide} ${coin} position with --side ${side}. Use --side ${requiredSide} (sell closes a long, buy closes a short).`,
-            );
-          }
+      const openPosition = openPositions ? findPosition(openPositions, coin) : undefined;
+      if (openPosition) {
+        const szi = parseFloat(openPosition.szi);
+        const requiredSide = szi > 0 ? 'sell' : 'buy';
+        if (side !== requiredSide) {
+          const posSide = szi > 0 ? 'long' : 'short';
+          throw invalid(
+            `Cannot close a ${posSide} ${coin} position with --side ${side}. Use --side ${requiredSide} (sell closes a long, buy closes a short).`,
+          );
         }
       }
 
-      const ctx = await resolveSigningCtx(wallet, log);
+      const ctx = guard.dryRun ? null : await resolveSigningCtx(wallet, log);
       const { assetId, szDecimals } = requireAsset(assetMeta, coin);
 
-      log(`\n  Close: ${coin} ${isBuy ? 'buy-to-close' : 'sell-to-close'} ${size} @ ${price}`);
-
       const builderStatus = await fetchBuilderFee(apiInstance, wallet.address);
-      await ensureBuilderApproved(apiInstance, builderStatus, ctx);
 
       const { action, size: effSize, price: effPrice } = buildCloseAction(
         { size, price, isBuy, slippage, builder: builderCode(builderStatus) },
         { assetId, szDecimals },
       );
+
+      const proceed = await guardPerpAction(apiInstance, {
+        guard,
+        walletAddress: wallet.address,
+        question: 'Submit this close order to Hyperliquid? [y/N] ',
+        buildPlan: async () => formatPlan(`Perp close plan — ${coin}`, [
+          ['Wallet', wallet.address],
+          ['Side', `${side} (${isBuy ? 'closes a short' : 'closes a long'}, reduce-only)`],
+          ['Size', `${effSize} ${coin}`],
+          ['Type', 'market (IOC)'],
+          ['Price', `${price} reference, worst fill ${effPrice} (${formatSlippage(slippage)} slippage)`],
+          ['Est. notional', formatUsd(effSize * price)],
+          ['Open position', describePosition(openPosition)],
+          ['Builder fee', builderFeeLine(builderStatus)],
+        ]),
+      }, guardDeps);
+      if (!proceed) return undefined;
+
+      log(`\n  Close: ${coin} ${isBuy ? 'buy-to-close' : 'sell-to-close'} ${size} @ ${price}`);
+
+      await ensureBuilderApproved(apiInstance, builderStatus, ctx);
+
       const nonce = hlNonce();
       const eip712 = l1Eip712(action, null, nonce);
 
@@ -899,11 +1081,12 @@ OPTIONS:
       const walletName = scalar(options.wallet, 'wallet');
 
       if (!coin || options.leverage === undefined) {
-        throw new CommandError('Usage: nansen perp leverage --coin <symbol> --leverage <n> [--margin-type cross|isolated] [--wallet <name>]', 'MISSING_PARAM');
+        throw new CommandError('Usage: nansen perp leverage --coin <symbol> --leverage <n> [--margin-type cross|isolated] [--wallet <name>] [--dry-run] [--yes]', 'MISSING_PARAM');
       }
 
       const marginType = assertMarginType(options['margin-type']);
       const leverage = parsePositiveInt(options.leverage, 'leverage');
+      const guard = resolveExecuteGuard(flags, { env, isTTY });
 
       // Pre-validate against the asset's max leverage so an over-max value fails
       // fast with a clear message instead of an opaque HL rejection. Falls open
@@ -916,12 +1099,30 @@ OPTIONS:
 
       const isCross = marginType === 'cross';
       const wallet = resolveWalletAddress(walletName);
-      const ctx = await resolveSigningCtx(wallet, log);
+      const ctx = guard.dryRun ? null : await resolveSigningCtx(wallet, log);
       const { assetId } = requireAsset(assetMeta, coin);
+
+      const { action } = buildLeverageAction({ leverage, isCross }, { assetId });
+
+      const proceed = await guardPerpAction(apiInstance, {
+        guard,
+        walletAddress: wallet.address,
+        question: 'Submit this leverage change to Hyperliquid? [y/N] ',
+        buildPlan: async () => {
+          const position = await readOpenPosition(apiInstance, wallet.address, coin);
+          return formatPlan(`Perp leverage plan — ${coin}`, [
+            ['Wallet', wallet.address],
+            ['Leverage', `${leverage}x`],
+            ['Margin type', marginType],
+            ['Asset maximum', Number.isFinite(assetMeta.maxLeverage) ? `${assetMeta.maxLeverage}x` : null],
+            ['Open position', describePosition(position)],
+          ]);
+        },
+      }, guardDeps);
+      if (!proceed) return undefined;
 
       log(`\n  Leverage: ${coin} ${leverage}x ${isCross ? 'cross' : 'isolated'}`);
 
-      const { action } = buildLeverageAction({ leverage, isCross }, { assetId });
       const nonce = hlNonce();
       const eip712 = l1Eip712(action, null, nonce);
 

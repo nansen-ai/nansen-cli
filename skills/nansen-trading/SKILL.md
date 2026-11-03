@@ -203,7 +203,7 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 |-----|---------|
 | `NANSEN_WALLET_PASSWORD` | **Required for `trade execute`.** Wallet encryption password — persisted in `~/.nansen/.env`. Source before executing: `source ~/.nansen/.env && nansen trade execute ...` |
 | `NANSEN_API_KEY` | API key (also set via explicit `nansen login --human`; browser sessions are not wallet or RPC keys) |
-| `NANSEN_YES` | Set to `1` to skip the `execute` confirmation prompt, like `--yes` |
+| `NANSEN_YES` | Set to `1` to skip the confirmation prompt of `trade execute`, `bridge execute` and `perp order`/`close`/`cancel`/`leverage`, like `--yes` |
 
 > **Agents:** Never hold a wallet password only in session memory. If `NANSEN_WALLET_PASSWORD` is not in `~/.nansen/.env`, follow the setup flow in the nansen-wallet-manager skill Password Policy to generate and persist one before proceeding.
 
@@ -221,6 +221,21 @@ Use `nansen perp` for Hyperliquid perpetual trading. Uses the same wallet and `N
 Subcommands: `order`, `cancel`, `close`, `leverage`, `positions`, `orders`, `account`, `meta`.
 
 The asset is selected with `--coin` (e.g. `BTC`, `ETH`); `--symbol` is accepted as an alias. List tradable assets and their max leverage with `nansen perp meta` (use `--filter <text>` or `--all` to see beyond the first 20).
+
+## Preview and confirm (`--dry-run`, `--yes`)
+
+`order`, `close`, `cancel` and `leverage` have no quote step, so a typo in `--size` or `--price` would otherwise go straight to the exchange. Preview first:
+
+```bash
+nansen perp order --coin ETH --side buy --size 0.1 --price 1600 --dry-run   # preview only, nothing is signed
+nansen perp order --coin ETH --side buy --size 0.1 --price 1600 --yes       # skip the confirmation prompt
+```
+
+**`--dry-run`** runs the normal validation and read-only lookups (asset metadata, builder fee, open position, compliance screen), prints the plan (coin, side, rounded size, price and type, take-profit/stop-loss, estimated notional, leverage, builder fee) and exits 0. Nothing is signed or sent to Hyperliquid, no wallet password is needed, and the one-time builder-fee approval is not submitted. `close` also shows the worst fill price after slippage and the open position, `cancel` shows the open order it would cancel, and `leverage` shows the new setting next to the asset maximum.
+
+**Confirmation.** When stdin is an interactive terminal, these four commands print the plan and ask, for example, `Submit this order to Hyperliquid? [y/N]` before signing. Answering anything but `y`/`yes` exits 1 with nothing signed (code `CONFIRMATION_DECLINED`). Pass `--yes` (`-y`), or set `NANSEN_YES=1`, to skip the question.
+
+**Agents and CI are unaffected:** when stdin is *not* a terminal the commands submit without prompting, exactly as before, and `--yes` is a no-op. These are the same rules as `trade execute` and `bridge execute`. `transfer` and `approve-builder-fee` are unchanged.
 
 ## Open a position
 

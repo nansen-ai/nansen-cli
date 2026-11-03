@@ -2411,7 +2411,7 @@ SUPPORTED ROUTES:
   // top of the pre-existing perp analytics command, so capture that handler and
   // keep screener/leaderboard reachable instead of shadowing them — both
   // `nansen perp screener` and `nansen research perp screener` route through here.
-  const perpCmds = buildPerpCommands(deps);
+  const perpCmds = buildPerpCommands(executionDeps);
   const PERP_ANALYTICS_SUBCOMMANDS = new Set(['screener', 'leaderboard']);
   cmds['perp'] = async (args, apiInstance, flags, options) => {
     const sub = args[0];
@@ -2440,7 +2440,12 @@ USAGE:
   nansen perp transfer --direction spot-to-perp --amount 25
   nansen perp approve-builder-fee
   nansen perp positions
-  nansen perp account`);
+  nansen perp account
+
+BEFORE SUBMITTING (order, cancel, close, leverage):
+  --dry-run   Validate and print what would be submitted, then stop. Exits 0.
+  --yes, -y   Skip the confirmation prompt (same as NANSEN_YES=1). The prompt only
+              appears when stdin is a terminal; declining exits 1, signing nothing.`);
       return;
     }
     if (!perpCmds[sub]) {
