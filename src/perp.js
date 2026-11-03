@@ -692,7 +692,7 @@ function formatSlippage(slippage) {
 function builderFeeLine(status) {
   const rate = builderMaxFeeRate(status.required_fee);
   if (status.approved) return `${rate} of the order value (approved)`;
-  return `${rate} of the order value. Not yet approved: a one-time approval (max ${rate} to ${String(status.builder_address).toLowerCase()}) is signed and submitted first`;
+  return `${rate} of the order value. Not yet approved: submitting signs and sends a one-time approval (max ${rate} to ${String(status.builder_address).toLowerCase()}) before the order`;
 }
 
 // The encoded trigger price of an attached take-profit/stop-loss leg.
@@ -721,9 +721,11 @@ function findPosition(positions, coin) {
 function describePosition(pos) {
   if (pos === undefined) return 'could not be loaded';
   if (pos === null) return 'none';
-  const szi = parseFloat(pos.szi);
+  // Direction from the sign; the size is the exchange's own string, so the
+  // plan shows it exactly as reported instead of a float round-trip.
+  const size = String(pos.szi).trim().replace(/^[-+]/, '');
   const lev = formatPositionLeverage(pos.leverage);
-  return `${szi > 0 ? 'long' : 'short'} ${Math.abs(szi)}${pos.entryPx ? ` @ ${pos.entryPx}` : ''}${lev ? `, ${lev}` : ''}`;
+  return `${parseFloat(pos.szi) > 0 ? 'long' : 'short'} ${size}${pos.entryPx ? ` @ ${pos.entryPx}` : ''}${lev ? `, ${lev}` : ''}`;
 }
 
 // Leverage that applies to an order in `coin`: Hyperliquid uses the wallet's

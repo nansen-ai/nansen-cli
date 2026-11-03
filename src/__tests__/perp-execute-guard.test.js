@@ -213,6 +213,20 @@ describe('perp --dry-run', () => {
     expect(out).toMatch(/Open position:\s+long 0\.02 @ 1950/);
   });
 
+  it('shows the open position size exactly as the exchange reports it', async () => {
+    const { cmds, text } = capture();
+    const api = mockApi({ positions: [{ coin: 'ETH', szi: '-12345678.123456789', entryPx: '1950' }] });
+    await cmds.leverage([], api, { 'dry-run': true }, LEVERAGE);
+    expect(text()).toMatch(/Open position:\s+short 12345678\.123456789 @ 1950/);
+  });
+
+  it('describes the builder-fee approval as what a real run would do', async () => {
+    const { cmds, text } = capture();
+    await cmds.order([], mockApi({ approved: false }), { 'dry-run': true }, ORDER);
+    expect(text()).toMatch(/Not yet approved: submitting signs and sends a one-time approval/);
+    expect(text()).not.toMatch(/is signed and submitted first/);
+  });
+
   it('close: the direction check still rejects the wrong side', async () => {
     const { cmds } = capture();
     const api = mockApi({ positions: [{ coin: 'ETH', szi: '0.02' }] });
