@@ -235,19 +235,26 @@ export function enableAutoPagination(api, opts = {}) {
       api.paginatedEndpoint = null;
       const pageMetadata = [];
       const recordPageMetadata = (meta, cached = false) => {
-        pageMetadata.push({ cached, meta: cached ? null : meta });
+        pageMetadata.push({ cached, meta });
       };
       try {
         return await collectPages(async pagination => {
           const previousMeta = api.lastResponseMeta;
+          let requestMetadata;
           try {
-            const pageResult = await request(endpoint, { ...body, pagination }, options);
+            const pageResult = await request(endpoint, { ...body, pagination }, {
+              ...options,
+              onResponseMeta(meta, cached) {
+                requestMetadata = { meta, cached };
+                options.onResponseMeta?.(meta, cached);
+              },
+            });
             // The payload belongs to this exact request, unlike the instance's
             // last-* fields which concurrent non-list calls can overwrite.
-            const cached = pageResult?._meta?.fromCache === true
-              || (api.responseMetadataOnPayload !== true && api.servedFromCache === true);
+            const cached = requestMetadata?.cached ?? (pageResult?._meta?.fromCache === true
+              || (api.responseMetadataOnPayload !== true && api.servedFromCache === true));
             const payloadMeta = pageResult?.[RESPONSE_META];
-            const meta = payloadMeta ?? (
+            const meta = requestMetadata ? requestMetadata.meta : payloadMeta ?? (
               api.responseMetadataOnPayload === true ? null : api.lastResponseMeta
             );
             recordPageMetadata(meta, cached);
@@ -265,7 +272,7 @@ export function enableAutoPagination(api, opts = {}) {
             // A transport failure may leave the prior page's metadata in place;
             // count the attempt, but only use shared state when the error itself
             // carries no metadata and this request demonstrably replaced it.
-            recordPageMetadata(hasErrorMeta
+            recordPageMetadata(requestMetadata ? requestMetadata.meta : hasErrorMeta
               ? errorMeta
               : (api.lastResponseMeta === previousMeta ? null : api.lastResponseMeta));
             throw error;

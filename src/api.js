@@ -423,7 +423,7 @@ function getCacheKey(endpoint, body, context = {}) {
 /**
  * Get cached response if valid
  */
-export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL, context = {}) {
+export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL, context = {}, onHit = null) {
   const cacheKey = getCacheKey(endpoint, body, context);
   const cacheFile = path.join(CACHE_DIR, `${cacheKey}.json`);
   
@@ -458,6 +458,10 @@ export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL
       } else {
         result = { ...cached.data, _meta: meta };
       }
+      const warningMeta = typeof cached.warning === 'string' && cached.warning
+        ? { notices: { warning: cached.warning } } : null;
+      if (result !== null && typeof result === 'object' && warningMeta) result[RESPONSE_META] = warningMeta;
+      onHit?.(warningMeta);
     }
   } catch (error) {
     primaryError = error;
@@ -477,7 +481,7 @@ export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL
 /**
  * Save response to cache
  */
-export function setCachedResponse(endpoint, body, data, context = {}) {
+export function setCachedResponse(endpoint, body, data, context = {}, responseMeta = data?.[RESPONSE_META]) {
   if (!fs.existsSync(CACHE_DIR)) {
     fs.mkdirSync(CACHE_DIR, { mode: 0o700, recursive: true });
   }
@@ -488,6 +492,7 @@ export function setCachedResponse(endpoint, body, data, context = {}) {
   const cached = {
     timestamp: Date.now(),
     endpoint,
+    warning: responseMeta?.notices?.warning,
     data
   };
   
@@ -1073,6 +1078,7 @@ export class NansenAPI {
     }
     const meta = readResponseMeta(paidResponse);
     this.lastResponseMeta = meta;
+    options.onResponseMeta?.(meta, false);
     if (meta && data !== null && typeof data === 'object') data[RESPONSE_META] = meta;
     return data;
   }
@@ -1107,8 +1113,18 @@ export class NansenAPI {
 
     let cacheContext = credentialContext();
     if (useCache && cacheContext) {
-      const cached = getCachedResponse(endpoint, body, cacheTtl, cacheContext);
-      if (cached) {
+      let hit = false;
+      const cached = getCachedResponse(endpoint, body, cacheTtl, cacheContext, meta => {
+        hit = true;
+        options.onResponseMeta?.(meta, true);
+        const warning = meta?.notices?.warning;
+        if (warning) {
+          const previous = this.lastResponseMeta;
+          const combined = [...new Set([previous?.notices?.warning, warning].filter(Boolean))].join(', ');
+          this.lastResponseMeta = { ...previous, notices: { ...previous?.notices, warning: combined } };
+        }
+      });
+      if (hit) {
         this.servedFromCache = true;
         traceCacheHit({ method, url });
         return cached;
@@ -1211,6 +1227,7 @@ export class NansenAPI {
           lastError = error;
           continue;
         }
+        options.onResponseMeta?.(meta, false);
         throw error;
       }
 
@@ -1444,6 +1461,7 @@ export class NansenAPI {
           continue;
         }
         
+        options.onResponseMeta?.(meta, false);
         throw lastError;
       }
 
@@ -1452,18 +1470,14 @@ export class NansenAPI {
         data._meta = { ...(data._meta || {}), retriedAttempts: attempt };
       }
 
-      // Cache successful response
-      if (useCache && cacheContext) {
-        setCachedResponse(endpoint, body, data, cacheContext);
-      }
-
-      // Attach after caching so the cache stores the payload alone — quota
-      // numbers are per-response and would be stale on a cache hit.
-      // Guarded: a response body can be a primitive, which cannot take a property.
+      // Symbols do not serialize into the payload. The cache persists only the
+      // durable warning separately; quota and request metadata remain live-only.
       const meta = readResponseMeta(response);
       this.lastResponseMeta = meta;
-      if (meta) {
-        if (data !== null && typeof data === 'object') data[RESPONSE_META] = meta;
+      options.onResponseMeta?.(meta, false);
+      if (meta && data !== null && typeof data === 'object') data[RESPONSE_META] = meta;
+      if (useCache && cacheContext) {
+        setCachedResponse(endpoint, body, data, cacheContext, meta);
       }
 
       return data;
@@ -1693,7 +1707,7 @@ export class NansenAPI {
     const { address, chain = 'ethereum', orderBy, pagination } = params;
     if (address) requireValidAddress(address, chain);
     return this.request('/api/v1/profiler/address/related-wallets', {
-      address,
+      wallet_address: address,
       chain,
       order_by: orderBy,
       pagination
@@ -1809,7 +1823,7 @@ export class NansenAPI {
     const { address, chain = 'ethereum', days = 30 } = params;
     if (address) requireValidAddress(address, chain);
     return this.request('/api/v1/profiler/address/pnl-summary', {
-      address,
+      wallet_address: address,
       chain,
       date: buildDateRange(days)
     });
@@ -2158,12 +2172,11 @@ export class NansenAPI {
   async pmMarketScreener(params = {}) {
     const { orderBy, sortBy = 'volume_24hr', query = '', status = '', tags, minLiquidity, maxLiquidity, maxUniqueTraders24h, minVolume24hr, negRisk, minOpenInterest, maxOpenInterest, endDateBefore, endDateAfter, minPrice, maxPrice, pagination } = params;
     const body = {
-      sort_by: sortBy,
+      order_by: orderBy || [{ field: sortBy, direction: 'DESC' }],
       query,
       status,
       pagination
     };
-    if (orderBy) body.order_by = orderBy;
     if (tags && tags.length) body.tags = tags;
     if (minLiquidity != null) body.min_liquidity = minLiquidity;
     if (maxLiquidity != null) body.max_liquidity = maxLiquidity;
@@ -2182,12 +2195,11 @@ export class NansenAPI {
   async pmEventScreener(params = {}) {
     const { orderBy, sortBy = 'volume_24hr', query = '', status = '', tags, minLiquidity, maxLiquidity, maxUniqueTraders24h, minVolume24hr, negRisk, minOpenInterest, maxOpenInterest, endDateBefore, endDateAfter, pagination } = params;
     const body = {
-      sort_by: sortBy,
+      order_by: orderBy || [{ field: sortBy, direction: 'DESC' }],
       query,
       status,
       pagination
     };
-    if (orderBy) body.order_by = orderBy;
     if (tags && tags.length) body.tags = tags;
     if (minLiquidity != null) body.min_liquidity = minLiquidity;
     if (maxLiquidity != null) body.max_liquidity = maxLiquidity;

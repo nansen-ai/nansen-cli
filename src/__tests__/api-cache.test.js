@@ -301,3 +301,112 @@ describe('response cache file safety', () => {
     expect(fs.readdirSync(getCacheDir())).toEqual([path.basename(cacheFile)]);
   });
 });
+
+describe('cached API warnings', () => {
+  it.each(['optimism', 'sui'])('retains %s advisories while dropping live accounting and request IDs', async chain => {
+    const api = await freshApi({ data: [{ chain }] });
+    const warning = `299 - "${chain} retires on 2027-02-01"`;
+    fetch.mockImplementation(async () => ({
+      ok: true, status: 200,
+      headers: new Headers({ warning, 'x-request-id': 'live-id', 'x-nansen-credits-used': '5' }),
+      json: async () => ({ data: [{ chain }] }),
+    }));
+    const live = await api.request('/api/v1/demo', {});
+    expect(api.lastResponseMeta.requestId).toBe('live-id');
+    const cached = await api.request('/api/v1/demo', {});
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(cached.data).toEqual(live.data);
+    expect(api.lastResponseMeta).toMatchObject({ requestId: 'live-id', notices: { warning } });
+    const cold = new api.constructor('test-key', 'https://api.nansen.ai', { cache: { enabled: true, ttl: 300 } });
+    await cold.request('/api/v1/demo', {});
+    expect(cold.lastResponseMeta).toEqual({ notices: { warning } });
+    expect(JSON.stringify(cached)).not.toContain(warning);
+  });
+});
+
+it.each(['plain-text-body', null, false, 0])('preserves warnings for cached primitive %j', async payload => {
+  const api = await freshApi(payload);
+  const warning = '299 - "Retirement notice"';
+  fetch.mockImplementation(async () => ({
+    ok: true, status: 200, headers: new Headers({ warning }), json: async () => payload,
+  }));
+  expect(await api.request('/api/v1/demo', {})).toBe(payload);
+  expect(await api.request('/api/v1/demo', {})).toBe(payload);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(api.lastResponseMeta).toEqual({ notices: { warning } });
+});
+
+
+it.each([null, '299 - "Cached advisory"'])('preserves live credit warnings after a cached auxiliary call with %s', async cachedWarning => {
+  const { creditWarning } = await import('../response-meta.js');
+  const api = await freshApi({ data: [] });
+  fetch.mockImplementation(async url => ({
+    ok: true, status: 200,
+    headers: new Headers(url.endsWith('/aux')
+      ? (cachedWarning ? { warning: cachedWarning } : {})
+      : { 'x-nansen-credits-used': '5', 'x-nansen-credits-cost': '5', 'x-nansen-credits-remaining': '2', warning: '299 - "Live advisory"' }),
+    json: async () => ({ data: [] }),
+  }));
+  await api.request('/aux', {});
+  await api.request('/primary', {});
+  await api.request('/aux', {});
+  expect(api.lastResponseMeta.credits).toEqual({ used: 5, cost: 5, remaining: 2 });
+  expect(creditWarning(api.lastResponseMeta)).toContain('2 API credits');
+  expect(api.lastResponseMeta.notices.warning).toContain('Live advisory');
+  if (cachedWarning) expect(api.lastResponseMeta.notices.warning).toContain('Cached advisory');
+});
+
+
+it.each(['text', null, false, 0])('preserves paginated cached primitive metadata for %j', async payload => {
+  const api = await freshApi(payload);
+  const { enableAutoPagination } = await import('../auto-paginate.js');
+  const warning = '299 - "sui retires on 2027-02-01"';
+  fetch.mockImplementation(async () => ({
+    ok: true, status: 200,
+    headers: new Headers({ warning, 'x-request-id': 'live-id', 'x-nansen-credits-used': '5' }),
+    json: async () => payload,
+  }));
+  enableAutoPagination(api);
+  const body = { pagination: { page: 1, per_page: 10 } };
+  expect(await api.request('/api/v1/demo', body)).toBe(payload);
+  expect(api.paginatedResponseMeta.notices.warning).toBe(warning);
+  expect(api.paginatedResponseMeta.credits.used).toBe(5);
+  expect(await api.request('/api/v1/demo', body)).toBe(payload);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(api.paginatedResponseMeta).toEqual({
+    notices: { warning },
+    credits: { used: 0, remaining: null, cost: 0 },
+    pagination: { pagesFetched: 1, livePages: 0, cachedPages: 1 },
+  });
+});
+
+
+it.each([[422, false], [503, false], [503, true]])('retains warnings from a failed page (%i, malformed=%s)', async (status, malformed) => {
+  const api = await freshApi({});
+  const { enableAutoPagination } = await import('../auto-paginate.js');
+  const { noticeWarnings } = await import('../response-meta.js');
+  const warning = '299 - "sui retires on 2027-02-01"';
+  fetch.mockImplementation(async (_url, options) => {
+    const page = JSON.parse(options.body).pagination.page;
+    if (page === 1) return {
+      ok: true, status: 200,
+      headers: new Headers({ 'x-nansen-credits-used': '2', 'x-nansen-credits-cost': '2' }),
+      json: async () => ({ data: [{ id: 1 }], pagination: { page: 1, total_pages: 2 } }),
+    };
+    return {
+      ok: false, status,
+      headers: new Headers({ warning, 'x-request-id': 'failed-page', 'x-nansen-credits-used': '3', 'x-nansen-credits-cost': '3' }),
+      json: async () => { if (malformed) throw new SyntaxError('bad JSON'); return { message: 'failed page' }; },
+      text: async () => 'bad JSON',
+    };
+  });
+  enableAutoPagination(api);
+  await expect(api.request('/api/v1/demo', { pagination: { page: 1, per_page: 1 } }, { retry: false })).rejects.toMatchObject({ status });
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(api.paginatedResponseMeta).toMatchObject({
+    requestId: 'failed-page', notices: { warning },
+    credits: { used: 5, cost: 5 },
+    pagination: { pagesFetched: 2, livePages: 2, cachedPages: 0 },
+  });
+  expect(noticeWarnings(api.paginatedResponseMeta)).toContain(`⚠️  ${warning}`);
+});
