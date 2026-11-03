@@ -140,8 +140,8 @@ describe('perp --dry-run', () => {
     expect(out).toMatch(/Size:\s+0\.01 ETH/);
     expect(out).toMatch(/Type:\s+market \(IOC\)/);
     expect(out).toMatch(/Price:\s+2000 reference, worst fill 2060 \(3% slippage\)/);
-    expect(out).toMatch(/Take-profit:\s+2200/);
-    expect(out).toMatch(/Stop-loss:\s+1800/);
+    expect(out).toMatch(/Take-profit:\s+sell 0\.01 ETH, reduce-only, market when the price reaches 2200/);
+    expect(out).toMatch(/Stop-loss:\s+sell 0\.01 ETH, reduce-only, market when the price reaches 1800/);
     expect(out).toMatch(/Est\. notional:\s+~\$20\.00 at the reference price, ~\$20\.60 at the worst fill/);
     expect(out).toMatch(/Leverage:\s+10x cross/);
     expect(out).toMatch(/Open position:\s+long 0\.5 @ 1900, 10x cross/);
@@ -159,6 +159,24 @@ describe('perp --dry-run', () => {
     await cmds.order([], mockApi(), { 'dry-run': true }, ORDER);
     expect(text()).toMatch(/Leverage:\s+your current ETH setting, unchanged by this order/);
     expect(text()).toMatch(/Price:\s+2000$/m);
+    expectNothingSigned();
+  });
+
+  it('order: shows the signed take-profit and stop-loss legs, not just their prices', async () => {
+    const { cmds, text } = capture();
+    await cmds.order([], mockApi(), { 'dry-run': true }, {
+      ...ORDER, 'take-profit': '2200', 'stop-loss': '1800',
+    });
+    const out = text();
+    expect(out).toMatch(/Take-profit:\s+sell 0\.01 ETH, reduce-only, market when the price reaches 2200$/m);
+    expect(out).toMatch(/Stop-loss:\s+sell 0\.01 ETH, reduce-only, market when the price reaches 1800$/m);
+    expectNothingSigned();
+  });
+
+  it('order: a nonzero notional below one cent is not shown as $0.00', async () => {
+    const { cmds, text } = capture();
+    await cmds.order([], mockApi(), { 'dry-run': true }, { ...ORDER, size: '0.0001', price: '40' });
+    expect(text()).toMatch(/Est\. notional:\s+<\$0\.01$/m);
     expectNothingSigned();
   });
 

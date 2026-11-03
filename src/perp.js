@@ -674,7 +674,8 @@ const PERP_DRY_RUN_NOTICE = [
 
 // Display-only USD estimate; the signed action carries the exact strings.
 function formatUsd(value) {
-  return Number.isFinite(value) ? `~$${value.toFixed(2)}` : null;
+  if (!Number.isFinite(value)) return null;
+  return value > 0 && value < 0.01 ? '<$0.01' : `~$${value.toFixed(2)}`;
 }
 
 // Notional of an IOC order at the reference price and at its worst fill (the
@@ -695,9 +696,17 @@ function builderFeeLine(status) {
   return `${rate} of the order value. Not yet approved: submitting signs and sends a one-time approval (max ${rate} to ${String(status.builder_address).toLowerCase()}) before the order`;
 }
 
-// The encoded trigger price of an attached take-profit/stop-loss leg.
-function triggerPrice(action, tpsl) {
-  return action.orders?.find(o => o?.t?.trigger?.tpsl === tpsl)?.t.trigger.triggerPx;
+// An attached take-profit/stop-loss leg as it will be signed: side, size,
+// reduce-only and trigger read from the built action. undefined when absent.
+function describeTriggerLeg(action, tpsl, coin) {
+  const leg = action.orders?.find(o => o?.t?.trigger?.tpsl === tpsl);
+  if (!leg) return undefined;
+  const { isMarket, triggerPx } = leg.t.trigger;
+  return [
+    `${leg.b ? 'buy' : 'sell'} ${leg.s} ${coin}`,
+    ...(leg.r ? ['reduce-only'] : []),
+    `${isMarket ? 'market' : 'limit'} when the price reaches ${triggerPx}`,
+  ].join(', ');
 }
 
 // Read-only lookup of the wallet's open position in `coin`, for the plan only.
@@ -904,8 +913,8 @@ OPTIONS:
             ['Price', orderType === 'market'
               ? `${price} reference, worst fill ${effPrice} (${formatSlippage(slippage)} slippage)`
               : String(effPrice)],
-            ['Take-profit', triggerPrice(action, 'tp')],
-            ['Stop-loss', triggerPrice(action, 'sl')],
+            ['Take-profit', describeTriggerLeg(action, 'tp', coin)],
+            ['Stop-loss', describeTriggerLeg(action, 'sl', coin)],
             ['Est. notional', orderType === 'market'
               ? formatIocNotional(effSize, price, effPrice)
               : formatUsd(effSize * effPrice)],
