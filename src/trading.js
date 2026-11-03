@@ -343,7 +343,14 @@ function ambiguousBroadcast(message, { status, details } = {}) {
  * releases its single-flight lock on the quote, because the swap never left the
  * backend. Kept as an explicit list rather than a pattern: adding a code here
  * lets the candidate loop sign the next quote after it, so it must be a
- * deliberate edit that matches the API's own published list.
+ * deliberate edit drawn from the API's own published list.
+ *
+ * A subset of that list, not a copy. `APPROVAL_BROADCAST_FAILED` is left out:
+ * the API returns it only when an approval is bundled into the request, and the
+ * CLI never bundles one (approvals go out as their own executeTransaction
+ * call). The code also says the swap was not sent, not that the approval was
+ * not: the API notes the approval may still sit in a mempool. A response with
+ * it is therefore unexpected here and stays ambiguous.
  */
 const STANDARD_PRE_BROADCAST_CODES = Object.freeze([
   'QUOTE_EXPIRED',
@@ -351,7 +358,6 @@ const STANDARD_PRE_BROADCAST_CODES = Object.freeze([
   'SIMULATION_FAILED',
   'SIMULATION_MIN_RETURN_NOT_REACHED',
   'INSUFFICIENT_BALANCE',
-  'APPROVAL_BROADCAST_FAILED',
 ]);
 
 const isAbsentTxId = (value) => value === undefined || value === null || value === '';

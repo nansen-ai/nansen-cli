@@ -9257,7 +9257,6 @@ describe('executeTransaction — standard execution route', () => {
     'SIMULATION_FAILED',
     'SIMULATION_MIN_RETURN_NOT_REACHED',
     'INSUFFICIENT_BALANCE',
-    'APPROVAL_BROADCAST_FAILED',
   ])('returns a 400 pre-broadcast %s as Failed without retrying', async (code) => {
     const { executeTransaction } = await import('../trading.js');
     const calls = stubExecuteFetch([{ status: 400, body: { code, message: 'rejected before broadcast' } }]);
@@ -9287,6 +9286,9 @@ describe('executeTransaction — standard execution route', () => {
     ['a listed code with a null success', 400, { code: 'SIMULATION_FAILED', success: null }],
     ['a listed code on a 422', 422, { code: 'QUOTE_EXPIRED', message: 'nope' }],
     ['a listed code on a 403', 403, { code: 'INSUFFICIENT_BALANCE', message: 'nope' }],
+    // The API emits it only for a bundled approval, which the CLI never sends,
+    // and it does not rule out that the approval itself went out.
+    ['APPROVAL_BROADCAST_FAILED', 400, { code: 'APPROVAL_BROADCAST_FAILED', message: 'approval not confirmed' }],
   ])('keeps a 4xx pre-broadcast lookalike with %s fail-closed', async (_label, status, body) => {
     const { executeTransaction } = await import('../trading.js');
     stubExecuteFetch([{ status, body }]);
