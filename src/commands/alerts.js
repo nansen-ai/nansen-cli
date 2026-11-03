@@ -6,6 +6,55 @@
 import { NansenError, ErrorCode } from '../api.js';
 import { parseCsvOption } from '../query-options.js';
 import { unknownCommandError } from '../input-validation.js';
+import { hasControlChars, readWebhookSecretInput } from '../auth-key-input.js';
+
+// ============= Webhook signing secret input =============
+
+/** Environment variable read for the webhook signing secret. */
+export const WEBHOOK_SECRET_ENV = 'NANSEN_WEBHOOK_SECRET';
+
+/**
+ * Resolve the webhook signing secret for create/update, or undefined.
+ *
+ * Sources, in order: --webhook-secret <secret> or --webhook-secret-stdin
+ * (passing both is an error), then NANSEN_WEBHOOK_SECRET. An explicit option
+ * overrides the environment, as --api-key overrides NANSEN_API_KEY. The
+ * environment is read only together with --webhook, so a variable exported for
+ * other commands never adds a secret to an alert that has no webhook channel.
+ * Errors never quote the secret.
+ */
+export async function resolveWebhookSecret(options, flags, { env = process.env, stdin = process.stdin, stdinTTY } = {}) {
+  // A bare `--webhook-secret` (no value) lands in flags, possibly as
+  // `[true, true]` when repeated; any presence counts as the flag being given.
+  const bareFlag = flags['webhook-secret'] !== undefined;
+  const fromFlag = Object.hasOwn(options, 'webhook-secret') || bareFlag;
+  const fromStdin = flags['webhook-secret-stdin'] !== undefined;
+  if (fromFlag && fromStdin) {
+    throw new NansenError('Use either --webhook-secret or --webhook-secret-stdin, not both.', ErrorCode.INVALID_PARAMS);
+  }
+  if (fromFlag) {
+    if (bareFlag && Object.hasOwn(options, 'webhook-secret')) {
+      throw new NansenError('--webhook-secret can only be passed once', ErrorCode.INVALID_PARAMS);
+    }
+    if (bareFlag) {
+      throw new NansenError('--webhook-secret requires a value. To keep the secret out of shell history, use --webhook-secret-stdin or NANSEN_WEBHOOK_SECRET instead.', ErrorCode.MISSING_PARAM);
+    }
+    if (!options.webhook) throw new NansenError('--webhook-secret requires --webhook', ErrorCode.INVALID_PARAMS);
+    return { value: options['webhook-secret'], source: '--webhook-secret' };
+  }
+  if (fromStdin) {
+    if (!options.webhook) throw new NansenError('--webhook-secret-stdin requires --webhook', ErrorCode.INVALID_PARAMS);
+    const value = await readWebhookSecretInput(stdin, stdinTTY ?? stdin?.isTTY);
+    return { value, source: '--webhook-secret-stdin' };
+  }
+  const value = typeof env?.[WEBHOOK_SECRET_ENV] === 'string' ? env[WEBHOOK_SECRET_ENV].trim() : '';
+  if (!value || !options.webhook) return undefined;
+  // Same rule as stdin: a line break means more than one value.
+  if (hasControlChars(value)) {
+    throw new NansenError(`${WEBHOOK_SECRET_ENV} must be a single line without control characters.`, ErrorCode.INVALID_PARAMS);
+  }
+  return { value, source: WEBHOOK_SECRET_ENV };
+}
 
 // ============= Channel secret redaction =============
 
@@ -707,7 +756,7 @@ const TIME_WINDOW_BY_TYPE = {
 };
 
 export function buildAlertsCommands(deps = {}) {
-  const { log = console.log } = deps;
+  const { log = console.log, env = process.env, stdin = process.stdin, stdinTTY } = deps;
 
   return {
     'alerts': async (args, apiInstance, flags, options) => {
@@ -762,7 +811,9 @@ REQUIRED:
 
 OPTIONS (all types):
   --chains <chains>            Comma-separated chains (e.g. ethereum,solana)
-  --webhook-secret <secret>    Signing secret for webhook payload verification (webhook only)
+  --webhook-secret-stdin       Read the webhook signing secret from a pipe or file (webhook only)
+  --webhook-secret <secret>    Signing secret on the command line (visible in shell history and
+                               the process list; prefer --webhook-secret-stdin or NANSEN_WEBHOOK_SECRET)
   --token <address:chain>      Include token (repeatable)
   --exclude-token <addr:chain> Exclude token (repeatable)
   --description '<text>'       Alert description
@@ -800,7 +851,15 @@ NOTE: Use single quotes for names with $ or special chars: --name 'SM >$1M'
 EXAMPLES:
   nansen alerts create --name 'ETH SM Inflow' --type sm-token-flows --chains ethereum --telegram 5238612255 --inflow-1h-min 1000000
   nansen alerts create --name 'USDC Transfers' --type common-token-transfer --chains ethereum --telegram 5238612255 --events send,receive --usd-min 1000000 --subject label:"Centralized Exchange"
-  nansen alerts create --name 'Contract Calls' --type smart-contract-call --chains ethereum --telegram 5238612255 --signature-hash 0xa9059cbb --caller address:0xabc`,
+  nansen alerts create --name 'Contract Calls' --type smart-contract-call --chains ethereum --telegram 5238612255 --signature-hash 0xa9059cbb --caller address:0xabc
+  nansen alerts create --name 'Hook' --type sm-token-flows --chains ethereum --webhook https://example.com/hook --inflow-1h-min 1000000 --webhook-secret-stdin < secret.txt
+
+WEBHOOK SIGNING SECRET (minimum 16 characters, webhook only):
+  --webhook-secret-stdin       Pipe or redirect it: ... --webhook-secret-stdin < secret.txt
+  NANSEN_WEBHOOK_SECRET        Environment variable, read only when --webhook is given
+  --webhook-secret <secret>    Still accepted, but it lands in shell history and the process list
+  --webhook-secret and --webhook-secret-stdin cannot be combined. Either one overrides
+  NANSEN_WEBHOOK_SECRET. The secret is redacted in output and errors unless --reveal is passed.`,
 
         update: `nansen alerts update — Update an existing alert
 
@@ -816,7 +875,8 @@ NOTE: --type cannot change an existing alert's type (use delete + create instead
 EXAMPLES:
   nansen alerts update abc123 --name 'New Name'
   nansen alerts update abc123 --inflow-1h-min 2000000
-  nansen alerts update abc123 --chains ethereum,base --inflow-1h-min 2000000`,
+  nansen alerts update abc123 --chains ethereum,base --inflow-1h-min 2000000
+  nansen alerts update abc123 --webhook https://example.com/hook --webhook-secret-stdin < secret.txt`,
 
         toggle: `nansen alerts toggle — Enable or disable an alert
 
@@ -838,11 +898,12 @@ USAGE:
         return;
       }
 
+      // Signing secret resolved once from --webhook-secret, --webhook-secret-stdin
+      // or NANSEN_WEBHOOK_SECRET before create/update runs (stdin can only be read once).
+      let webhookSecret;
+
       // Build channels array from --telegram/--slack/--discord/--webhook flags
       function buildChannels() {
-        if (options["webhook-secret"] && !options.webhook) {
-          throw new NansenError('--webhook-secret requires --webhook', ErrorCode.INVALID_PARAMS);
-        }
         for (const flag of ['slack', 'discord', 'webhook', 'webhook-secret']) {
           if (Array.isArray(options[flag])) {
             throw new NansenError(`--${flag} can only be passed once`, ErrorCode.INVALID_PARAMS);
@@ -858,11 +919,25 @@ USAGE:
         if (options.telegram) channels.push({ type: 'telegram', data: { chatId: String(options.telegram) } });
         if (options.slack) channels.push({ type: 'slack', data: { webhookUrl: options.slack } });
         if (options.discord) channels.push({ type: 'discord', data: { webhookUrl: options.discord } });
+        // Output masks a secret as a whole (REDACTED), so only an all-asterisk
+        // value is a pasted-back redaction; a real secret may contain `****`.
+        if (webhookSecret && webhookSecret.source !== '--webhook-secret' && /^\*+$/.test(webhookSecret.value)) {
+          throw new NansenError(
+            `The webhook secret from ${webhookSecret.source} looks like a redacted value from alerts output. Pass the full value (nansen alerts list --reveal shows it).`,
+            ErrorCode.INVALID_PARAMS,
+          );
+        }
         if (options.webhook) {
           const webhookData = { webhookUrl: options.webhook };
-          if (options["webhook-secret"]) {
-            if (options["webhook-secret"].length < 16) throw new NansenError('--webhook-secret must be at least 16 characters', ErrorCode.INVALID_PARAMS);
-            webhookData.secret = options["webhook-secret"];
+          if (webhookSecret) {
+            const { value, source } = webhookSecret;
+            if (typeof value !== 'string' || value.length < 16) {
+              throw new NansenError(
+                source === '--webhook-secret' ? '--webhook-secret must be at least 16 characters' : `The webhook secret from ${source} must be at least 16 characters`,
+                ErrorCode.INVALID_PARAMS,
+              );
+            }
+            webhookData.secret = value;
           }
           channels.push({ type: 'webhook', data: webhookData });
         }
@@ -1019,6 +1094,9 @@ USAGE:
       }
 
       try {
+        if (sub === 'create' || sub === 'update') {
+          webhookSecret = await resolveWebhookSecret(options, flags, { env, stdin, stdinTTY });
+        }
         const result = await handlers[sub]();
         return flags.reveal ? result : redactAlertSecrets(result);
       } catch (err) {
@@ -1046,7 +1124,8 @@ USAGE:
         // API error bodies (message and details) can echo the submitted channels,
         // and the hint above quotes the webhook URL; all are masked here unless
         // --reveal is passed.
-        throw flags.reveal ? error : redactAlertError(error, options, sentPayload);
+        const redactOptions = webhookSecret ? { ...options, 'webhook-secret': webhookSecret.value } : options;
+        throw flags.reveal ? error : redactAlertError(error, redactOptions, sentPayload);
       }
     },
   };

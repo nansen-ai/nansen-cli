@@ -37,6 +37,7 @@ export const ERROR_CODES = {
   // ── Input and validation ──
   INVALID_PARAMS: { group: 'input', description: 'An option or request field has an invalid value, or the command does not accept it. `details.errors[]` names each field.' },
   MISSING_PARAM: { group: 'input', description: 'A required option or request field is missing. `details.errors[]` names each field.' },
+  NOT_A_PIPE: { group: 'input', description: 'An option that reads a secret from stdin (`--api-key-stdin`, `--webhook-secret-stdin`) was used with a terminal on stdin. Pipe the value or redirect a file.' },
   MISSING_ARGS: { group: 'input', description: 'A trade or wallet command is missing required arguments; the message shows the usage.' },
   INVALID_INPUT: { group: 'input', description: 'A trade, bridge, perp or wallet argument failed local validation.' },
   INVALID_ADDRESS: { group: 'input', description: 'An address does not match the format of the selected chain.' },

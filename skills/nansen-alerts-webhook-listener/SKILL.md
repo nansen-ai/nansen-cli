@@ -85,11 +85,13 @@ If the user prefers localtunnel or can't install ngrok, proceed with localtunnel
 
 ### Step 1: Generate a webhook secret
 
+Write the secret straight to a file that only the user can read, so it never appears in the terminal, the shell history or the transcript:
+
 ```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+(umask 077 && node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))" > nansen-webhook-secret.txt)
 ```
 
-Store the output — you need it for both the server and the alert configuration. **Never log or echo the secret after this point.**
+The server and the alert both read it from this file (`WEBHOOK_SECRET="$(cat nansen-webhook-secret.txt)"` for the server, `--webhook-secret-stdin < nansen-webhook-secret.txt` for `nansen alerts`). **Never log, echo or paste the secret.**
 
 ### Step 2: Write the webhook receiver script
 
@@ -257,7 +259,7 @@ server.listen(PORT, '127.0.0.1', () => {
 Start the server:
 
 ```bash
-WEBHOOK_SECRET='<secret>' node nansen-webhook-server.mjs
+WEBHOOK_SECRET="$(cat nansen-webhook-secret.txt)" node nansen-webhook-server.mjs
 ```
 
 Then start a public tunnel so Nansen's servers can reach it.
@@ -287,9 +289,9 @@ Prints a URL like `https://xxx.loca.lt`. The webhook URL is `https://xxx.loca.lt
 **Do NOT create or modify any alerts.** Instead, print a clear summary for the user explaining what was set up and what they need to do next.
 
 The summary MUST include:
-1. Confirmation of what was created (the server script path and the generated secret)
-2. The commands to start the server and tunnel (with the actual secret filled in)
-3. The exact `nansen alerts create` or `nansen alerts update` command they should run, with the `--webhook` and `--webhook-secret` flags filled in with the tunnel URL and secret — but leave the alert-specific flags (`--name`, `--type`, `--chains`, etc.) as placeholders for the user to fill in
+1. Confirmation of what was created (the server script path and the secret file path; never the secret itself)
+2. The commands to start the server and tunnel (reading the secret from the file)
+3. The exact `nansen alerts create` or `nansen alerts update` command they should run, with `--webhook` filled in with the tunnel URL and `--webhook-secret-stdin < nansen-webhook-secret.txt` for the secret (do not put the secret on the command line with `--webhook-secret`; it lands in shell history and the process list) — but leave the alert-specific flags (`--name`, `--type`, `--chains`, etc.) as placeholders for the user to fill in
 4. A reminder that the server and tunnel must be running before the alert is created (Nansen validates the webhook endpoint on creation)
 5. A note that tunnel URLs are ephemeral and will change on restart
 
@@ -299,12 +301,13 @@ Example summary format:
 ## Webhook listener ready
 
 **Server script:** ./nansen-webhook-server.mjs
+**Secret file:** ./nansen-webhook-secret.txt (readable only by you)
 **Port:** 9477
 
 ### To start receiving alerts:
 
 1. Start the server (keep this terminal open):
-   WEBHOOK_SECRET='<actual-secret>' node nansen-webhook-server.mjs
+   WEBHOOK_SECRET="$(cat nansen-webhook-secret.txt)" node nansen-webhook-server.mjs
 
 2. In a new terminal, start the tunnel:
    ngrok http 9477          # recommended
@@ -316,13 +319,13 @@ Example summary format:
      --type <sm-token-flows|common-token-transfer|smart-contract-call> \
      --chains <chains> \
      --webhook 'https://<your-tunnel-url>/webhook' \
-     --webhook-secret '<actual-secret>' \
-     [type-specific flags...]
+     --webhook-secret-stdin \
+     [type-specific flags...] < nansen-webhook-secret.txt
 
    Or add the webhook to an existing alert:
    nansen alerts update <alert-id> \
      --webhook 'https://<your-tunnel-url>/webhook' \
-     --webhook-secret '<actual-secret>'
+     --webhook-secret-stdin < nansen-webhook-secret.txt
 
 Note: The tunnel URL changes each time you restart. Update the alert
 webhook URL if you restart the tunnel.
@@ -343,11 +346,11 @@ See `nansen alerts create --help` for full flag reference per alert type.
 
 | Symptom | Fix |
 |---|---|
-| "Invalid signature" on every request | Ensure the **exact same secret** is in `WEBHOOK_SECRET` and `--webhook-secret` |
+| "Invalid signature" on every request | Ensure the server and the alert read the **same secret** (the same `nansen-webhook-secret.txt`). Re-run `nansen alerts update <id> --webhook '<url>/webhook' --webhook-secret-stdin < nansen-webhook-secret.txt` after changing it |
 | "Failed to send welcome message" on alert create | Start the server and tunnel **before** creating the alert |
 | No alerts arriving | Check `nansen alerts list --table` — is the alert enabled? Is the webhook URL correct (includes `/webhook`)? |
 | Tunnel URL expired / tunnel died | Restart the tunnel, get the new URL, then `nansen alerts update <id> --webhook '<new-url>/webhook'`. If this keeps happening, switch from localtunnel to ngrok. |
-| Port already in use | Set a different port: `PORT=9478 WEBHOOK_SECRET='...' node nansen-webhook-server.mjs` and update the tunnel accordingly |
+| Port already in use | Set a different port: `PORT=9478 WEBHOOK_SECRET="$(cat nansen-webhook-secret.txt)" node nansen-webhook-server.mjs` and update the tunnel accordingly |
 
 ## OpenClaw Integration
 
@@ -365,7 +368,7 @@ If the user is running OpenClaw locally on the same machine, the webhook server 
 ### Start command (with OpenClaw forwarding)
 
 ```bash
-WEBHOOK_SECRET='<secret>' \
+WEBHOOK_SECRET="$(cat nansen-webhook-secret.txt)" \
 OPENCLAW_GATEWAY_URL='http://localhost:3000' \
 OPENCLAW_AUTH_TOKEN='<token>' \
 node nansen-webhook-server.mjs
