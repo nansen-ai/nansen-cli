@@ -290,6 +290,21 @@ describe('wallet CRUD', () => {
     expect(() => createWallet('.hidden', PASSWORD)).toThrow('Wallet name must be');
   });
 
+  it('should reject a wallet named after the config file', () => {
+    createWallet('main', PASSWORD);
+    for (const name of ['config', 'Config', 'CONFIG']) {
+      expect(() => createWallet(name, PASSWORD)).toThrow('reserved name');
+    }
+    expect(listWallets()).toMatchObject({ defaultWallet: 'main', wallets: [{ name: 'main' }] });
+    expect(() => showWallet('config')).toThrow('reserved name');
+  });
+
+  it('should reject wallet names that send treats as WalletConnect', () => {
+    expect(() => createWallet('wc', PASSWORD)).toThrow('reserved name');
+    expect(() => createWallet('walletconnect', PASSWORD)).toThrow('reserved name');
+    expect(listWallets().wallets).toHaveLength(0);
+  });
+
   it('should reject duplicate wallet names', () => {
     createWallet('dupe', PASSWORD);
     expect(() => createWallet('dupe', PASSWORD)).toThrow('already exists');

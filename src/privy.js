@@ -11,7 +11,7 @@ import path from "path";
 import { parsePaymentRequirements } from "./x402.js";
 import { hasSufficientEvmPaymentBalance, hasSufficientSvmPaymentBalance } from "./x402-payment-balance.js";
 import { isEvmNetwork } from "./x402-evm.js";
-import { mkdirPrivateSync, readWalletJson, withWalletLock, writeWalletJsonAtomic } from "./wallet.js";
+import { mkdirPrivateSync, readWalletJson, validateWalletName, withWalletLock, writeWalletJsonAtomic } from "./wallet.js";
 import { evaluatePaymentRequirement, resolvePaymentAmount, resolvePayTo, signWithSessionCharge } from "./x402-policy.js";
 import {
   isSvmNetwork,
@@ -209,10 +209,7 @@ function getClient() {
  * Mirrors createWallet() in wallet.js but for Privy server wallets.
  */
 export async function createPrivyWalletPair(name) {
-  const WALLET_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
-  if (!name || !WALLET_NAME_RE.test(name)) {
-    throw new Error("Wallet name must be 1-64 characters: letters, numbers, hyphens, underscores only");
-  }
+  validateWalletName(name, { creating: true });
 
   const walletsDir = path.join(process.env.HOME || process.env.USERPROFILE || "", ".nansen", "wallets");
   const walletFile = path.join(walletsDir, `${name}.json`);

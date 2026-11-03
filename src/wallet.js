@@ -454,9 +454,18 @@ export function withWalletLock(fn, { waitMs = WALLET_LOCK_WAIT_MS } = {}) {
 
 const WALLET_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
-function validateWalletName(name) {
+// `wallet send` and limit orders treat these as WalletConnect, so a local
+// wallet with one of these names could never be selected.
+const WALLETCONNECT_NAMES = new Set(['walletconnect', 'wc']);
+
+export function validateWalletName(name, { creating = false } = {}) {
   if (!name || !WALLET_NAME_RE.test(name)) {
     throw new Error('Wallet name must be 1-64 characters: letters, numbers, hyphens, underscores only');
+  }
+  // config.json is the wallet settings file in the same directory. Compared
+  // case-insensitively because the macOS and Windows filesystems are.
+  if (name.toLowerCase() === 'config' || (creating && WALLETCONNECT_NAMES.has(name))) {
+    throw new Error(`"${name}" is a reserved name and cannot be used for a wallet`);
   }
 }
 
@@ -638,6 +647,7 @@ export function listWallets() {
  * the CLI saves the password there so a racing create can't overwrite it.
  */
 export function createWallet(name, password, { beforeCommit } = {}) {
+  validateWalletName(name, { creating: true });
   const walletFile = getWalletFile(name);
   // Key generation and encryption (two scrypt runs) need no shared state, so
   // they run before the lock to keep it short.

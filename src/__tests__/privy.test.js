@@ -769,6 +769,15 @@ describe("createPrivyWalletPair", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
+  it("rejects a reserved name before creating any Privy wallet", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createPrivyWalletPair("config")).rejects.toThrow("reserved name");
+    await expect(createPrivyWalletPair("wc")).rejects.toThrow("reserved name");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("deletes the new Privy wallets when another command took the name during the network calls", async () => {
     const walletsDir = path.join(tempDir, ".nansen", "wallets");
     const fetchMock = vi.fn(async (url, options) => {
