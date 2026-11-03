@@ -523,6 +523,25 @@ describe('cache clear', () => {
     expect(fs.existsSync(outsider)).toBe(true);
   });
 
+  it('removes temp files left by a killed write, but not a write in progress', async () => {
+    writeResponseEntry(CACHE_KEY, { data: [1] });
+    const temp = suffix => `${'b'.repeat(64)}.json.4242.${suffix}.tmp`;
+    const stale = path.join(responseCacheDir(), temp('12345678-1234-4123-8123-123456789abc'));
+    const live = path.join(responseCacheDir(), temp('87654321-4321-4321-8321-cba987654321'));
+    fs.writeFileSync(stale, '{"timestamp":');
+    fs.writeFileSync(live, '{"timestamp":');
+    const old = new Date(Date.now() - 11 * 60 * 1000);
+    fs.utimesSync(stale, old, old);
+    const { collectCacheStats, clearCaches } = await freshModule('../cache-inspect.js');
+
+    // Temp files are not cache entries; stats keep counting entries only.
+    expect(collectCacheStats().caches[0].entries).toBe(1);
+    const result = clearCaches('responses');
+
+    expect(result.total_entries).toBe(2);
+    expect(fs.readdirSync(responseCacheDir())).toEqual([path.basename(live)]);
+  });
+
   it('ignores JSON files that are not response-cache digest entries', async () => {
     fs.mkdirSync(responseCacheDir(), { recursive: true });
     const unrelated = path.join(responseCacheDir(), 'important.json');

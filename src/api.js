@@ -15,6 +15,7 @@ import { readResponseMeta, stringHeader } from './response-meta.js';
 import { trace, traceRequest, traceResponse, traceError, traceRetry, traceCacheHit } from './debug.js';
 import { appendPaymentRecord, newPaymentId, sanitizeRequestUrl } from './x402-audit.js';
 import { openLocalFile } from './local-file.js';
+import { ENTRY_MAX_AGE_MS, isStaleTemp, pruneResponseCacheDir } from './response-cache-files.js';
 
 /**
  * Key for the credit/rate-limit metadata attached to a successful response.
@@ -426,6 +427,8 @@ function getCacheKey(endpoint, body, context = {}) {
 export function getCachedResponse(endpoint, body, ttlSeconds = DEFAULT_CACHE_TTL, context = {}, onHit = null) {
   const cacheKey = getCacheKey(endpoint, body, context);
   const cacheFile = path.join(CACHE_DIR, `${cacheKey}.json`);
+  // The sweep after a write keeps entries this process may still read.
+  if (Number.isFinite(ttlSeconds) && ttlSeconds > largestReadTtlSeconds) largestReadTtlSeconds = ttlSeconds;
   
   if (!fs.existsSync(cacheFile)) {
     return null;
@@ -527,22 +530,58 @@ export function setCachedResponse(endpoint, body, data, context = {}, responseMe
   try { fs.unlinkSync(tempFile); } catch { /* rename may already have committed */ }
   if (primaryError) throw primaryError;
   if (closeError) throw closeError;
+  sweepResponseCache(cacheFile);
+}
+
+// Sweep old entries and abandoned temp files after the first successful write
+// in a process, then at most once per RESPONSE_CACHE_SWEEP_INTERVAL_MS so a
+// long-running process keeps sweeping. Best effort: the response is already
+// cached and a failed sweep must not fail the request. Ages are measured
+// against the mtime of the entry just written rather than Date.now(), so every
+// file is judged by the same clock (a network filesystem may stamp its own
+// time) and the new entry itself is never older than the window. Entries this
+// process may still read with a longer TTL are kept.
+const RESPONSE_CACHE_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+let lastResponseCacheSweep;
+let largestReadTtlSeconds = 0;
+function sweepResponseCache(writtenFile) {
+  const now = Date.now();
+  if (lastResponseCacheSweep !== undefined && now - lastResponseCacheSweep < RESPONSE_CACHE_SWEEP_INTERVAL_MS) return;
+  lastResponseCacheSweep = now;
+  try {
+    const retentionMs = Math.max(ENTRY_MAX_AGE_MS, largestReadTtlSeconds * 1000);
+    pruneResponseCacheDir(CACHE_DIR, fs.lstatSync(writtenFile).mtimeMs, retentionMs);
+  } catch {
+    // The next process tries again.
+  }
 }
 
 /**
  * Clear all cached responses
  */
 export function clearCache() {
-  if (fs.existsSync(CACHE_DIR)) {
-    const files = fs.readdirSync(CACHE_DIR);
-    for (const file of files) {
-      if (file.endsWith('.json')) {
-        fs.unlinkSync(path.join(CACHE_DIR, file));
+  // Like the sweep and `nansen cache clear`, never follow a symlinked cache
+  // directory: deletes stay inside the directory itself.
+  const dirStat = fs.lstatSync(CACHE_DIR, { throwIfNoEntry: false });
+  if (!dirStat?.isDirectory()) return 0;
+  const files = fs.readdirSync(CACHE_DIR);
+  const now = Date.now();
+  let removed = 0;
+  for (const file of files) {
+    const full = path.join(CACHE_DIR, file);
+    if (file.endsWith('.json')) {
+      fs.unlinkSync(full);
+      removed += 1;
+    } else {
+      // A temp file younger than this may belong to a write in progress.
+      const stat = fs.lstatSync(full, { throwIfNoEntry: false });
+      if (stat?.isFile() && isStaleTemp(file, stat, now)) {
+        fs.unlinkSync(full);
+        removed += 1;
       }
     }
-    return files.length;
   }
-  return 0;
+  return removed;
 }
 
 /**
