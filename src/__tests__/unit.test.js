@@ -513,6 +513,22 @@ describe('x402 Payment', () => {
       expect(typedData.message.nonce).toMatch(/^0x[0-9a-f]{64}$/);
     });
 
+    it('should bound validBefore by a sane payment timeout', () => {
+      const window = (maxTimeoutSeconds) => {
+        const { message } = buildEIP712TypedData({
+          fromAddress: '0xSender',
+          requirement: { ...MOCK_REQUIREMENT, maxTimeoutSeconds },
+        });
+        return message.validBefore - (message.validAfter + 600);
+      };
+      expect(window(300)).toBe(300);
+      expect(window('60')).toBe(60);
+      expect(window(10 ** 9)).toBe(3600);
+      expect(window(undefined)).toBe(120);
+      expect(window(-5)).toBe(120);
+      expect(window('1e9')).toBe(120);
+    });
+
     it('should include all required EIP-712 types', () => {
       const typedData = buildEIP712TypedData({
         fromAddress: '0xSender',
