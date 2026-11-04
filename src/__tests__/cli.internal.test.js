@@ -2089,6 +2089,23 @@ describe('parseSort', () => {
     expect(parseSort('null:asc', undefined)).toEqual([{ field: 'null', direction: 'ASC' }]);
   });
 
+  it('should reject extra colon segments instead of dropping them', () => {
+    for (const bad of ['value_usd:desc:asc', 'value_usd:asc:', 'a:b:c']) {
+      expect(() => parseSort(bad, undefined)).toThrowError(/--sort must be "field" or "field:direction"/);
+    }
+  });
+
+  it('should reject an --order-by that is not an array of objects with a field', () => {
+    for (const bad of ['foo', 5, true, {}, { field: 'x' }, [{ direction: 'ASC' }], [{ field: '' }], [{ field: 'a' }, 'b'], [null], [['a']]]) {
+      expect(() => parseSort(undefined, bad)).toThrowError(/--order-by must be a JSON array/);
+    }
+  });
+
+  it('should pass a well-formed --order-by through untouched', () => {
+    const orderBy = [{ field: 'value_usd', direction: 'DESC' }, { field: 'token.symbol', direction: 'asc' }];
+    expect(parseSort(undefined, orderBy)).toBe(orderBy);
+  });
+
   it('should reject a non-string value with an actionable error instead of a TypeError', () => {
     for (const bad of [true, ['a', 'b'], { field: 'x' }]) {
       let error;
