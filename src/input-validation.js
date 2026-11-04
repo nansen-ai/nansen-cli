@@ -126,7 +126,7 @@ const CATEGORY_ALIASES = { tgm: 'token', sm: 'smart-money', prof: 'profiler', po
 // Categories that still run without the `research` prefix.
 const TOP_LEVEL_CATEGORIES = new Set(['smart-money', 'profiler', 'token', 'search', 'portfolio', 'prediction-market']);
 // Subcommand spellings a handler accepts besides the schema name.
-const SUBCOMMAND_ALIASES = { portfolio: { 'defi-holdings': 'defi' } };
+export const SUBCOMMAND_ALIASES = { portfolio: { 'defi-holdings': 'defi' } };
 // Commands whose endpoint was removed. Their handler still answers with
 // COMMAND_UNAVAILABLE, both as `nansen <name>` and `nansen research <name>`,
 // but they are left out of the schema, help listings, completions and "did

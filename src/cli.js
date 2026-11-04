@@ -19,7 +19,7 @@ import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
 import { buildPagination, parseSort, parseCsvOption, rejectBlankOption, parseFiltersOption } from './query-options.js';
-import { resolveResearchCommand, validateResearchInput, UNAVAILABLE_COMMANDS, validateOutputOptions, validateFieldSelection, unknownCommandError, normalizeFilterAddresses } from './input-validation.js';
+import { resolveResearchCommand, validateResearchInput, UNAVAILABLE_COMMANDS, SUBCOMMAND_ALIASES, validateOutputOptions, validateFieldSelection, unknownCommandError, normalizeFilterAddresses } from './input-validation.js';
 import { enableAutoPagination, DEFAULT_MAX_PAGES, MAX_PAGES_LIMIT, locateRows } from './auto-paginate.js';
 export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
@@ -2479,7 +2479,8 @@ function telemetryCommandName(commands, command, subcommand) {
   // `perp` is both a top-level command and a research category (screener, leaderboard).
   const known = [SCHEMA.commands[command]?.subcommands, SCHEMA.commands.research.subcommands[command]?.subcommands];
   if (known.some(subcommands => subcommands && Object.hasOwn(subcommands, subcommand))
-    || REMOVED_SUBCOMMANDS[command]?.includes(subcommand)) {
+    || REMOVED_SUBCOMMANDS[command]?.includes(subcommand)
+    || Object.hasOwn(SUBCOMMAND_ALIASES[command] ?? {}, subcommand)) {
     return `${command} ${subcommand}`;
   }
   return command;

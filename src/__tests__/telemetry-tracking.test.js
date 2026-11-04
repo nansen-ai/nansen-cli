@@ -313,6 +313,12 @@ describe('telemetry tracking for all first-level commands', () => {
     expect(calls.at(-1)[0].command).toBe('token');
   });
 
+  it('keeps an accepted subcommand alias', async () => {
+    await runCLI(['portfolio', 'defi-holdings', '--wallet', '0x' + 'ab'.repeat(20)], depsWithApi());
+    const calls = [...trackSucceeded.mock.calls, ...trackFailed.mock.calls];
+    expect(calls[0][0].command).toBe('portfolio defi-holdings');
+  });
+
   it('API error triggers trackCommandFailed', async () => {
     const err = new Error('Unauthorized');
     err.code = 'UNAUTHORIZED';
