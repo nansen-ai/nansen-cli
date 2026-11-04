@@ -174,6 +174,15 @@ function friendlyRpcError(error, method = '') {
   if (lower.includes('no record of a prior credit') || lower.includes('accountnotfound')) {
     return 'Insufficient SOL for transaction fees. Send at least 0.01 SOL to your wallet.';
   }
+  // Solana names the account short of rent by its index in the transaction.
+  // Index 0 is this wallet (the fee payer), where topping up is the fix. Any
+  // other index is an account the transaction funds; in a SOL send that is the
+  // recipient, which as a new address must receive at least the rent-exempt
+  // minimum, so adding SOL to the wallet would not help.
+  const rentAccount = lower.match(/results in an account \((\d+)\) with insufficient funds for rent/);
+  if (rentAccount && rentAccount[1] !== '0') {
+    return `The transfer would leave account ${rentAccount[1]} (the recipient of a SOL send) below Solana's rent-exempt minimum. A new address must receive at least 0.00089088 SOL. RPC said: ${msg}`;
+  }
   if (lower.includes('insufficient lamports') || lower.includes('insufficient funds')) {
     return 'Insufficient SOL balance for this transaction. Top up your wallet with SOL.';
   }
