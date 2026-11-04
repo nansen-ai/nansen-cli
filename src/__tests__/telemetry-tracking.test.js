@@ -278,6 +278,47 @@ describe('telemetry tracking for all first-level commands', () => {
     expect(trackFailed.mock.calls[0][0].error_code).toBe('UNKNOWN_COMMAND');
   });
 
+  it('does not send a positional value as part of the command', async () => {
+    await runCLI(['search', 'vitalik.eth'], depsWithApi());
+    expect(trackSucceeded.mock.calls[0][0].command).toBe('search');
+
+    // `help` is a query here, not a subcommand.
+    await runCLI(['search', 'help'], depsWithApi());
+    expect(trackSucceeded.mock.calls[1][0].command).toBe('search');
+  });
+
+  it('reports a research category alias under its canonical name', async () => {
+    await runCLI(['research', 'sm', 'netflow'], depsWithApi());
+    const calls = [...trackSucceeded.mock.calls, ...trackFailed.mock.calls];
+    expect(calls[0][0].command).toBe('research smart-money');
+  });
+
+  it('keeps research subcommands of perp', async () => {
+    for (const subcommand of ['screener', 'leaderboard']) {
+      trackSucceeded.mockClear();
+      trackFailed.mockClear();
+      await runCLI(['perp', subcommand], depsWithApi());
+      const calls = [...trackSucceeded.mock.calls, ...trackFailed.mock.calls];
+      expect(calls[0][0].command).toBe(`perp ${subcommand}`);
+    }
+  });
+
+  it('does not send an unknown command or subcommand verbatim', async () => {
+    const address = '0x' + 'ab'.repeat(20);
+    await runCLI([address], baseDeps());
+    expect(trackFailed.mock.calls[0][0].command).toBe('unknown');
+
+    await runCLI(['token', address], depsWithApi());
+    const calls = [...trackSucceeded.mock.calls, ...trackFailed.mock.calls];
+    expect(calls.at(-1)[0].command).toBe('token');
+  });
+
+  it('keeps an accepted subcommand alias', async () => {
+    await runCLI(['portfolio', 'defi-holdings', '--wallet', '0x' + 'ab'.repeat(20)], depsWithApi());
+    const calls = [...trackSucceeded.mock.calls, ...trackFailed.mock.calls];
+    expect(calls[0][0].command).toBe('portfolio defi-holdings');
+  });
+
   it('API error triggers trackCommandFailed', async () => {
     const err = new Error('Unauthorized');
     err.code = 'UNAUTHORIZED';
