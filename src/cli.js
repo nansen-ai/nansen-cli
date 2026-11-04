@@ -2461,6 +2461,30 @@ export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token
 // Subcommands that moved under 'trade'
 export const DEPRECATED_TO_TRADE = new Set(['quote', 'execute']);
 
+// Subcommands of removed commands (UNAVAILABLE_COMMANDS), which have no schema entry.
+const REMOVED_SUBCOMMANDS = { points: ['leaderboard'] };
+
+/**
+ * Command name for telemetry. Positionals are often values (a search query,
+ * an address), so only subcommands listed in the schema are kept.
+ */
+function telemetryCommandName(commands, command, subcommand) {
+  if (!Object.hasOwn(commands, command)) return 'unknown';
+  if (!subcommand) return command;
+  if (command === 'research') {
+    const category = RESEARCH_CATEGORY_ALIASES[subcommand] || subcommand;
+    const known = Object.hasOwn(SCHEMA.commands.research.subcommands, category) || UNAVAILABLE_COMMANDS.has(category);
+    return known ? `research ${category}` : 'research';
+  }
+  // `perp` is both a top-level command and a research category (screener, leaderboard).
+  const known = [SCHEMA.commands[command]?.subcommands, SCHEMA.commands.research.subcommands[command]?.subcommands];
+  if (known.some(subcommands => subcommands && Object.hasOwn(subcommands, subcommand))
+    || REMOVED_SUBCOMMANDS[command]?.includes(subcommand)) {
+    return `${command} ${subcommand}`;
+  }
+  return command;
+}
+
 // Command aliases: top-level shortcuts that resolve before routing
 export const COMMAND_ALIASES = {
   'tgm': 'token',           // Token God Mode
@@ -2856,6 +2880,7 @@ export async function runCLI(rawArgs, deps = {}) {
   // ── Telemetry setup ──
   const startTime = Date.now();
   const fullCommand = subcommand ? `${command} ${subcommand}` : command;
+  const telemetryCommand = telemetryCommandName(commands, command, subcommand);
   const flagNames = Object.keys(flags).filter(k => flags[k]).map(k => `--${k}`);
   const optionNames = Object.keys(options).map(k => `--${k}`);
   // Only names the CLI defines reach telemetry (login/logout keep their own set).
@@ -2880,7 +2905,7 @@ export async function runCLI(rawArgs, deps = {}) {
     const errorData = formatError(error);
     const formatted = formatOutput(errorData, { pretty, table, csv });
     output(formatted.text);
-    await trackFailed({ command: fullCommand, duration_ms: Date.now() - startTime, error_code: ErrorCode.UNKNOWN_COMMAND, flags: usedFlags, chain });
+    await trackFailed({ command: telemetryCommand, duration_ms: Date.now() - startTime, error_code: ErrorCode.UNKNOWN_COMMAND, flags: usedFlags, chain });
     exit(1);
     return { type: 'error', data: errorData };
   }
@@ -2964,14 +2989,14 @@ export async function runCLI(rawArgs, deps = {}) {
 
     // Commands that handle their own output return undefined
     if (result === undefined) {
-      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, flags: usedFlags, chain });
+      await trackSucceeded({ command: telemetryCommand, duration_ms: Date.now() - startTime, flags: usedFlags, chain });
       return { type: 'no-output', command };
     }
 
     // Feedback JSON is a complete receipt, even alongside list-format flags.
     if (command === 'feedback') {
       output(formatOutput({ success: true, data: result }, { pretty }).text);
-      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: false, flags: usedFlags, chain });
+      await trackSucceeded({ command: telemetryCommand, duration_ms: Date.now() - startTime, from_cache: false, flags: usedFlags, chain });
       return { type: 'success', data: result };
     }
 
@@ -2979,7 +3004,7 @@ export async function runCLI(rawArgs, deps = {}) {
     if (command === 'schema') {
       const formatted = formatOutput(result, { pretty, table: false });
       output(formatted.text);
-      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, flags: usedFlags, chain });
+      await trackSucceeded({ command: telemetryCommand, duration_ms: Date.now() - startTime, flags: usedFlags, chain });
       return { type: 'schema', data: result };
     }
 
@@ -2997,7 +3022,7 @@ export async function runCLI(rawArgs, deps = {}) {
     // Alerts list with --table uses custom table format
     if (command === 'alerts' && subcommand === 'list' && table) {
       output(formatAlertsTable(result));
-      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: fromCache, flags: usedFlags, chain });
+      await trackSucceeded({ command: telemetryCommand, duration_ms: Date.now() - startTime, from_cache: fromCache, flags: usedFlags, chain });
       return { type: 'success', data: result };
     }
 
@@ -3008,14 +3033,14 @@ export async function runCLI(rawArgs, deps = {}) {
       if (streamOutput) {
         output(streamOutput);
       }
-      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: fromCache, flags: usedFlags, chain });
+      await trackSucceeded({ command: telemetryCommand, duration_ms: Date.now() - startTime, from_cache: fromCache, flags: usedFlags, chain });
       return { type: 'stream', data: result };
     }
 
     const successData = { success: true, data: result };
     const formatted = formatOutput(successData, { pretty, table, csv });
     output(formatted.text);
-    await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: fromCache, flags: usedFlags, chain });
+    await trackSucceeded({ command: telemetryCommand, duration_ms: Date.now() - startTime, from_cache: fromCache, flags: usedFlags, chain });
     return { type: csv ? 'csv' : 'success', data: result };
   } catch (error) {
     // A failed later page can still have incurred charges on earlier pages.
@@ -3041,7 +3066,7 @@ export async function runCLI(rawArgs, deps = {}) {
       output(formatted.text);
     }
     await trackFailed({
-      command: fullCommand,
+      command: telemetryCommand,
       duration_ms: Date.now() - startTime,
       error_code: error.code || 'UNKNOWN',
       status: error.status || null,
