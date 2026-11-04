@@ -780,6 +780,33 @@ describe('sendTokens integration', () => {
       await expect(send).rejects.not.toThrow('Top up your wallet');
     });
 
+    // In an SPL transfer account 1 is the source ATA, not a SOL recipient, so
+    // the recipient/rent-exempt-minimum advice must not be given there.
+    test('keeps the generic SOL advice for a rent error on an SPL token send', async () => {
+      const TOKEN_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+      const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'sendTransaction') {
+          return { json: () => Promise.resolve({ error: { code: -32002, message: 'Transaction simulation failed: Transaction results in an account (1) with insufficient funds for rent' } }) };
+        }
+        if (body.method === 'getAccountInfo' && body.params[0] === TOKEN_MINT) {
+          return { json: () => Promise.resolve({ result: { value: { owner: TOKEN_PROGRAM, data: { parsed: { info: { decimals: 6 } } } } } }) };
+        }
+        const responses = {
+          'getLatestBlockhash': { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } },
+          'getBalance': { value: 10000000000 },
+          'getTokenAccountBalance': { value: { amount: '5000000', uiAmountString: '5.0' } },
+          'getAccountInfo': { value: null },
+        };
+        return { json: () => Promise.resolve({ result: responses[body.method] ?? null }) };
+      });
+
+      const send = sendTokens({ to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', amount: '1', chain: 'solana', token: TOKEN_MINT, password: 'test' });
+      await expect(send).rejects.toThrow('Insufficient SOL balance for this transaction. Top up your wallet with SOL.');
+      await expect(send).rejects.not.toThrow('rent-exempt minimum');
+    });
+
     test('propagates network errors', async () => {
       fetch.mockRejectedValue(new Error('ECONNREFUSED'));
       await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('ECONNREFUSED');

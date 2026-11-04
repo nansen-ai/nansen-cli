@@ -123,7 +123,7 @@ function formatAmount(rawAmount, decimals) {
 
 // ============= RPC =============
 
-async function rpcCall(url, method, params = []) {
+async function rpcCall(url, method, params = [], context = {}) {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -131,7 +131,7 @@ async function rpcCall(url, method, params = []) {
   });
   const data = await response.json();
   if (data.error) {
-    const err = new Error(friendlyRpcError(data.error, method));
+    const err = new Error(friendlyRpcError(data.error, method, context));
     // Classified from the raw RPC text, before any rewording, so callers can
     // branch on it without depending on the friendly message's wording.
     err.transactionWouldFail = isTransactionFailureMessage(data.error);
@@ -162,8 +162,11 @@ function isTransactionFailureMessage(error) {
  * geth rejects an underfunded transaction with "insufficient funds for gas *
  * price + value", which used to match the Solana branch and tell a Base or
  * Ethereum user to top up SOL.
+ *
+ * `context.nativeSolSend` marks the broadcast of a plain SOL transfer, the only
+ * transaction whose account indices this function can interpret.
  */
-function friendlyRpcError(error, method = '') {
+function friendlyRpcError(error, method = '', context = {}) {
   const msg = error.message || JSON.stringify(error);
   const lower = msg.toLowerCase();
   const isEvm = typeof method === 'string' && method.toLowerCase().startsWith('eth_');
@@ -175,11 +178,13 @@ function friendlyRpcError(error, method = '') {
     return 'Insufficient SOL for transaction fees. Send at least 0.01 SOL to your wallet.';
   }
   // Solana names the account short of rent by its index in the transaction.
-  // Index 0 is this wallet (the fee payer), where topping up is the fix. Any
-  // other index is an account the transaction funds; in a SOL send that is the
-  // recipient, which as a new address must receive at least the rent-exempt
-  // minimum, so adding SOL to the wallet would not help.
-  const rentAccount = lower.match(/results in an account \((\d+)\) with insufficient funds for rent/);
+  // Index 0 is this wallet (the fee payer), where topping up is the fix. In a
+  // native SOL send any other index is the recipient, which as a new address
+  // must receive at least the rent-exempt minimum, so adding SOL to the wallet
+  // would not help. SPL transfers lay out their accounts differently (ATAs,
+  // mint, token program), so they keep the generic advice below.
+  const rentAccount = context.nativeSolSend
+    && lower.match(/results in an account \((\d+)\) with insufficient funds for rent/);
   if (rentAccount && rentAccount[1] !== '0') {
     return `The transfer would leave account ${rentAccount[1]} (the recipient of a SOL send) below Solana's rent-exempt minimum. A new address must receive at least 0.00089088 SOL. RPC said: ${msg}`;
   }
@@ -696,13 +701,13 @@ async function validateErc20Token(rpcUrl, tokenAddress) {
 
 // ============= Broadcasting =============
 
-async function broadcastTransaction(signedTx, chain) {
+async function broadcastTransaction(signedTx, chain, token = null) {
   if (chain === 'solana') {
     return rpcCall(CHAIN_RPCS.solana, 'sendTransaction', [signedTx, {
       encoding: 'base64',
       skipPreflight: false,
       preflightCommitment: 'confirmed',
-    }]);
+    }], { nativeSolSend: !token });
   }
   return rpcCall(CHAIN_RPCS[chain] || CHAIN_RPCS.evm, 'eth_sendRawTransaction', [signedTx]);
 }
@@ -752,7 +757,7 @@ async function sendTokensViaPrivy({ to, amount, chain, token, max, dryRun, walle
 
     const signResult = await client.signSolanaTransaction(walletId, unsignedTransaction);
     const signedTx = signResult.data?.signed_transaction || signResult.signed_transaction;
-    const txHash = await broadcastTransaction(signedTx, chain);
+    const txHash = await broadcastTransaction(signedTx, chain, token);
     const confirmation = await waitForSolanaConfirmation(CHAIN_RPCS.solana, txHash);
 
     return {
@@ -923,7 +928,7 @@ export async function sendTokens({ to, amount, chain, token = null, wallet = nul
     };
   }
 
-  const txHash = await broadcastTransaction(result.signedTransaction, chain);
+  const txHash = await broadcastTransaction(result.signedTransaction, chain, token);
 
   // Wait for confirmation
   let confirmation;
@@ -1051,7 +1056,7 @@ async function sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRu
 
   const txHash = await (async () => {
     if (wcResult.txHash) return wcResult.txHash;
-    if (wcResult.signedTransaction) return broadcastTransaction(wcResult.signedTransaction, chain);
+    if (wcResult.signedTransaction) return broadcastTransaction(wcResult.signedTransaction, chain, token);
     throw new Error('No transaction hash or signed transaction returned from WalletConnect');
   })();
 
