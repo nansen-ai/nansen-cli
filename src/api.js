@@ -1271,6 +1271,8 @@ export class NansenAPI {
       }
 
       if (!response.ok) {
+        // A literal `null` body parses as JSON but has no fields to read.
+        if (data == null) data = {};
         let message = data.message || data.error
           || (typeof data.detail === 'string' ? data.detail : data.detail?.message)
           || `API error: ${response.status}`;

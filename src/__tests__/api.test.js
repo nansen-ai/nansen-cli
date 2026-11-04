@@ -3365,6 +3365,33 @@ describe('NansenAPI', () => {
         vi.useRealTimers();
       });
 
+      it('reports a JSON null error body as an API error instead of a TypeError', async () => {
+        if (LIVE_TEST) return;
+        mockFetch.mockImplementation(async () => realResponse('null', 400, { 'content-type': 'application/json' }));
+
+        let thrownError;
+        await api.smartMoneyNetflow({}).catch(e => { thrownError = e; });
+
+        expect(thrownError).not.toBeInstanceOf(TypeError);
+        expect(thrownError.status).toBe(400);
+        expect(thrownError.message).toBe('API error: 400');
+      });
+
+      it('retries a JSON null 503 body like any other 503', async () => {
+        if (LIVE_TEST) return;
+        vi.useFakeTimers();
+        mockFetch
+          .mockResolvedValueOnce(realResponse('null', 503, { 'content-type': 'application/json' }))
+          .mockResolvedValueOnce(realResponse(JSON.stringify({ data: [] }), 200, { 'content-type': 'application/json' }));
+
+        const promise = api.smartMoneyNetflow({});
+        await vi.runAllTimersAsync();
+        await promise;
+
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+        vi.useRealTimers();
+      });
+
       it('retries a plain-text 429 like a JSON one and honours Retry-After', async () => {
         if (LIVE_TEST) return;
         vi.useFakeTimers();
