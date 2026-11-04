@@ -672,18 +672,54 @@ const PERP_DRY_RUN_NOTICE = [
   '  Re-run without --dry-run to sign and submit it.\n',
 ];
 
-// Display-only USD estimate; the signed action carries the exact strings.
-function formatUsd(value) {
-  if (!Number.isFinite(value)) return null;
-  return value > 0 && value < 0.01 ? '<$0.01' : `~$${value.toFixed(2)}`;
+// A decimal string (a wire value, or a number's shortest form such as "1e-7")
+// as an exact BigInt scaled by 10^scale. null when it isn't one.
+function parseDecimal(value) {
+  const match = /^([-+]?)(\d*)(?:\.(\d*))?(?:e([-+]?\d{1,3}))?$/i.exec(String(value ?? '').trim());
+  if (!match || !(match[2] || match[3])) return null;
+  const fraction = match[3] ?? '';
+  let digits = BigInt(`${match[2] || '0'}${fraction}`);
+  let scale = fraction.length - Number(match[4] ?? 0);
+  if (scale < 0) {
+    digits *= 10n ** BigInt(-scale);
+    scale = 0;
+  }
+  return { digits: match[1] === '-' ? -digits : digits, scale };
+}
+
+// USD value of size × price, computed in exact decimal arithmetic from the
+// strings that are signed, so the preview cannot drift from the submitted
+// order through float rounding. Only the cent rounding (half up) is approximate.
+function formatUsd(size, price) {
+  const a = parseDecimal(size);
+  const b = parseDecimal(price);
+  if (!a || !b) return null;
+  const product = a.digits * b.digits;
+  if (product < 0n) return null;
+  const scale = a.scale + b.scale;
+  let cents;
+  if (scale <= 2) {
+    cents = product * 10n ** BigInt(2 - scale);
+  } else {
+    const divisor = 10n ** BigInt(scale - 2);
+    cents = (product + divisor / 2n) / divisor;
+  }
+  if (product > 0n && cents === 0n) return '<$0.01';
+  return `~$${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`;
 }
 
 // Notional of an IOC order at the reference price and at its worst fill (the
 // limit price encoded after slippage), so a buy's worst-case cost is visible.
 function formatIocNotional(size, referencePrice, worstPrice) {
-  const atReference = formatUsd(size * referencePrice);
-  const atWorst = formatUsd(size * worstPrice);
+  const atReference = formatUsd(size, referencePrice);
+  const atWorst = formatUsd(size, worstPrice);
   return atReference && atWorst ? `${atReference} at the reference price, ${atWorst} at the worst fill` : null;
+}
+
+// The order leg of a built action (not an attached take-profit/stop-loss), whose
+// `s` and `p` are the exact size and limit price strings that get signed.
+function mainOrderLeg(action) {
+  return action.orders?.find(o => !o?.t?.trigger);
 }
 
 function formatSlippage(slippage) {
@@ -916,8 +952,8 @@ OPTIONS:
             ['Take-profit', describeTriggerLeg(action, 'tp', coin)],
             ['Stop-loss', describeTriggerLeg(action, 'sl', coin)],
             ['Est. notional', orderType === 'market'
-              ? formatIocNotional(effSize, price, effPrice)
-              : formatUsd(effSize * effPrice)],
+              ? formatIocNotional(mainOrderLeg(action)?.s, String(price), mainOrderLeg(action)?.p)
+              : formatUsd(mainOrderLeg(action)?.s, mainOrderLeg(action)?.p)],
             ['Leverage', describeOrderLeverage(position, coin)],
             ['Open position', describePosition(position)],
             ['Builder fee', builderFeeLine(builderStatus)],
@@ -1081,7 +1117,7 @@ OPTIONS:
           ['Size', `${effSize} ${coin}`],
           ['Type', 'market (IOC)'],
           ['Price', `${price} reference, worst fill ${effPrice} (${formatSlippage(slippage)} slippage)`],
-          ['Est. notional', formatIocNotional(effSize, price, effPrice)],
+          ['Est. notional', formatIocNotional(mainOrderLeg(action)?.s, String(price), mainOrderLeg(action)?.p)],
           ['Open position', describePosition(openPosition)],
           ['Builder fee', builderFeeLine(builderStatus)],
         ]),

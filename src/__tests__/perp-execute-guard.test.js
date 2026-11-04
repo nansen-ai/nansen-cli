@@ -180,6 +180,14 @@ describe('perp --dry-run', () => {
     expectNothingSigned();
   });
 
+  it('order: computes the notional from the signed strings without float rounding', async () => {
+    const { cmds, text } = capture();
+    // 1.005 * 1 is 1.00499999... as a float, which toFixed(2) shows as 1.00.
+    await cmds.order([], mockApi(), { 'dry-run': true }, { ...ORDER, size: '1.005', price: '1' });
+    expect(text()).toMatch(/Est\. notional:\s+~\$1\.01$/m);
+    expectNothingSigned();
+  });
+
   it('order: still runs the normal validation', async () => {
     const { cmds } = capture();
     await expect(cmds.order([], mockApi(), { 'dry-run': true }, { ...ORDER, side: 'lng' }))
