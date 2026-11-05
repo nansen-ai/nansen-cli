@@ -61,6 +61,8 @@ const ORDER = { coin: 'ETH', side: 'buy', size: '0.01', price: '2000', type: 'li
 const CLOSE = { coin: 'ETH', side: 'sell', size: '0.01', price: '2000', wallet: 'x' };
 const CANCEL = { coin: 'ETH', oid: '4242', wallet: 'x' };
 const LEVERAGE = { coin: 'ETH', leverage: '5', 'margin-type': 'isolated', wallet: 'x' };
+// An open long, so `close` (sell) has something to close.
+const LONG_ETH = [{ coin: 'ETH', szi: '0.02', entryPx: '1950' }];
 
 function mockApi({
   approved = true,
@@ -226,6 +228,29 @@ describe('perp --dry-run', () => {
     expectNothingSigned();
   });
 
+  it('close: fails the preview when there is no open position to close', async () => {
+    const { cmds, text } = capture();
+    const api = mockApi({ positions: [{ coin: 'BTC', szi: '0.1' }] });
+    await expect(cmds.close([], api, { 'dry-run': true }, CLOSE))
+      .rejects.toMatchObject({ code: 'NO_OPEN_POSITION', message: expect.stringMatching(/No open ETH position to close/) });
+    expectNothingSigned();
+    expect(text()).not.toContain('DRY RUN');
+  });
+
+  it('close: a failed positions read still previews (Hyperliquid checks on submit)', async () => {
+    const { cmds, text } = capture();
+    const base = mockApi();
+    const api = {
+      request: vi.fn(async (endpoint, ...rest) => {
+        if (endpoint.startsWith('/api/v1/perp/positions')) throw new Error('positions down');
+        return base.request(endpoint, ...rest);
+      }),
+    };
+    await cmds.close([], api, { 'dry-run': true }, CLOSE);
+    expectNothingSigned();
+    expect(text()).toMatch(/Open position:\s+could not be loaded/);
+  });
+
   it('close: prints the plan and submits nothing', async () => {
     const { cmds, text } = capture();
     const api = mockApi({ positions: [{ coin: 'ETH', szi: '0.02', entryPx: '1950' }] });
@@ -329,7 +354,7 @@ describe('perp confirmation prompt (stdin is a terminal)', () => {
   ])('%s: declining exits with CONFIRMATION_DECLINED and signs nothing', async (name, options, question) => {
     const promptFn = vi.fn(async () => 'n');
     const { cmds, errText, text } = capture({ isTTY: true, promptFn });
-    const api = mockApi({ approved: false });
+    const api = mockApi({ approved: false, positions: LONG_ETH });
 
     const err = await cmds[name]([], api, {}, options).catch(e => e);
 
@@ -395,7 +420,7 @@ describe('perp off a terminal (agents, CI, pipes)', () => {
   ])('%s proceeds without a prompt, as before', async (name, options) => {
     const promptFn = vi.fn(async () => 'n');
     const { cmds, text } = capture({ isTTY: false, promptFn });
-    const api = mockApi();
+    const api = mockApi({ positions: LONG_ETH });
     await cmds[name]([], api, {}, options);
     expect(promptFn).not.toHaveBeenCalled();
     expect(submitExchange).toHaveBeenCalledTimes(1);

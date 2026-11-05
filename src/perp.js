@@ -1087,6 +1087,14 @@ OPTIONS:
         // positions lookup failed — skip the direction pre-check.
       }
       const openPosition = openPositions ? findPosition(openPositions, coin) : undefined;
+      // The lookup worked and there is nothing to close: a reduce-only order
+      // would be rejected by Hyperliquid, so a dry run must not report success.
+      if (openPosition === null) {
+        throw new CommandError(
+          `No open ${coin} position to close for ${wallet.address}. Check with: nansen perp positions`,
+          'NO_OPEN_POSITION',
+        );
+      }
       if (openPosition) {
         const posSide = positionSide(openPosition.szi).side;
         const requiredSide = posSide === 'long' ? 'sell' : 'buy';

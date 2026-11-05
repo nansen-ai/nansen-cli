@@ -184,6 +184,7 @@ export const ERROR_CODES = {
   BUILDER_FEE_TOO_HIGH: { group: 'perp', description: 'The builder fee is above the allowed ceiling.' },
   BUILDER_FEE_UNAVAILABLE: { group: 'perp', description: 'The builder fee could not be read or approved.' },
   META_UNAVAILABLE: { group: 'perp', description: 'Hyperliquid asset metadata is not available.', retry: true },
+  NO_OPEN_POSITION: { group: 'perp', description: 'perp close found no open position in that coin, so there is nothing to close.' },
   SANCTIONED: { group: 'perp', description: 'The address failed sanctions screening.' },
   SCREENING_UNAVAILABLE: { group: 'perp', description: 'Sanctions screening is not available, so the action was refused.', retry: true },
   UNSUPPORTED_NETWORK: { group: 'perp', description: 'The network is not supported for this perp action.' },

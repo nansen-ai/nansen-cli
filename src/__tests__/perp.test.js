@@ -411,11 +411,13 @@ describe('perp close direction (NEW-4)', () => {
     ).rejects.not.toThrow(/Cannot close/);
   });
 
-  it('falls open when no open position matches the coin', async () => {
+  it('rejects a close when the lookup worked and no position matches the coin', async () => {
     const api = apiWith([{ coin: 'BTC', szi: '0.5' }]);
     await expect(
       cmds.close([], api, {}, { ...baseClose, side: 'buy' }),
-    ).rejects.not.toThrow(/Cannot close/);
+    ).rejects.toMatchObject({ code: 'NO_OPEN_POSITION' });
+    // Rejected before any signing or submission.
+    expect(submitExchange).not.toHaveBeenCalled();
   });
 
   it('falls open when the positions lookup fails', async () => {
@@ -590,7 +592,7 @@ describe('perp direct-to-HL flow (Chunk 3/4/5)', () => {
 
   // Dispatch the proxy/screen calls by endpoint. `screen` is a function so a
   // test can make it throw (unavailable) or flag an address (sanctioned).
-  function mockApi({ assets = [ETH], builder, screen }) {
+  function mockApi({ assets = [ETH], builder, screen, positions = [] }) {
     const builderStatus = builder ?? {
       approved: true,
       max_fee_rate: 80,
@@ -601,7 +603,7 @@ describe('perp direct-to-HL flow (Chunk 3/4/5)', () => {
       request: vi.fn(async (endpoint, body) => {
         if (endpoint.startsWith('/api/v1/perp/meta')) return { assets };
         if (endpoint.startsWith('/api/v1/perp/builder-fee')) return builderStatus;
-        if (endpoint.startsWith('/api/v1/perp/positions')) return { positions: [] };
+        if (endpoint.startsWith('/api/v1/perp/positions')) return { positions };
         if (endpoint.startsWith('/api/v1/sanctions/screen')) return screen(body);
         throw new Error(`unexpected endpoint ${endpoint}`);
       }),
@@ -853,7 +855,7 @@ describe('perp direct-to-HL flow (Chunk 3/4/5)', () => {
 
     it('fires with command "close" from the close handler', async () => {
       const { track, telCmds } = trackingCmds();
-      const api = mockApi({ screen: clean });
+      const api = mockApi({ screen: clean, positions: [{ coin: 'ETH', szi: '0.01' }] });
       submitExchange.mockResolvedValueOnce({
         status: 'ok',
         response: { type: 'order', data: { statuses: [{ filled: { oid: 99, totalSz: '0.01', avgPx: '2000' } }] } },
