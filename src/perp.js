@@ -1082,7 +1082,8 @@ OPTIONS:
       let openPositions = null;
       try {
         const result = await perpRead(apiInstance, 'positions', { wallet_address: wallet.address });
-        openPositions = result.positions || [];
+        // Only an array is a real answer; anything else counts as "could not load".
+        if (Array.isArray(result?.positions)) openPositions = result.positions;
       } catch {
         // positions lookup failed — skip the direction pre-check.
       }

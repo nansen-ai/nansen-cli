@@ -237,12 +237,17 @@ describe('perp --dry-run', () => {
     expect(text()).not.toContain('DRY RUN');
   });
 
-  it('close: a failed positions read still previews (Hyperliquid checks on submit)', async () => {
+  it.each([
+    ['a failed read', () => { throw new Error('positions down'); }],
+    ['positions as an object', () => ({ positions: {} })],
+    ['positions as a string', () => ({ positions: 'oops' })],
+    ['no positions field', () => ({})],
+  ])('close: %s still previews (Hyperliquid checks on submit)', async (_label, positionsResponse) => {
     const { cmds, text } = capture();
     const base = mockApi();
     const api = {
       request: vi.fn(async (endpoint, ...rest) => {
-        if (endpoint.startsWith('/api/v1/perp/positions')) throw new Error('positions down');
+        if (endpoint.startsWith('/api/v1/perp/positions')) return positionsResponse();
         return base.request(endpoint, ...rest);
       }),
     };
