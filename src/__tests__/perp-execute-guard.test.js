@@ -264,6 +264,13 @@ describe('perp --dry-run', () => {
     expectNothingSigned();
   });
 
+  it('close: a dry run screens a sanctioned wallet even when it has no position', async () => {
+    const { cmds } = capture();
+    const err = await cmds.close([], mockApi({ positions: [], sanctioned: true }), { 'dry-run': true }, CLOSE).catch(e => e);
+    expect(err.code).toBe('SANCTIONED');
+    expectNothingSigned();
+  });
+
   it('close: the NO_OPEN_POSITION message says the data can lag a fresh fill', async () => {
     const { cmds } = capture();
     await expect(cmds.close([], mockApi({ positions: [] }), { 'dry-run': true }, CLOSE))

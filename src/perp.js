@@ -1102,8 +1102,11 @@ OPTIONS:
       // which holds the live state: the proxy's positions can lag a fill that
       // just happened, and a stale "none" must never block a risk-reducing close.
       if (openPosition === null && guard.dryRun) {
-        // An unknown coin or a metadata outage is the more useful answer.
+        // An unknown coin or a metadata outage is the more useful answer, and a
+        // dry run screens the wallet as guardPerpAction would (a blocked wallet
+        // must fail the preview the same way whether or not it has a position).
         requireAsset(assetMeta, coin);
+        await screenOrThrow(apiInstance, [wallet.address]);
         throw new CommandError(
           `No open ${coin} position to close for ${wallet.address}. Check with: nansen perp positions. If you opened it moments ago, the positions data may not show it yet; retry in a few seconds.`,
           'NO_OPEN_POSITION',

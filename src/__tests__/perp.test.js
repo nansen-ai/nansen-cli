@@ -411,6 +411,7 @@ describe('perp close direction (NEW-4)', () => {
     request: vi.fn(async (endpoint) => {
       if (endpoint.startsWith('/api/v1/perp/meta')) return { assets: [{ name: 'ETH', asset_id: 1, sz_decimals: 4, max_leverage: 50 }] };
       if (endpoint.startsWith('/api/v1/perp/positions')) return positionsAnswer();
+      if (endpoint.startsWith('/api/v1/sanctions/screen')) return { results: [{ address: '0x' + '1'.repeat(40), sanctioned: false }] };
       throw new Error(`stop at ${endpoint}`);
     }),
   });
