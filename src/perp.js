@@ -752,10 +752,11 @@ function describeTriggerLeg(action, tpsl, coin) {
 async function readOpenPosition(apiInstance, walletAddress, coin) {
   try {
     const result = await perpRead(apiInstance, 'positions', { wallet_address: walletAddress });
-    // Only an array is a real answer; anything else counts as "could not load".
-    // findPosition stays inside the try so a malformed entry does too.
-    if (!Array.isArray(result?.positions)) return undefined;
-    return findPosition(result.positions, coin);
+    // Only an array of well-formed entries is a real answer. Anything else,
+    // including one bad entry for any coin, counts as "could not load".
+    const positions = result?.positions;
+    if (!Array.isArray(positions) || !positions.every(isWellFormedPosition)) return undefined;
+    return findPosition(positions, coin);
   } catch {
     return undefined;
   }
@@ -770,14 +771,19 @@ function positionSide(szi) {
   return { side: match[1] === '-' ? 'short' : 'long', size: match[2] };
 }
 
-// The coin's position, null when there is none (no entry, or a well-formed
-// zero size), or undefined when its entry has a missing or unreadable size, so
-// callers treat that like a failed read instead of "no position".
+// A positions entry the lookup can trust: an object with a coin name and a
+// decimal size string (zero allowed; zero means no position).
+function isWellFormedPosition(p) {
+  return p !== null && typeof p === 'object'
+    && typeof p.coin === 'string' && p.coin !== ''
+    && /^\s*[-+]?\d*\.?\d+\s*$/.test(String(p.szi ?? ''));
+}
+
+// The coin's position, or null when there is none (no entry, or a zero size).
+// Expects entries already checked with isWellFormedPosition.
 function findPosition(positions, coin) {
-  const pos = positions.find(p => String(p.coin).toUpperCase() === coin);
-  if (!pos) return null;
-  if (positionSide(pos.szi)) return pos;
-  return /^\s*[-+]?\d*\.?\d+\s*$/.test(String(pos.szi ?? '')) ? null : undefined;
+  const pos = positions.find(p => p.coin.toUpperCase() === coin);
+  return pos && positionSide(pos.szi) ? pos : null;
 }
 
 function describePosition(pos) {
