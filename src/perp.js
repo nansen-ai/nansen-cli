@@ -747,43 +747,45 @@ function describeTriggerLeg(action, tpsl, coin) {
 
 // Read-only lookup of the wallet's open position in `coin`, for the plan and
 // close's pre-checks. Returns the position, null when there is none, or
-// undefined when the read failed or the data is malformed (callers then skip
-// the checks, and the plan says so instead of guessing).
+// undefined when the read failed or the answer for `coin` can't be trusted
+// (callers then skip the checks, and the plan says so instead of guessing).
 async function readOpenPosition(apiInstance, walletAddress, coin) {
   try {
     const result = await perpRead(apiInstance, 'positions', { wallet_address: walletAddress });
-    // Only an array of well-formed entries is a real answer. Anything else,
-    // including one bad entry for any coin, counts as "could not load".
-    const positions = result?.positions;
-    if (!Array.isArray(positions) || !positions.every(isWellFormedPosition)) return undefined;
-    return findPosition(positions, coin);
+    return findPosition(result?.positions, coin);
   } catch {
     return undefined;
   }
 }
 
+// A position size as the exchange sends it: a plain decimal string, signed
+// for a short. Shared by the parse and the well-formed check so they agree.
+const SZI_RE = /^\s*([-+]?)(\d*\.?\d+)\s*$/;
+
 // Side and unsigned size of a position, read from the exchange's own szi
 // string, so no float conversion can round a tiny size to zero or lose its
 // sign. null for a zero, missing or malformed size.
 function positionSide(szi) {
-  const match = /^\s*([-+]?)(\d*\.?\d+)\s*$/.exec(String(szi ?? ''));
+  const match = SZI_RE.exec(String(szi ?? ''));
   if (!match || !/[1-9]/.test(match[2])) return null;
   return { side: match[1] === '-' ? 'short' : 'long', size: match[2] };
 }
 
-// A positions entry the lookup can trust: an object with a coin name and a
-// decimal size string (zero allowed; zero means no position).
-function isWellFormedPosition(p) {
-  return p !== null && typeof p === 'object'
-    && typeof p.coin === 'string' && p.coin !== ''
-    && /^\s*[-+]?\d*\.?\d+\s*$/.test(String(p.szi ?? ''));
-}
-
-// The coin's position, or null when there is none (no entry, or a zero size).
-// Expects entries already checked with isWellFormedPosition.
+// The coin's position, null when there is none (no entry, or a zero size), or
+// undefined when the answer can't be trusted: `positions` is not a list, an
+// entry has no coin name (it could be this coin), or this coin's entry has a
+// missing or unreadable size. A bad entry for another coin is ignored, so it
+// cannot switch off the checks for this one.
 function findPosition(positions, coin) {
-  const pos = positions.find(p => p.coin.toUpperCase() === coin);
-  return pos && positionSide(pos.szi) ? pos : null;
+  if (!Array.isArray(positions)) return undefined;
+  let pos = null;
+  for (const p of positions) {
+    if (p === null || typeof p !== 'object' || typeof p.coin !== 'string' || p.coin === '') return undefined;
+    if (p.coin.toUpperCase() === coin) pos = p;
+  }
+  if (!pos) return null;
+  if (positionSide(pos.szi)) return pos;
+  return SZI_RE.test(String(pos.szi ?? '')) ? null : undefined;
 }
 
 function describePosition(pos) {
@@ -1098,7 +1100,10 @@ OPTIONS:
       const openPosition = await readOpenPosition(apiInstance, wallet.address, coin);
       // The lookup worked and there is nothing to close: a reduce-only order
       // would be rejected by Hyperliquid, so a dry run must not report success.
-      if (openPosition === null) {
+      // Only the dry run fails here. A real close still goes to Hyperliquid,
+      // which holds the live state: the proxy's positions can lag a fill that
+      // just happened, and a stale "none" must never block a risk-reducing close.
+      if (openPosition === null && guard.dryRun) {
         throw new CommandError(
           `No open ${coin} position to close for ${wallet.address}. Check with: nansen perp positions`,
           'NO_OPEN_POSITION',

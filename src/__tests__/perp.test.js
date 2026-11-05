@@ -404,27 +404,40 @@ describe('perp close direction (NEW-4)', () => {
     ).rejects.toThrow(/Cannot close a short ETH position with --side sell\. Use --side buy/);
   });
 
+  // Routed mock for the fall-open cases: real asset metadata, the given
+  // positions answer, and every later read throws. Reaching the builder-fee
+  // read proves the run got past the position checks.
+  const routedApi = (positionsAnswer) => ({
+    request: vi.fn(async (endpoint) => {
+      if (endpoint.startsWith('/api/v1/perp/meta')) return { assets: [{ name: 'ETH', asset_id: 1, sz_decimals: 4, max_leverage: 50 }] };
+      if (endpoint.startsWith('/api/v1/perp/positions')) return positionsAnswer();
+      throw new Error(`stop at ${endpoint}`);
+    }),
+  });
+  const reachedBuilderFee = (api) => api.request.mock.calls.some(([e]) => e.startsWith('/api/v1/perp/builder-fee'));
+
   it('allows the correct close direction (sell closes a long)', async () => {
-    const api = apiWith([{ coin: 'ETH', szi: '0.5' }]);
-    await expect(
-      cmds.close([], api, {}, { ...baseClose, side: 'sell' }),
-    ).rejects.not.toThrow(/Cannot close/);
+    const api = routedApi(() => ({ positions: [{ coin: 'ETH', szi: '0.5' }] }));
+    const err = await cmds.close([], api, { 'dry-run': true }, { ...baseClose, side: 'sell' }).catch(e => e);
+    expect(err?.message ?? '').not.toMatch(/Cannot close|No open ETH position/);
+    expect(reachedBuilderFee(api)).toBe(true);
   });
 
-  it('rejects a close when the lookup worked and no position matches the coin', async () => {
-    const api = apiWith([{ coin: 'BTC', szi: '0.5' }]);
+  it('a dry run rejects a close when the lookup worked and no position matches the coin', async () => {
+    const api = routedApi(() => ({ positions: [{ coin: 'BTC', szi: '0.5' }] }));
     await expect(
-      cmds.close([], api, {}, { ...baseClose, side: 'buy' }),
+      cmds.close([], api, { 'dry-run': true }, { ...baseClose, side: 'buy' }),
     ).rejects.toMatchObject({ code: 'NO_OPEN_POSITION' });
-    // Rejected before any signing or submission.
+    expect(reachedBuilderFee(api)).toBe(false);
     expect(submitExchange).not.toHaveBeenCalled();
   });
 
   it('falls open when the positions lookup fails', async () => {
-    const brokenApi = { request: vi.fn(async () => { throw new Error('positions down'); }) };
-    await expect(
-      cmds.close([], brokenApi, {}, { ...baseClose, side: 'buy' }),
-    ).rejects.not.toThrow(/Cannot close|positions down/);
+    const api = routedApi(() => { throw new Error('positions down'); });
+    const err = await cmds.close([], api, { 'dry-run': true }, { ...baseClose, side: 'buy' }).catch(e => e);
+    expect(err?.code).not.toBe('NO_OPEN_POSITION');
+    expect(err?.message ?? '').not.toMatch(/Cannot close|positions down/);
+    expect(reachedBuilderFee(api)).toBe(true);
   });
 });
 

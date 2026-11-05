@@ -228,6 +228,21 @@ describe('perp --dry-run', () => {
     expectNothingSigned();
   });
 
+  it('close: a malformed entry for another coin does not switch off the ETH checks', async () => {
+    const { cmds } = capture();
+    // A long ETH position next to a BTC entry with an unreadable size.
+    const api = mockApi({ positions: [{ coin: 'ETH', szi: '0.02' }, { coin: 'BTC', szi: 1e-7 }, { coin: 'SOL', szi: null }] });
+    await expect(cmds.close([], api, { 'dry-run': true }, { ...CLOSE, side: 'buy' }))
+      .rejects.toThrow(/Cannot close a long ETH position with --side buy/);
+    expectNothingSigned();
+  });
+
+  it('close: a malformed entry for another coin still lets a dry run see no ETH position', async () => {
+    const { cmds } = capture();
+    await expect(cmds.close([], mockApi({ positions: [{ coin: 'BTC' }] }), { 'dry-run': true }, CLOSE))
+      .rejects.toMatchObject({ code: 'NO_OPEN_POSITION' });
+  });
+
   it('close: a zero-size ETH entry is no position, not a failed read', async () => {
     const { cmds } = capture();
     await expect(cmds.close([], mockApi({ positions: [{ coin: 'ETH', szi: '0.0' }] }), { 'dry-run': true }, CLOSE))
@@ -252,7 +267,6 @@ describe('perp --dry-run', () => {
     ['a null entry in the list', () => ({ positions: [null] })],
     ['an ETH entry with no size', () => ({ positions: [{ coin: 'ETH' }] })],
     ['an ETH entry with an unreadable size', () => ({ positions: [{ coin: 'ETH', szi: 'abc' }] })],
-    ['a malformed entry for another coin', () => ({ positions: [{ coin: 'BTC' }] })],
     ['an entry with no coin', () => ({ positions: [{ szi: '0.5' }] })],
   ])('close: %s still previews (Hyperliquid checks on submit)', async (_label, positionsResponse) => {
     const { cmds, text } = capture();
@@ -453,6 +467,14 @@ describe('perp off a terminal (agents, CI, pipes)', () => {
     // The unprompted path makes no extra reads for a plan.
     if (name !== 'close') expect(called(api, '/api/v1/perp/positions')).toBe(false);
     expect(called(api, '/api/v1/perp/orders')).toBe(false);
+  });
+
+  it('a real close with no position in the positions data still goes to Hyperliquid', async () => {
+    // The proxy's positions can lag a fill that just happened; only a dry run
+    // fails on "no position". Hyperliquid holds the live state and decides.
+    const { cmds } = capture({ isTTY: false });
+    await cmds.close([], mockApi({ positions: [] }), {}, CLOSE);
+    expect(submitExchange).toHaveBeenCalledTimes(1);
   });
 
   it('still reports a missing password before a metadata outage', async () => {
