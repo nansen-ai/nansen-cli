@@ -176,6 +176,7 @@
         "order": {
           "submitsTo": "https://api.hyperliquid.xyz/exchange",
           "apiEndpoints": [
+            "/api/v1/perp/positions",
             "/api/v1/perp/meta",
             "/api/v1/perp/builder-fee",
             "/api/v1/sanctions/screen"
@@ -243,12 +244,24 @@
             "wallet": {
               "type": "string",
               "description": "Wallet name (defaults to the configured default wallet)"
+            },
+            "dry-run": {
+              "type": "boolean",
+              "description": "Run the normal validation and read-only lookups (asset metadata, builder fee, open position, compliance screen), print the order plan (coin, side, rounded size, price and type, take-profit/stop-loss, estimated notional, leverage, builder fee), then stop. Nothing is signed or sent to Hyperliquid, no wallet password is needed, and the one-time builder-fee approval is not submitted. Exits 0."
+            },
+            "yes": {
+              "type": "boolean",
+              "aliases": [
+                "y"
+              ],
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
           }
         },
         "cancel": {
           "submitsTo": "https://api.hyperliquid.xyz/exchange",
           "apiEndpoints": [
+            "/api/v1/perp/orders",
             "/api/v1/perp/meta",
             "/api/v1/sanctions/screen"
           ],
@@ -267,6 +280,17 @@
             "wallet": {
               "type": "string",
               "description": "Wallet name"
+            },
+            "dry-run": {
+              "type": "boolean",
+              "description": "Run the normal validation and read-only lookups (asset metadata, open orders, compliance screen), print the cancel plan (coin, order id, the matching open order), then stop. Nothing is signed or sent to Hyperliquid and no wallet password is needed. Exits 0."
+            },
+            "yes": {
+              "type": "boolean",
+              "aliases": [
+                "y"
+              ],
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
           }
         },
@@ -312,12 +336,24 @@
             "wallet": {
               "type": "string",
               "description": "Wallet name"
+            },
+            "dry-run": {
+              "type": "boolean",
+              "description": "Run the normal validation and read-only lookups (asset metadata, open position and close-direction check, builder fee, compliance screen), print the close plan (coin, side, rounded size, worst fill price after slippage, estimated notional, open position, builder fee), then stop. Nothing is signed or sent to Hyperliquid, no wallet password is needed, and the one-time builder-fee approval is not submitted. Exits 0."
+            },
+            "yes": {
+              "type": "boolean",
+              "aliases": [
+                "y"
+              ],
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
           }
         },
         "leverage": {
           "submitsTo": "https://api.hyperliquid.xyz/exchange",
           "apiEndpoints": [
+            "/api/v1/perp/positions",
             "/api/v1/perp/meta",
             "/api/v1/sanctions/screen"
           ],
@@ -345,6 +381,17 @@
             "wallet": {
               "type": "string",
               "description": "Wallet name"
+            },
+            "dry-run": {
+              "type": "boolean",
+              "description": "Run the normal validation and read-only lookups (asset metadata and maximum leverage, open position, compliance screen), print the leverage plan (coin, leverage, margin type, asset maximum, open position), then stop. Nothing is signed or sent to Hyperliquid and no wallet password is needed. Exits 0."
+            },
+            "yes": {
+              "type": "boolean",
+              "aliases": [
+                "y"
+              ],
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
           }
         },
@@ -568,6 +615,9 @@
             },
             "yes": {
               "type": "boolean",
+              "aliases": [
+                "y"
+              ],
               "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
           },
@@ -3273,6 +3323,9 @@
             },
             "yes": {
               "type": "boolean",
+              "aliases": [
+                "y"
+              ],
               "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
             }
           },
