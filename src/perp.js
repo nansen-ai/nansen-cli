@@ -745,9 +745,10 @@ function describeTriggerLeg(action, tpsl, coin) {
   ].join(', ');
 }
 
-// Read-only lookup of the wallet's open position in `coin`, for the plan only.
-// Returns the position, null when there is none, or undefined when the read
-// failed (the plan then says so instead of guessing).
+// Read-only lookup of the wallet's open position in `coin`, for the plan and
+// close's pre-checks. Returns the position, null when there is none, or
+// undefined when the read failed or the data is malformed (callers then skip
+// the checks, and the plan says so instead of guessing).
 async function readOpenPosition(apiInstance, walletAddress, coin) {
   try {
     const result = await perpRead(apiInstance, 'positions', { wallet_address: walletAddress });
@@ -769,9 +770,14 @@ function positionSide(szi) {
   return { side: match[1] === '-' ? 'short' : 'long', size: match[2] };
 }
 
+// The coin's position, null when there is none (no entry, or a well-formed
+// zero size), or undefined when its entry has a missing or unreadable size, so
+// callers treat that like a failed read instead of "no position".
 function findPosition(positions, coin) {
   const pos = positions.find(p => String(p.coin).toUpperCase() === coin);
-  return pos && positionSide(pos.szi) ? pos : null;
+  if (!pos) return null;
+  if (positionSide(pos.szi)) return pos;
+  return /^\s*[-+]?\d*\.?\d+\s*$/.test(String(pos.szi ?? '')) ? null : undefined;
 }
 
 function describePosition(pos) {

@@ -228,6 +228,13 @@ describe('perp --dry-run', () => {
     expectNothingSigned();
   });
 
+  it('close: a zero-size ETH entry is no position, not a failed read', async () => {
+    const { cmds } = capture();
+    await expect(cmds.close([], mockApi({ positions: [{ coin: 'ETH', szi: '0.0' }] }), { 'dry-run': true }, CLOSE))
+      .rejects.toMatchObject({ code: 'NO_OPEN_POSITION' });
+    expectNothingSigned();
+  });
+
   it('close: fails the preview when there is no open position to close', async () => {
     const { cmds, text } = capture();
     const api = mockApi({ positions: [{ coin: 'BTC', szi: '0.1' }] });
@@ -243,6 +250,8 @@ describe('perp --dry-run', () => {
     ['positions as a string', () => ({ positions: 'oops' })],
     ['no positions field', () => ({})],
     ['a null entry in the list', () => ({ positions: [null] })],
+    ['an ETH entry with no size', () => ({ positions: [{ coin: 'ETH' }] })],
+    ['an ETH entry with an unreadable size', () => ({ positions: [{ coin: 'ETH', szi: 'abc' }] })],
   ])('close: %s still previews (Hyperliquid checks on submit)', async (_label, positionsResponse) => {
     const { cmds, text } = capture();
     const base = mockApi();
@@ -285,11 +294,19 @@ describe('perp --dry-run', () => {
     expect(text()).toMatch(new RegExp(`Open position:\\s+short ${tiny.replace('.', '\\.')} @ 1950`));
   });
 
-  it('treats a zero or malformed position size as no position', async () => {
-    for (const szi of ['0.000', '-0', '12abc', '']) {
+  it('treats a zero position size as no position', async () => {
+    for (const szi of ['0.000', '-0', '0']) {
       const { cmds, text } = capture();
       await cmds.leverage([], mockApi({ positions: [{ coin: 'ETH', szi, entryPx: '1950' }] }), { 'dry-run': true }, LEVERAGE);
       expect(text()).toMatch(/Open position:\s+none/);
+    }
+  });
+
+  it('treats a malformed position size as a failed read, not as no position', async () => {
+    for (const szi of ['12abc', '', undefined]) {
+      const { cmds, text } = capture();
+      await cmds.leverage([], mockApi({ positions: [{ coin: 'ETH', szi, entryPx: '1950' }] }), { 'dry-run': true }, LEVERAGE);
+      expect(text()).toMatch(/Open position:\s+could not be loaded/);
     }
   });
 
