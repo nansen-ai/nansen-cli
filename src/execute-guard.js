@@ -1,7 +1,8 @@
 /**
  * Acknowledgement gate shared by the commands that move funds on-chain
- * (`trade execute`, `bridge execute`) and the perp commands that change
- * Hyperliquid state (`perp order`, `close`, `cancel`, `leverage`).
+ * (`trade execute`, `bridge execute`, `trade limit-order create`/`cancel`) and
+ * the perp commands that change Hyperliquid state (`perp order`, `close`,
+ * `cancel`, `leverage`).
  *
  * Two independent switches, both resolved in the command layer:
  *   --dry-run   run the validation the command normally runs, print the plan,

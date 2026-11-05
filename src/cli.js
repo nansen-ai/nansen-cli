@@ -1284,7 +1284,9 @@ USAGE:
   nansen trade quote --chain <chain> --to-chain <chain> --from <token> --to <token> --amount <units>
   nansen trade execute --quote <quoteId> [--wallet <name>] [--dry-run] [--yes]
   nansen trade bridge-status --tx-hash <hash> --from-chain <chain> --to-chain <chain>
-  nansen trade limit-order <create|list|cancel|update> [options]
+  nansen trade limit-order create [options] [--dry-run] [--yes]
+  nansen trade limit-order cancel --order <orderId> [--dry-run] [--yes]
+  nansen trade limit-order <list|update> [options]
 
 EXAMPLES:
   nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
@@ -1299,9 +1301,10 @@ WALLET:
   --wallet <name>   Use a named wallet, or "walletconnect" / "wc" for WalletConnect.
                     Defaults to the default local wallet if omitted.
 
-BEFORE BROADCASTING (execute only):
-  --dry-run         Validate and print what would be sent, then stop. Nothing is
-                    signed or broadcast and the quote stays usable. Exits 0.
+BEFORE SIGNING (execute and limit-order create/cancel):
+  --dry-run         Print the execution or intent plan, then stop before signing
+                    or final submission. Limit-order preview makes no API request;
+                    cancel preview never requests its one-time transaction. Exits 0.
   --yes, -y         Skip the confirmation prompt (same as NANSEN_YES=1). The prompt
                     only appears when stdin is a terminal — agents, CI and pipes run
                     unprompted either way. Declining exits 1 with nothing signed.
@@ -2340,7 +2343,7 @@ export function buildCommands(deps = {}) {
   // 'trade' delegates to quote/execute from buildTradingCommands and limit-order from buildLimitOrderCommands
   const executionDeps = { ...deps, promptFn: confirmationPromptFn };
   const tradingCmds = buildTradingCommands(executionDeps);
-  const limitOrderCmds = buildLimitOrderCommands(deps);
+  const limitOrderCmds = buildLimitOrderCommands(executionDeps);
   cmds['trade'] = async (args, apiInstance, flags, options) => {
     const sub = args[0];
     if (!sub || sub === 'help') {
@@ -2359,9 +2362,9 @@ SUBCOMMANDS:
   update    Update trigger price or slippage
 
 USAGE:
-  nansen trade limit-order create --from <token> --to <token> --amount <units> --trigger-mint <token> --trigger-condition <above|below> --trigger-price <usd>
+  nansen trade limit-order create --from <token> --to <token> --amount <units> --trigger-mint <token> --trigger-condition <above|below> --trigger-price <usd> [--dry-run] [--yes]
   nansen trade limit-order list [--state <active|past>]
-  nansen trade limit-order cancel --order <orderId>
+  nansen trade limit-order cancel --order <orderId> [--dry-run] [--yes]
   nansen trade limit-order update --order <orderId> --trigger-price <usd>`);
         return;
       }
@@ -2729,12 +2732,17 @@ export async function runCLI(rawArgs, deps = {}) {
   // recreate update/telemetry state during the same invocation.
   const isMcpUsage = command === 'mcp' && (subcommand !== 'verify' || flags.help || flags.h);
   const isAuthMutation = command === 'login' || command === 'logout';
+  const isOfflineLimitOrderDryRun = command === 'trade'
+    && subArgs[0] === 'limit-order'
+    && (subArgs[1] === 'create' || subArgs[1] === 'cancel')
+    && flags['dry-run'] === true;
   const isOfflineCommand = command === 'auth'
     || (command === 'doctor' && flags.offline)
     || isMcpUsage
     || command === 'completion'
     || command === 'cache'
-    || (command === 'feedback' && subcommand === 'forget');
+    || (command === 'feedback' && subcommand === 'forget')
+    || isOfflineLimitOrderDryRun;
   const trackSucceeded = isOfflineCommand ? async () => {} : isAuthMutation ? metadata => trackAuthCommand({ ...metadata, command }) : trackCommandSucceeded;
   const trackFailed = isOfflineCommand ? async () => {} : isAuthMutation ? metadata => trackAuthCommand({ ...metadata, command, failed: true }) : trackCommandFailed;
 
@@ -2947,11 +2955,16 @@ export async function runCLI(rawArgs, deps = {}) {
     if (options['x402-payment-signature']) {
       defaultHeaders['Payment-Signature'] = options['x402-payment-signature'];
     }
-    api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders, authState: inputInteractiveDeps.authState });
+    // Limit-order dry runs are intentionally local previews. In addition to
+    // suppressing update checks and telemetry above, avoid constructing the API
+    // client because its constructor resolves saved Nansen credentials.
+    if (!isOfflineLimitOrderDryRun) {
+      api = new NansenAPIClass(undefined, undefined, { retry: retryOptions, cache: cacheOptions, defaultHeaders, authState: inputInteractiveDeps.authState });
+    }
 
     // --all aliases --paginate; wrapping api.request gives every list handler
     // the same max-pages bound while leaving non-list requests untouched.
-    if (flags.paginate || flags.all) {
+    if ((flags.paginate || flags.all) && api) {
       const maxPages = parsePositiveSafeIntegerOption(
         'max-pages', options, flags, DEFAULT_MAX_PAGES, { max: MAX_PAGES_LIMIT },
       );
@@ -2982,10 +2995,10 @@ export async function runCLI(rawArgs, deps = {}) {
     //
     // A --paginate result mixes pages, and both of those describe a single
     // page; it was served from the cache only if no page went to the API.
-    const paginatedPages = api.paginatedResponseMeta?.pagination;
+    const paginatedPages = api?.paginatedResponseMeta?.pagination;
     const fromCache = paginatedPages
       ? paginatedPages.livePages === 0
-      : !!result?._meta?.fromCache || api.servedFromCache === true;
+      : !!result?._meta?.fromCache || api?.servedFromCache === true;
 
     // Credit balance warning, from the headers on the call just made. Goes to
     // stderr so it never contaminates the JSON on stdout that agents parse.
