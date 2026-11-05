@@ -243,6 +243,33 @@ describe('perp --dry-run', () => {
       .rejects.toMatchObject({ code: 'NO_OPEN_POSITION' });
   });
 
+  it('close: an entry with no coin name is skipped and does not switch off the ETH checks', async () => {
+    const { cmds } = capture();
+    const api = mockApi({ positions: [null, 'junk', { szi: '0.5' }, { coin: null, szi: '1' }, { coin: 'ETH', szi: '0.02' }] });
+    await expect(cmds.close([], api, { 'dry-run': true }, { ...CLOSE, side: 'buy' }))
+      .rejects.toThrow(/Cannot close a long ETH position with --side buy/);
+  });
+
+  it('close: the first ETH entry wins when the list has two', async () => {
+    const { cmds, text } = capture();
+    const api = mockApi({ positions: [{ coin: 'ETH', szi: '0.5' }, { coin: 'eth', szi: '0' }] });
+    await cmds.close([], api, { 'dry-run': true }, CLOSE);
+    expect(text()).toMatch(/Open position:\s+long 0\.5/);
+  });
+
+  it('close: a dry run for an unknown coin reports the asset error, not "no position"', async () => {
+    const { cmds } = capture();
+    const err = await cmds.close([], mockApi({ positions: [] }), { 'dry-run': true }, { ...CLOSE, coin: 'ZZZZ' }).catch(e => e);
+    expect(err.code).toBe('META_UNAVAILABLE');
+    expectNothingSigned();
+  });
+
+  it('close: the NO_OPEN_POSITION message says the data can lag a fresh fill', async () => {
+    const { cmds } = capture();
+    await expect(cmds.close([], mockApi({ positions: [] }), { 'dry-run': true }, CLOSE))
+      .rejects.toThrow(/may not show it yet; retry in a few seconds/);
+  });
+
   it('close: a zero-size ETH entry is no position, not a failed read', async () => {
     const { cmds } = capture();
     await expect(cmds.close([], mockApi({ positions: [{ coin: 'ETH', szi: '0.0' }] }), { 'dry-run': true }, CLOSE))
@@ -264,10 +291,8 @@ describe('perp --dry-run', () => {
     ['positions as an object', () => ({ positions: {} })],
     ['positions as a string', () => ({ positions: 'oops' })],
     ['no positions field', () => ({})],
-    ['a null entry in the list', () => ({ positions: [null] })],
     ['an ETH entry with no size', () => ({ positions: [{ coin: 'ETH' }] })],
     ['an ETH entry with an unreadable size', () => ({ positions: [{ coin: 'ETH', szi: 'abc' }] })],
-    ['an entry with no coin', () => ({ positions: [{ szi: '0.5' }] })],
   ])('close: %s still previews (Hyperliquid checks on submit)', async (_label, positionsResponse) => {
     const { cmds, text } = capture();
     const base = mockApi();
@@ -407,6 +432,22 @@ describe('perp confirmation prompt (stdin is a terminal)', () => {
     expect(exportWallet).not.toHaveBeenCalled();
   });
 
+  it('close with no position: the prompt plan warns that Hyperliquid will reject it', async () => {
+    const promptFn = vi.fn(async () => 'n');
+    const { cmds, errText } = capture({ isTTY: true, promptFn });
+    const err = await cmds.close([], mockApi({ positions: [] }), {}, CLOSE).catch(e => e);
+    expect(err.code).toBe('CONFIRMATION_DECLINED');
+    expect(errText()).toMatch(/Warning:\s+no open ETH position in the positions data; Hyperliquid rejects a reduce-only close/);
+    expectNothingSigned();
+  });
+
+  it('close with a position: the prompt plan has no warning', async () => {
+    const promptFn = vi.fn(async () => 'n');
+    const { cmds, errText } = capture({ isTTY: true, promptFn });
+    await cmds.close([], mockApi({ positions: LONG_ETH }), {}, CLOSE).catch(() => {});
+    expect(errText()).not.toContain('Warning');
+  });
+
   it('loads the wallet key only after the user confirms', async () => {
     const promptFn = vi.fn(async () => {
       expect(exportWallet).not.toHaveBeenCalled();
@@ -467,6 +508,22 @@ describe('perp off a terminal (agents, CI, pipes)', () => {
     // The unprompted path makes no extra reads for a plan.
     if (name !== 'close') expect(called(api, '/api/v1/perp/positions')).toBe(false);
     expect(called(api, '/api/v1/perp/orders')).toBe(false);
+  });
+
+  it.each([
+    ['a failed read', () => { throw new Error('positions down'); }],
+    ['a malformed ETH entry', () => ({ positions: [{ coin: 'ETH', szi: 'abc' }] })],
+  ])('a real close with %s still goes to Hyperliquid', async (_label, positionsResponse) => {
+    const { cmds } = capture({ isTTY: false });
+    const base = mockApi();
+    const api = {
+      request: vi.fn(async (endpoint, ...rest) => {
+        if (endpoint.startsWith('/api/v1/perp/positions')) return positionsResponse();
+        return base.request(endpoint, ...rest);
+      }),
+    };
+    await cmds.close([], api, {}, CLOSE);
+    expect(submitExchange).toHaveBeenCalledTimes(1);
   });
 
   it('a real close with no position in the positions data still goes to Hyperliquid', async () => {

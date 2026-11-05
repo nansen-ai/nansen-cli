@@ -772,17 +772,15 @@ function positionSide(szi) {
 }
 
 // The coin's position, null when there is none (no entry, or a zero size), or
-// undefined when the answer can't be trusted: `positions` is not a list, an
-// entry has no coin name (it could be this coin), or this coin's entry has a
-// missing or unreadable size. A bad entry for another coin is ignored, so it
-// cannot switch off the checks for this one.
+// undefined when the answer can't be trusted: `positions` is not a list, or
+// this coin's entry has a missing or unreadable size. Entries that are not
+// objects or carry no coin name can't be matched and are skipped, and a bad
+// entry for another coin is ignored, so neither switches off this coin's checks.
+// The first entry for the coin wins.
 function findPosition(positions, coin) {
   if (!Array.isArray(positions)) return undefined;
-  let pos = null;
-  for (const p of positions) {
-    if (p === null || typeof p !== 'object' || typeof p.coin !== 'string' || p.coin === '') return undefined;
-    if (p.coin.toUpperCase() === coin) pos = p;
-  }
+  const pos = positions.find(p => p !== null && typeof p === 'object'
+    && p.coin != null && String(p.coin).toUpperCase() === coin);
   if (!pos) return null;
   if (positionSide(pos.szi)) return pos;
   return SZI_RE.test(String(pos.szi ?? '')) ? null : undefined;
@@ -1104,8 +1102,10 @@ OPTIONS:
       // which holds the live state: the proxy's positions can lag a fill that
       // just happened, and a stale "none" must never block a risk-reducing close.
       if (openPosition === null && guard.dryRun) {
+        // An unknown coin or a metadata outage is the more useful answer.
+        requireAsset(assetMeta, coin);
         throw new CommandError(
-          `No open ${coin} position to close for ${wallet.address}. Check with: nansen perp positions`,
+          `No open ${coin} position to close for ${wallet.address}. Check with: nansen perp positions. If you opened it moments ago, the positions data may not show it yet; retry in a few seconds.`,
           'NO_OPEN_POSITION',
         );
       }
@@ -1139,6 +1139,9 @@ OPTIONS:
           ['Size', `${effSize} ${coin}`],
           ['Type', 'market (IOC)'],
           ['Price', `${price} reference, worst fill ${effPrice} (${formatSlippage(slippage)} slippage)`],
+          ...(openPosition === null
+            ? [['Warning', `no open ${coin} position in the positions data; Hyperliquid rejects a reduce-only close with nothing to close (the data can lag a fill that just happened)`]]
+            : []),
           ['Est. notional', formatIocNotional(mainOrderLeg(action)?.s, String(price), mainOrderLeg(action)?.p)],
           ['Open position', describePosition(openPosition)],
           ['Builder fee', builderFeeLine(builderStatus)],
