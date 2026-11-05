@@ -20,6 +20,7 @@ import {
   resolveSendToken,
 } from '../transfer.js';
 import { signSecp256k1, rlpEncode } from '../crypto.js';
+import { RLP } from '@ethereumjs/rlp';
 import { base58Encode } from '../wallet.js';
 import * as wallet from '../wallet.js';
 import * as wcTrading from '../walletconnect-trading.js';
@@ -451,6 +452,31 @@ describe('sendTokens integration', () => {
       const sendRawCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_sendRawTransaction');
       expect(sendRawCall).toBeDefined();
       expect(JSON.parse(sendRawCall[1].body).params[0]).toMatch(/^0x02/);
+    });
+
+    // RLP strips leading zeros from hex strings (right for integers), so an
+    // address passed as a string lost its leading 0x00 bytes. Nodes reject a
+    // `to` shorter than 20 bytes, and an all-zero one became contract creation.
+    test.each([
+      ['native send to an address with leading zero bytes', { to: '0x00000000219ab540356cBB839Cbe05303d7705Fa', amount: '0.01' }, '0x00000000219ab540356cbb839cbe05303d7705fa'],
+      ['token send to a contract with leading zero bytes', { to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', token: '0x0000000000085d4780B73119b644AE5ecd22b376' }, '0x0000000000085d4780b73119b644ae5ecd22b376'],
+    ])('keeps the full 20-byte to field: %s', async (_name, args, expectedTo) => {
+      mockEvmRpcSmart();
+      const smart = fetch.getMockImplementation();
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        // decimals() = 6; every other eth_call (balanceOf) keeps the large balance.
+        if (body.method === 'eth_call' && body.params[0].data === '0x313ce567') {
+          return { json: () => Promise.resolve({ result: '0x' + '6'.padStart(64, '0') }) };
+        }
+        return smart(url, opts);
+      });
+      await sendTokens({ ...args, chain: 'evm', password: 'test' });
+
+      const sendRawCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_sendRawTransaction');
+      const raw = JSON.parse(sendRawCall[1].body).params[0];
+      const fields = RLP.decode(Buffer.from(raw.slice(4), 'hex'));
+      expect('0x' + Buffer.from(fields[5]).toString('hex')).toBe(expectedTo);
     });
 
     test('uses eth_estimateGas instead of hardcoded gas limit', async () => {
