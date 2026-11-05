@@ -37,12 +37,28 @@ export function buildPagination(options) {
 // Parse simple sort syntax: "field:direction" or "field" (defaults to DESC)
 export function parseSort(sortOption, orderByOption) {
   // If --order-by is provided, use it (full JSON control)
-  if (orderByOption) return orderByOption;
+  if (orderByOption) {
+    const isEntry = e => e !== null && typeof e === 'object' && !Array.isArray(e)
+      && typeof e.field === 'string' && e.field.trim() !== '';
+    if (!Array.isArray(orderByOption) || !orderByOption.every(isEntry)) {
+      throw new NansenError(
+        `--order-by must be a JSON array of {"field", "direction"} objects, e.g. --order-by '[{"field":"value_usd","direction":"DESC"}]'`,
+        ErrorCode.INVALID_PARAMS,
+      );
+    }
+    return orderByOption;
+  }
   if (!sortOption) return undefined;
   if (typeof sortOption !== 'string') {
     throw new NansenError('--sort must be "field" or "field:direction"', ErrorCode.INVALID_PARAMS);
   }
   const parts = sortOption.split(':');
+  if (parts.length > 2) {
+    throw new NansenError(
+      `--sort must be "field" or "field:direction", got "${sortOption}" (e.g. --sort ${parts[0].trim()}:desc)`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
   const field = parts[0].trim();
   const rawDirection = (parts[1] || '').trim();
   const direction = (rawDirection || 'desc').toUpperCase();
