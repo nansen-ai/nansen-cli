@@ -339,7 +339,7 @@
             },
             "dry-run": {
               "type": "boolean",
-              "description": "Run the normal validation and read-only lookups (asset metadata, open position and close-direction check, builder fee, compliance screen), print the close plan (coin, side, rounded size, worst fill price after slippage, estimated notional, open position, builder fee), then stop. Nothing is signed or sent to Hyperliquid, no wallet password is needed, and the one-time builder-fee approval is not submitted. Exits 0."
+              "description": "Run the normal validation and read-only lookups (asset metadata, open position and close-direction check, builder fee, compliance screen), print the close plan (coin, side, rounded size, worst fill price after slippage, estimated notional, open position, builder fee), then stop. Nothing is signed or sent to Hyperliquid, no wallet password is needed, and the one-time builder-fee approval is not submitted. Exits 0, or exits 1 with NO_OPEN_POSITION when the wallet has no open position in that coin. A real close (without --dry-run) does not make this check; Hyperliquid rejects a close with nothing to close."
             },
             "yes": {
               "type": "boolean",

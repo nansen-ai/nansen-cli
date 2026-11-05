@@ -404,25 +404,41 @@ describe('perp close direction (NEW-4)', () => {
     ).rejects.toThrow(/Cannot close a short ETH position with --side sell\. Use --side buy/);
   });
 
+  // Routed mock for the fall-open cases: real asset metadata, the given
+  // positions answer, and every later read throws. Reaching the builder-fee
+  // read proves the run got past the position checks.
+  const routedApi = (positionsAnswer) => ({
+    request: vi.fn(async (endpoint) => {
+      if (endpoint.startsWith('/api/v1/perp/meta')) return { assets: [{ name: 'ETH', asset_id: 1, sz_decimals: 4, max_leverage: 50 }] };
+      if (endpoint.startsWith('/api/v1/perp/positions')) return positionsAnswer();
+      if (endpoint.startsWith('/api/v1/sanctions/screen')) return { results: [{ address: '0x' + '1'.repeat(40), sanctioned: false }] };
+      throw new Error(`stop at ${endpoint}`);
+    }),
+  });
+  const reachedBuilderFee = (api) => api.request.mock.calls.some(([e]) => e.startsWith('/api/v1/perp/builder-fee'));
+
   it('allows the correct close direction (sell closes a long)', async () => {
-    const api = apiWith([{ coin: 'ETH', szi: '0.5' }]);
-    await expect(
-      cmds.close([], api, {}, { ...baseClose, side: 'sell' }),
-    ).rejects.not.toThrow(/Cannot close/);
+    const api = routedApi(() => ({ positions: [{ coin: 'ETH', szi: '0.5' }] }));
+    const err = await cmds.close([], api, { 'dry-run': true }, { ...baseClose, side: 'sell' }).catch(e => e);
+    expect(err?.message ?? '').not.toMatch(/Cannot close|No open ETH position/);
+    expect(reachedBuilderFee(api)).toBe(true);
   });
 
-  it('falls open when no open position matches the coin', async () => {
-    const api = apiWith([{ coin: 'BTC', szi: '0.5' }]);
+  it('a dry run rejects a close when the lookup worked and no position matches the coin', async () => {
+    const api = routedApi(() => ({ positions: [{ coin: 'BTC', szi: '0.5' }] }));
     await expect(
-      cmds.close([], api, {}, { ...baseClose, side: 'buy' }),
-    ).rejects.not.toThrow(/Cannot close/);
+      cmds.close([], api, { 'dry-run': true }, { ...baseClose, side: 'buy' }),
+    ).rejects.toMatchObject({ code: 'NO_OPEN_POSITION' });
+    expect(reachedBuilderFee(api)).toBe(false);
+    expect(submitExchange).not.toHaveBeenCalled();
   });
 
   it('falls open when the positions lookup fails', async () => {
-    const brokenApi = { request: vi.fn(async () => { throw new Error('positions down'); }) };
-    await expect(
-      cmds.close([], brokenApi, {}, { ...baseClose, side: 'buy' }),
-    ).rejects.not.toThrow(/Cannot close|positions down/);
+    const api = routedApi(() => { throw new Error('positions down'); });
+    const err = await cmds.close([], api, { 'dry-run': true }, { ...baseClose, side: 'buy' }).catch(e => e);
+    expect(err?.code).not.toBe('NO_OPEN_POSITION');
+    expect(err?.message ?? '').not.toMatch(/Cannot close|positions down/);
+    expect(reachedBuilderFee(api)).toBe(true);
   });
 });
 
@@ -590,7 +606,7 @@ describe('perp direct-to-HL flow (Chunk 3/4/5)', () => {
 
   // Dispatch the proxy/screen calls by endpoint. `screen` is a function so a
   // test can make it throw (unavailable) or flag an address (sanctioned).
-  function mockApi({ assets = [ETH], builder, screen }) {
+  function mockApi({ assets = [ETH], builder, screen, positions = [] }) {
     const builderStatus = builder ?? {
       approved: true,
       max_fee_rate: 80,
@@ -601,7 +617,7 @@ describe('perp direct-to-HL flow (Chunk 3/4/5)', () => {
       request: vi.fn(async (endpoint, body) => {
         if (endpoint.startsWith('/api/v1/perp/meta')) return { assets };
         if (endpoint.startsWith('/api/v1/perp/builder-fee')) return builderStatus;
-        if (endpoint.startsWith('/api/v1/perp/positions')) return { positions: [] };
+        if (endpoint.startsWith('/api/v1/perp/positions')) return { positions };
         if (endpoint.startsWith('/api/v1/sanctions/screen')) return screen(body);
         throw new Error(`unexpected endpoint ${endpoint}`);
       }),
@@ -853,7 +869,7 @@ describe('perp direct-to-HL flow (Chunk 3/4/5)', () => {
 
     it('fires with command "close" from the close handler', async () => {
       const { track, telCmds } = trackingCmds();
-      const api = mockApi({ screen: clean });
+      const api = mockApi({ screen: clean, positions: [{ coin: 'ETH', szi: '0.01' }] });
       submitExchange.mockResolvedValueOnce({
         status: 'ok',
         response: { type: 'order', data: { statuses: [{ filled: { oid: 99, totalSz: '0.01', avgPx: '2000' } }] } },

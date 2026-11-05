@@ -745,30 +745,45 @@ function describeTriggerLeg(action, tpsl, coin) {
   ].join(', ');
 }
 
-// Read-only lookup of the wallet's open position in `coin`, for the plan only.
-// Returns the position, null when there is none, or undefined when the read
-// failed (the plan then says so instead of guessing).
+// Read-only lookup of the wallet's open position in `coin`, for the plan and
+// close's pre-checks. Returns the position, null when there is none, or
+// undefined when the read failed or the answer for `coin` can't be trusted
+// (callers then skip the checks, and the plan says so instead of guessing).
 async function readOpenPosition(apiInstance, walletAddress, coin) {
   try {
     const result = await perpRead(apiInstance, 'positions', { wallet_address: walletAddress });
-    return findPosition(result.positions || [], coin);
+    return findPosition(result?.positions, coin);
   } catch {
     return undefined;
   }
 }
 
+// A position size as the exchange sends it: a plain decimal string, signed
+// for a short. Shared by the parse and the well-formed check so they agree.
+const SZI_RE = /^\s*([-+]?)(\d*\.?\d+)\s*$/;
+
 // Side and unsigned size of a position, read from the exchange's own szi
 // string, so no float conversion can round a tiny size to zero or lose its
 // sign. null for a zero, missing or malformed size.
 function positionSide(szi) {
-  const match = /^\s*([-+]?)(\d*\.?\d+)\s*$/.exec(String(szi ?? ''));
+  const match = SZI_RE.exec(String(szi ?? ''));
   if (!match || !/[1-9]/.test(match[2])) return null;
   return { side: match[1] === '-' ? 'short' : 'long', size: match[2] };
 }
 
+// The coin's position, null when there is none (no entry, or a zero size), or
+// undefined when the answer can't be trusted: `positions` is not a list, or
+// this coin's entry has a missing or unreadable size. Entries that are not
+// objects or carry no coin name can't be matched and are skipped, and a bad
+// entry for another coin is ignored, so neither switches off this coin's checks.
+// The first entry for the coin wins.
 function findPosition(positions, coin) {
-  const pos = positions.find(p => String(p.coin).toUpperCase() === coin);
-  return pos && positionSide(pos.szi) ? pos : null;
+  if (!Array.isArray(positions)) return undefined;
+  const pos = positions.find(p => p !== null && typeof p === 'object'
+    && p.coin != null && String(p.coin).toUpperCase() === coin);
+  if (!pos) return null;
+  if (positionSide(pos.szi)) return pos;
+  return SZI_RE.test(String(pos.szi ?? '')) ? null : undefined;
 }
 
 function describePosition(pos) {
@@ -1079,14 +1094,24 @@ OPTIONS:
       // fails fast with a clear message instead of the backend's opaque "reduce
       // only order would increase position". sell closes a long, buy closes a
       // short. Fall open if positions can't be fetched — HL still checks.
-      let openPositions = null;
-      try {
-        const result = await perpRead(apiInstance, 'positions', { wallet_address: wallet.address });
-        openPositions = result.positions || [];
-      } catch {
-        // positions lookup failed — skip the direction pre-check.
+      // undefined: lookup failed or malformed (skip the checks); null: no position.
+      const openPosition = await readOpenPosition(apiInstance, wallet.address, coin);
+      // The lookup worked and there is nothing to close: a reduce-only order
+      // would be rejected by Hyperliquid, so a dry run must not report success.
+      // Only the dry run fails here. A real close still goes to Hyperliquid,
+      // which holds the live state: the proxy's positions can lag a fill that
+      // just happened, and a stale "none" must never block a risk-reducing close.
+      if (openPosition === null && guard.dryRun) {
+        // An unknown coin or a metadata outage is the more useful answer, and a
+        // dry run screens the wallet as guardPerpAction would (a blocked wallet
+        // must fail the preview the same way whether or not it has a position).
+        requireAsset(assetMeta, coin);
+        await screenOrThrow(apiInstance, [wallet.address]);
+        throw new CommandError(
+          `No open ${coin} position to close for ${wallet.address}. Check with: nansen perp positions. If you opened it moments ago, the positions data may not show it yet; retry in a few seconds.`,
+          'NO_OPEN_POSITION',
+        );
       }
-      const openPosition = openPositions ? findPosition(openPositions, coin) : undefined;
       if (openPosition) {
         const posSide = positionSide(openPosition.szi).side;
         const requiredSide = posSide === 'long' ? 'sell' : 'buy';
@@ -1117,6 +1142,9 @@ OPTIONS:
           ['Size', `${effSize} ${coin}`],
           ['Type', 'market (IOC)'],
           ['Price', `${price} reference, worst fill ${effPrice} (${formatSlippage(slippage)} slippage)`],
+          ...(openPosition === null
+            ? [['Warning', `no open ${coin} position in the positions data; Hyperliquid rejects a reduce-only close with nothing to close (the data can lag a fill that just happened)`]]
+            : []),
           ['Est. notional', formatIocNotional(mainOrderLeg(action)?.s, String(price), mainOrderLeg(action)?.p)],
           ['Open position', describePosition(openPosition)],
           ['Builder fee', builderFeeLine(builderStatus)],

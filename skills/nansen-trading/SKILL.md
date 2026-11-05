@@ -233,6 +233,8 @@ nansen perp order --coin ETH --side buy --size 0.1 --price 1600 --yes       # sk
 
 **`--dry-run`** runs the normal validation and read-only lookups (asset metadata, builder fee, open position, compliance screen), prints the plan (coin, side, rounded size, price and type, take-profit/stop-loss, estimated notional, leverage, builder fee) and exits 0. Nothing is signed or sent to Hyperliquid, no wallet password is needed, and the one-time builder-fee approval is not submitted. `close` also shows the worst fill price after slippage and the open position, `cancel` shows the open order it would cancel, and `leverage` shows the new setting next to the asset maximum.
 
+**Exception: `close --dry-run` exits 1 with `NO_OPEN_POSITION` when the wallet has no open position in that coin.** That is a definite "nothing to close" answer, not a crash. If the position was opened moments ago, the positions data may not show it yet: retry after a few seconds. A real `close` skips this check and lets Hyperliquid decide; with a prompt, its plan shows a warning instead.
+
 **Confirmation.** When stdin is an interactive terminal, these four commands print the plan and ask, for example, `Submit this order to Hyperliquid? [y/N]` before signing. Answering anything but `y`/`yes` exits 1 with nothing signed (code `CONFIRMATION_DECLINED`). Pass `--yes` (`-y`), or set `NANSEN_YES=1`, to skip the question.
 
 **Agents and CI are unaffected:** when stdin is *not* a terminal the commands submit without prompting, exactly as before, and `--yes` is a no-op. These are the same rules as `trade execute` and `bridge execute`. `transfer` and `approve-builder-fee` are unchanged.

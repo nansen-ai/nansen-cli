@@ -209,6 +209,7 @@ A connection failure is `NETWORK_ERROR` and never `UNAUTHORIZED`: the CLI could 
 | `BUILDER_FEE_TOO_HIGH` | The builder fee is above the allowed ceiling. | No |
 | `BUILDER_FEE_UNAVAILABLE` | The builder fee could not be read or approved. | No |
 | `META_UNAVAILABLE` | Hyperliquid asset metadata is not available. | Yes |
+| `NO_OPEN_POSITION` | perp close --dry-run found no open position in that coin, so a real close would be rejected. The positions data can lag a fill that just happened, so retry after a few seconds if the position was opened moments ago. | Yes |
 | `SANCTIONED` | The address failed sanctions screening. | No |
 | `SCREENING_UNAVAILABLE` | Sanctions screening is not available, so the action was refused. | Yes |
 | `UNSUPPORTED_NETWORK` | The network is not supported for this perp action. | No |
