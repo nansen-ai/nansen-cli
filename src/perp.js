@@ -751,7 +751,10 @@ function describeTriggerLeg(action, tpsl, coin) {
 async function readOpenPosition(apiInstance, walletAddress, coin) {
   try {
     const result = await perpRead(apiInstance, 'positions', { wallet_address: walletAddress });
-    return findPosition(result.positions || [], coin);
+    // Only an array is a real answer; anything else counts as "could not load".
+    // findPosition stays inside the try so a malformed entry does too.
+    if (!Array.isArray(result?.positions)) return undefined;
+    return findPosition(result.positions, coin);
   } catch {
     return undefined;
   }
@@ -1079,15 +1082,8 @@ OPTIONS:
       // fails fast with a clear message instead of the backend's opaque "reduce
       // only order would increase position". sell closes a long, buy closes a
       // short. Fall open if positions can't be fetched — HL still checks.
-      let openPositions = null;
-      try {
-        const result = await perpRead(apiInstance, 'positions', { wallet_address: wallet.address });
-        // Only an array is a real answer; anything else counts as "could not load".
-        if (Array.isArray(result?.positions)) openPositions = result.positions;
-      } catch {
-        // positions lookup failed — skip the direction pre-check.
-      }
-      const openPosition = openPositions ? findPosition(openPositions, coin) : undefined;
+      // undefined: lookup failed or malformed (skip the checks); null: no position.
+      const openPosition = await readOpenPosition(apiInstance, wallet.address, coin);
       // The lookup worked and there is nothing to close: a reduce-only order
       // would be rejected by Hyperliquid, so a dry run must not report success.
       if (openPosition === null) {

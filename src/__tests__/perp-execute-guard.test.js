@@ -242,6 +242,7 @@ describe('perp --dry-run', () => {
     ['positions as an object', () => ({ positions: {} })],
     ['positions as a string', () => ({ positions: 'oops' })],
     ['no positions field', () => ({})],
+    ['a null entry in the list', () => ({ positions: [null] })],
   ])('close: %s still previews (Hyperliquid checks on submit)', async (_label, positionsResponse) => {
     const { cmds, text } = capture();
     const base = mockApi();
