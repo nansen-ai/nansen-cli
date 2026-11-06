@@ -1151,6 +1151,11 @@ export const HELP = `Nansen CLI v${VERSION} - analytics and DEX trading for AI a
 
 USAGE: nansen <command> [subcommand] [options]
 
+GET STARTED:
+  nansen login                                        Sign in through browser approval
+  nansen research smart-money netflow --chain solana  What smart money is buying and selling
+  nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
+
 COMMANDS:
   trade       DEX swaps/bridges: quote, execute, bridge-status, limit-order
   bridge      Hyperliquid bridge: quote, execute, status (EVM <-> HL)
@@ -1171,16 +1176,26 @@ COMMANDS:
   completion  Shell completions: bash, zsh, fish
   cache       stats, clear
   changelog   --since <version> to filter
+  help        Topics: auth, options, examples, chains, labels, deprecated, telemetry
 
-OPTIONS: --chain --limit --page N --sort field:dir --fields a,b --days N --filters '{}'
-PAGING:  --paginate (alias --all) fetch every page, --max-pages N (default 10), --limit sets page size
-FORMAT:  --pretty --table --format csv --stream (NDJSON)
-RETRY:   --no-retry --retries N --cache --cache-ttl N
-DEBUG:   --debug (or NANSEN_DEBUG=1) traces each request on stderr: method, URL,
-         status, time-to-headers (TTFB), retries, request id. Never prints
-         credentials or bodies.
+MORE HELP:
+  nansen <command> --help   Subcommands and options for one command
+  nansen help <topic>       One topic (see "help" above)
+  nansen schema             JSON schema for every command
+  Docs: https://docs.nansen.ai
+  Skills: npx skills add nansen-ai/nansen-cli (agent-optimised docs per command group)
 
-AUTHENTICATION:
+Telemetry: anonymous usage stats. Details: nansen help telemetry. Disable: DO_NOT_TRACK=1
+`;
+
+/**
+ * Detail that used to sit on the top-level page, one topic per
+ * `nansen help <topic>`. The top page stays a short index (every fresh agent
+ * reads it), so longer reference text belongs here. Each topic is also a
+ * `help` subcommand in schema.json, which feeds `nansen schema` and completion.
+ */
+export const HELP_TOPICS = {
+  auth: `AUTHENTICATION:
   nansen login                 Fresh browser approval, even with an existing key/session
   nansen login --no-browser    Same approval without opening the browser
   nansen auth status           Offline, cached/unverified; does not open session storage
@@ -1193,9 +1208,15 @@ AUTHENTICATION:
   Browser sessions renew automatically; uncertain renewal requires fresh login.
   Browser nansen:api sessions have API-key-equivalent account permissions; wallet signing is separate.
   Browser login is enabled in production; saved sessions need native storage (see docs/browser-login.md).
-  Public API endpoints keep their usual account, plan and credit checks; MCP key export is separate.
-
-TRADING:
+  Public API endpoints keep their usual account, plan and credit checks; MCP key export is separate.`,
+  options: `OPTIONS: --chain --limit --page N --sort field:dir --fields a,b --days N --filters '{}'
+PAGING:  --paginate (alias --all) fetch every page, --max-pages N (default 10), --limit sets page size
+FORMAT:  --pretty --table --format csv --stream (NDJSON)
+RETRY:   --no-retry --retries N --cache --cache-ttl N
+DEBUG:   --debug (or NANSEN_DEBUG=1) traces each request on stderr: method, URL,
+         status, time-to-headers (TTFB), retries, request id. Never prints
+         credentials or bodies.`,
+  examples: `TRADING:
   nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
   nansen trade execute --quote <quoteId>
   nansen trade bridge-status --tx-hash <hash> --from-chain base --to-chain solana
@@ -1213,22 +1234,16 @@ EXAMPLES:
   nansen trade quote --chain base --to-chain solana --from USDC --to USDC --amount 1000000
   nansen research smart-money netflow --chain solana
   nansen research token screener --chain solana --timeframe 24h
-  nansen research profiler balance --address 0x... --chain ethereum
-
-DEPRECATED ALIASES (still work, will be removed in a future version):
-  smart-money, profiler, token, search, portfolio → use "nansen research <command>"
-  quote, execute → use "nansen trade <command>"
-
-Research chains: ${SCHEMA.chains.join(', ')}
+  nansen research profiler balance --address 0x... --chain ethereum`,
+  chains: `Research chains: ${SCHEMA.chains.join(', ')}
 Trade chains: solana, base
-Bridge routes: ${formatBridgeRoutes()}
-Labels: Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader (Smart Trader covers all windows; Fund is no longer a Smart Money label)
-
-Docs: https://docs.nansen.ai
-Skills: npx skills add nansen-ai/nansen-cli (agent-optimised docs per command group)
-
-Telemetry: anonymous usage stats (commands, timing, errors). Perp order/close additionally send each leg's side, outcome, order id, shared submission id, and a SHA-256 wallet identifier. Raw wallet, price, size, and exchange error text are not sent. Disable: DO_NOT_TRACK=1
-`;
+Bridge routes: ${formatBridgeRoutes()}`,
+  labels: `Labels: Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader (Smart Trader covers all windows; Fund is no longer a Smart Money label)`,
+  deprecated: `DEPRECATED ALIASES (still work, will be removed in a future version):
+  smart-money, profiler, token, search, portfolio → use "nansen research <command>"
+  quote, execute → use "nansen trade <command>"`,
+  telemetry: `Telemetry: anonymous usage stats (commands, timing, errors). Perp order/close additionally send each leg's side, outcome, order id, shared submission id, and a SHA-256 wallet identifier. Raw wallet, price, size, and exchange error text are not sent. Disable: DO_NOT_TRACK=1`,
+};
 
 // Usage text for the `cache` command group. Also the answer to "which commands
 // cache?" — caching is decided by the request path, so the rule lives here (and
@@ -2708,7 +2723,23 @@ export async function runCLI(rawArgs, deps = {}) {
     exit(1);
     return { type: 'error', data: errorData };
   }
-  const { _: positional, flags, options } = parsed;
+  const { flags, options } = parsed;
+  let positional = parsed._;
+
+  // `nansen help <topic>` prints one topic of HELP_TOPICS. `nansen help
+  // <command> [sub...]` is the same request as `nansen <command> [sub...] --help`,
+  // so rewrite it here and let the usual help paths answer it.
+  let helpTopic = null;
+  let helpRequestedFor = null;
+  if (positional[0] === 'help' && positional.length > 1) {
+    if (Object.hasOwn(HELP_TOPICS, positional[1])) {
+      helpTopic = positional[1];
+    } else {
+      helpRequestedFor = positional[1];
+      positional = positional.slice(1);
+      flags.help = true;
+    }
+  }
 
   // Resolve command aliases
   const rawCommand = positional[0] || 'help';
@@ -2782,7 +2813,15 @@ export async function runCLI(rawArgs, deps = {}) {
   if (command === 'help' || ((flags.help || flags.h) && !unavailableCommand)) {
     // Help for an offline command still owes the zero-network contract: the
     // cost-map refresh fetches the OpenAPI spec and writes ~/.nansen/cost-map.json.
-    if (!isOfflineCommand && !isAuthMutation) await refreshCostMapIfStale();
+    // The top-level page and its topics show no costs, so they skip the
+    // refresh: on a cold or stale cache it fetches the spec before printing.
+    const showsCosts = command !== 'help' && commands[command];
+    if (showsCosts && !isOfflineCommand && !isAuthMutation) await refreshCostMapIfStale();
+    if (helpTopic) {
+      output(HELP_TOPICS[helpTopic]);
+      notify();
+      return { type: 'help-topic', topic: helpTopic };
+    }
     // Check for subcommand-specific help: nansen <command> <subcommand> --help
     if (flags.help || flags.h) {
       // Handle 'research <category> <sub> --help' (3-level)
@@ -2823,7 +2862,7 @@ export async function runCLI(rawArgs, deps = {}) {
       }
       // First try subcommand help
       // Skip for 'trade'/'alerts' — their handlers show their own rich usage
-      if (command && subcommand && command !== 'trade' && command !== 'alerts' && command !== 'agent') {
+      if (command && subcommand && command !== 'help' && command !== 'trade' && command !== 'alerts' && command !== 'agent') {
         const subHelp = generateSubcommandHelp(command, subcommand);
         if (subHelp) {
           output(deprecationNote(command) + subHelp);
@@ -2833,7 +2872,9 @@ export async function runCLI(rawArgs, deps = {}) {
       }
       // Then try command-level help (list subcommands)
       // Skip for 'trade'/'alerts'/'cache' — let the handler show its own usage
-      const cmdSchemaLookup = command !== 'trade' && command !== 'alerts' && command !== 'agent' && command !== 'cache' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
+      // `help` is in schema.json for `nansen schema` and completion, but
+      // `nansen --help` and `nansen help --help` show the top-level page.
+      const cmdSchemaLookup = command !== 'help' && command !== 'trade' && command !== 'alerts' && command !== 'agent' && command !== 'cache' && (SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command]);
       if (command && cmdSchemaLookup) {
         const cmdSchema = cmdSchemaLookup;
         const lines = [`${command} — ${cmdSchema.description}`];
@@ -2882,6 +2923,14 @@ export async function runCLI(rawArgs, deps = {}) {
       output(deprecationNote(command) + (help || TRADE_USAGE));
       notify();
       return { type: 'command-help', command };
+    }
+    // `nansen help <name>` where <name> is neither a topic nor a command.
+    if (helpRequestedFor && !commands[command]) {
+      const available = [...new Set([...Object.keys(HELP_TOPICS), ...Object.keys(commands).filter(name => name !== 'help' && !UNAVAILABLE_COMMANDS.has(name))])];
+      const errorData = formatError(unknownCommandError('help topic or command', helpRequestedFor, available));
+      output(formatOutput(errorData, { pretty, table, csv }).text);
+      exit(1);
+      return { type: 'error', data: errorData };
     }
     // 'help' and unknown commands: full banner + command list
     if (command === 'help' || !commands[command]) {

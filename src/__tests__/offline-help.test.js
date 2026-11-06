@@ -61,8 +61,26 @@ describe('offline commands: --help does not touch the network', () => {
     expect(refreshCostMapIfStale).toHaveBeenCalledOnce();
   });
 
-  it('top-level help still refreshes the cost map', async () => {
-    await runCLI(['help'], baseDeps());
+  // The top-level page and its topics print no costs, so a cold or stale
+  // cost map must not delay them with a spec fetch.
+  it.each([
+    [[]],
+    [['help']],
+    [['--help']],
+    [['help', 'chains']],
+    [['help', 'nope']],
+    [['not-a-command', '--help']],
+  ])('top-level help %j skips the cost-map refresh', async (args) => {
+    await runCLI(args, baseDeps());
+    expect(refreshCostMapIfStale).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('command help still refreshes the cost map, also through `help <command>`', async () => {
+    await runCLI(['research', 'smart-money', 'netflow', '--help'], baseDeps());
+    expect(refreshCostMapIfStale).toHaveBeenCalledOnce();
+    refreshCostMapIfStale.mockClear();
+    await runCLI(['help', 'research', 'smart-money', 'netflow'], baseDeps());
     expect(refreshCostMapIfStale).toHaveBeenCalledOnce();
   });
 });
