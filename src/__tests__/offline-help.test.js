@@ -76,6 +76,8 @@ describe('offline commands: --help does not touch the network', () => {
     [['help']],
     [['--help']],
     [['help', 'chains']],
+    [['help', 'nope']],
+    [['not-a-command', '--help']],
   ])('top-level help %j does not schedule an update check', async (args) => {
     await runCLI(args, baseDeps());
     expect(scheduleUpdateCheck).not.toHaveBeenCalled();

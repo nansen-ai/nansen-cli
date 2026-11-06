@@ -2757,6 +2757,14 @@ export async function runCLI(rawArgs, deps = {}) {
   const stream = flags.stream || flags.s;
   const csv = options.format === 'csv';
 
+  // mcp prints its own output via `log`; runCLI callers inject their stdout
+  // sink as `output`, so map it across (an explicit `log` dep still wins).
+  // Only execute/login handlers consume the stdin-interactivity seam. Other
+  // modules retain their existing deps: notably wallet export interprets
+  // `isTTY` as stdout visibility when deciding whether to warn about printing
+  // private keys, so substituting the stdin signal there changes its semantics.
+  const commands = { ...buildCommands(inputInteractiveDeps), ...buildWalletCommands(deps), ...buildTradingCommands(topLevelTradingDeps), ...buildAlertsCommands(deps), ...buildAgentCommands(deps), ...buildFeedbackCommands({ ...deps, log: deps.log ?? output }), ...buildMcpCommands({ ...deps, log: deps.log ?? output }), ...buildCompletionCommands({ ...deps, log: deps.log ?? output }), ...commandOverrides };
+
   // Commands in this set promise zero network activity. That includes update
   // checks, cost-map refreshes and telemetry, not just their primary work.
   // `cache` belongs here specifically so inspecting or clearing caches cannot
@@ -2776,7 +2784,9 @@ export async function runCLI(rawArgs, deps = {}) {
     || command === 'completion'
     || command === 'cache'
     || (command === 'feedback' && subcommand === 'forget')
-    || isOfflineLimitOrderDryRun;
+    || isOfflineLimitOrderDryRun
+    // Help for a name that is not a command prints only the top page or an error.
+    || ((flags.help || flags.h) && !commands[command]);
   const trackSucceeded = isOfflineCommand ? async () => {} : isAuthMutation ? metadata => trackAuthCommand({ ...metadata, command }) : trackCommandSucceeded;
   const trackFailed = isOfflineCommand ? async () => {} : isAuthMutation ? metadata => trackAuthCommand({ ...metadata, command, failed: true }) : trackCommandFailed;
 
@@ -2795,14 +2805,6 @@ export async function runCLI(rawArgs, deps = {}) {
     if (DEPRECATED_TO_TRADE.has(cmd)) return `Note: "nansen ${cmd}" is deprecated. Use "nansen trade ${cmd}" instead.\n\n`;
     return '';
   };
-
-  // mcp prints its own output via `log`; runCLI callers inject their stdout
-  // sink as `output`, so map it across (an explicit `log` dep still wins).
-  // Only execute/login handlers consume the stdin-interactivity seam. Other
-  // modules retain their existing deps: notably wallet export interprets
-  // `isTTY` as stdout visibility when deciding whether to warn about printing
-  // private keys, so substituting the stdin signal there changes its semantics.
-  const commands = { ...buildCommands(inputInteractiveDeps), ...buildWalletCommands(deps), ...buildTradingCommands(topLevelTradingDeps), ...buildAlertsCommands(deps), ...buildAgentCommands(deps), ...buildFeedbackCommands({ ...deps, log: deps.log ?? output }), ...buildMcpCommands({ ...deps, log: deps.log ?? output }), ...buildCompletionCommands({ ...deps, log: deps.log ?? output }), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);
