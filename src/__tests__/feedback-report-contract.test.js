@@ -111,6 +111,6 @@ describe('feedback report contract', () => {
     expect(submit).toMatch(/^ {2}description\* /m);
     for (const name of fields.filter(name => !contract.FeedbackReport.required.includes(name))) expect(submit).toMatch(new RegExp(`^ {2}${name} `, 'm'));
     expect(submit).toContain(`Report example: ${JSON.stringify(report.example)}`);
-    expect(generateSubcommandHelp('feedback', 'get')).toMatch(/^Params \(\* required\): <feedback-id>\*, --json/m);
+    expect(generateSubcommandHelp('feedback', 'get')).toMatch(/^Options \(\* required\):\n {2}<feedback-id>\* — .*\n {2}--json — /m);
   });
 });
