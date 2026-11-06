@@ -37,10 +37,10 @@ Public agent fast/expert and direct API commands accept the selected nansen:api 
 ```bash
 nansen agent "What are top smart money tokens on Solana today and why?"
 nansen agent "Analyse wallet 0x123... -- is this a smart trader?"
-nansen agent "..." --expert   # deeper analysis, 200 credits
+nansen agent "..." --expert   # deeper analysis, 400 credits
 ```
 
-Cost: 20 credits (fast) / 200 credits (expert)
+Cost: 100 credits (fast) / 400 credits (expert)
 
 ## Use direct CLI commands when
 

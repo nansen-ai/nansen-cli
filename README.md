@@ -141,8 +141,8 @@ The check calls `tools/list` for reachability, then calls the paid `nansen_score
 
 ```
 nansen research <category> <subcommand> [options]
-nansen agent "<question>"             # AI research agent (20 credits)
-nansen agent "<question>" --expert    # deeper analysis (200 credits)
+nansen agent "<question>"             # AI research agent (100 credits)
+nansen agent "<question>" --expert    # deeper analysis (400 credits)
 nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
 nansen trade execute --quote <quoteId>
 nansen wallet <subcommand> [options]
