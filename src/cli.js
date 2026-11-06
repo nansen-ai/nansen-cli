@@ -2760,7 +2760,9 @@ export async function runCLI(rawArgs, deps = {}) {
   // Commands in this set promise zero network activity. That includes update
   // checks, cost-map refreshes and telemetry, not just their primary work.
   // `cache` belongs here specifically so inspecting or clearing caches cannot
-  // recreate update/telemetry state during the same invocation.
+  // recreate update/telemetry state during the same invocation. `help` is the
+  // top-level page and its topics only: `help <command>` was rewritten above,
+  // so it behaves like `<command> --help`.
   const isMcpUsage = command === 'mcp' && (subcommand !== 'verify' || flags.help || flags.h);
   const isAuthMutation = command === 'login' || command === 'logout';
   const isOfflineLimitOrderDryRun = command === 'trade'
@@ -2768,6 +2770,7 @@ export async function runCLI(rawArgs, deps = {}) {
     && (subArgs[1] === 'create' || subArgs[1] === 'cancel')
     && flags['dry-run'] === true;
   const isOfflineCommand = command === 'auth'
+    || command === 'help'
     || (command === 'doctor' && flags.offline)
     || isMcpUsage
     || command === 'completion'
@@ -2813,10 +2816,10 @@ export async function runCLI(rawArgs, deps = {}) {
   if (command === 'help' || ((flags.help || flags.h) && !unavailableCommand)) {
     // Help for an offline command still owes the zero-network contract: the
     // cost-map refresh fetches the OpenAPI spec and writes ~/.nansen/cost-map.json.
-    // The top-level page and its topics show no costs, so they skip the
-    // refresh: on a cold or stale cache it fetches the spec before printing.
-    const showsCosts = command !== 'help' && commands[command];
-    if (showsCosts && !isOfflineCommand && !isAuthMutation) await refreshCostMapIfStale();
+    // The top-level page and its topics (`help` is offline) show no costs, so
+    // they skip the refresh: on a cold or stale cache it fetches the spec
+    // before printing.
+    if (commands[command] && !isOfflineCommand && !isAuthMutation) await refreshCostMapIfStale();
     if (helpTopic) {
       output(HELP_TOPICS[helpTopic]);
       notify();

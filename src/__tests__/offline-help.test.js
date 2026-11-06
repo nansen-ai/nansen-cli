@@ -13,6 +13,13 @@ vi.mock('../cost-cache.js', async (importOriginal) => ({
   refreshCostMapIfStale,
 }));
 
+const scheduleUpdateCheck = vi.fn();
+
+vi.mock('../update-check.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  scheduleUpdateCheck,
+}));
+
 const { runCLI } = await import('../cli.js');
 
 function baseDeps() {
@@ -24,6 +31,7 @@ describe('offline commands: --help does not touch the network', () => {
 
   beforeEach(() => {
     refreshCostMapIfStale.mockClear();
+    scheduleUpdateCheck.mockClear();
     fetchSpy = vi.fn(() => { throw new Error('network access in offline command'); });
     vi.stubGlobal('fetch', fetchSpy);
   });
@@ -59,6 +67,26 @@ describe('offline commands: --help does not touch the network', () => {
   it('doctor --help (online) still refreshes the cost map', async () => {
     await runCLI(['doctor', '--help'], baseDeps());
     expect(refreshCostMapIfStale).toHaveBeenCalledOnce();
+  });
+
+  // The top-level page and its topics print local text only: no update check
+  // either (it spawns a child that contacts the npm registry).
+  it.each([
+    [[]],
+    [['help']],
+    [['--help']],
+    [['help', 'chains']],
+  ])('top-level help %j does not schedule an update check', async (args) => {
+    await runCLI(args, baseDeps());
+    expect(scheduleUpdateCheck).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [['research', 'smart-money', 'netflow', '--help']],
+    [['help', 'trade']],
+  ])('command help %j still schedules the update check', async (args) => {
+    await runCLI(args, baseDeps());
+    expect(scheduleUpdateCheck).toHaveBeenCalledOnce();
   });
 
   // The top-level page and its topics print no costs, so a cold or stale
