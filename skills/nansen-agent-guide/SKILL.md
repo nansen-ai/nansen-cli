@@ -37,10 +37,10 @@ Public agent fast/expert and direct API commands accept the selected nansen:api 
 ```bash
 nansen agent "What are top smart money tokens on Solana today and why?"
 nansen agent "Analyse wallet 0x123... -- is this a smart trader?"
-nansen agent "..." --expert   # deeper analysis, 750 credits
+nansen agent "..." --expert   # deeper analysis, 400 credits
 ```
 
-Cost: 200 credits (fast) / 750 credits (expert)
+Cost: 100 credits (fast) / 400 credits (expert)
 
 ## Use direct CLI commands when
 
@@ -58,7 +58,7 @@ Cost: 5-50 credits per call
 
 ## Anti-patterns
 
-- Don't use `nansen agent` for simple data fetches -- 40x more expensive
+- Don't use `nansen agent` for simple data fetches -- it costs more than a direct call and returns prose, not data
 - Don't use raw CLI for open-ended analysis -- returns data, not interpretation
 - Don't chain 3+ agent calls -- get raw data via CLI, call agent once for synthesis
 
