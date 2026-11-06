@@ -380,22 +380,32 @@ export async function* createPrivyPaymentSignatures(response, url, options = {})
   let solWallet;
   for (const requirement of rankRequirements(requirements)) {
     if (isEvmNetwork(requirement.network)) {
-      if (evmWallet === undefined) {
-        evmWallet = await getPrivyEvmWallet(client);
-        if (!evmWallet) console.error('[x402] No Privy EVM wallet found for payment signing');
-      }
+      if (evmWallet === undefined) evmWallet = await lookupPrivyWallet('EVM', () => getPrivyEvmWallet(client));
       if (!evmWallet) continue;
       const item = await signPrivyEvmRequirement(client, evmWallet, requirement, url, options);
       if (item) yield item;
     } else {
-      if (solWallet === undefined) {
-        solWallet = await getPrivySolanaWallet(client);
-        if (!solWallet) console.error('[x402] No Privy Solana wallet found for payment signing');
-      }
+      if (solWallet === undefined) solWallet = await lookupPrivyWallet('Solana', () => getPrivySolanaWallet(client));
       if (!solWallet) continue;
       const item = await signPrivySolanaRequirement(client, solWallet, requirement, url, options);
       if (item) yield item;
     }
+  }
+}
+
+/**
+ * Look up the Privy wallet for one chain. A failed lookup only skips that
+ * chain's options, so the remaining ranked options on the other chain are
+ * still tried.
+ */
+async function lookupPrivyWallet(chain, lookup) {
+  try {
+    const wallet = await lookup();
+    if (!wallet) console.error(`[x402] No Privy ${chain} wallet found for payment signing`);
+    return wallet || null;
+  } catch (err) {
+    console.error(`[x402] Privy ${chain} wallet lookup failed: ${err.message}`);
+    return null;
   }
 }
 

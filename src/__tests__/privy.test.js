@@ -596,6 +596,27 @@ describe("createPrivyPaymentSignatures", () => {
       expect(results.map((r) => r.network)).toEqual([solRequirement.network, evmRequirement.network]);
     });
 
+    it("still tries the EVM option when the Solana wallet lookup fails", async () => {
+      const signed = stubPrivy();
+      const stubbed = fetch.getMockImplementation();
+      let listings = 0;
+      fetch.mockImplementation(async (url, options) => {
+        // The cheaper Solana option is ranked first, so its wallet lookup is the first listing.
+        if (url.includes("/wallets") && !url.includes("/rpc") && listings++ === 0) {
+          return { ok: false, status: 503, json: async () => ({ error: "unavailable" }), text: async () => "unavailable" };
+        }
+        return stubbed(url, options);
+      });
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const results = await collect([evmRequirement, solRequirement]);
+
+      expect(signed).toEqual(["50000"]);
+      expect(results.map((r) => r.network)).toEqual([evmRequirement.network]);
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining("Privy Solana wallet lookup failed"));
+      errors.mockRestore();
+    });
+
     it.each(["permit2-exact", "foo"])("does not sign an EIP-3009 authorization for a %s option", async (method) => {
       const signed = stubPrivy();
       const errors = vi.spyOn(console, "error").mockImplementation(() => {});
