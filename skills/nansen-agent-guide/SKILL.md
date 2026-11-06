@@ -58,7 +58,7 @@ Cost: 5-50 credits per call
 
 ## Anti-patterns
 
-- Don't use `nansen agent` for simple data fetches -- 40x more expensive
+- Don't use `nansen agent` for simple data fetches -- it costs more than a direct call and returns prose, not data
 - Don't use raw CLI for open-ended analysis -- returns data, not interpretation
 - Don't chain 3+ agent calls -- get raw data via CLI, call agent once for synthesis
 
