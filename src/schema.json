@@ -3410,6 +3410,17 @@
                 "wallet": {
                   "type": "string",
                   "description": "Wallet name (or \"walletconnect\"/\"wc\")"
+                },
+                "dry-run": {
+                  "type": "boolean",
+                  "description": "Print a locally validated create intent and stop before limit-order authentication, custom-token metadata RPC lookups, transaction crafting, transaction signing, or order submission. No API request is made and exits 0."
+                },
+                "yes": {
+                  "type": "boolean",
+                  "aliases": [
+                    "y"
+                  ],
+                  "description": "Skip the create confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; non-TTY automation proceeds unprompted. Declining exits 1 before API requests or signing."
                 }
               },
               "chains": [
@@ -3469,6 +3480,17 @@
                 "wallet": {
                   "type": "string",
                   "description": "Wallet name (or \"walletconnect\"/\"wc\")"
+                },
+                "dry-run": {
+                  "type": "boolean",
+                  "description": "Print a locally validated cancel intent and stop before limit-order authentication, order lookup, signing, confirmation, or requesting/consuming the one-time cancellation transaction. No API request is made and exits 0."
+                },
+                "yes": {
+                  "type": "boolean",
+                  "aliases": [
+                    "y"
+                  ],
+                  "description": "Skip the cancel confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; non-TTY automation proceeds unprompted. Declining exits 1 before API requests or signing."
                 }
               },
               "chains": [

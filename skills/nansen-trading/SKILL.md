@@ -121,6 +121,8 @@ nansen trade limit-order update --order <order-id> --trigger-price 85
 
 `--slippage-bps` is basis points (`300` = 3%, `100` = 1%); omit for auto.
 
+`create` and `cancel` take the same `--dry-run` and `--yes` as `trade execute`. `--dry-run` prints the order (or cancellation) plan from the arguments and the wallet's public address and exits 0, with no API request, signature or submission; a cancel preview does not request the one-time cancellation transaction. In an interactive terminal they ask before signing; agents and CI run unprompted, and `--yes` is a no-op there.
+
 ## Agent pattern
 
 ```bash
@@ -203,7 +205,7 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 |-----|---------|
 | `NANSEN_WALLET_PASSWORD` | **Required for `trade execute`.** Wallet encryption password — persisted in `~/.nansen/.env`. Source before executing: `source ~/.nansen/.env && nansen trade execute ...` |
 | `NANSEN_API_KEY` | API key (also set via explicit `nansen login --human`; browser sessions are not wallet or RPC keys) |
-| `NANSEN_YES` | Set to `1` to skip the confirmation prompt of `trade execute`, `bridge execute` and `perp order`/`close`/`cancel`/`leverage`, like `--yes` |
+| `NANSEN_YES` | Set to `1` to skip the confirmation prompt of `trade execute`, `bridge execute`, `trade limit-order create`/`cancel` and `perp order`/`close`/`cancel`/`leverage`, like `--yes` |
 
 > **Agents:** Never hold a wallet password only in session memory. If `NANSEN_WALLET_PASSWORD` is not in `~/.nansen/.env`, follow the setup flow in the nansen-wallet-manager skill Password Policy to generate and persist one before proceeding.
 

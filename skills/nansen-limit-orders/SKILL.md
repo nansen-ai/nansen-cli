@@ -117,6 +117,14 @@ nansen trade limit-order cancel --order <orderId>
 Cancelling submits a withdrawal transaction; surface the tx signature from the
 CLI output so the user can verify on Solscan.
 
+### Preview and confirm
+
+`create` and `cancel` accept `--dry-run` (print the plan and exit 0; no API
+request, no signature, nothing submitted) and `--yes`/`-y` (skip the
+confirmation prompt, same as `NANSEN_YES=1`). The prompt only appears in an
+interactive terminal; agents and CI run unprompted. Use `--dry-run` to show the
+user what will be created or cancelled before running it for real.
+
 ### Update
 
 ```bash
