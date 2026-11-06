@@ -4,9 +4,11 @@
  * Zero external dependencies.
  */
 
+import http from 'http';
 import https from 'https';
 import { keccak256 } from './crypto.js';
 import { EVM_CHAINS } from './chain-ids.js';
+import { CHAIN_RPCS } from './rpc-urls.js';
 
 const ENS_PATTERN = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.eth$/;
 
@@ -84,9 +86,13 @@ function httpsPost(url, body, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
     const parsed = new URL(url);
-    const req = https.request({
+    // The URL can come from NANSEN_EVM_RPC, so keep its port and query string
+    // (some providers put the key in `?key=`) and allow a plain-http local node.
+    const client = parsed.protocol === 'http:' ? http : https;
+    const req = client.request({
       hostname: parsed.hostname,
-      path: parsed.pathname,
+      port: parsed.port || undefined,
+      path: parsed.pathname + parsed.search,
       method: 'POST',
       timeout: timeoutMs,
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
@@ -130,13 +136,16 @@ function namehash(name) {
 
 const ENS_REGISTRY = '0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e';
 const ZERO_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
-const RPC_URL = 'https://eth.llamarpc.com';
 
 async function resolveOnchain(name) {
   const hash = namehash(name);
+  // Same Ethereum RPC as every other command (NANSEN_EVM_RPC or the shared
+  // default). The fallback used to be pinned to eth.llamarpc.com, which now
+  // answers HTTP 525, and could not be pointed anywhere else.
+  const rpcUrl = CHAIN_RPCS.ethereum;
 
   // Step 1: Get resolver from ENS registry — resolver(bytes32)
-  const resolverResult = await httpsPost(RPC_URL, {
+  const resolverResult = await httpsPost(rpcUrl, {
     jsonrpc: '2.0', id: 1, method: 'eth_call',
     params: [{ to: ENS_REGISTRY, data: '0x0178b8bf' + hash }, 'latest']
   });
@@ -147,7 +156,7 @@ async function resolveOnchain(name) {
   const resolver = '0x' + resolverHex.slice(26);
 
   // Step 2: Call addr(bytes32) on the resolver — selector 0x3b3b57de
-  const addrResult = await httpsPost(RPC_URL, {
+  const addrResult = await httpsPost(rpcUrl, {
     jsonrpc: '2.0', id: 2, method: 'eth_call',
     params: [{ to: resolver, data: '0x3b3b57de' + hash }, 'latest']
   });

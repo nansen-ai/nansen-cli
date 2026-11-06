@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import https from 'node:https';
 import { isEnsName, resolveAddress } from '../ens.js';
+import { CHAIN_RPCS } from '../rpc-urls.js';
 
 describe('ENS Resolution', () => {
   describe('isEnsName', () => {
@@ -66,6 +67,57 @@ describe('ENS Resolution', () => {
         const get = mockEnsIdeas({ address: '0x4a7C6899cdcB379e284fBFD045462e751DA4C7cE' });
         await expect(resolveAddress('nansen.eth', 'solana')).rejects.toThrow('EVM chains');
         expect(get).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('on-chain fallback', () => {
+      const RESOLVER = '231b0ee14048e9dccd1d247744d114a4eb5e8e63';
+      const OWNER = 'd8da6bf26964af9d7eed9e03e53415d37aa96045';
+      const word = hex => '0x' + hex.padStart(64, '0');
+      const savedRpc = CHAIN_RPCS.ethereum;
+
+      afterEach(() => {
+        CHAIN_RPCS.ethereum = savedRpc;
+        vi.restoreAllMocks();
+      });
+
+      // ensideas is down, so the name has to resolve through eth_call.
+      function mockRpc() {
+        vi.spyOn(https, 'get').mockImplementation(() => { throw new Error('ensideas down'); });
+        const answers = [word(RESOLVER), word(OWNER)];
+        return vi.spyOn(https, 'request').mockImplementation((_opts, cb) => {
+          const req = new EventEmitter();
+          req.write = () => {};
+          req.end = () => queueMicrotask(() => {
+            const res = new EventEmitter();
+            res.statusCode = 200;
+            cb(res);
+            res.emit('data', JSON.stringify({ jsonrpc: '2.0', id: 1, result: answers.shift() }));
+            res.emit('end');
+          });
+          return req;
+        });
+      }
+
+      it('uses the shared Ethereum RPC instead of a hard-coded endpoint', async () => {
+        CHAIN_RPCS.ethereum = 'https://ethereum-rpc.publicnode.com';
+        const request = mockRpc();
+        const result = await resolveAddress('vitalik.eth');
+        expect(result.address.toLowerCase()).toBe('0x' + OWNER);
+        expect(request).toHaveBeenCalledTimes(2);
+        for (const [opts] of request.mock.calls) {
+          expect(opts.hostname).toBe('ethereum-rpc.publicnode.com');
+        }
+      });
+
+      it('keeps the port and query string of a custom RPC URL', async () => {
+        CHAIN_RPCS.ethereum = 'https://rpc.example.org:8443/v1/mainnet?key=abc';
+        const request = mockRpc();
+        await resolveAddress('vitalik.eth');
+        const [opts] = request.mock.calls[0];
+        expect(opts.hostname).toBe('rpc.example.org');
+        expect(opts.port).toBe('8443');
+        expect(opts.path).toBe('/v1/mainnet?key=abc');
       });
     });
 
