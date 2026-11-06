@@ -419,13 +419,13 @@ describe('update notification in CLI', () => {
     exit: (code) => { _exitCode = code; }
   });
 
-  it('should show update notification on stderr for help command', async () => {
+  // Top-level help prints local text only, like other offline commands.
+  it('should NOT show update notification for the top-level help', async () => {
     writeCache({ latest: '99.0.0', checkedAt: Date.now() });
     const { runCLI } = await import('../cli.js');
     await runCLI(['help'], mockDeps());
 
-    expect(errors.some(e => e.includes('Update available'))).toBe(true);
-    expect(errors.some(e => e.includes('99.0.0'))).toBe(true);
+    expect(errors.length).toBe(0);
   });
 
   it('should NOT show update notification for --version', async () => {
@@ -440,7 +440,7 @@ describe('update notification in CLI', () => {
   it('should NOT show notification when version is current', async () => {
     writeCache({ latest: '1.3.0', checkedAt: Date.now() });
     const { runCLI } = await import('../cli.js');
-    await runCLI(['help'], mockDeps());
+    await runCLI(['smart-money', '--help'], mockDeps());
 
     expect(errors.length).toBe(0);
   });
@@ -449,7 +449,7 @@ describe('update notification in CLI', () => {
     writeCache({ latest: '99.0.0', checkedAt: Date.now() });
     process.env.NO_UPDATE_NOTIFIER = '1';
     const { runCLI } = await import('../cli.js');
-    await runCLI(['help'], mockDeps());
+    await runCLI(['smart-money', '--help'], mockDeps());
 
     expect(errors.length).toBe(0);
   });

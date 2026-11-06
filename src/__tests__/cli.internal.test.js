@@ -21,6 +21,7 @@ import {
   DEPRECATED_TO_RESEARCH,
   DEPRECATED_TO_TRADE,
   HELP,
+  HELP_TOPICS,
   SCHEMA,
   filterFields,
   parseFields,
@@ -2120,8 +2121,33 @@ describe('parseSort', () => {
 describe('HELP', () => {
   it('should contain usage information', () => {
     expect(HELP).toContain('USAGE:');
+    expect(HELP).toContain('GET STARTED:');
     expect(HELP).toContain('COMMANDS:');
-    expect(HELP).toContain('EXAMPLES:');
+    expect(HELP).toContain('MORE HELP:');
+  });
+
+  // Every fresh agent reads this page, so it stays an index: the reference
+  // text lives in HELP_TOPICS behind `nansen help <topic>`.
+  it('stays a short index', () => {
+    expect(HELP.trimEnd().split('\n').length).toBeLessThanOrEqual(40);
+    expect(HELP).not.toContain('AUTHENTICATION:');
+    expect(HELP).not.toContain('Research chains:');
+    expect(HELP).not.toContain('DEPRECATED ALIASES');
+  });
+
+  it('points to every help topic and keeps the telemetry opt-out', () => {
+    const helpLine = HELP.split('\n').find(line => /^ {2}help {2,}/.test(line));
+    for (const topic of Object.keys(HELP_TOPICS)) expect(helpLine).toContain(topic);
+    expect(HELP).toContain('nansen help <topic>');
+    expect(HELP).toContain('nansen help telemetry');
+    expect(HELP).toContain('DO_NOT_TRACK=1');
+  });
+
+  it('gets a new user started with login, research and a trade quote', () => {
+    const start = HELP.split('GET STARTED:')[1].split('\n\n')[0];
+    expect(start).toContain('nansen login');
+    expect(start).toContain('nansen research smart-money netflow --chain solana');
+    expect(start).toContain('nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000');
   });
 
   it('should list top-level commands in help text', () => {
@@ -2138,10 +2164,74 @@ describe('HELP', () => {
     expect(HELP).toContain('DEX swaps/bridges');
     expect(HELP).toContain('bridge-status');
     expect(HELP).toContain('limit-order');
-    expect(HELP).toContain('nansen trade execute --quote <quoteId>');
-    expect(HELP).toContain('nansen trade limit-order create');
-    expect(HELP).toContain('nansen trade limit-order create --from SOL --to USDC --amount 1.5 --trigger-mint SOL --trigger-condition below --trigger-price 80');
-    expect(HELP.indexOf('trade')).toBeLessThan(HELP.indexOf('research'));
+    expect(HELP_TOPICS.examples).toContain('nansen trade execute --quote <quoteId>');
+    expect(HELP_TOPICS.examples).toContain('nansen trade limit-order create --from SOL --to USDC --amount 1.5 --trigger-mint SOL --trigger-condition below --trigger-price 80');
+    const commands = HELP.split('COMMANDS:')[1];
+    expect(commands.indexOf('  trade ')).toBeLessThan(commands.indexOf('  research '));
+  });
+});
+
+describe('HELP_TOPICS', () => {
+  it('keeps the reference text that left the top-level page', () => {
+    for (const chain of SCHEMA.chains) expect(HELP_TOPICS.chains).toContain(chain);
+    expect(HELP_TOPICS.chains).toContain('Trade chains: solana, base');
+    expect(HELP_TOPICS.auth).toContain('NANSEN_API_KEY overrides saved authentication.');
+    expect(HELP_TOPICS.options).toContain('--paginate');
+    expect(HELP_TOPICS.options).toContain('--debug');
+    expect(HELP_TOPICS.labels).toContain('Smart HL Perps Trader');
+    expect(HELP_TOPICS.deprecated).toContain('use "nansen research <command>"');
+    expect(HELP_TOPICS.telemetry).toContain('SHA-256 wallet identifier');
+    expect(HELP_TOPICS.telemetry).toContain('DO_NOT_TRACK=1');
+  });
+
+  it('matches the help subcommands in schema.json', () => {
+    expect(Object.keys(SCHEMA.commands.help.subcommands)).toEqual(Object.keys(HELP_TOPICS));
+  });
+});
+
+describe('nansen help <topic|command>', () => {
+  const render = async (args) => {
+    const output = vi.fn();
+    const exit = vi.fn();
+    const result = await runCLI(args, { output, errorOutput: () => {}, exit });
+    return { result, text: output.mock.calls.map(call => call[0]).join('\n'), exit };
+  };
+
+  it.each(Object.keys(HELP_TOPICS))('prints the %s topic', async (topic) => {
+    const { result, text, exit } = await render(['help', topic]);
+    expect(result).toEqual({ type: 'help-topic', topic });
+    expect(text).toBe(HELP_TOPICS[topic]);
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [['trade']],
+    [['research', 'smart-money']],
+    [['research', 'token', 'holders']],
+    [['wallet']],
+    [['sm', 'netflow']],
+    [['auth', 'status']],
+  ])('help %j prints the same as --help', async (path) => {
+    const viaHelp = await render(['help', ...path]);
+    const viaFlag = await render([...path, '--help']);
+    expect(viaHelp.text).toBe(viaFlag.text);
+    expect(viaHelp.text).not.toBe('');
+  });
+
+  it('rejects a name that is neither a topic nor a command', async () => {
+    const { result, text, exit } = await render(['help', 'chain']);
+    expect(result.type).toBe('error');
+    expect(result.data.code).toBe('UNKNOWN_COMMAND');
+    expect(text).toContain("Did you mean 'chains'?");
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it('shows the top-level page for nansen, nansen help and nansen help --help', async () => {
+    for (const args of [[], ['help'], ['--help'], ['help', '--help']]) {
+      const { result, text } = await render(args);
+      expect(result.type).toBe('help');
+      expect(text).toBe(HELP);
+    }
   });
 });
 

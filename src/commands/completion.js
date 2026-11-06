@@ -33,7 +33,6 @@ export const UNSCHEMA_COMMANDS = {
     description: 'Show release history',
     options: { since: { type: 'string', description: 'Only show versions at or above this one' } },
   },
-  help: { description: 'Show the top-level help' },
 };
 
 /**
