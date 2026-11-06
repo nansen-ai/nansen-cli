@@ -2528,6 +2528,28 @@ function costHelpLines(endpoint, options = {}) {
   return lines;
 }
 
+// One line per positional arg and option, from the schema: name, required
+// marker, aliases, default, enum, and what it does. Every --help body that
+// lists options goes through here, so agents never need `nansen schema` just
+// to learn what a flag means.
+export function formatOptionHelp(options = {}, args = []) {
+  const line = (label, opt) => {
+    const parts = [`${label}${opt.required ? '*' : ''}`];
+    if (opt.aliases?.length) parts.push(`(alias ${opt.aliases.map(a => `--${a}`).join(', ')})`);
+    if (opt.default !== undefined) parts.push(`(${opt.default})`);
+    if (opt.enum) parts.push(`[${opt.enum.join('|')}]`);
+    if (opt.repeatable) parts.push('(repeatable)');
+    if (opt.requiredUnless?.length) parts.push(`(unless ${opt.requiredUnless.map(o => `--${o}`).join(', ')})`);
+    if (opt.description) parts.push(`— ${opt.description}`);
+    return `  ${parts.join(' ')}`;
+  };
+  const lines = [
+    ...args.map(arg => line(`<${arg.name}>`, arg)),
+    ...Object.entries(options).map(([name, opt]) => line(`--${name}`, opt)),
+  ];
+  return lines.length ? ['Options (* required):', ...lines] : [];
+}
+
 // Generate help text for a specific subcommand using SCHEMA
 export function generateSubcommandHelp(command, subcommand, prefix = null) {
   // `perp` is both a top-level trading command and a research category, and
@@ -2554,23 +2576,7 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
     return lines.join('\n');
   }
 
-  const positional = subSchema.args ?? [];
-  if (subSchema.options || positional.length) {
-    const describe = (label, opt) => {
-      const parts = [`${label}${opt.required ? '*' : ''}`];
-      if (opt.default !== undefined) parts.push(`(${opt.default})`);
-      if (opt.enum) parts.push(`[${opt.enum.join('|')}]`);
-      if (command.startsWith('trade') && opt.description) parts.push(`— ${opt.description}`);
-      return parts.join(' ');
-    };
-    const params = [
-      ...positional.map(arg => describe(`<${arg.name}>`, arg)),
-      ...Object.entries(subSchema.options ?? {}).map(([name, opt]) => describe(`--${name}`, opt)),
-    ];
-    lines.push(command.startsWith('trade')
-      ? `Options (* required):\n  ${params.join('\n  ')}`
-      : `Params (* required): ${params.join(', ')}`);
-  }
+  lines.push(...formatOptionHelp(subSchema.options, subSchema.args));
 
   if (subSchema.supportedChains?.length) {
     lines.push(`Chains: ${subSchema.supportedChains.join(', ')}`);
@@ -2807,13 +2813,7 @@ export async function runCLI(rawArgs, deps = {}) {
             lines.push(`Use: nansen research ${category} <subcommand> --help`);
           } else if (catSchema.options) {
             // Leaf historical subcommand: render options + example
-            const params = Object.entries(catSchema.options).map(([name, opt]) => {
-              const parts = [`--${name}`];
-              if (opt.required) parts[0] += '*';
-              if (opt.default !== undefined) parts.push(`(${opt.default})`);
-              return parts.join(' ');
-            });
-            lines.push(`Params (* required): ${params.join(', ')}`);
+            lines.push(...formatOptionHelp(catSchema.options));
             if (catSchema.endpoint) lines.push(...costHelpLines(catSchema.endpoint, catSchema.options));
           }
           output(lines.join('\n'));
@@ -2842,16 +2842,8 @@ export async function runCLI(rawArgs, deps = {}) {
           lines.push('Subcommands: ' + Object.keys(cmdSchema.subcommands).join(', '));
           lines.push(`Use: nansen ${command} <subcommand> --help`);
         }
-        if (cmdSchema.options) {
-          const params = Object.entries(cmdSchema.options).map(([name, opt]) => {
-            const parts = [`--${name}`];
-            if (opt.required) parts[0] += '*';
-            if (opt.default !== undefined) parts.push(`(default: ${opt.default})`);
-            if (opt.description) parts.push(`— ${opt.description}`);
-            return parts.join(' ');
-          });
-          lines.push(`\nOptions (* required):\n  ${params.join('\n  ')}`);
-        }
+        const optionLines = formatOptionHelp(cmdSchema.options);
+        if (optionLines.length) lines.push(`\n${optionLines.join('\n')}`);
         if (cmdSchema.examples?.length) {
           lines.push(`\nExamples:\n  ${cmdSchema.examples.join('\n  ')}`);
         }
