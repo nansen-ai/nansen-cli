@@ -2210,6 +2210,7 @@ describe('nansen help <topic|command>', () => {
     [['research', 'token', 'holders']],
     [['wallet']],
     [['sm', 'netflow']],
+    [['auth', 'status']],
   ])('help %j prints the same as --help', async (path) => {
     const viaHelp = await render(['help', ...path]);
     const viaFlag = await render([...path, '--help']);

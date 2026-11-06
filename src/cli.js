@@ -2732,7 +2732,7 @@ export async function runCLI(rawArgs, deps = {}) {
   let helpTopic = null;
   let helpRequestedFor = null;
   if (positional[0] === 'help' && positional.length > 1) {
-    if (Object.hasOwn(HELP_TOPICS, positional[1])) {
+    if (positional.length === 2 && Object.hasOwn(HELP_TOPICS, positional[1])) {
       helpTopic = positional[1];
     } else {
       helpRequestedFor = positional[1];
