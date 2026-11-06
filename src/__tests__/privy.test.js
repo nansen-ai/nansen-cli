@@ -532,6 +532,90 @@ describe("createPrivyPaymentSignatures", () => {
     expect(results[0].network).toBe("eip155:196");
   });
 
+  // The caller stops at the first payment the server accepts, so the order
+  // decides what the wallet pays. Privy must rank like the local signer.
+  describe("option order and transfer method", () => {
+    const solRequirement = {
+      scheme: "exact",
+      network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+      asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      payTo: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+      amount: "10000",
+      extra: { feePayer: "11111111111111111111111111111111" },
+    };
+
+    function stubPrivy() {
+      const signed = [];
+      vi.stubGlobal("fetch", vi.fn(async (url, options) => {
+        const body = typeof options?.body === "string" ? JSON.parse(options.body) : {};
+        if (body.method === "eth_call") return { ok: true, json: async () => ({ result: "0x" + "f".repeat(30) }) };
+        if (body.method === "getTokenAccountsByOwner") return { ok: true, json: async () => ({ result: null }) };
+        if (body.method === "getLatestBlockhash") {
+          return { ok: true, json: async () => ({ result: { value: { blockhash: "GHtXQBpokCUCJwhRAJbhGVPKp9VTVn65CWVRqFMJkFwh" } } }) };
+        }
+        if (url.includes("/wallets") && !url.includes("/rpc")) {
+          return {
+            ok: true,
+            json: async () => ({
+              data: [
+                { id: "w-1", address: "0x1234567890abcdef1234567890abcdef12345678", chain_type: "ethereum" },
+                { id: "wl_sol_1", address: "7UX2i7SucgLMQcfZ75s3VXmZZY4YRUyJN9X1RgfMoDUi", chain_type: "solana" },
+              ],
+            }),
+          };
+        }
+        if (body.method === "eth_signTypedData_v4") signed.push(body.params.typed_data.message.value);
+        if (body.method === "signTransaction") signed.push("solana");
+        return { ok: true, json: async () => ({ data: { signature: "0xfakesignature", signed_transaction: "c2lnbmVkdHhiYXNlNjQ=" } }) };
+      }));
+      return signed;
+    }
+
+    async function collect(requirements) {
+      const results = [];
+      for await (const r of createPrivyPaymentSignatures(make402Response(requirements), "https://api.nansen.ai/test")) results.push(r);
+      return results;
+    }
+
+    it("signs the cheapest option first", async () => {
+      const signed = stubPrivy();
+      const expensive = { ...evmRequirement, amount: "900000" }; // $0.90
+      const cheap = { ...evmRequirement, amount: "10000" };      // $0.01
+
+      const results = await collect([expensive, cheap]);
+
+      expect(signed).toEqual(["10000", "900000"]);
+      expect(results.map((r) => r.payment.amountRaw)).toEqual(["10000", "900000"]);
+    });
+
+    it("ranks a cheaper Solana option before a pricier EVM option", async () => {
+      const signed = stubPrivy();
+      const results = await collect([evmRequirement, solRequirement]); // $0.05 EVM, $0.01 Solana
+
+      expect(signed).toEqual(["solana", "50000"]);
+      expect(results.map((r) => r.network)).toEqual([solRequirement.network, evmRequirement.network]);
+    });
+
+    it.each(["permit2-exact", "foo"])("does not sign an EIP-3009 authorization for a %s option", async (method) => {
+      const signed = stubPrivy();
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      const permit2 = {
+        ...evmRequirement,
+        network: "eip155:56",
+        asset: "0x55d398326f99059fF775485246999027B3197955",
+        amount: "10000000000000000",
+        extra: { name: "Tether USD", version: "1", assetTransferMethod: method, spenderAddress: "0x" + "22".repeat(20) },
+      };
+
+      const results = await collect([permit2, evmRequirement]);
+
+      expect(signed).toEqual(["50000"]);
+      expect(results.map((r) => r.network)).toEqual(["eip155:8453"]);
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining(`not assetTransferMethod "${method}"`));
+      errors.mockRestore();
+    });
+  });
+
   it.each([
     ["no token account", [], 0],
     ["a short balance", "49999", 0],
