@@ -130,7 +130,7 @@ export function validateSession(bundle, now = Date.now(), { allowExpired = false
   }
 }
 export async function pairDevice(client, { signal, onPending, onIssued, onBeforePoll, now = Date.now, wait = (ms, signal) => delay(ms, undefined, { signal }) } = {}) {
-  const { response, data } = await client.request('/auth/device/authorize', { audience: client.audience, scope: 'nansen:api', client_label: 'nansen CLI' }, signal);
+  const { response, data } = await client.request('/auth/device/authorize', { audience: client.audience, scope: 'nansen:api', client_label: 'nansen CLI', client_id: 'nansen-cli' }, signal);
   if (!response.ok) throw new AuthError('PAIRING_FAILED', 'Could not start browser approval. Retry nansen login later.');
   if (typeof data.device_code !== 'string' || !data.device_code || typeof data.user_code !== 'string' || !/^[A-Za-z0-9-]{4,32}$/.test(data.user_code) || !Number.isFinite(data.expires_in) || data.expires_in <= 0 || data.expires_in > 3600 || !Number.isFinite(data.interval) || data.interval < 1 || data.interval > 600) throw new AuthError('PAIRING_FAILED', 'The pairing service returned an invalid grant. Retry later.');
   const expected = `${client.issuer}/device`;
