@@ -890,7 +890,10 @@ OPTIONS:
         delete: `nansen alerts delete — Delete an alert
 
 USAGE:
-  nansen alerts delete <id>`,
+  nansen alerts delete <id>
+
+OPTIONS:
+  --reveal                     Show full channel URLs and secrets in the response (redacted by default)`,
       };
 
       if (!sub || sub === 'help') {

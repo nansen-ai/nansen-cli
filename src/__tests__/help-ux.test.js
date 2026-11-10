@@ -16,7 +16,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { resolveBooleanOption, parseArgs, generateSubcommandHelp, buildCommands, runCLI } from '../cli.js';
+import { resolveBooleanOption, parseArgs, generateSubcommandHelp, formatOptionHelp, buildCommands, runCLI } from '../cli.js';
+
+const SCHEMA = JSON.parse(fs.readFileSync(new URL('../schema.json', import.meta.url), 'utf8'));
 
 describe('valueless inline flag errors', () => {
   it('returns a structured non-zero error for --help=false', async () => {
@@ -138,15 +140,17 @@ describe('generateSubcommandHelp', () => {
     expect(first).toContain('Recent buyers and sellers');
   });
 
-  it('lists every option, marking required ones and showing defaults and enums', () => {
-    const params = lineStartingWith(helpLines('token', 'who-bought-sold'), 'Params');
-    expect(params).toBe(
-      'Params (* required): --chain (solana), --token*, --days (30), --buy-or-sell (BUY) [BUY|SELL], --date, --filters, --sort, --order-by, --smart-money'
-    );
-    // The marker is what tells an agent which options it must supply, so
-    // pin it per option rather than only on the joined line.
-    expect(params).toContain('--token*');
-    expect(params).not.toContain('--chain*');
+  it('lists every option on its own line with marker, default, enum and description', () => {
+    const lines = helpLines('token', 'who-bought-sold');
+    const start = lines.indexOf('Options (* required):');
+    const options = lines.slice(start + 1).filter(l => l.startsWith('  --')).map(l => l.split(' — ')[0].trim());
+    expect(options).toEqual([
+      '--chain (solana)', '--token* (alias --token-address)', '--days (30)', '--buy-or-sell (BUY) [BUY|SELL]',
+      '--date', '--filters', '--sort', '--order-by', '--smart-money',
+    ]);
+    // What each option does, from the schema, so an agent needs no `nansen schema` call.
+    expect(lines).toContain('  --buy-or-sell (BUY) [BUY|SELL] — Filter by buy or sell side');
+    expect(lines.some(l => l.startsWith('Params'))).toBe(false);
   });
 
   it('generates a runnable example that already carries every required option', () => {
@@ -184,11 +188,11 @@ describe('generateSubcommandHelp', () => {
     // trading command left the research ones with no help at all.
     const lines = helpLines('perp', 'screener', 'research perp');
     expect(lines[0]).toMatch(/^perp screener — /);
-    expect(lineStartingWith(lines, 'Params')).toContain('--days (30)');
+    expect(lineStartingWith(lines, '  --days')).toContain('--days (30) — ');
     expect(lineStartingWith(lines, 'Example:')).toBe('Example: nansen research perp screener');
     // ...and the trading command's own subcommands still resolve to the
     // trading schema, not to the research category.
-    expect(lineStartingWith(helpLines('perp', 'order'), 'Params')).toContain('--coin*');
+    expect(lineStartingWith(helpLines('perp', 'order'), '  --coin')).toMatch(/^ {2}--coin\* — /);
   });
 
   it('points a research-category subcommand at its research path even with no prefix given', () => {
@@ -241,7 +245,7 @@ describe('generateSubcommandHelp', () => {
       const help = await freshHelp('token', 'who-bought-sold');
       expect(help).not.toContain('Cost:');
       // The rest of the help is unaffected.
-      expect(help).toContain('Params (* required): --chain (solana), --token*');
+      expect(help).toContain('Options (* required):\n  --chain (solana) — ');
     });
 
     // Drives the real `--help` path. Staying offline is the seeded caches'
@@ -281,7 +285,7 @@ describe('generateSubcommandHelp', () => {
       // agent needs, and it used to go unasserted.
       expect(combined).toContain('"nansen smart-money" is deprecated');
       expect(combined).toContain('smart-money netflow — Net capital flows');
-      expect(combined).toContain('Params (* required): --chain (solana)');
+      expect(combined).toContain('Options (* required):\n  --chain (solana) — ');
       expect(combined).toContain('Cost: 5 credits\n');
       expect(combined).toContain('Example: nansen research smart-money netflow --chain solana');
     });
@@ -290,12 +294,60 @@ describe('generateSubcommandHelp', () => {
       seedCosts({ '/api/v1/perp-screener': { free: 1, pro: 1 } });
       const combined = await runHelp(['research', 'perp', 'screener', '--help']);
       expect(combined).toContain('perp screener — Screen perpetual futures contracts');
-      expect(combined).toContain('Params (* required): --days (30)');
+      expect(combined).toContain('Options (* required):\n  --days (30) — ');
       expect(combined).toContain('Example: nansen research perp screener');
       // The old output was the category listing, which pointed the caller
       // back at the command they had just run.
       expect(combined).not.toContain('Use: nansen research perp <subcommand> --help');
     });
+
+    // Every schema leaf, through the real `--help` path. alerts and agent
+    // print hand-written help that already describes each option.
+    const leaves = [];
+    const walk = (node, argv) => {
+      if (node.subcommands) {
+        for (const [name, child] of Object.entries(node.subcommands)) walk(child, [...argv, name]);
+      } else if (node.options || node.args) {
+        leaves.push([argv.join(' '), node]);
+      }
+    };
+    for (const [name, node] of Object.entries(SCHEMA.commands)) {
+      if (name !== 'alerts' && name !== 'agent') walk(node, [name]);
+    }
+
+    it.each(leaves)('nansen %s --help says what each option does', async (argv, node) => {
+      seedCosts({});
+      const out = await runHelp([...argv.split(' '), '--help']);
+      for (const [name, opt] of Object.entries(node.options ?? {})) {
+        expect(out, `--${name}`).toMatch(new RegExp(`^  --${name}\\b.* — `, 'm'));
+        expect(out, `--${name}`).toContain(opt.description);
+      }
+      for (const arg of node.args ?? []) expect(out, `<${arg.name}>`).toContain(`<${arg.name}>`);
+    });
+  });
+});
+
+describe('formatOptionHelp', () => {
+  it('renders aliases, repeatable, requiredUnless and positional args', () => {
+    expect(formatOptionHelp(
+      {
+        address: { required: true, requiredUnless: ['entity'], description: 'Wallet address' },
+        entity: { aliases: ['entity-name'], description: 'Entity name' },
+        label: { repeatable: true, description: 'Label filter' },
+      },
+      [{ name: 'client', required: true, enum: ['a', 'b'], description: 'Client' }],
+    )).toEqual([
+      'Options (* required):',
+      '  <client>* [a|b] — Client',
+      '  --address* (unless --entity) — Wallet address',
+      '  --entity (alias --entity-name) — Entity name',
+      '  --label (repeatable) — Label filter',
+    ]);
+  });
+
+  it('returns nothing when there are no options, so no empty heading is printed', () => {
+    expect(formatOptionHelp(undefined)).toEqual([]);
+    expect(formatOptionHelp({}, [])).toEqual([]);
   });
 });
 
@@ -420,6 +472,12 @@ describe('command-specific help', () => {
       expect(output.mock.calls[0][0]).toMatch(new RegExp(`^trade ${sub} —`));
       expect(execute).not.toHaveBeenCalled();
     });
+
+  it('lists --reveal in alerts delete help, like the other alerts subcommands', async () => {
+    const log = vi.fn();
+    await runCLI(['alerts', 'delete', '--help'], { output: vi.fn(), log, exit: vi.fn() });
+    expect(log.mock.calls.join('\n')).toMatch(/^ {2}--reveal +Show full channel URLs/m);
+  });
 
   it('exposes quote controls and their units', () => {
     const help = generateSubcommandHelp('trade', 'quote');
