@@ -8,13 +8,12 @@
 
 import fs from "fs";
 import path from "path";
-import { parsePaymentRequirements } from "./x402.js";
+import { parsePaymentRequirements, rankRequirements } from "./x402.js";
 import { hasSufficientEvmPaymentBalance, hasSufficientSvmPaymentBalance } from "./x402-payment-balance.js";
 import { isEvmNetwork } from "./x402-evm.js";
 import { mkdirPrivateSync, readWalletJson, validateWalletName, withWalletLock, writeWalletJsonAtomic } from "./wallet.js";
 import { evaluatePaymentRequirement, resolvePaymentAmount, resolvePayTo, signWithSessionCharge } from "./x402-policy.js";
 import {
-  isSvmNetwork,
   getSolanaRpcUrl,
   fetchRecentBlockhash,
   buildUnsignedSvmTransaction,
@@ -359,6 +358,11 @@ async function getPrivySolanaWallet(client) {
  * Same yield contract as createPaymentSignatures() in x402.js:
  * { signature, network, asset, payment, releaseCharge }
  *
+ * Options are tried cheapest first, in the order rankRequirements gives the
+ * local and WalletConnect signers. The caller stops at the first payment the
+ * server accepts, so server order would let a pricier option be paid while a
+ * cheaper one sat in the same response.
+ *
  * @param {Response} response - The 402 HTTP response
  * @param {string} url - The original request URL
  * @param {object} [options] - { onCapRefusal }, called with the reason when the session cap refuses an option
@@ -370,113 +374,151 @@ export async function* createPrivyPaymentSignatures(response, url, options = {})
 
   const client = getClient();
 
-  // EVM requirements
-  const evmRequirements = requirements.filter((r) => isEvmNetwork(r.network));
-  if (evmRequirements.length > 0) {
-    const evmWallet = await getPrivyEvmWallet(client);
-    if (evmWallet) {
-      for (const requirement of evmRequirements) {
-        const decision = evaluatePaymentRequirement(requirement);
-        if (!decision.ok) {
-          console.error(`[x402] ${decision.reason}`);
-          continue;
-        }
-        try {
-          if (!await hasSufficientEvmPaymentBalance(requirement, evmWallet.address)) continue;
-          const typedData = buildEIP712TypedData({
-            fromAddress: evmWallet.address,
-            requirement,
-          });
-
-          const signed = await signWithSessionCharge(decision, async () => {
-            const signResult = await client.ethSignTypedDataV4(evmWallet.id, typedData);
-            const signature = signResult.data?.signature || signResult.signature;
-            if (!signature) throw new Error('Privy returned no signature');
-
-            const authorization = {
-              from: evmWallet.address,
-              to: resolvePayTo(requirement),
-              value: resolvePaymentAmount(requirement).toString(),
-              validAfter: typedData.message.validAfter.toString(),
-              validBefore: typedData.message.validBefore.toString(),
-              nonce: typedData.message.nonce,
-            };
-
-            return buildPaymentSignatureHeader({
-              signature,
-              authorization,
-              resource: { url, description: "", mimeType: "" },
-              accepted: requirement,
-            });
-          });
-          if (!signed.ok) {
-            console.error(`[x402] ${signed.reason}`);
-            options.onCapRefusal?.(signed.reason);
-            continue;
-          }
-
-          yield { signature: signed.value, network: requirement.network, asset: requirement.asset, payment: decision, releaseCharge: signed.release };
-        } catch (err) {
-          console.error(`[x402] Privy EVM signing failed for ${requirement.network}: ${err.message}`);
-          continue;
-        }
-      }
+  // rankRequirements keeps only EVM and Solana options. Each wallet is looked
+  // up once, on the first option for its chain.
+  let evmWallet;
+  let solWallet;
+  let lookupError;
+  let signedAny = false;
+  const onLookupError = (err) => { if (!lookupError) lookupError = err; };
+  for (const requirement of rankRequirements(requirements)) {
+    if (isEvmNetwork(requirement.network)) {
+      if (evmWallet === undefined) evmWallet = await lookupPrivyWallet('EVM', () => getPrivyEvmWallet(client), onLookupError);
+      if (!evmWallet) continue;
+      const item = await signPrivyEvmRequirement(client, evmWallet, requirement, url, options);
+      if (item) { signedAny = true; yield item; }
     } else {
-      console.error('[x402] No Privy EVM wallet found for payment signing');
+      if (solWallet === undefined) solWallet = await lookupPrivyWallet('Solana', () => getPrivySolanaWallet(client), onLookupError);
+      if (!solWallet) continue;
+      const item = await signPrivySolanaRequirement(client, solWallet, requirement, url, options);
+      if (item) { signedAny = true; yield item; }
     }
   }
+  // A failed lookup only skips its own chain. When nothing was signed at all,
+  // surface the lookup error so a Privy setup problem keeps its reason.
+  if (!signedAny && lookupError) throw lookupError;
+}
 
-  // Solana requirements
-  const svmRequirements = requirements.filter((r) => isSvmNetwork(r.network));
-  if (svmRequirements.length > 0) {
-    const solWallet = await getPrivySolanaWallet(client);
-    if (solWallet) {
-      for (const requirement of svmRequirements) {
-        const svmDecision = evaluatePaymentRequirement(requirement);
-        if (!svmDecision.ok) {
-          console.error(`[x402] ${svmDecision.reason}`);
-          continue;
-        }
-        try {
-          if (!await hasSufficientSvmPaymentBalance(requirement, solWallet.address)) continue;
-          const rpcUrl = getSolanaRpcUrl(requirement.network);
-          const recentBlockhash = await fetchRecentBlockhash(rpcUrl);
+/**
+ * Look up the Privy wallet for one chain. A failed lookup only skips that
+ * chain's options, so the remaining ranked options on the other chain are
+ * still tried. The error is passed to onError so the caller can report it
+ * if no option gets signed.
+ */
+async function lookupPrivyWallet(chain, lookup, onError) {
+  try {
+    const wallet = await lookup();
+    if (!wallet) console.error(`[x402] No Privy ${chain} wallet found for payment signing`);
+    return wallet || null;
+  } catch (err) {
+    console.error(`[x402] Privy ${chain} wallet lookup failed: ${err.message}`);
+    onError(err);
+    return null;
+  }
+}
 
-          const { txBase64 } = buildUnsignedSvmTransaction(
-            requirement,
-            solWallet.address,
-            recentBlockhash,
-          );
+/**
+ * Sign one EVM option with the Privy wallet, or return null to skip it.
+ */
+async function signPrivyEvmRequirement(client, evmWallet, requirement, url, options) {
+  const decision = evaluatePaymentRequirement(requirement);
+  if (!decision.ok) {
+    console.error(`[x402] ${decision.reason}`);
+    return null;
+  }
+  // Privy signs an EIP-3009 TransferWithAuthorization. A Permit2 or unknown
+  // transfer method needs a different signature, which the server rejects as
+  // EIP-3009, so skip it like the WalletConnect signer does.
+  const method = requirement.extra?.assetTransferMethod;
+  if (method && method !== 'eip3009') {
+    console.error(`[x402] Skipping ${requirement.network} option: Privy wallets sign only EIP-3009 payments, not assetTransferMethod "${method}".`);
+    return null;
+  }
+  try {
+    if (!await hasSufficientEvmPaymentBalance(requirement, evmWallet.address)) return null;
+    const typedData = buildEIP712TypedData({
+      fromAddress: evmWallet.address,
+      requirement,
+    });
 
-          const signed = await signWithSessionCharge(svmDecision, async () => {
-            const signResult = await client.signSolanaTransaction(solWallet.id, txBase64);
-            const signedTx = signResult.data?.signed_transaction || signResult.signed_transaction;
-            if (!signedTx) throw new Error('Privy returned no signed transaction');
+    const signed = await signWithSessionCharge(decision, async () => {
+      const signResult = await client.ethSignTypedDataV4(evmWallet.id, typedData);
+      const signature = signResult.data?.signature || signResult.signature;
+      if (!signature) throw new Error('Privy returned no signature');
 
-            const payload = {
-              x402Version: 2,
-              payload: { transaction: signedTx },
-              accepted: requirement,
-            };
-            if (url) {
-              payload.resource = { url };
-            }
-            return Buffer.from(JSON.stringify(payload)).toString("base64");
-          });
-          if (!signed.ok) {
-            console.error(`[x402] ${signed.reason}`);
-            options.onCapRefusal?.(signed.reason);
-            continue;
-          }
+      const authorization = {
+        from: evmWallet.address,
+        to: resolvePayTo(requirement),
+        value: resolvePaymentAmount(requirement).toString(),
+        validAfter: typedData.message.validAfter.toString(),
+        validBefore: typedData.message.validBefore.toString(),
+        nonce: typedData.message.nonce,
+      };
 
-          yield { signature: signed.value, network: requirement.network, asset: requirement.asset, payment: svmDecision, releaseCharge: signed.release };
-        } catch (err) {
-          console.error(`[x402] Privy Solana signing failed for ${requirement.network}: ${err.message}`);
-          continue;
-        }
-      }
-    } else {
-      console.error('[x402] No Privy Solana wallet found for payment signing');
+      return buildPaymentSignatureHeader({
+        signature,
+        authorization,
+        resource: { url, description: "", mimeType: "" },
+        accepted: requirement,
+      });
+    });
+    if (!signed.ok) {
+      console.error(`[x402] ${signed.reason}`);
+      options.onCapRefusal?.(signed.reason);
+      return null;
     }
+
+    return { signature: signed.value, network: requirement.network, asset: requirement.asset, payment: decision, releaseCharge: signed.release };
+  } catch (err) {
+    console.error(`[x402] Privy EVM signing failed for ${requirement.network}: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Sign one Solana option with the Privy wallet, or return null to skip it.
+ */
+async function signPrivySolanaRequirement(client, solWallet, requirement, url, options) {
+  const svmDecision = evaluatePaymentRequirement(requirement);
+  if (!svmDecision.ok) {
+    console.error(`[x402] ${svmDecision.reason}`);
+    return null;
+  }
+  try {
+    if (!await hasSufficientSvmPaymentBalance(requirement, solWallet.address)) return null;
+    const rpcUrl = getSolanaRpcUrl(requirement.network);
+    const recentBlockhash = await fetchRecentBlockhash(rpcUrl);
+
+    const { txBase64 } = buildUnsignedSvmTransaction(
+      requirement,
+      solWallet.address,
+      recentBlockhash,
+    );
+
+    const signed = await signWithSessionCharge(svmDecision, async () => {
+      const signResult = await client.signSolanaTransaction(solWallet.id, txBase64);
+      const signedTx = signResult.data?.signed_transaction || signResult.signed_transaction;
+      if (!signedTx) throw new Error('Privy returned no signed transaction');
+
+      const payload = {
+        x402Version: 2,
+        payload: { transaction: signedTx },
+        accepted: requirement,
+      };
+      if (url) {
+        payload.resource = { url };
+      }
+      return Buffer.from(JSON.stringify(payload)).toString("base64");
+    });
+    if (!signed.ok) {
+      console.error(`[x402] ${signed.reason}`);
+      options.onCapRefusal?.(signed.reason);
+      return null;
+    }
+
+    return { signature: signed.value, network: requirement.network, asset: requirement.asset, payment: svmDecision, releaseCharge: signed.release };
+  } catch (err) {
+    console.error(`[x402] Privy Solana signing failed for ${requirement.network}: ${err.message}`);
+    return null;
   }
 }
