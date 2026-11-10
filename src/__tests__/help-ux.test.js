@@ -493,7 +493,7 @@ describe('command-specific help', () => {
       await runCLI(args, { output, exit: vi.fn() });
       return output.mock.calls.map(call => call[0]).join('\n');
     };
-    const root = await render(['--help']);
+    const root = await render(['help', 'examples']);
     const bridge = await render(['bridge', '--help']);
     for (const route of ['base -> hyperliquid', 'hyperliquid -> base', 'hyperliquid -> ethereum', 'hyperliquid -> arbitrum']) {
       expect(root).toContain(route);

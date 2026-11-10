@@ -4009,6 +4009,53 @@
           ]
         }
       }
+    },
+    "help": {
+      "description": "Show the top-level help, one help topic, or a command's help. \"nansen help <command> [subcommand]\" prints the same as \"nansen <command> [subcommand] --help\". Prints local text only: no network call, no credits.",
+      "subcommands": {
+        "auth": {
+          "description": "Sign-in options, API keys, browser sessions and how auto-payment relates to authentication",
+          "examples": [
+            "nansen help auth"
+          ]
+        },
+        "options": {
+          "description": "Global options: paging, output format, retries, caching and the --debug request trace",
+          "examples": [
+            "nansen help options"
+          ]
+        },
+        "examples": {
+          "description": "Example commands for trading, the Hyperliquid bridge and research",
+          "examples": [
+            "nansen help examples"
+          ]
+        },
+        "chains": {
+          "description": "Chains accepted by research, trade and the Hyperliquid bridge",
+          "examples": [
+            "nansen help chains"
+          ]
+        },
+        "labels": {
+          "description": "Smart Money labels",
+          "examples": [
+            "nansen help labels"
+          ]
+        },
+        "deprecated": {
+          "description": "Deprecated top-level aliases and the commands that replace them",
+          "examples": [
+            "nansen help deprecated"
+          ]
+        },
+        "telemetry": {
+          "description": "What anonymous usage telemetry sends, and how to turn it off",
+          "examples": [
+            "nansen help telemetry"
+          ]
+        }
+      }
     }
   },
   "globalOptions": {
