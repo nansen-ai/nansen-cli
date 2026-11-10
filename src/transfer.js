@@ -350,15 +350,18 @@ async function buildEvmTransaction({ to, amount, token, privateKey, chain, max =
   }
 
   // RLP: [chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data, accessList]
+  // `to` and `data` are byte strings, not integers: pass Buffers so rlpEncode
+  // keeps their leading zero bytes (a hex string has them stripped, which
+  // shortened an address such as 0x0000000000085d47... below 20 bytes).
   const txFields = [
     bigIntToHex(BigInt(chainId)),
     bigIntToHex(nonce),
     bigIntToHex(maxPriorityFee),
     bigIntToHex(maxFee),
     bigIntToHex(gasLimit),
-    txTo,
+    Buffer.from(txTo.replace(/^0x/, ''), 'hex'),
     bigIntToHex(txValue),
-    txData.length > 0 ? '0x' + txData.toString('hex') : '0x',
+    txData,
     [], // accessList
   ];
 
