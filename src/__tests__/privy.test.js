@@ -617,6 +617,23 @@ describe("createPrivyPaymentSignatures", () => {
       errors.mockRestore();
     });
 
+    it("rejects with the lookup error when no option can be signed", async () => {
+      const signed = stubPrivy();
+      const stubbed = fetch.getMockImplementation();
+      fetch.mockImplementation(async (url, options) => {
+        if (url.includes("/wallets") && !url.includes("/rpc")) {
+          return { ok: false, status: 401, json: async () => ({ message: "Invalid app ID or app secret" }), text: async () => "" };
+        }
+        return stubbed(url, options);
+      });
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await expect(collect([evmRequirement])).rejects.toThrow("Invalid app ID or app secret");
+
+      expect(signed).toEqual([]);
+      errors.mockRestore();
+    });
+
     it.each(["permit2-exact", "foo"])("does not sign an EIP-3009 authorization for a %s option", async (method) => {
       const signed = stubPrivy();
       const errors = vi.spyOn(console, "error").mockImplementation(() => {});

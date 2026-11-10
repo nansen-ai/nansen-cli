@@ -378,33 +378,41 @@ export async function* createPrivyPaymentSignatures(response, url, options = {})
   // up once, on the first option for its chain.
   let evmWallet;
   let solWallet;
+  let lookupError;
+  let signedAny = false;
+  const onLookupError = (err) => { if (!lookupError) lookupError = err; };
   for (const requirement of rankRequirements(requirements)) {
     if (isEvmNetwork(requirement.network)) {
-      if (evmWallet === undefined) evmWallet = await lookupPrivyWallet('EVM', () => getPrivyEvmWallet(client));
+      if (evmWallet === undefined) evmWallet = await lookupPrivyWallet('EVM', () => getPrivyEvmWallet(client), onLookupError);
       if (!evmWallet) continue;
       const item = await signPrivyEvmRequirement(client, evmWallet, requirement, url, options);
-      if (item) yield item;
+      if (item) { signedAny = true; yield item; }
     } else {
-      if (solWallet === undefined) solWallet = await lookupPrivyWallet('Solana', () => getPrivySolanaWallet(client));
+      if (solWallet === undefined) solWallet = await lookupPrivyWallet('Solana', () => getPrivySolanaWallet(client), onLookupError);
       if (!solWallet) continue;
       const item = await signPrivySolanaRequirement(client, solWallet, requirement, url, options);
-      if (item) yield item;
+      if (item) { signedAny = true; yield item; }
     }
   }
+  // A failed lookup only skips its own chain. When nothing was signed at all,
+  // surface the lookup error so a Privy setup problem keeps its reason.
+  if (!signedAny && lookupError) throw lookupError;
 }
 
 /**
  * Look up the Privy wallet for one chain. A failed lookup only skips that
  * chain's options, so the remaining ranked options on the other chain are
- * still tried.
+ * still tried. The error is passed to onError so the caller can report it
+ * if no option gets signed.
  */
-async function lookupPrivyWallet(chain, lookup) {
+async function lookupPrivyWallet(chain, lookup, onError) {
   try {
     const wallet = await lookup();
     if (!wallet) console.error(`[x402] No Privy ${chain} wallet found for payment signing`);
     return wallet || null;
   } catch (err) {
     console.error(`[x402] Privy ${chain} wallet lookup failed: ${err.message}`);
+    onError(err);
     return null;
   }
 }
