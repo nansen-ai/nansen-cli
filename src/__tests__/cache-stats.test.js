@@ -740,7 +740,6 @@ describe('documented cache surface stays in sync with the code', () => {
     const optOuts = {
       getAccount: 'account',
       webSearch: 'web search',
-      webFetch: 'web fetch',
       alertsCreate: 'alerts create',
       alertsUpdate: 'alerts update',
       alertsToggle: 'alerts toggle',

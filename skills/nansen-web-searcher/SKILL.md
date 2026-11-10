@@ -39,4 +39,4 @@ Positional args and `--query` flags can be combined — all become queries.
 
 Returns `results[]` — one entry per query, each with `organic[]` (title, link, snippet, date) and optional `knowledge_graph`.
 
-**Note:** Some domains are excluded from results (paywalled/unfetchable sites like bloomberg.com, twitter.com). Use `nansen web fetch` to retrieve content from specific URLs.
+**Note:** Some domains are excluded from results (paywalled/unfetchable sites like bloomberg.com, twitter.com).

@@ -144,10 +144,10 @@ describe('parseArgs', () => {
   });
 
   it('should keep positionals intact when an option is given an empty-string value', () => {
-    const result = parseArgs(['web', 'fetch', 'https://nansen.ai', '--question', '']);
-    expect(result._).toEqual(['web', 'fetch', 'https://nansen.ai']);
-    expect(result.options.question).toBe('');
-    expect(result.flags.question).toBeUndefined();
+    const result = parseArgs(['web', 'search', 'bitcoin', '--query', '']);
+    expect(result._).toEqual(['web', 'search', 'bitcoin']);
+    expect(result.options.query).toBe('');
+    expect(result.flags.query).toBeUndefined();
   });
 
   it('should accumulate repeated empty-string option values', () => {
@@ -7019,80 +7019,11 @@ describe('web search subcommand', () => {
   });
 });
 
-describe('web fetch subcommand', () => {
-  let webCmd;
-  let mockApi;
-
-  beforeEach(() => {
-    mockApi = {
-      webFetch: vi.fn().mockResolvedValue({ analysis: 'test', urls_requested: 1, retrieved_urls: [], failed_urls: [] }),
-    };
-    const commands = buildCommands({ output: () => {}, errorOutput: () => {}, exit: () => {} });
-    webCmd = (args, options = {}) => commands['web'](['fetch', ...args], mockApi, {}, options);
-  });
-
-  it('passes a single positional URL and --question', async () => {
-    await webCmd(['https://nansen.ai'], { question: 'What is this?' });
-    expect(mockApi.webFetch).toHaveBeenCalledWith({ urls: ['https://nansen.ai'], question: 'What is this?' });
-  });
-
-  it('passes multiple positional URLs', async () => {
-    await webCmd(['https://a.com', 'https://b.com'], { question: 'Compare?' });
-    expect(mockApi.webFetch).toHaveBeenCalledWith({ urls: ['https://a.com', 'https://b.com'], question: 'Compare?' });
-  });
-
-  it('passes --url flag as URL', async () => {
-    await webCmd([], { url: 'https://nansen.ai', question: 'What?' });
-    expect(mockApi.webFetch).toHaveBeenCalledWith({ urls: ['https://nansen.ai'], question: 'What?' });
-  });
-
-  it('handles --url as an array (repeated flag)', async () => {
-    await webCmd([], { url: ['https://a.com', 'https://b.com'], question: 'Compare?' });
-    expect(mockApi.webFetch).toHaveBeenCalledWith({ urls: ['https://a.com', 'https://b.com'], question: 'Compare?' });
-  });
-
-  it('merges positional URLs and --url flag', async () => {
-    await webCmd(['https://a.com'], { url: 'https://b.com', question: 'Diff?' });
-    expect(mockApi.webFetch).toHaveBeenCalledWith({ urls: ['https://a.com', 'https://b.com'], question: 'Diff?' });
-  });
-
-  it('returns the API response', async () => {
-    const stub = { analysis: 'Nansen is a blockchain analytics platform.', urls_requested: 1, retrieved_urls: ['https://nansen.ai'], failed_urls: [] };
-    mockApi.webFetch.mockResolvedValue(stub);
-    const result = await webCmd(['https://nansen.ai'], { question: 'What?' });
-    expect(result).toEqual(stub);
-  });
-
-  it('throws MISSING_PARAM when no URL provided', async () => {
-    await expect(webCmd([], { question: 'What?' })).rejects.toThrow('At least one URL is required');
-  });
-
-  it('throws MISSING_PARAM when --question is missing', async () => {
-    await expect(webCmd(['https://nansen.ai'])).rejects.toThrow('--question is required');
-  });
-
-  it('throws MISSING_PARAM when --question is blank/whitespace', async () => {
-    await expect(webCmd(['https://nansen.ai'], { question: '   ' })).rejects.toThrow('--question is required and cannot be blank');
-  });
-
-  it('throws INVALID_PARAMS when a URL has no scheme', async () => {
-    await expect(webCmd(['not-a-url'], { question: 'What?' })).rejects.toThrow('Invalid URL: "not-a-url"');
-  });
-
-  it('throws INVALID_PARAMS when a URL has no scheme (://bad)', async () => {
-    await expect(webCmd(['://bad'], { question: 'What?' })).rejects.toThrow('Invalid URL');
-  });
-
-  it('throws MISSING_PARAM when both URL and question are missing', async () => {
-    await expect(webCmd([])).rejects.toThrow('At least one URL is required');
-  });
-});
-
 describe('web help subcommand', () => {
   it('returns available subcommands', async () => {
     const commands = buildCommands({ output: () => {}, errorOutput: () => {}, exit: () => {} });
     const result = await commands['web']([], {}, {}, {});
-    expect(result).toMatchObject({ subcommands: ['search', 'fetch'] });
+    expect(result).toMatchObject({ subcommands: ['search'] });
   });
 
   it('throws for unknown web subcommand', async () => {
