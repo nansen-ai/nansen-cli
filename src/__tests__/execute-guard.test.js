@@ -19,6 +19,7 @@ import { PassThrough } from 'stream';
 import {
   formatPlan,
   guardExecution,
+  isRequireConfirmEnvSet,
   isYesEnvSet,
   resolveExecuteGuard,
 } from '../execute-guard.js';
@@ -33,7 +34,7 @@ const LIFI_ROUTER = '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae';
 describe('execute guard flags', () => {
   it('reads --dry-run, --yes and -y off the parsed flags', () => {
     expect(resolveExecuteGuard({}, { env: {}, isTTY: false })).toEqual({
-      dryRun: false, assumeYes: false, isTTY: false,
+      dryRun: false, assumeYes: false, isTTY: false, requireConfirm: false,
     });
     expect(resolveExecuteGuard({ 'dry-run': true }, { env: {}, isTTY: true }).dryRun).toBe(true);
     expect(resolveExecuteGuard({ yes: true }, { env: {} }).assumeYes).toBe(true);
@@ -75,6 +76,67 @@ describe('execute guard flags', () => {
     expect(plan).toContain('Quote:');
     expect(plan).toContain('Fee:');
     expect(plan).not.toContain('Recipient');
+  });
+});
+
+describe('NANSEN_REQUIRE_CONFIRM', () => {
+  const REQUIRE = { NANSEN_REQUIRE_CONFIRM: '1' };
+
+  it('accepts the same truthy spellings as NANSEN_YES', () => {
+    for (const value of ['1', 'true', 'YES', ' on ']) {
+      expect(isRequireConfirmEnvSet({ NANSEN_REQUIRE_CONFIRM: value })).toBe(true);
+    }
+    for (const value of ['0', 'false', 'off', '', '2']) {
+      expect(isRequireConfirmEnvSet({ NANSEN_REQUIRE_CONFIRM: value })).toBe(false);
+    }
+    expect(isRequireConfirmEnvSet({})).toBe(false);
+  });
+
+  it('refuses a non-TTY run without --yes as soon as the guard is resolved', () => {
+    let caught;
+    try { resolveExecuteGuard({}, { env: REQUIRE, isTTY: false }); } catch (error) { caught = error; }
+    expect(caught).toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+    expect(caught.message).toContain('--yes');
+    expect(caught.message).toContain('--dry-run');
+    expect(caught.message).toContain('nothing was signed');
+  });
+
+  it('lets --yes, -y, NANSEN_YES, --dry-run and an interactive terminal through', () => {
+    expect(resolveExecuteGuard({ yes: true }, { env: REQUIRE, isTTY: false }).assumeYes).toBe(true);
+    expect(resolveExecuteGuard({ y: true }, { env: REQUIRE, isTTY: false }).assumeYes).toBe(true);
+    expect(resolveExecuteGuard({}, { env: { ...REQUIRE, NANSEN_YES: '1' }, isTTY: false }).assumeYes).toBe(true);
+    expect(resolveExecuteGuard({ 'dry-run': true }, { env: REQUIRE, isTTY: false }).dryRun).toBe(true);
+    expect(resolveExecuteGuard({}, { env: REQUIRE, isTTY: true })).toEqual({
+      dryRun: false, assumeYes: false, isTTY: true, requireConfirm: true,
+    });
+  });
+
+  it('keeps today\'s non-TTY behaviour when unset or falsy', () => {
+    expect(resolveExecuteGuard({}, { env: {}, isTTY: false }).requireConfirm).toBe(false);
+    expect(resolveExecuteGuard({}, { env: { NANSEN_REQUIRE_CONFIRM: '0' }, isTTY: false }).requireConfirm).toBe(false);
+  });
+
+  it('guardExecution refuses off a terminal as a backstop, without prompting', async () => {
+    const promptFn = vi.fn();
+    await expect(guardExecution({ plan: 'p', isTTY: false, requireConfirm: true, promptFn, log: () => {} }))
+      .rejects.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+    expect(promptFn).not.toHaveBeenCalled();
+  });
+
+  it('guardExecution still previews a dry run and honours --yes', async () => {
+    const logs = [];
+    await expect(guardExecution({ plan: 'the plan', dryRun: true, isTTY: false, requireConfirm: true, log: m => logs.push(m) }))
+      .resolves.toBe(false);
+    expect(logs).toContain('the plan');
+    await expect(guardExecution({ plan: 'p', assumeYes: true, isTTY: false, requireConfirm: true }))
+      .resolves.toBe(true);
+  });
+
+  it('guardExecution still prompts on a terminal', async () => {
+    const promptFn = vi.fn(async () => 'y');
+    await expect(guardExecution({ plan: 'p', isTTY: true, requireConfirm: true, promptFn, log: () => {} }))
+      .resolves.toBe(true);
+    expect(promptFn).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -755,6 +817,60 @@ describe('trade execute --dry-run / --yes', () => {
       delete process.stdin.isTTY;
       delete process.stdout.isTTY;
     }
+  });
+
+  it('NANSEN_REQUIRE_CONFIRM refuses a non-TTY execute before any request, signature or broadcast', async () => {
+    stubFetch();
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    const quoteId = nativeQuote(showWallet('default').evm);
+
+    const cmds = buildTradingCommands({
+      log: () => {}, promptFn: vi.fn(), isTTY: false, env: { NANSEN_REQUIRE_CONFIRM: '1' },
+    });
+    await expect(cmds.execute([], api, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+
+    // Nothing at all left the process: no screening request (which could pay
+    // via x402), no RPC preflight, no broadcast. The quote is still usable.
+    expect(api.request).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    const saved = JSON.parse(fs.readFileSync(path.join(tmpHome, '.nansen', 'quotes', `${quoteId}.json`), 'utf8'));
+    expect(saved.executedAt).toBeUndefined();
+  });
+
+  it('NANSEN_REQUIRE_CONFIRM with NANSEN_YES proceeds off a terminal', async () => {
+    stubFetch({ allowBroadcast: true });
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    const quoteId = nativeQuote(showWallet('default').evm);
+
+    const cmds = buildTradingCommands({
+      log: () => {}, promptFn: vi.fn(), isTTY: false, env: { NANSEN_REQUIRE_CONFIRM: '1', NANSEN_YES: '1' },
+    });
+    await cmds.execute([], api, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
+
+    expect(executeBodies).toHaveLength(1);
+  });
+
+  it('NANSEN_REQUIRE_CONFIRM reports CONFIRMATION_REQUIRED through the CLI envelope', async () => {
+    stubFetch();
+    const quoteId = nativeQuote('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+
+    const stdout = [];
+    const exit = vi.fn();
+    await runCLI(['trade', 'execute', '--quote', quoteId], {
+      output: m => stdout.push(m),
+      errorOutput: () => {},
+      log: m => stdout.push(m),
+      exit,
+      isTTY: false,
+      env: { ...process.env, NANSEN_REQUIRE_CONFIRM: '1' },
+    });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(stdout.join('\n')).toContain('CONFIRMATION_REQUIRED');
+    expect(executeBodies).toHaveLength(0);
   });
 
   it('describes a cross-chain swap by route in the plan', async () => {

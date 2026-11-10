@@ -148,4 +148,26 @@ describe('runCLI limit-order guard integration', () => {
       error_code: 'CONFIRMATION_DECLINED',
     });
   });
+
+  it.each([
+    ['create', createArgs()],
+    ['cancel', cancelArgs()],
+  ])('%s with NANSEN_REQUIRE_CONFIRM off a terminal fails as CONFIRMATION_REQUIRED before any request', async (_name, args) => {
+    const request = vi.fn(async () => { throw new Error('no API request may be made'); });
+    const exit = vi.fn();
+    const result = await runCLI(args, {
+      NansenAPIClass: vi.fn(function MockAPI() { return { request }; }),
+      output: vi.fn(),
+      errorOutput: vi.fn(),
+      log: vi.fn(),
+      isInputTTY: false,
+      exit,
+      env: { NANSEN_REQUIRE_CONFIRM: '1' },
+    });
+
+    expect(result).toMatchObject({ type: 'error', data: { code: 'CONFIRMATION_REQUIRED' } });
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(request).not.toHaveBeenCalled();
+    expect(mocks.resolveCredential).not.toHaveBeenCalled();
+  });
 });

@@ -68,6 +68,8 @@ nansen trade execute --quote <quote-id> --yes       # skip the confirmation prom
 
 **Agents and CI are unaffected:** when stdin is *not* a terminal (a pipe, a CI job, an agent shell) the command proceeds without prompting, exactly as before. `--yes` is accepted there and is simply a no-op, so it is safe to always pass it. The same flags and rules apply to `nansen bridge execute`.
 
+**Operator stop point (`NANSEN_REQUIRE_CONFIRM=1`).** If the user has set `NANSEN_REQUIRE_CONFIRM=1`, a non-terminal run without `--yes` fails with `CONFIRMATION_REQUIRED` (exit 1) before any request or signature. That means the user wants to approve each broadcast: show them the `--dry-run` plan, and only re-run with `--yes` after they say go. Do not unset the variable to get around it.
+
 ### Exit codes (`trade execute`, `bridge execute`)
 
 | Code | Meaning |
@@ -189,7 +191,7 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 | `--quote-index` | Pin a specific quote by index (0-based) when multiple quotes were returned |
 | `--no-simulate` | Skip pre-broadcast simulation |
 | `--dry-run` | Validate and print what would be sent, then stop. Nothing is signed or broadcast |
-| `--yes`, `-y` | Skip the confirmation prompt (same as `NANSEN_YES=1`); no-op when stdin is not a terminal |
+| `--yes`, `-y` | Skip the confirmation prompt (same as `NANSEN_YES=1`); no-op when stdin is not a terminal, unless `NANSEN_REQUIRE_CONFIRM=1` is set, which makes it required there |
 
 ### `trade bridge-status` flags
 
@@ -206,6 +208,7 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 | `NANSEN_WALLET_PASSWORD` | **Required for `trade execute`.** Wallet encryption password — persisted in `~/.nansen/.env`. Source before executing: `source ~/.nansen/.env && nansen trade execute ...` |
 | `NANSEN_API_KEY` | API key (also set via explicit `nansen login --human`; browser sessions are not wallet or RPC keys) |
 | `NANSEN_YES` | Set to `1` to skip the confirmation prompt of `trade execute`, `bridge execute`, `trade limit-order create`/`cancel` and `perp order`/`close`/`cancel`/`leverage`, like `--yes` |
+| `NANSEN_REQUIRE_CONFIRM` | Set to `1` to make those same commands fail with `CONFIRMATION_REQUIRED`, before any request or signature, when stdin is not a terminal and neither `--yes` nor `NANSEN_YES=1` is given. `--dry-run` still works. Opt-in; unset keeps today's behaviour |
 
 > **Agents:** Never hold a wallet password only in session memory. If `NANSEN_WALLET_PASSWORD` is not in `~/.nansen/.env`, follow the setup flow in the nansen-wallet-manager skill Password Policy to generate and persist one before proceeding.
 
@@ -239,7 +242,7 @@ nansen perp order --coin ETH --side buy --size 0.1 --price 1600 --yes       # sk
 
 **Confirmation.** When stdin is an interactive terminal, these four commands print the plan and ask, for example, `Submit this order to Hyperliquid? [y/N]` before signing. Answering anything but `y`/`yes` exits 1 with nothing signed (code `CONFIRMATION_DECLINED`). Pass `--yes` (`-y`), or set `NANSEN_YES=1`, to skip the question.
 
-**Agents and CI are unaffected:** when stdin is *not* a terminal the commands submit without prompting, exactly as before, and `--yes` is a no-op. These are the same rules as `trade execute` and `bridge execute`. `transfer` and `approve-builder-fee` are unchanged.
+**Agents and CI are unaffected:** when stdin is *not* a terminal the commands submit without prompting, exactly as before, and `--yes` is a no-op. These are the same rules as `trade execute` and `bridge execute`, including `NANSEN_REQUIRE_CONFIRM=1`. `transfer` and `approve-builder-fee` are unchanged.
 
 ## Open a position
 

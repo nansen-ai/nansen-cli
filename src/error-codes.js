@@ -166,6 +166,7 @@ export const ERROR_CODES = {
   RPC_JSON_ERROR: { group: 'trade', description: 'The RPC answered with a body that is not JSON.' },
   RPC_NETWORK_ERROR: { group: 'trade', description: 'The CLI could not reach the RPC.', retry: true },
   CONFIRMATION_DECLINED: { group: 'trade', description: 'The confirmation prompt was declined; nothing was signed.' },
+  CONFIRMATION_REQUIRED: { group: 'trade', description: 'NANSEN_REQUIRE_CONFIRM is set and stdin is not a terminal; nothing was signed. Pass --yes to proceed or --dry-run to preview.' },
   CONFIRMATION_UNAVAILABLE: { group: 'trade', description: 'Confirmation is required but no terminal is available. Pass --yes to confirm.' },
 
   // ── Bridge ──

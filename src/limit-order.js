@@ -937,7 +937,7 @@ EXAMPLES:
         log('');
 
       } catch (err) {
-        if (err.reported) throw err;
+        if (err.reported || err.code === 'CONFIRMATION_REQUIRED') throw err;
         log(`Error: ${err.message}`);
         if (err.details) log(`  Details: ${JSON.stringify(err.details)}`);
         if (err.cause) log(`  Cause: ${err.cause.message || err.cause}`);
@@ -1159,7 +1159,7 @@ EXAMPLES:
         log('');
 
       } catch (err) {
-        if (err.reported) throw err;
+        if (err.reported || err.code === 'CONFIRMATION_REQUIRED') throw err;
         log(`Error: ${err.message}`);
         if (err.details) log(`  Details: ${JSON.stringify(err.details)}`);
         exit(1);

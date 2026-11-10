@@ -254,7 +254,7 @@
               "aliases": [
                 "y"
               ],
-              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed, unless NANSEN_REQUIRE_CONFIRM=1 is set, in which case this (or NANSEN_YES=1) is required and a run without it fails with CONFIRMATION_REQUIRED before any request or signature. Declining the prompt exits 1 with nothing signed."
             }
           }
         },
@@ -290,7 +290,7 @@
               "aliases": [
                 "y"
               ],
-              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed, unless NANSEN_REQUIRE_CONFIRM=1 is set, in which case this (or NANSEN_YES=1) is required and a run without it fails with CONFIRMATION_REQUIRED before any request or signature. Declining the prompt exits 1 with nothing signed."
             }
           }
         },
@@ -346,7 +346,7 @@
               "aliases": [
                 "y"
               ],
-              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed, unless NANSEN_REQUIRE_CONFIRM=1 is set, in which case this (or NANSEN_YES=1) is required and a run without it fails with CONFIRMATION_REQUIRED before any request or signature. Declining the prompt exits 1 with nothing signed."
             }
           }
         },
@@ -391,7 +391,7 @@
               "aliases": [
                 "y"
               ],
-              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed, unless NANSEN_REQUIRE_CONFIRM=1 is set, in which case this (or NANSEN_YES=1) is required and a run without it fails with CONFIRMATION_REQUIRED before any request or signature. Declining the prompt exits 1 with nothing signed."
             }
           }
         },
@@ -618,7 +618,7 @@
               "aliases": [
                 "y"
               ],
-              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed, unless NANSEN_REQUIRE_CONFIRM=1 is set, in which case this (or NANSEN_YES=1) is required and a run without it fails with CONFIRMATION_REQUIRED before any request or signature. Declining the prompt exits 1 with nothing signed."
             }
           },
           "examples": [
@@ -3326,7 +3326,7 @@
               "aliases": [
                 "y"
               ],
-              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed. Declining the prompt exits 1 with nothing signed."
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed, unless NANSEN_REQUIRE_CONFIRM=1 is set, in which case this (or NANSEN_YES=1) is required and a run without it fails with CONFIRMATION_REQUIRED before any request or signature. Declining the prompt exits 1 with nothing signed."
             }
           },
           "examples": [
@@ -3420,7 +3420,7 @@
                   "aliases": [
                     "y"
                   ],
-                  "description": "Skip the create confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; non-TTY automation proceeds unprompted. Declining exits 1 before API requests or signing."
+                  "description": "Skip the create confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; non-TTY automation proceeds unprompted unless NANSEN_REQUIRE_CONFIRM=1 is set, which makes this (or NANSEN_YES=1) required there (CONFIRMATION_REQUIRED). Declining exits 1 before API requests or signing."
                 }
               },
               "chains": [
@@ -3490,7 +3490,7 @@
                   "aliases": [
                     "y"
                   ],
-                  "description": "Skip the cancel confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; non-TTY automation proceeds unprompted. Declining exits 1 before API requests or signing."
+                  "description": "Skip the cancel confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; non-TTY automation proceeds unprompted unless NANSEN_REQUIRE_CONFIRM=1 is set, which makes this (or NANSEN_YES=1) required there (CONFIRMATION_REQUIRED). Declining exits 1 before API requests or signing."
                 }
               },
               "chains": [
