@@ -242,7 +242,7 @@ nansen perp order --coin ETH --side buy --size 0.1 --price 1600 --yes       # sk
 
 **Confirmation.** When stdin is an interactive terminal, these four commands print the plan and ask, for example, `Submit this order to Hyperliquid? [y/N]` before signing. Answering anything but `y`/`yes` exits 1 with nothing signed (code `CONFIRMATION_DECLINED`). Pass `--yes` (`-y`), or set `NANSEN_YES=1`, to skip the question.
 
-**Agents and CI are unaffected:** when stdin is *not* a terminal the commands submit without prompting, exactly as before, and `--yes` is a no-op. These are the same rules as `trade execute` and `bridge execute`, including `NANSEN_REQUIRE_CONFIRM=1`. `transfer` and `approve-builder-fee` are unchanged.
+**When stdin is *not* a terminal** (agents, CI) the commands submit without prompting, exactly as before, and `--yes` is a no-op. **Exception:** if `NANSEN_REQUIRE_CONFIRM=1` is set, they fail with `CONFIRMATION_REQUIRED` (exit 1) before any request or signature unless `--yes` or `NANSEN_YES=1` is given; follow the operator stop point described above. These are the same rules as `trade execute` and `bridge execute`. `transfer` and `approve-builder-fee` are unchanged.
 
 ## Open a position
 
