@@ -1010,8 +1010,9 @@ export async function traceCounterparties(api, params = {}) {
           queue.push({ addr: cpAddr, hop: hop + 1 });
         }
       }
-    } catch {
-      // Skip addresses that fail (404, etc) but continue the traversal
+    } catch (error) {
+      if (hop === 0) throw error;
+      // Keep later lookups best-effort once the root has been fetched.
     }
 
     if (queue.length > 0) await sleep(delayMs);

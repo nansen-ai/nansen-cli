@@ -43,7 +43,7 @@ import {
   buildAlertsCommands,
   validateAlertData,
 } from '../commands/alerts.js';
-import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode, computeIdentityDigest, COUNTERPARTIES_BATCH_CHAINS } from '../api.js';
+import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenAPI, NansenError, ErrorCode, computeIdentityDigest, COUNTERPARTIES_BATCH_CHAINS } from '../api.js';
 import { EVM_CHAINS, EVM_CHAIN_IDS } from '../chain-ids.js';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -6283,6 +6283,83 @@ describe('batchProfile', () => {
 });
 
 describe('traceCounterparties', () => {
+  it('reports a rejected root lookup as a failed CLI command, not an empty graph', async () => {
+    vi.stubEnv('NANSEN_API_KEY', 'trace-test-key');
+    vi.stubEnv('NO_UPDATE_NOTIFIER', '1');
+    vi.stubGlobal('fetch', async () => Response.json(
+      { message: 'Invalid API key' },
+      { status: 401 },
+    ));
+    const outputs = [];
+    let exitCode;
+
+    try {
+      const result = await runCLI([
+        'research', 'profiler', 'trace',
+        '--address', '0x0000000000000000000000000000000000000001',
+        '--chain', 'ethereum', '--depth', '1', '--width', '1',
+        '--delay', '0', '--no-retry',
+      ], {
+        output: message => outputs.push(message),
+        errorOutput: () => {},
+        exit: code => { exitCode = code; },
+        isTTY: false,
+      });
+
+      expect(exitCode).toBe(1);
+      expect(result.type).toBe('error');
+      expect(JSON.parse(outputs.join('\n'))).toMatchObject({
+        success: false,
+        code: ErrorCode.UNAUTHORIZED,
+        status: 401,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('continues through a sibling when a later lookup fails', async () => {
+    const root = '0x0000000000000000000000000000000000000001';
+    const missing = '0x0000000000000000000000000000000000000002';
+    const sibling = '0x0000000000000000000000000000000000000003';
+    const leaf = '0x0000000000000000000000000000000000000004';
+    vi.stubGlobal('fetch', async (_url, init) => {
+      const { address } = JSON.parse(init.body);
+      if (address === root) {
+        return Response.json({ counterparties: [
+          { counterparty_address: missing },
+          { counterparty_address: sibling },
+        ] });
+      }
+      if (address === missing) {
+        return Response.json({ message: 'Not found' }, { status: 404 });
+      }
+      if (address === sibling) {
+        return Response.json({ counterparties: [{ counterparty_address: leaf }] });
+      }
+      throw new Error(`Unexpected address: ${address}`);
+    });
+
+    try {
+      const api = new NansenAPI('trace-test-key', 'https://api.nansen.ai', {
+        retry: { maxRetries: 0 },
+      });
+      const result = await traceCounterparties(api, {
+        address: root, chain: 'ethereum', depth: 2, width: 2, delayMs: 0,
+      });
+
+      expect(result.nodes).toEqual([root, missing, sibling, leaf]);
+      expect(result.edges).toEqual([
+        { from: root, to: missing, volume_usd: 0, tx_count: 0, hop: 1 },
+        { from: root, to: sibling, volume_usd: 0, tx_count: 0, hop: 1 },
+        { from: sibling, to: leaf, volume_usd: 0, tx_count: 0, hop: 2 },
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('keeps each width-bounded internal lookup to one request under the global wrapper', async () => {
     const rawRequest = vi.fn(async (_endpoint, body) => ({
       counterparties: [
