@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { NansenAPI } from '../api.js';
-import { runCLI, SCHEMA, API_ENDPOINTS } from '../cli.js';
+import { runCLI, SCHEMA, API_ENDPOINTS, withDefaultChainMeta } from '../cli.js';
 import {
   similarity,
   closestMatch,
@@ -611,6 +611,67 @@ describe('schema-wide checks', () => {
     expect(exitCode).toBe(1);
     expect(calls).toEqual([]);
     expect(output).toMatchObject({ success: false, code: 'INVALID_PARAMS', details: { param: `--${option}` } });
+  });
+
+  // `--help` and `nansen schema` show the schema's chain default, while the
+  // handler picks the chain it sends. Without --chain they must be the same
+  // chain, and the response must name it in `_meta.defaults.chain`.
+  // Composite leaves (profiler batch, trace, compare) have no single endpoint:
+  // check the first request they make.
+  it.each(leaves
+    .filter(([, leaf]) => leaf.options?.chain)
+    .map(([words, leaf]) => [words.join(' '), words, leaf]))('%s sends its schema chain default when --chain is left out', async (_name, words, leaf) => {
+    // compare needs two addresses.
+    const args = requiredArgs(leaf).map(arg => (arg === EVM && leaf.options.addresses?.required ? `${EVM},0xd8da6bf26964af9d7eed9e03e53415d37aa96045` : arg));
+    const { calls, exitCode, output } = await runCaptured([...words, ...args]);
+    expect(exitCode, JSON.stringify(output)).toBeNull();
+    const call = leaf.endpoint ? calls.find(c => c.endpoint === leaf.endpoint) : calls[0];
+    expect(call, `no request to ${leaf.endpoint ?? 'any endpoint'}`).toBeDefined();
+    const sent = call.body.chain ?? call.body.chains ?? call.body.parameters?.chain;
+    const documented = leaf.options.chain.default;
+    expect(sent === undefined ? undefined : [].concat(sent), 'schema chain default differs from the chain sent').toEqual(documented === undefined ? undefined : [documented]);
+    if (!Array.isArray(output.data)) expect(output.data._meta?.defaults?.chain).toBe(documented);
+  });
+});
+
+describe('_meta.defaults.chain', () => {
+  const info = ['research', 'token', 'info', '--token', SOL_MINT];
+
+  it('names the chain used when --chain is left out', async () => {
+    const { output } = await runCaptured(info);
+    expect(output.data._meta).toEqual({ defaults: { chain: 'solana' } });
+  });
+
+  it('is absent when --chain or --chains is given', async () => {
+    expect((await runCaptured([...info, '--chain', 'solana'])).output.data._meta).toBeUndefined();
+    const screener = await runCaptured(['research', 'token', 'screener', '--chains', 'solana,base']);
+    expect(screener.output.data._meta).toBeUndefined();
+  });
+
+  it('is reported for the deprecated top-level alias too', async () => {
+    const { output } = await runCaptured(['profiler', 'balance', '--address', EVM]);
+    expect(output.data._meta).toEqual({ defaults: { chain: 'all' } });
+  });
+
+  it('is not added to --fields or --stream output', async () => {
+    const fields = await runCaptured([...info, '--fields', 'token_symbol']);
+    expect(JSON.stringify(fields.output)).not.toContain('_meta');
+    const stream = await runCaptured([...info, '--stream']);
+    expect(JSON.stringify(stream.output)).not.toContain('defaults');
+  });
+
+  it('keeps the other _meta keys', () => {
+    const resolved = resolveResearchCommand(SCHEMA, 'research', ['token', 'info']);
+    expect(withDefaultChainMeta({ data: [], _meta: { fromCache: true } }, resolved, {}))
+      .toEqual({ data: [], _meta: { fromCache: true, defaults: { chain: 'solana' } } });
+    expect(withDefaultChainMeta([1], resolved, {})).toEqual([1]);
+    expect(withDefaultChainMeta({ data: [] }, null, {})).toEqual({ data: [] });
+  });
+
+  it('shows the chain actually sent in --help', async () => {
+    const outputs = [];
+    await runCLI(['research', 'token', 'indicators', '--help'], { output: line => outputs.push(line), errorOutput: () => {}, exit: () => {}, isTTY: false });
+    expect(outputs.join('\n')).toContain('--chain (solana)');
   });
 });
 

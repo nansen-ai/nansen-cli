@@ -891,7 +891,7 @@
                 },
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
+                  "default": "all",
                   "description": "Chain to profile the address on"
                 },
                 "days": {
@@ -932,7 +932,7 @@
                 },
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
+                  "default": "all",
                   "description": "Chain to profile the address on"
                 },
                 "days": {
@@ -958,7 +958,7 @@
                 },
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
+                  "default": "all",
                   "description": "Chain to profile the address on"
                 },
                 "entity": {
@@ -995,7 +995,7 @@
                 },
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
+                  "default": "all",
                   "description": "Chain to profile the address on"
                 },
                 "days": {
@@ -1075,7 +1075,7 @@
                 },
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
+                  "default": "all",
                   "description": "Chain to profile the address on"
                 },
                 "days": {
@@ -1111,7 +1111,7 @@
                 },
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
+                  "default": "all",
                   "description": "Chain to profile the address on"
                 },
                 "sort": {
@@ -1148,7 +1148,7 @@
                 },
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
+                  "default": "all",
                   "description": "Chain to profile the address on"
                 },
                 "days": {
@@ -1189,7 +1189,7 @@
                 },
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
+                  "default": "all",
                   "description": "Chain to profile the address on"
                 }
               }
@@ -1262,7 +1262,7 @@
                 },
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
+                  "default": "all",
                   "description": "Chain to profile the address on"
                 },
                 "days": {
@@ -1309,7 +1309,7 @@
               "options": {
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
+                  "default": "all",
                   "description": "Chain to profile every address on"
                 },
                 "include": {
@@ -1349,7 +1349,7 @@
                 },
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
+                  "default": "all",
                   "description": "Chain to profile the address on"
                 },
                 "depth": {
@@ -1387,7 +1387,7 @@
                 },
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
+                  "default": "all",
                   "description": "Chain to compare the wallets on"
                 },
                 "days": {
@@ -1875,7 +1875,7 @@
               "options": {
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
+                  "default": "solana",
                   "description": "Chain the token lives on"
                 },
                 "token": {
@@ -2529,7 +2529,8 @@
             },
             "chain": {
               "type": "string",
-              "description": "Single chain; --chains takes precedence"
+              "description": "Single chain; --chains takes precedence",
+              "default": "solana"
             }
           }
         },
@@ -2905,7 +2906,8 @@
             },
             "chain": {
               "type": "string",
-              "description": "Single chain; --chains takes precedence"
+              "description": "Single chain; --chains takes precedence",
+              "default": "solana"
             }
           }
         },
@@ -2946,7 +2948,8 @@
             },
             "chain": {
               "type": "string",
-              "description": "Single chain; --chains takes precedence"
+              "description": "Single chain; --chains takes precedence",
+              "default": "solana"
             }
           }
         },

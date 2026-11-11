@@ -3565,7 +3565,7 @@ describe('runCLI', () => {
 
     expect(errors).toEqual(['ℹ️  Plan notice', 'Credits: 7 (this call)']);
     expect(outputs).toHaveLength(1);
-    expect(JSON.parse(outputs[0])).toEqual({ success: true, data: { data: [] } });
+    expect(JSON.parse(outputs[0])).toEqual({ success: true, data: { data: [], _meta: { defaults: { chain: 'solana' } } } });
   });
 
   it('does not duplicate response metadata when post-request formatting fails', async () => {
