@@ -157,10 +157,10 @@ nansen cache stats                    # what the local caches hold (no API key n
 The points leaderboard API has been removed. `nansen research points leaderboard` and the legacy command `nansen points leaderboard` return `success: false` with code `COMMAND_UNAVAILABLE` and exit status `1`, without making an API request (with `--help` too). The command is no longer listed in `nansen schema`, help or completions.
 
 **Direct research subcommands:**
-- `nansen research chain-rank [--timeframe-days 7|30|365] [--chain-type all|evm]` — rank chains by growth metrics
+- `nansen research chain-rank [--days 7|30|365] [--chain-type all|evm]` — rank chains by growth metrics
 - `nansen research token-sectors` — list token sectors available for filtering
 - `nansen research address-premium-labels --address <addr> [--chain <chain>] [--page <n>] [--limit <n>]` — get all labels for an address, including premium labels
-- `nansen research smart-money-pnl-leaderboard [--chains c1,c2] [--timeframe-days 1|7|30|90|180] [--filters '<json>'] [--sort <field[:asc|desc]>] [--page <n>] [--limit <n>]` — rank smart money wallets by PnL
+- `nansen research smart-money-pnl-leaderboard [--chains c1,c2] [--days 1|7|30|90|180] [--filters '<json>'] [--sort <field[:asc|desc]>] [--page <n>] [--limit <n>]` — rank smart money wallets by PnL
 - `nansen research position-intelligence --symbol <symbol>` — aggregate Hyperliquid positions by trader cohort
 - `nansen research perp-pnl-summary --address <addr> --from-date <date> --to-date <date>` — summarize realized Hyperliquid PnL for an address
 - `nansen research transaction-with-token-transfer-lookup --transaction-hash <hash> [--chain <chain>] [--block-timestamp "YYYY-MM-DD HH:MM:SS"]` — look up a transaction and its token/NFT transfers
@@ -325,16 +325,16 @@ For EVM chains, there's no native limit-order surface — pair an external venue
 
 ## Perpetuals
 
-Hyperliquid perpetual trading via `nansen perp`. Uses the same wallet and `NANSEN_WALLET_PASSWORD` as DEX trading (requires an EVM wallet). Select the asset with `--coin` (`--symbol` is accepted as an alias).
+Hyperliquid perpetual trading via `nansen perp`. Uses the same wallet and `NANSEN_WALLET_PASSWORD` as DEX trading (requires an EVM wallet). Select the asset with `--symbol` (`--coin` is accepted as an alias).
 
 ```bash
 nansen perp meta --filter ETH                                  # list assets + max leverage
-nansen perp order --coin ETH --side buy --size 0.1 --price 1600 --type limit
-nansen perp order --coin BTC --side sell --size 0.001 --price 95000 --type market \
+nansen perp order --symbol ETH --side buy --size 0.1 --price 1600 --type limit
+nansen perp order --symbol BTC --side sell --size 0.001 --price 95000 --type market \
   --take-profit 90000 --stop-loss 98000
-nansen perp close --coin ETH --size 0.1 --price 1600 --side sell   # sell closes a long
-nansen perp cancel --coin ETH --oid <orderId>
-nansen perp leverage --coin ETH --leverage 5 --margin-type cross   # or isolated
+nansen perp close --symbol ETH --size 0.1 --price 1600 --side sell   # sell closes a long
+nansen perp cancel --symbol ETH --oid <orderId>
+nansen perp leverage --symbol ETH --leverage 5 --margin-type cross   # or isolated
 nansen perp transfer --direction spot-to-perp --amount 25          # Spot<->Perps (or perp-to-spot)
 nansen perp positions
 nansen perp account                                            # value, unrealized PnL, margin, spot USDC
@@ -626,7 +626,7 @@ Any field may be absent or `null`, meaning unknown — never assume zero. A low-
 | MCP client lists tools but paid calls fail | Run `npx -y nansen-cli mcp verify` with the saved key or `NANSEN_API_KEY`, and ensure that same key is in the client's `NANSEN-API-KEY` header |
 | Anything else misbehaving | `nansen doctor` checks your whole setup (auth, wallets, caches, connectivity) with a fix per finding |
 | Empty perp _research_ results | Use `--symbol BTC`, not `--token`. Perps are Hyperliquid-only. |
-| `perp` _trading_ prints the usage banner | Trading needs `--coin BTC` (`--symbol` also works); see the Perpetuals section. |
+| `perp` _trading_ prints the usage banner | Trading needs `--symbol BTC` (`--coin` also works); see the Perpetuals section. |
 | `UNSUPPORTED_FILTER` on token holders | Remove `--smart-money` — not all tokens have that data. |
 | Huge JSON response | Use `--fields` to select columns. |
 

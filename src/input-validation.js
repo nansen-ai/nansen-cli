@@ -381,8 +381,8 @@ function valueErrors(name, spec, value) {
 
 /**
  * Check a research command's options before it runs. Throws one NansenError
- * listing every problem (see validationError). On success it rewrites
- * --chain/--chains in `options` to their canonical spelling (lowercase, REST
+ * listing every problem (see validationError). On success it renames aliases
+ * to their schema name, and rewrites --chain/--chains in `options` to their canonical spelling (lowercase, REST
  * aliases such as bsc -> bnb applied), as the API itself would, and turns
  * --chains into an array.
  */
@@ -399,9 +399,18 @@ export function validateResearchInput(resolved, { flags = {}, options = {}, endp
     ...Object.entries(options).map(([name, value]) => [name, value]),
     ...Object.entries(flags).filter(([name, value]) => value && !(name in options)).map(([name, value]) => [name, value]),
   ];
+  const spelled = new Map(); // schema name -> the spelling that was given
   for (const [raw, value] of supplied) {
     const canonical = names.get(raw);
     if (canonical) {
+      // `--token A --token-address B` names one input twice; the handler
+      // would silently use one of them.
+      if (spelled.has(canonical)) {
+        errors.push(fieldError(`--${canonical}`, 'invalid_field_value',
+          `Options '--${spelled.get(canonical)}' and '--${raw}' are the same input (--${canonical}); pass one.`));
+        continue;
+      }
+      spelled.set(canonical, raw);
       given.set(canonical, value);
       continue;
     }
@@ -415,8 +424,12 @@ export function validateResearchInput(resolved, { flags = {}, options = {}, endp
       continue;
     }
     const field = raw.length === 1 ? `-${raw}` : `--${raw}`;
+    // --days is the lookback flag elsewhere; here the window is text (24h, 7d).
+    const hint = raw === 'days' && leaf.options?.timeframe && !names.has('days')
+      ? ' Use --timeframe instead (for example --timeframe 7d); this command takes a time window, not a number of days.'
+      : '';
     errors.push(fieldError(field, 'unknown_field',
-      `Option '${field}' is not recognized by ${path}. Command-specific options: ${visible.join(', ') || 'none'}. Common options also apply; see: nansen schema.`));
+      `Option '${field}' is not recognized by ${path}.${hint} Command-specific options: ${visible.join(', ') || 'none'}. Common options also apply; see: nansen schema.`));
   }
 
   for (const [name, value] of given) {
@@ -447,7 +460,23 @@ export function validateResearchInput(resolved, { flags = {}, options = {}, endp
   }
 
   if (errors.length) throw validationError(errors);
+  canonicalizeOptionNames(options, flags, names);
   normalizeChainOptions(options, names);
+}
+
+/**
+ * Move every alias to its schema name (--token-address -> --token), so a
+ * handler reads one name per input and an alias needs only a schema entry.
+ */
+function canonicalizeOptionNames(options, flags, names) {
+  for (const [raw, canonical] of names) {
+    if (raw === canonical) continue;
+    for (const bag of [options, flags]) {
+      if (!Object.hasOwn(bag, raw)) continue;
+      bag[canonical] = bag[raw];
+      delete bag[raw];
+    }
+  }
 }
 
 /** Reject an output format the CLI cannot write. */

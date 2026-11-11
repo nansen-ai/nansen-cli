@@ -192,7 +192,7 @@ describe('generateSubcommandHelp', () => {
     expect(lineStartingWith(lines, 'Example:')).toBe('Example: nansen research perp screener');
     // ...and the trading command's own subcommands still resolve to the
     // trading schema, not to the research category.
-    expect(lineStartingWith(helpLines('perp', 'order'), '  --coin')).toMatch(/^ {2}--coin\* — /);
+    expect(lineStartingWith(helpLines('perp', 'order'), '  --symbol')).toMatch(/^ {2}--symbol\* \(alias --coin\) — /);
   });
 
   it('points a research-category subcommand at its research path even with no prefix given', () => {

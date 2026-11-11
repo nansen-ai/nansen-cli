@@ -1991,11 +1991,12 @@ export function buildCommands(deps = {}) {
       rejectBlankOption(options.chain, 'chain', 'solana');
       rejectBlankOption(options.chains, 'chains', 'solana');
       rejectBlankOption(options.timeframe, 'timeframe', '1d');
+      rejectBlankOption(options.interval, 'interval', '1d');
       rejectBlankOption(options['buy-or-sell'], 'buy-or-sell', 'SELL');
       const subcommand = args[0] || 'help';
       const chain = options.chain || 'solana';
-      const tokenAddress = normalizeAddress(options.token || options['token-address'], chain);
-      const tokenSymbol = options.symbol || options['token-symbol'];
+      const tokenAddress = normalizeAddress(options.token, chain);
+      const tokenSymbol = options.symbol;
       const chains = parseCsvOption(options.chains, 'chains') || [chain];
       const timeframe = options.timeframe || '24h';
       const filters = parseFiltersOption(options.filters);
@@ -2028,7 +2029,7 @@ export function buildCommands(deps = {}) {
 
       const handlers = {
         'indicators': () => apiInstance.tokenIndicators({ tokenAddress, chain }),
-        'ohlcv': () => apiInstance.tokenOhlcv({ tokenAddress, chain, timeframe: options.timeframe || '1d' }),
+        'ohlcv': () => apiInstance.tokenOhlcv({ tokenAddress, chain, timeframe: options.interval || '1d' }),
         'info': () => apiInstance.tokenInformation({ tokenAddress, chain, timeframe: options.timeframe }),
         'screener': async () => {
           const search = options.search;
@@ -2452,10 +2453,10 @@ SUBCOMMANDS:
   leaderboard Perp trader leaderboard (analytics)
 
 USAGE:
-  nansen perp order --coin BTC --side buy --size 0.001 --price 50000 --type limit
-  nansen perp cancel --coin BTC --oid 12345
-  nansen perp close --coin BTC --size 0.001 --price 100000 --side sell
-  nansen perp leverage --coin BTC --leverage 10 --margin-type cross
+  nansen perp order --symbol BTC --side buy --size 0.001 --price 50000 --type limit
+  nansen perp cancel --symbol BTC --oid 12345
+  nansen perp close --symbol BTC --size 0.001 --price 100000 --side sell
+  nansen perp leverage --symbol BTC --leverage 10 --margin-type cross
   nansen perp transfer --direction spot-to-perp --amount 25
   nansen perp approve-builder-fee
   nansen perp positions

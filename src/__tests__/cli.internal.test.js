@@ -876,7 +876,20 @@ describe('alerts list — client-side filtering', () => {
       .rejects.toThrow('Cannot specify both --enabled and --disabled');
   });
 
-  it('should filter by --token-address (case-insensitive)', async () => {
+  it('should filter by --token (case-insensitive)', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { token: '0xABC' });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('1');
+  });
+
+  it('rejects --token and --token-address naming different tokens', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { token: '0xabc', 'token-address': '0xdef' }))
+      .rejects.toThrow('are the same input; pass one');
+  });
+
+  it('should filter by the old --token-address name (case-insensitive)', async () => {
     const { mockApi, cmd } = setup();
     const result = await cmd(['list'], mockApi, {}, { 'token-address': '0xABC' });
     expect(result).toHaveLength(1);
@@ -3234,11 +3247,11 @@ describe('buildCommands', () => {
       );
     });
 
-    it('should call ohlcv with token address and timeframe', async () => {
+    it('should call ohlcv with token address and --interval', async () => {
       const mockApi = {
         tokenOhlcv: vi.fn().mockResolvedValue({ candles: [] })
       };
-      await commands['token'](['ohlcv'], mockApi, {}, { token: '0xabc', chain: 'solana', timeframe: '4h' });
+      await commands['token'](['ohlcv'], mockApi, {}, { token: '0xabc', chain: 'solana', interval: '4h' });
 
       expect(mockApi.tokenOhlcv).toHaveBeenCalledWith(
         expect.objectContaining({ tokenAddress: '0xabc', chain: 'solana', timeframe: '4h' })

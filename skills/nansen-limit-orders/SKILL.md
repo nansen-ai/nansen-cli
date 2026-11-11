@@ -100,11 +100,11 @@ Constraints (all enforced server-side — surface errors to the user as-is):
 nansen trade limit-order list                    # default
 nansen trade limit-order list --state active     # only open
 nansen trade limit-order list --state past       # filled or cancelled
-nansen trade limit-order list --mint <mintAddr>  # filter by token
+nansen trade limit-order list --token <mintAddr> # filter by token
 nansen trade limit-order list --limit 50 --offset 0 --dir desc
 ```
 
-Options: `--state active|past`, `--mint <addr>`, `--limit <n>` (default 20),
+Options: `--state active|past`, `--token <addr>`, `--limit <n>` (default 20),
 `--offset <n>`, `--sort <field>`, `--dir asc|desc` (default `desc`),
 `--wallet <name>`.
 

@@ -475,8 +475,8 @@ describe('perp coded errors (6826 N2)', () => {
   });
 });
 
-describe('perp --symbol alias (6827)', () => {
-  it('accepts --symbol as an alias for --coin (no usage banner)', async () => {
+describe('perp --symbol, with --coin as its alias', () => {
+  it('accepts --symbol (no usage banner)', async () => {
     const { coin, ...noCoin } = baseOrder;
     void coin;
     // passes coin resolution; fails later (no real wallet) — assert it is NOT
@@ -484,6 +484,19 @@ describe('perp --symbol alias (6827)', () => {
     await expect(
       cmds.order([], null, {}, { ...noCoin, symbol: 'ETH' }),
     ).rejects.not.toThrow(/Usage: nansen perp order/);
+  });
+
+  it('still accepts the old --coin name', async () => {
+    await expect(cmds.order([], null, {}, baseOrder)).rejects.not.toThrow(/Usage: nansen perp order/);
+  });
+
+  it.each([
+    ...['order', 'cancel', 'close', 'leverage'].map(sub => [sub, 'BTC']),
+    ['order', 'ETH'],
+  ])('perp %s rejects --symbol ETH with --coin %s, before any signing', async (sub, coin) => {
+    const err = await cmds[sub]([], null, {}, { ...baseOrder, symbol: 'ETH', coin, oid: '1', leverage: '2' }).catch(e => e);
+    expect(err.code).toBe('INVALID_INPUT');
+    expect(err.message).toMatch(new RegExp(`--symbol ETH and --coin ${coin} are the same input .*; pass one`));
   });
 });
 
@@ -753,7 +766,7 @@ describe('perp direct-to-HL flow (Chunk 3/4/5)', () => {
     await capCmds.order([], api, {}, { ...baseOrder, type: 'limit', tif: 'Gtc' });
     const out = logs.join('\n');
     expect(out).toMatch(/Resting order: oid 987654/);
-    expect(out).toMatch(/nansen perp cancel --coin ETH --oid 987654/);
+    expect(out).toMatch(/nansen perp cancel --symbol ETH --oid 987654/);
   });
 
   it('prints the fill and order id (no cancel hint) after a market order', async () => {

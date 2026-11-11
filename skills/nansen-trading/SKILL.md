@@ -222,15 +222,15 @@ Use `nansen perp` for Hyperliquid perpetual trading. Uses the same wallet and `N
 
 Subcommands: `order`, `cancel`, `close`, `leverage`, `positions`, `orders`, `account`, `meta`.
 
-The asset is selected with `--coin` (e.g. `BTC`, `ETH`); `--symbol` is accepted as an alias. List tradable assets and their max leverage with `nansen perp meta` (use `--filter <text>` or `--all` to see beyond the first 20).
+The asset is selected with `--symbol` (e.g. `BTC`, `ETH`); `--coin` is accepted as an alias. List tradable assets and their max leverage with `nansen perp meta` (use `--filter <text>` or `--all` to see beyond the first 20).
 
 ## Preview and confirm (`--dry-run`, `--yes`)
 
 `order`, `close`, `cancel` and `leverage` have no quote step, so a typo in `--size` or `--price` would otherwise go straight to the exchange. Preview first:
 
 ```bash
-nansen perp order --coin ETH --side buy --size 0.1 --price 1600 --dry-run   # preview only, nothing is signed
-nansen perp order --coin ETH --side buy --size 0.1 --price 1600 --yes       # skip the confirmation prompt
+nansen perp order --symbol ETH --side buy --size 0.1 --price 1600 --dry-run   # preview only, nothing is signed
+nansen perp order --symbol ETH --side buy --size 0.1 --price 1600 --yes       # skip the confirmation prompt
 ```
 
 **`--dry-run`** runs the normal validation and read-only lookups (asset metadata, builder fee, open position, compliance screen), prints the plan (coin, side, rounded size, price and type, take-profit/stop-loss, estimated notional, leverage, builder fee) and exits 0. Nothing is signed or sent to Hyperliquid, no wallet password is needed, and the one-time builder-fee approval is not submitted. `close` also shows the worst fill price after slippage and the open position, `cancel` shows the open order it would cancel, and `leverage` shows the new setting next to the asset maximum.
@@ -245,10 +245,10 @@ nansen perp order --coin ETH --side buy --size 0.1 --price 1600 --yes       # sk
 
 ```bash
 # Limit long: 0.1 ETH at $1600
-nansen perp order --coin ETH --side buy --size 0.1 --price 1600 --type limit
+nansen perp order --symbol ETH --side buy --size 0.1 --price 1600 --type limit
 
 # Market short with optional take-profit / stop-loss
-nansen perp order --coin BTC --side sell --size 0.001 --price 95000 --type market \
+nansen perp order --symbol BTC --side sell --size 0.001 --price 95000 --type market \
   --take-profit 90000 --stop-loss 98000
 ```
 
@@ -258,22 +258,22 @@ nansen perp order --coin BTC --side sell --size 0.001 --price 95000 --type marke
 - `--type`: `limit` (default) or `market`. `--tif`: `Gtc` (default), `Ioc`, `Alo`.
 - `--slippage`: decimal in `[0,1]` for market orders (default `0.03` = 3%).
 
-On success the command prints the Hyperliquid order id (`oid`) and the fill (size @ avg price). A resting (unfilled) order also prints a ready-to-run `nansen perp cancel --coin <coin> --oid <oid>`. Attached take-profit/stop-loss legs are labelled and each print their own `oid`.
+On success the command prints the Hyperliquid order id (`oid`) and the fill (size @ avg price). A resting (unfilled) order also prints a ready-to-run `nansen perp cancel --symbol <symbol> --oid <oid>`. Attached take-profit/stop-loss legs are labelled and each print their own `oid`.
 
 ## Close / cancel
 
 ```bash
 # Close: sell to close a long, buy to close a short (validated against your open position)
-nansen perp close --coin ETH --size 0.1 --price 1600 --side sell
+nansen perp close --symbol ETH --size 0.1 --price 1600 --side sell
 
 # Cancel a resting order by id
-nansen perp cancel --coin ETH --oid 123456
+nansen perp cancel --symbol ETH --oid 123456
 ```
 
 ## Leverage, transfers & account
 
 ```bash
-nansen perp leverage --coin ETH --leverage 5 --margin-type cross   # or isolated
+nansen perp leverage --symbol ETH --leverage 5 --margin-type cross   # or isolated
 nansen perp transfer --direction spot-to-perp --amount 25          # or perp-to-spot
 nansen perp positions
 nansen perp account     # account value, unrealized PnL, margin used, withdrawable, spot USDC

@@ -49,7 +49,7 @@ function parseTimeframeDays(value) {
   if (value === undefined || value === null) return undefined;
   const trimmed = String(value).trim();
   if (!/^[1-9]\d*$/.test(trimmed)) {
-    throw new NansenError('--timeframe-days must be a positive integer', ErrorCode.INVALID_PARAMS);
+    throw new NansenError('--days must be a positive integer', ErrorCode.INVALID_PARAMS);
   }
   return parseInt(trimmed, 10);
 }
@@ -114,7 +114,7 @@ const SUB_HELP = {
   'chain-rank': `nansen research chain-rank — Rank chains by growth metrics
 
 USAGE:
-  nansen research chain-rank [--timeframe-days 7|30|365] [--chain-type all|evm]`,
+  nansen research chain-rank [--days 7|30|365] [--chain-type all|evm]`,
   'token-sectors': `nansen research token-sectors — List token sectors available for filtering
 
 USAGE:
@@ -126,13 +126,13 @@ USAGE:
   'smart-money-pnl-leaderboard': `nansen research smart-money-pnl-leaderboard — Rank smart money wallets by PnL
 
 USAGE:
-  nansen research smart-money-pnl-leaderboard [--chains c1,c2] [--timeframe-days 1|7|30|90|180] [--filters '<json>'] [--sort <field[:asc|desc]>] [--page <n>] [--limit <n>]`,
+  nansen research smart-money-pnl-leaderboard [--chains c1,c2] [--days 1|7|30|90|180] [--filters '<json>'] [--sort <field[:asc|desc]>] [--page <n>] [--limit <n>]`,
   'position-intelligence': `nansen research position-intelligence — Aggregate Hyperliquid positions by trader cohort
 
 USAGE:
   nansen research position-intelligence --symbol <symbol>
 
-NOTE: --token-address is accepted as an alias for --symbol (the API request field is token_address).`,
+NOTE: --coin, --token and --token-address are accepted as aliases for --symbol (the API request field is token_address).`,
   'perp-pnl-summary': `nansen research perp-pnl-summary — Summarize realized Hyperliquid PnL for an address
 
 USAGE:
@@ -146,30 +146,30 @@ NOTE: --block-timestamp is required for bitcoin, tron, ton, starknet, and sui.`,
   'historical-dex-trades': `nansen research historical-dex-trades — Historical DEX trades for a token
 
 USAGE:
-  nansen research historical-dex-trades --token-address <addr> --from-date <YYYY-MM-DD> --to-date <YYYY-MM-DD> [--chain <chain>]`,
+  nansen research historical-dex-trades --token <addr> --from-date <YYYY-MM-DD> --to-date <YYYY-MM-DD> [--chain <chain>]`,
   'historical-pnl-leaderboard': `nansen research historical-pnl-leaderboard — Historical PnL leaderboard for a token
 
 USAGE:
-  nansen research historical-pnl-leaderboard --token-address <addr> --from-date <YYYY-MM-DD> --to-date <YYYY-MM-DD> [--chain <chain>]`,
+  nansen research historical-pnl-leaderboard --token <addr> --from-date <YYYY-MM-DD> --to-date <YYYY-MM-DD> [--chain <chain>]`,
   'historical-token-flow-summary': `nansen research historical-token-flow-summary — Historical token flow summary
 
 USAGE:
-  nansen research historical-token-flow-summary --token-address <addr> --from-date <YYYY-MM-DD> --to-date <YYYY-MM-DD> [--chain <chain>]
+  nansen research historical-token-flow-summary --token <addr> --from-date <YYYY-MM-DD> --to-date <YYYY-MM-DD> [--chain <chain>]
 
 NOTE: This endpoint does not support pagination.
 Whale, public figure, top PnL and exchange label history starts 2025-03-11, so those fields are null for an earlier --to-date.`,
   'historical-token-quant-scores': `nansen research historical-token-quant-scores — Historical token quantitative scores
 
 USAGE:
-  nansen research historical-token-quant-scores --token-address <addr> --as-of-date <YYYY-MM-DD> [--chain <chain>]`,
+  nansen research historical-token-quant-scores --token <addr> --as-of-date <YYYY-MM-DD> [--chain <chain>]`,
   'historical-top-holders': `nansen research historical-top-holders — Historical top holders of a token
 
 USAGE:
-  nansen research historical-top-holders --token-address <addr> --as-of-date <YYYY-MM-DD> [--chain <chain>]`,
+  nansen research historical-top-holders --token <addr> --as-of-date <YYYY-MM-DD> [--chain <chain>]`,
   'historical-who-bought-sold': `nansen research historical-who-bought-sold — Historical buyers/sellers of a token
 
 USAGE:
-  nansen research historical-who-bought-sold --token-address <addr> --from-date <YYYY-MM-DD> --to-date <YYYY-MM-DD> [--buy-or-sell BUY|SELL] [--chain <chain>]`,
+  nansen research historical-who-bought-sold --token <addr> --from-date <YYYY-MM-DD> --to-date <YYYY-MM-DD> [--buy-or-sell BUY|SELL] [--chain <chain>]`,
   'historical-smart-money-balances': `nansen research historical-smart-money-balances — Historical smart money token balances
 
 USAGE:
@@ -179,7 +179,7 @@ NOTE: This endpoint does not support order_by.`,
   'historical-token-screener': `nansen research historical-token-screener — Historical token screener
 
 USAGE:
-  nansen research historical-token-screener --timeframe-days <n> --to-date <YYYY-MM-DD> [--chains c1,c2]`,
+  nansen research historical-token-screener --days <n> --to-date <YYYY-MM-DD> [--chains c1,c2]`,
   'historical-wallet-balances': `nansen research historical-wallet-balances — Historical token balances for a wallet
 
 USAGE:
@@ -198,7 +198,7 @@ USAGE:
   'historical-token-ohlcv': `nansen research historical-token-ohlcv — Historical token OHLCV candles
 
 USAGE:
-  nansen research historical-token-ohlcv --token-address <addr> --from-date <date> --timeframe <5m|15m|30m|1h|4h|1d|1w> (--as-of-date <date> | --as-of-ts <timestamp>) [--chain <chain>] [--apply-blacklist-filter <true|false>]`,
+  nansen research historical-token-ohlcv --token <addr|symbol> --from-date <date> --interval <5m|15m|30m|1h|4h|1d|1w> (--as-of-date <date> | --as-of-ts <timestamp>) [--chain <chain>] [--apply-blacklist-filter <true|false>]`,
 };
 
 export function buildResearchCommands(deps = {}) {
@@ -226,7 +226,7 @@ export function buildResearchCommands(deps = {}) {
 
       for (const [name, example] of [
         ['chain', 'solana'], ['chains', 'solana'], ['chain-type', 'all'],
-        ['timeframe', '1d'], ['timeframe-days', '7'],
+        ['interval', '1d'], ['days', '7'],
       ]) {
         rejectBlankOption(options[name], name, example);
       }
@@ -238,10 +238,10 @@ export function buildResearchCommands(deps = {}) {
       const asOfDate = options['as-of-date'];
 
       if (sub === 'chain-rank') {
-        const timeFrame = parseTimeframeDays(options['timeframe-days']) ?? 7;
+        const timeFrame = parseTimeframeDays(options.days) ?? 7;
         if (!CHAIN_RANK_TIMEFRAMES.has(timeFrame)) {
           throw new NansenError(
-            `--timeframe-days must be one of: ${[...CHAIN_RANK_TIMEFRAMES].join(', ')}`,
+            `--days must be one of: ${[...CHAIN_RANK_TIMEFRAMES].join(', ')}`,
             ErrorCode.INVALID_PARAMS,
           );
         }
@@ -265,10 +265,10 @@ export function buildResearchCommands(deps = {}) {
       }
 
       if (sub === 'smart-money-pnl-leaderboard') {
-        const timeframe = parseTimeframeDays(options['timeframe-days']) ?? 7;
+        const timeframe = parseTimeframeDays(options.days) ?? 7;
         if (!SM_PNL_TIMEFRAME_DAYS.includes(timeframe)) {
           throw new NansenError(
-            `--timeframe-days must be one of: ${SM_PNL_TIMEFRAME_DAYS.join(', ')}`,
+            `--days must be one of: ${SM_PNL_TIMEFRAME_DAYS.join(', ')}`,
             ErrorCode.INVALID_PARAMS,
           );
         }
@@ -280,10 +280,10 @@ export function buildResearchCommands(deps = {}) {
       }
 
       if (sub === 'position-intelligence') {
-        const symbol = String(options.symbol || options['token-address'] || options.token || '').trim();
+        const symbol = String(options.symbol || '').trim();
         if (!symbol) {
           throw new NansenError(
-            'Required: --symbol (or --token-address)',
+            'Required: --symbol',
             ErrorCode.MISSING_PARAM,
           );
         }
@@ -299,11 +299,11 @@ export function buildResearchCommands(deps = {}) {
       }
 
       if (sub === 'historical-token-ohlcv') {
-        const tokenAddress = options['token-address'] || options.token;
+        const tokenAddress = options.token;
         const asOfTs = options['as-of-ts'];
         requireOptions(
-          { 'token-address': tokenAddress, 'from-date': fromDate, timeframe: options.timeframe },
-          ['token-address', 'from-date', 'timeframe'],
+          { token: tokenAddress, 'from-date': fromDate, interval: options.interval },
+          ['token', 'from-date', 'interval'],
         );
         if (!asOfDate && !asOfTs) {
           throw new NansenError(
@@ -323,7 +323,7 @@ export function buildResearchCommands(deps = {}) {
           fromDate,
           asOfDate,
           asOfTs,
-          timeframe: options.timeframe,
+          timeframe: options.interval,
           applyBlacklistFilter: parseBooleanOption(options, flags, 'apply-blacklist-filter'),
         });
       }
@@ -347,22 +347,22 @@ export function buildResearchCommands(deps = {}) {
       // Range-based token endpoints (require --from-date + --to-date)
       const rangeTokenHandlers = {
         'historical-dex-trades': () => apiInstance.researchDexTrades({
-          tokenAddress: options['token-address'] || options.token,
+          tokenAddress: options.token,
           chain: options.chain,
           fromDate, toDate, filters, orderBy, pagination,
         }),
         'historical-pnl-leaderboard': () => apiInstance.researchPnlLeaderboard({
-          tokenAddress: options['token-address'] || options.token,
+          tokenAddress: options.token,
           chain: options.chain,
           fromDate, toDate, filters, orderBy, pagination,
         }),
         'historical-token-flow-summary': () => apiInstance.researchTokenFlowSummary({
-          tokenAddress: options['token-address'] || options.token,
+          tokenAddress: options.token,
           chain: options.chain,
           fromDate, toDate,
         }),
         'historical-who-bought-sold': () => apiInstance.researchWhoBoughtSold({
-          tokenAddress: options['token-address'] || options.token,
+          tokenAddress: options.token,
           chain: options.chain,
           buyOrSell: options['buy-or-sell'],
           fromDate, toDate, filters, orderBy, pagination,
@@ -371,8 +371,8 @@ export function buildResearchCommands(deps = {}) {
 
       if (rangeTokenHandlers[sub]) {
         requireOptions(
-          { 'token-address': options['token-address'] || options.token, 'from-date': fromDate, 'to-date': toDate },
-          ['token-address', 'from-date', 'to-date'],
+          { token: options.token, 'from-date': fromDate, 'to-date': toDate },
+          ['token', 'from-date', 'to-date'],
         );
         if (sub === 'historical-token-flow-summary' && (options.page || options.limit)) {
           throw new NansenError(
@@ -386,12 +386,12 @@ export function buildResearchCommands(deps = {}) {
       // As-of-date token endpoints (require --as-of-date)
       const asOfTokenHandlers = {
         'historical-token-quant-scores': () => apiInstance.researchTokenQuantScores({
-          tokenAddress: options['token-address'] || options.token,
+          tokenAddress: options.token,
           chain: options.chain,
           asOfDate, filters, orderBy, pagination,
         }),
         'historical-top-holders': () => apiInstance.researchTopHolders({
-          tokenAddress: options['token-address'] || options.token,
+          tokenAddress: options.token,
           chain: options.chain,
           asOfDate, filters, orderBy, pagination,
         }),
@@ -399,8 +399,8 @@ export function buildResearchCommands(deps = {}) {
 
       if (asOfTokenHandlers[sub]) {
         requireOptions(
-          { 'token-address': options['token-address'] || options.token, 'as-of-date': asOfDate },
-          ['token-address', 'as-of-date'],
+          { token: options.token, 'as-of-date': asOfDate },
+          ['token', 'as-of-date'],
         );
         return asOfTokenHandlers[sub]();
       }
@@ -420,8 +420,8 @@ export function buildResearchCommands(deps = {}) {
       }
 
       if (sub === 'historical-token-screener') {
-        const timeframeDays = parseTimeframeDays(options['timeframe-days']);
-        requireOptions({ 'timeframe-days': timeframeDays, 'to-date': options['to-date'] }, ['timeframe-days', 'to-date']);
+        const timeframeDays = parseTimeframeDays(options.days);
+        requireOptions({ days: timeframeDays, 'to-date': options['to-date'] }, ['days', 'to-date']);
         return apiInstance.researchTokenScreener({
           chains: parseChains(options),
           timeframeDays,
