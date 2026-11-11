@@ -154,8 +154,8 @@ describe.each(['', ' \t '])('explicit blank option %j', blank => {
     ['address-premium-labels', 'chain'],
     ['smart-money-pnl-leaderboard', 'chains'],
     ['chain-rank', 'chain-type'],
-    ['chain-rank', 'timeframe-days'],
-    ['historical-token-ohlcv', 'timeframe'],
+    ['chain-rank', 'days'],
+    ['historical-token-ohlcv', 'interval'],
   ])('rejects direct research %s --%s', async (sub, name) => {
     const api = { chainRank: vi.fn(), addressPremiumLabels: vi.fn(), smartMoneyPnlLeaderboard: vi.fn() };
     await expect(buildResearchCommands(deps).research([sub], api, {}, {

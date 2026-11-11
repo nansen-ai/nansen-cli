@@ -34,7 +34,7 @@ All commands: `nansen research token <sub> [options]`
 
 ```bash
 nansen research token info --token <addr> --chain solana
-nansen research token ohlcv --token <addr> --chain solana --timeframe 1h
+nansen research token ohlcv --token <addr> --chain solana --interval 1h
 ```
 
 Timeframes: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`, `1w`, `1M`

@@ -183,10 +183,11 @@
           ],
           "description": "Place a perp order (limit or market, with optional take-profit/stop-loss)",
           "options": {
-            "coin": {
+            "symbol": {
               "type": "string",
+              "aliases": ["coin"],
               "required": true,
-              "description": "Asset symbol, e.g. BTC, ETH (alias: --symbol)"
+              "description": "Asset symbol, e.g. BTC, ETH"
             },
             "side": {
               "type": "string",
@@ -267,10 +268,11 @@
           ],
           "description": "Cancel an open order by order id",
           "options": {
-            "coin": {
+            "symbol": {
               "type": "string",
+              "aliases": ["coin"],
               "required": true,
-              "description": "Asset symbol (alias: --symbol)"
+              "description": "Asset symbol"
             },
             "oid": {
               "type": "string",
@@ -304,10 +306,11 @@
           ],
           "description": "Close a position (reduce-only market order)",
           "options": {
-            "coin": {
+            "symbol": {
               "type": "string",
+              "aliases": ["coin"],
               "required": true,
-              "description": "Asset symbol (alias: --symbol)"
+              "description": "Asset symbol"
             },
             "size": {
               "type": "string",
@@ -359,10 +362,11 @@
           ],
           "description": "Set leverage and margin mode for an asset",
           "options": {
-            "coin": {
+            "symbol": {
               "type": "string",
+              "aliases": ["coin"],
               "required": true,
-              "description": "Asset symbol (alias: --symbol)"
+              "description": "Asset symbol"
             },
             "leverage": {
               "type": "string",
@@ -830,6 +834,9 @@
                 },
                 "token": {
                   "type": "string",
+                  "aliases": [
+                    "token-address"
+                  ],
                   "description": "Only this token (contract address); sent as filters.token_address"
                 }
               }
@@ -1715,9 +1722,7 @@
                   "type": "string",
                   "required": true,
                   "description": "Perp symbol, e.g. BTC",
-                  "aliases": [
-                    "token-symbol"
-                  ]
+                  "aliases": ["token-symbol", "coin"]
                 },
                 "days": {
                   "type": "integer",
@@ -1757,9 +1762,7 @@
                   "type": "string",
                   "required": true,
                   "description": "Perp symbol, e.g. BTC",
-                  "aliases": [
-                    "token-symbol"
-                  ]
+                  "aliases": ["token-symbol", "coin"]
                 },
                 "filters": {
                   "type": "string",
@@ -1789,9 +1792,7 @@
                   "type": "string",
                   "required": true,
                   "description": "Perp symbol, e.g. BTC",
-                  "aliases": [
-                    "token-symbol"
-                  ]
+                  "aliases": ["token-symbol", "coin"]
                 },
                 "days": {
                   "type": "integer",
@@ -1906,8 +1907,9 @@
                     "token-address"
                   ]
                 },
-                "timeframe": {
+                "interval": {
                   "type": "string",
+                  "aliases": ["timeframe"],
                   "default": "1d",
                   "description": "Candle interval"
                 }
@@ -2442,8 +2444,9 @@
           "endpoint": "/api/v1/chains/chain-rank",
           "description": "Rank chains by growth metrics",
           "options": {
-            "timeframe-days": {
+            "days": {
               "type": "number",
+              "aliases": ["timeframe-days"],
               "enum": [7, 30, 365],
               "default": 7,
               "description": "Growth window in days"
@@ -2498,8 +2501,9 @@
               "type": "string",
               "repeatable": true
             },
-            "timeframe-days": {
+            "days": {
               "type": "number",
+              "aliases": ["timeframe-days"],
               "enum": [1, 7, 30, 90, 180],
               "default": 7,
               "description": "Timeframe in days"
@@ -2541,10 +2545,7 @@
               "required": true,
               "description": "Hyperliquid asset symbol (--token-address is accepted as an alias)",
               "type": "string",
-              "aliases": [
-                "token-address",
-                "token"
-              ]
+              "aliases": ["token-address", "token", "coin"]
             }
           },
           "pagination": false
@@ -2577,13 +2578,11 @@
           "endpoint": "/api/v1beta1/tgm/historical-token-ohlcv",
           "description": "Historical token OHLCV candles",
           "options": {
-            "token-address": {
+            "token": {
               "required": true,
               "description": "Token address or Hyperliquid asset symbol",
               "type": "string",
-              "aliases": [
-                "token"
-              ]
+              "aliases": ["token-address", "symbol"]
             },
             "chain": {
               "type": "string",
@@ -2603,8 +2602,9 @@
               "description": "Exact Hyperliquid cutoff timestamp; exactly one of --as-of-date or --as-of-ts is required",
               "type": "string"
             },
-            "timeframe": {
+            "interval": {
               "type": "string",
+              "aliases": ["timeframe"],
               "required": true,
               "enum": [
                 "5m",
@@ -2649,12 +2649,12 @@
           "endpoint": "/api/v1/tgm/historical-dex-trades",
           "description": "Historical DEX trades for a token at a point in time",
           "options": {
-            "token-address": {
+            "token": {
               "required": true,
               "description": "Token address",
               "type": "string",
               "aliases": [
-                "token"
+                "token-address"
               ]
             },
             "from-date": {
@@ -2694,12 +2694,12 @@
           "endpoint": "/api/v1/tgm/historical-pnl-leaderboard",
           "description": "Historical PnL leaderboard for a token",
           "options": {
-            "token-address": {
+            "token": {
               "required": true,
               "description": "Token address",
               "type": "string",
               "aliases": [
-                "token"
+                "token-address"
               ]
             },
             "from-date": {
@@ -2739,12 +2739,12 @@
           "endpoint": "/api/v1/tgm/historical-token-flow-summary",
           "description": "Historical token flow summary (no pagination; whale, public figure, top PnL and exchange segments start 2025-03-11)",
           "options": {
-            "token-address": {
+            "token": {
               "required": true,
               "description": "Token address",
               "type": "string",
               "aliases": [
-                "token"
+                "token-address"
               ]
             },
             "from-date": {
@@ -2771,12 +2771,12 @@
           "endpoint": "/api/v1/tgm/historical-token-quant-scores",
           "description": "Historical token quantitative scores at a snapshot date",
           "options": {
-            "token-address": {
+            "token": {
               "required": true,
               "description": "Token address",
               "type": "string",
               "aliases": [
-                "token"
+                "token-address"
               ]
             },
             "as-of-date": {
@@ -2797,12 +2797,12 @@
           "endpoint": "/api/v1/tgm/historical-top-holders",
           "description": "Historical top holders of a token at a snapshot date",
           "options": {
-            "token-address": {
+            "token": {
               "required": true,
               "description": "Token address",
               "type": "string",
               "aliases": [
-                "token"
+                "token-address"
               ]
             },
             "as-of-date": {
@@ -2836,12 +2836,12 @@
           "endpoint": "/api/v1/tgm/historical-who-bought-sold",
           "description": "Historical buyers/sellers of a token",
           "options": {
-            "token-address": {
+            "token": {
               "required": true,
               "description": "Token address",
               "type": "string",
               "aliases": [
-                "token"
+                "token-address"
               ]
             },
             "from-date": {
@@ -2913,9 +2913,10 @@
           "endpoint": "/api/v1beta1/token-screener/historical",
           "description": "Historical token screener over a trailing window",
           "options": {
-            "timeframe-days": {
+            "days": {
               "required": true,
               "type": "number",
+              "aliases": ["timeframe-days"],
               "description": "Trailing window size in days"
             },
             "to-date": {
@@ -3040,6 +3041,13 @@
             "description"
           ],
           "options": {
+            "token": {
+              "type": "string",
+              "aliases": [
+                "token-address"
+              ],
+              "description": "Only alerts that include or exclude this token address"
+            },
             "reveal": {
               "type": "boolean",
               "description": "Show full channel webhook URLs and webhook signing secrets (redacted by default)"
@@ -3431,14 +3439,15 @@
               ]
             },
             "list": {
-              "description": "List your limit orders. Explicitly blank --wallet, --limit, --offset, --dir, and --mint values are rejected.",
+              "description": "List your limit orders. Explicitly blank --wallet, --limit, --offset, --dir, and --token values are rejected.",
               "options": {
                 "state": {
                   "type": "string",
                   "description": "Filter by state (active, past)"
                 },
-                "mint": {
+                "token": {
                   "type": "string",
+                  "aliases": ["mint"],
                   "description": "Filter by token mint address"
                 },
                 "limit": {

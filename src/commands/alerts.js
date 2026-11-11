@@ -781,7 +781,7 @@ Run: nansen alerts <subcommand> --help`,
         list: `nansen alerts list — List all alerts
 
 USAGE:
-  nansen alerts list [--table] [--pretty] [--type <type>] [--enabled|--disabled] [--token-address <addr>] [--chain <chain>] [--limit <n>] [--offset <n>] [--reveal]
+  nansen alerts list [--table] [--pretty] [--type <type>] [--enabled|--disabled] [--token <addr>] [--chain <chain>] [--limit <n>] [--offset <n>] [--reveal]
 
 OPTIONS:
   --table                      Human-readable table output (columns: ID, NAME, TYPE, ENABLED, CHANNELS)
@@ -789,7 +789,7 @@ OPTIONS:
   --reveal                     Show full channel webhook URLs and secrets (redacted by default)
   --type <type>                Filter by alert type (sm-token-flows, common-token-transfer, smart-contract-call)
   --enabled / --disabled       Filter by enabled state
-  --token-address <addr>       Filter by token address
+  --token <addr>               Filter by token address (alias --token-address)
   --chain <chain>              Filter by chain
   --limit <n>                  Max results
   --offset <n>                 Skip first N results
@@ -957,7 +957,13 @@ OPTIONS:
 
           const offset = parseNonNegativeIntegerOption(options.offset, 'offset');
           const limit = parseNonNegativeIntegerOption(options.limit, 'limit');
-          const tokenAddress = parseStringFilter(options['token-address'], 'token-address');
+          // --token-address is the old name of --token.
+          const token = parseStringFilter(options.token, 'token');
+          const legacyToken = parseStringFilter(options['token-address'], 'token-address');
+          if (token && legacyToken) {
+            throw new NansenError(`--token ${token} and --token-address ${legacyToken} are the same input; pass one.`, ErrorCode.INVALID_PARAMS);
+          }
+          const tokenAddress = token ?? legacyToken;
           const chainFilter = parseStringFilter(options.chain, 'chain');
 
           const results = await apiInstance.alertsList();

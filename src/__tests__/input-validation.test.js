@@ -77,7 +77,7 @@ function sampleValue(name, spec) {
     'from-date': '2025-01-01',
     'to-date': '2025-01-02',
     'as-of-date': '2025-01-02',
-    'timeframe-days': '7',
+    days: '7',
     'transaction-hash': TX_HASH,
   }[name] ?? 'x';
 }
@@ -334,6 +334,37 @@ describe('validateResearchInput', () => {
     expect(check('research token screener', {}, { 'include-stablecoins': true })).toBeNull();
   });
 
+  it('renames an alias to its option name for the handler', () => {
+    const options = { 'token-address': SOL_MINT };
+    expect(check('research token info', options)).toBeNull();
+    expect(options).toEqual({ token: SOL_MINT });
+    const ohlcv = { token: SOL_MINT, timeframe: '1h' };
+    expect(check('research token ohlcv', ohlcv)).toBeNull();
+    expect(ohlcv).toEqual({ token: SOL_MINT, interval: '1h' });
+  });
+
+  it('rejects one input given under two names', () => {
+    const error = check('research token info', { token: SOL_MINT, 'token-address': SOL_MINT });
+    expect(error.details.errors).toEqual([expect.objectContaining({
+      field: '--token',
+      code: 'invalid_field_value',
+      message: "Options '--token' and '--token-address' are the same input (--token); pass one.",
+    })]);
+    expect(check('research token perp-trades', { 'token-symbol': 'BTC', coin: 'BTC' }).details.errors[0].message)
+      .toMatch(/'--token-symbol' and '--coin' are the same input \(--symbol\)/);
+  });
+
+  it.each(['research token screener', 'research token info', 'research token flow-intelligence'])('points %s --days at --timeframe', path => {
+    const args = path === 'research token screener' ? { days: '7' } : { token: SOL_MINT, days: '7' };
+    const error = check(path, args);
+    expect(error.details.errors[0]).toMatchObject({ field: '--days', code: 'unknown_field' });
+    expect(error.details.errors[0].message).toContain('Use --timeframe instead (for example --timeframe 7d)');
+  });
+
+  it('does not add the --timeframe hint where --days is not the issue', () => {
+    expect(check('research token screener', { turbo: '1' }).message).not.toContain('Use --timeframe');
+  });
+
   it('rejects a JSON value for a plain option instead of dropping it', () => {
     expect(check('research token info', { token: SOL_MINT, timeframe: {} })).toMatchObject({
       message: "Option '--timeframe' must be a string, not JSON; received: {}",
@@ -562,6 +593,37 @@ describe('schema-wide checks', () => {
     expect(SCHEMA.commands.research.subcommands.token.subcommands.holders.supportedChains).toContain('bitcoin');
   });
 
+  // An alias is only a schema entry: validation renames it to the option's
+  // name, so it must send exactly what the canonical name sends.
+  const aliasCases = leaves.filter(([, leaf]) => leaf.endpoint).flatMap(([words, leaf]) => Object.entries(leaf.options || {})
+    .flatMap(([name, spec]) => (spec.aliases || []).map(alias => [`${words.join(' ')} --${alias}`, words, leaf, name, spec, alias])));
+
+  it('has aliases to check, including every canonical rename', () => {
+    const labels = aliasCases.map(([label]) => label);
+    for (const label of [
+      'research chain-rank --timeframe-days',
+      'research smart-money-pnl-leaderboard --timeframe-days',
+      'research historical-token-screener --timeframe-days',
+      'research token ohlcv --timeframe',
+      'research historical-token-ohlcv --timeframe',
+      'research historical-dex-trades --token-address',
+      'research smart-money holdings --token-address',
+      'research token perp-trades --coin',
+      'research position-intelligence --coin',
+    ]) expect(labels).toContain(label);
+  });
+
+  it.each(aliasCases)('%s sends the same request as its canonical name', async (_label, words, leaf, name, spec, alias) => {
+    const required = requiredArgs(leaf, { skip: [name] });
+    const value = spec.required ? sampleValue(name, spec) : probeValue(name, spec, leaf);
+    const canonical = await runCaptured([...words, ...required, `--${name}`, value]);
+    const aliased = await runCaptured([...words, ...required, `--${alias}`, value]);
+    expect(canonical.exitCode, JSON.stringify(canonical.output)).toBeNull();
+    expect(aliased.exitCode, JSON.stringify(aliased.output)).toBeNull();
+    expect(aliased.calls.length).toBeGreaterThan(0);
+    expect(aliased.calls).toEqual(canonical.calls);
+  });
+
   const runnable = leaves.filter(([, leaf]) => leaf.endpoint);
 
   it.each(runnable.map(([words, leaf]) => [words.join(' '), words, leaf]))('%s runs with its required options and sends what it accepts', async (_name, words, leaf) => {
@@ -661,6 +723,13 @@ describe('runCLI failures always exit 1 with success:false (API-1080)', () => {
   it('wires --limit/--page into profiler balance', async () => {
     const { calls } = await runCaptured(['research', 'profiler', 'balance', '--address', EVM, '--chain', 'ethereum', '--limit', '4', '--page', '2']);
     expect(calls[0].body.pagination).toEqual({ page: 2, per_page: 4 });
+  });
+
+  it('sends a Hyperliquid --symbol and --interval for historical-token-ohlcv', async () => {
+    const { calls, exitCode, output } = await runCaptured(['research', 'historical-token-ohlcv', '--chain', 'hyperliquid', '--symbol', 'BTC',
+      '--interval', '1h', '--from-date', '2025-01-01', '--as-of-date', '2025-01-02']);
+    expect(exitCode, JSON.stringify(output)).toBeNull();
+    expect(calls[0].body).toMatchObject({ token_address: 'BTC', chain: 'hyperliquid', timeframe: '1h' });
   });
 
   it('sends token screener --chains as a list, with aliases applied', async () => {

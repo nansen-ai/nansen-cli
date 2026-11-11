@@ -1313,6 +1313,31 @@ describe('buildLimitOrderCommands', () => {
       expect(Object.fromEntries(params)).toMatchObject({ limit: '20', offset: '0', dir: 'desc' });
     });
 
+    it.each(['token', 'mint'])('filters by --%s (mint is the old name)', async flag => {
+      createTestWallet(`lo-list-${flag}`);
+      const cmds = buildLimitOrderCommands({ log: () => {}, exit: vi.fn() });
+      mockFetchSequence([
+        { body: { challenge: 'sign' } },
+        { body: { token: 'jwt' } },
+        { body: { orders: [], pagination: { total: 0, limit: 20, offset: 0 } } },
+      ]);
+      await cmds.list([], null, {}, { wallet: `lo-list-${flag}`, [flag]: 'SOL' });
+      const params = new URL(global.fetch.mock.calls[2][0]).searchParams;
+      expect(params.get('mint')).toBe('So11111111111111111111111111111111111111112');
+    });
+
+    it('rejects --token and --mint naming different tokens, before any request', async () => {
+      createTestWallet('lo-list-conflict');
+      const logs = [];
+      const exit = vi.fn();
+      const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+      global.fetch = vi.fn();
+      await cmds.list([], null, {}, { wallet: 'lo-list-conflict', token: 'SOL', mint: 'USDC' });
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(logs.join('\n')).toMatch(/--token SOL and --mint USDC are the same input/);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
     it('formats and displays orders', async () => {
       createTestWallet('lo-list-fmt');
       const logs = [];

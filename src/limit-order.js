@@ -946,6 +946,7 @@ EXAMPLES:
     },
 
     'list': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.token, 'token', 'SOL');
       rejectBlankOption(options.mint, 'mint', 'SOL');
       rejectBlankOption(options.limit, 'limit', '20');
       rejectBlankOption(options.offset, 'offset', '0');
@@ -953,7 +954,14 @@ EXAMPLES:
       rejectBlankOption(options.wallet, 'wallet', '<name>');
       const walletName = options.wallet;
       const state = options.state;
-      const mint = options.mint ? resolveTokenAddress(options.mint, 'solana') : undefined;
+      // --mint is the old name of --token.
+      if (options.token !== undefined && options.mint !== undefined) {
+        log(`Error: --token ${options.token} and --mint ${options.mint} are the same input; pass one.`);
+        exit(1);
+        return;
+      }
+      const tokenArg = options.token ?? options.mint;
+      const mint = tokenArg ? resolveTokenAddress(tokenArg, 'solana') : undefined;
       const limit = options.limit || 20;
       // parseArgs keeps numbers as strings; the footer below adds to offset.
       const offset = options.offset == null ? 0 : Number(options.offset);
@@ -969,7 +977,7 @@ EXAMPLES:
       if (mint) {
         const mintValidation = validateTokenAddress(mint, 'solana');
         if (!mintValidation.valid) {
-          log(`Error: Invalid --mint address: ${mintValidation.error}`);
+          log(`Error: Invalid --token address: ${mintValidation.error}`);
           exit(1);
           return;
         }

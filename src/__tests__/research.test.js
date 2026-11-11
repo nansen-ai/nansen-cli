@@ -449,32 +449,32 @@ describe('buildResearchCommands handler', () => {
   it('dispatches chain-rank', async () => {
     mockApi = makeMockApi();
     await cmds.research(['chain-rank'], mockApi, {}, {
-      'timeframe-days': '30', 'chain-type': 'evm',
+      days: '30', 'chain-type': 'evm',
     });
     expect(mockApi.chainRank).toHaveBeenCalledWith({ timeFrame: 30, chainType: 'evm' });
   });
 
   it('rejects chain-rank with a timeframe outside 7/30/365', async () => {
     mockApi = makeMockApi();
-    await expect(cmds.research(['chain-rank'], mockApi, {}, { 'timeframe-days': '99' }))
-      .rejects.toThrow('--timeframe-days must be one of: 7, 30, 365');
+    await expect(cmds.research(['chain-rank'], mockApi, {}, { days: '99' }))
+      .rejects.toThrow('--days must be one of: 7, 30, 365');
     expect(mockApi.chainRank).not.toHaveBeenCalled();
   });
 
-  it('rejects non-integer --timeframe-days values', async () => {
+  it('rejects non-integer --days values', async () => {
     mockApi = makeMockApi();
     for (const value of ['30.5', '30abc', '-7', '0']) {
-      await expect(cmds.research(['chain-rank'], mockApi, {}, { 'timeframe-days': value }))
-        .rejects.toThrow('--timeframe-days must be a positive integer');
+      await expect(cmds.research(['chain-rank'], mockApi, {}, { days: value }))
+        .rejects.toThrow('--days must be a positive integer');
     }
     expect(mockApi.chainRank).not.toHaveBeenCalled();
   });
 
-  it('rejects --timeframe-days 0 on historical-token-screener (API requires at least 1)', async () => {
+  it('rejects --days 0 on historical-token-screener (API requires at least 1)', async () => {
     mockApi = makeMockApi();
     await expect(cmds.research(['historical-token-screener'], mockApi, {}, {
-      'timeframe-days': '0', 'to-date': TO,
-    })).rejects.toThrow('--timeframe-days must be a positive integer');
+      days: '0', 'to-date': TO,
+    })).rejects.toThrow('--days must be a positive integer');
     expect(mockApi.researchTokenScreener).not.toHaveBeenCalled();
   });
 
@@ -541,14 +541,14 @@ describe('buildResearchCommands handler', () => {
   it('rejects an invalid --page on historical subcommands', async () => {
     mockApi = makeMockApi();
     await expect(cmds.research(['historical-dex-trades'], mockApi, {}, {
-      'token-address': TOKENS.solana, 'from-date': FROM, 'to-date': TO, page: '0',
+      token: TOKENS.solana, 'from-date': FROM, 'to-date': TO, page: '0',
     })).rejects.toThrow(/--page must be a positive integer/);
   });
 
   it('dispatches smart-money-pnl-leaderboard', async () => {
     mockApi = makeMockApi();
     await cmds.research(['smart-money-pnl-leaderboard'], mockApi, {}, {
-      chains: 'ethereum,solana', 'timeframe-days': '30', page: '2', limit: '5',
+      chains: 'ethereum,solana', days: '30', page: '2', limit: '5',
     });
     expect(mockApi.smartMoneyPnlLeaderboard).toHaveBeenCalledWith(expect.objectContaining({
       chains: ['ethereum', 'solana'],
@@ -567,7 +567,7 @@ describe('buildResearchCommands handler', () => {
   it('rejects an unsupported smart money leaderboard timeframe', async () => {
     mockApi = makeMockApi();
     await expect(cmds.research(['smart-money-pnl-leaderboard'], mockApi, {}, {
-      'timeframe-days': '14',
+      days: '14',
     })).rejects.toThrow(/must be one of: 1, 7, 30, 90, 180/);
     expect(mockApi.smartMoneyPnlLeaderboard).not.toHaveBeenCalled();
   });
@@ -578,16 +578,10 @@ describe('buildResearchCommands handler', () => {
     expect(mockApi.tokenPositionIntelligence).toHaveBeenCalledWith({ tokenAddress: 'BTC' });
   });
 
-  it('dispatches position-intelligence via the --token-address alias', async () => {
-    mockApi = makeMockApi();
-    await cmds.research(['position-intelligence'], mockApi, {}, { 'token-address': 'BTC' });
-    expect(mockApi.tokenPositionIntelligence).toHaveBeenCalledWith({ tokenAddress: 'BTC' });
-  });
-
   it('requires a position-intelligence symbol', async () => {
     mockApi = makeMockApi();
     await expect(cmds.research(['position-intelligence'], mockApi, {}, {}))
-      .rejects.toThrow(/--symbol \(or --token-address\)/);
+      .rejects.toThrow(/Required: --symbol/);
   });
 
   it('rejects an empty or whitespace-only position-intelligence symbol', async () => {
@@ -629,11 +623,11 @@ describe('buildResearchCommands handler', () => {
   it('dispatches historical-token-ohlcv', async () => {
     mockApi = makeMockApi();
     await cmds.research(['historical-token-ohlcv'], mockApi, {}, {
-      'token-address': TOKENS.solana,
+      token: TOKENS.solana,
       chain: 'solana',
       'from-date': FROM,
       'as-of-date': TO,
-      timeframe: '1d',
+      interval: '1d',
       'apply-blacklist-filter': 'false',
     });
     expect(mockApi.researchHistoricalTokenOhlcv).toHaveBeenCalledWith({
@@ -650,11 +644,11 @@ describe('buildResearchCommands handler', () => {
   it('treats a bare --apply-blacklist-filter flag as true', async () => {
     mockApi = makeMockApi();
     await cmds.research(['historical-token-ohlcv'], mockApi, { 'apply-blacklist-filter': true }, {
-      'token-address': TOKENS.solana,
+      token: TOKENS.solana,
       chain: 'solana',
       'from-date': FROM,
       'as-of-date': TO,
-      timeframe: '1d',
+      interval: '1d',
     });
     expect(mockApi.researchHistoricalTokenOhlcv).toHaveBeenCalledWith(
       expect.objectContaining({ applyBlacklistFilter: true })
@@ -663,7 +657,7 @@ describe('buildResearchCommands handler', () => {
 
   it('requires exactly one historical OHLCV snapshot anchor', async () => {
     mockApi = makeMockApi();
-    const options = { 'token-address': TOKENS.solana, 'from-date': FROM, timeframe: '1d' };
+    const options = { token: TOKENS.solana, 'from-date': FROM, interval: '1d' };
     await expect(cmds.research(['historical-token-ohlcv'], mockApi, {}, options))
       .rejects.toThrow(/one of --as-of-date or --as-of-ts/);
     await expect(cmds.research(['historical-token-ohlcv'], mockApi, {}, {
@@ -707,7 +701,7 @@ describe('buildResearchCommands handler', () => {
   it('dispatches historical-dex-trades with token/from-date/to-date wiring', async () => {
     mockApi = makeMockApi();
     await cmds.research(['historical-dex-trades'], mockApi, {}, {
-      'token-address': TOKENS.solana,
+      token: TOKENS.solana,
       'from-date': FROM,
       'to-date': TO,
       chain: 'solana',
@@ -723,7 +717,7 @@ describe('buildResearchCommands handler', () => {
   it('dispatches historical-pnl-leaderboard', async () => {
     mockApi = makeMockApi();
     await cmds.research(['historical-pnl-leaderboard'], mockApi, {}, {
-      'token-address': TOKENS.solana, 'from-date': FROM, 'to-date': TO,
+      token: TOKENS.solana, 'from-date': FROM, 'to-date': TO,
     });
     expect(mockApi.researchPnlLeaderboard).toHaveBeenCalled();
   });
@@ -731,7 +725,7 @@ describe('buildResearchCommands handler', () => {
   it('dispatches historical-token-flow-summary', async () => {
     mockApi = makeMockApi();
     await cmds.research(['historical-token-flow-summary'], mockApi, {}, {
-      'token-address': TOKENS.solana, 'from-date': FROM, 'to-date': TO,
+      token: TOKENS.solana, 'from-date': FROM, 'to-date': TO,
     });
     expect(mockApi.researchTokenFlowSummary).toHaveBeenCalled();
   });
@@ -739,7 +733,7 @@ describe('buildResearchCommands handler', () => {
   it('dispatches historical-token-quant-scores with --as-of-date', async () => {
     mockApi = makeMockApi();
     await cmds.research(['historical-token-quant-scores'], mockApi, {}, {
-      'token-address': TOKENS.solana, 'as-of-date': AS_OF,
+      token: TOKENS.solana, 'as-of-date': AS_OF,
     });
     expect(mockApi.researchTokenQuantScores).toHaveBeenCalledWith(expect.objectContaining({
       asOfDate: AS_OF,
@@ -749,7 +743,7 @@ describe('buildResearchCommands handler', () => {
   it('dispatches historical-top-holders with --as-of-date', async () => {
     mockApi = makeMockApi();
     await cmds.research(['historical-top-holders'], mockApi, {}, {
-      'token-address': TOKENS.solana, 'as-of-date': AS_OF,
+      token: TOKENS.solana, 'as-of-date': AS_OF,
     });
     expect(mockApi.researchTopHolders).toHaveBeenCalledWith(expect.objectContaining({
       asOfDate: AS_OF,
@@ -759,7 +753,7 @@ describe('buildResearchCommands handler', () => {
   it('dispatches historical-who-bought-sold and passes --buy-or-sell', async () => {
     mockApi = makeMockApi();
     await cmds.research(['historical-who-bought-sold'], mockApi, {}, {
-      'token-address': TOKENS.solana, 'from-date': FROM, 'to-date': TO, 'buy-or-sell': 'SELL',
+      token: TOKENS.solana, 'from-date': FROM, 'to-date': TO, 'buy-or-sell': 'SELL',
     });
     expect(mockApi.researchWhoBoughtSold).toHaveBeenCalledWith(expect.objectContaining({
       buyOrSell: 'SELL',
@@ -777,10 +771,10 @@ describe('buildResearchCommands handler', () => {
     }));
   });
 
-  it('dispatches historical-token-screener with --timeframe-days and --to-date', async () => {
+  it('dispatches historical-token-screener with --days and --to-date', async () => {
     mockApi = makeMockApi();
     await cmds.research(['historical-token-screener'], mockApi, {}, {
-      'timeframe-days': '30', 'to-date': TO, chains: 'solana',
+      days: '30', 'to-date': TO, chains: 'solana',
     });
     expect(mockApi.researchTokenScreener).toHaveBeenCalledWith(expect.objectContaining({
       chains: ['solana'],
@@ -823,34 +817,34 @@ describe('buildResearchCommands handler', () => {
     }));
   });
 
-  it('errors when required token-address is missing', async () => {
+  it('errors when required --token is missing', async () => {
     mockApi = makeMockApi();
     await expect(cmds.research(['historical-dex-trades'], mockApi, {}, { 'from-date': FROM, 'to-date': TO }))
-      .rejects.toThrow(/token-address/);
+      .rejects.toThrow(/Required: --token/);
   });
 
   it('errors when required from-date/to-date are missing on range subcommands', async () => {
     mockApi = makeMockApi();
-    await expect(cmds.research(['historical-dex-trades'], mockApi, {}, { 'token-address': TOKENS.solana }))
+    await expect(cmds.research(['historical-dex-trades'], mockApi, {}, { token: TOKENS.solana }))
       .rejects.toThrow(/from-date/);
   });
 
   it('errors when required --as-of-date is missing on snapshot subcommands', async () => {
     mockApi = makeMockApi();
-    await expect(cmds.research(['historical-top-holders'], mockApi, {}, { 'token-address': TOKENS.solana }))
+    await expect(cmds.research(['historical-top-holders'], mockApi, {}, { token: TOKENS.solana }))
       .rejects.toThrow(/as-of-date/);
   });
 
-  it('errors when --timeframe-days is missing on historical-token-screener', async () => {
+  it('errors when --days is missing on historical-token-screener', async () => {
     mockApi = makeMockApi();
     await expect(cmds.research(['historical-token-screener'], mockApi, {}, { chains: 'solana' }))
-      .rejects.toThrow(/timeframe-days/);
+      .rejects.toThrow(/--days/);
   });
 
   it('rejects --page/--limit on historical-token-flow-summary', async () => {
     mockApi = makeMockApi();
     await expect(cmds.research(['historical-token-flow-summary'], mockApi, {}, {
-      'token-address': TOKENS.solana, 'from-date': FROM, 'to-date': TO, page: 2, limit: 5,
+      token: TOKENS.solana, 'from-date': FROM, 'to-date': TO, page: 2, limit: 5,
     })).rejects.toThrow(/does not support/);
   });
 

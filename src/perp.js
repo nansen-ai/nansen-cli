@@ -429,7 +429,7 @@ async function buildScreenSignSubmit(apiInstance, prepared, ctx) {
         log(`  Filled${tag}: ${o.totalSz} @ ${o.avgPx}  (${oidText})`);
       } else {
         log(`  Resting order${tag}: ${oidText}`);
-        if (coin && o.oidSafe) log(`  Cancel:  nansen perp cancel --coin ${coin} --oid ${o.oid}`);
+        if (coin && o.oidSafe) log(`  Cancel:  nansen perp cancel --symbol ${coin} --oid ${o.oid}`);
       }
     }
   } else if (result.response) {
@@ -652,11 +652,16 @@ function assertOrderType(raw) {
   return type;
 }
 
-// Resolve the asset symbol from --coin (or its --symbol alias), rejecting a
+// Resolve the asset symbol from --symbol (or its --coin alias), rejecting a
 // duplicated flag. Returns the upper-cased symbol, or '' when neither is set.
 function resolveCoin(options) {
-  const raw = scalar(options.coin, 'coin') ?? scalar(options.symbol, 'symbol');
-  return String(raw ?? '').toUpperCase();
+  const symbol = scalar(options.symbol, 'symbol');
+  const coin = scalar(options.coin, 'coin');
+  // `--symbol ETH --coin BTC` names the market twice; never pick one silently.
+  if (symbol !== undefined && coin !== undefined) {
+    throw invalid(`--symbol ${symbol} and --coin ${coin} are the same input (--coin is an alias of --symbol); pass one.`);
+  }
+  return String(symbol ?? coin ?? '').toUpperCase();
 }
 
 // ── Preview + confirmation (--dry-run / --yes) ───────────────────────
@@ -876,10 +881,10 @@ export function buildPerpCommands(deps = {}) {
 
       if (!coin || !options.side || options.size === undefined || options.price === undefined) {
         throw new CommandError(
-`Usage: nansen perp order --coin <symbol> --side <buy|sell> --size <amount> --price <price> [options]
+`Usage: nansen perp order --symbol <symbol> --side <buy|sell> --size <amount> --price <price> [options]
 
 OPTIONS:
-  --coin          Asset symbol (BTC, ETH, etc.)
+  --symbol        Asset symbol (BTC, ETH, etc.; alias --coin)
   --side          buy (long) or sell (short)
   --size          Position size in base asset units
   --price         Limit price (or mark price for market orders)
@@ -1011,7 +1016,7 @@ OPTIONS:
       const walletName = scalar(options.wallet, 'wallet');
 
       if (!coin || options.oid === undefined) {
-        throw new CommandError('Usage: nansen perp cancel --coin <symbol> --oid <orderId> [--wallet <name>] [--dry-run] [--yes]', 'MISSING_PARAM');
+        throw new CommandError('Usage: nansen perp cancel --symbol <symbol> --oid <orderId> [--wallet <name>] [--dry-run] [--yes]', 'MISSING_PARAM');
       }
 
       const oid = parsePositiveInt(options.oid, 'oid');
@@ -1067,7 +1072,7 @@ OPTIONS:
 
       if (!coin || options.size === undefined || options.price === undefined || !options.side) {
         throw new CommandError(
-`Usage: nansen perp close --coin <symbol> --size <amount> --price <markPrice> --side <buy|sell> [options]
+`Usage: nansen perp close --symbol <symbol> --size <amount> --price <markPrice> --side <buy|sell> [options]
 
   --side    buy (closing a short) or sell (closing a long)
   --slippage  Slippage tolerance (default 0.03 = 3%)
@@ -1186,7 +1191,7 @@ OPTIONS:
       const walletName = scalar(options.wallet, 'wallet');
 
       if (!coin || options.leverage === undefined) {
-        throw new CommandError('Usage: nansen perp leverage --coin <symbol> --leverage <n> [--margin-type cross|isolated] [--wallet <name>] [--dry-run] [--yes]', 'MISSING_PARAM');
+        throw new CommandError('Usage: nansen perp leverage --symbol <symbol> --leverage <n> [--margin-type cross|isolated] [--wallet <name>] [--dry-run] [--yes]', 'MISSING_PARAM');
       }
 
       const marginType = assertMarginType(options['margin-type']);
