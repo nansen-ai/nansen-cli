@@ -292,10 +292,12 @@ For limit orders, `--dry-run` is a non-consuming intent preview built from local
 
 When stdin is an interactive terminal, each guarded command prints its plan and asks for confirmation first (`Broadcast this transaction?`, `Create this limit order?`, or `Cancel this limit order?`); anything but `y`/`yes` aborts with exit code 1 and nothing signed. `--yes`, `-y`, or `NANSEN_YES=1` skips only the question. **When stdin is not a terminal — agents, CI, pipes — nothing changes: the command proceeds without prompting**, and `--yes` is accepted as a no-op so it is always safe to pass.
 
+To make an agent stop for your go-ahead, set `NANSEN_REQUIRE_CONFIRM=1` in its environment. Then, when stdin is not a terminal, every guarded command (`trade execute`, `bridge execute`, `trade limit-order create`/`cancel`, `perp order`/`close`/`cancel`/`leverage`) run without `--yes` or `NANSEN_YES=1` fails with exit code 1 and code `CONFIRMATION_REQUIRED` before it makes any request or signs anything. `--dry-run` still previews. Unset (the default), behaviour is unchanged.
+
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | Broadcast succeeded, or the dry run completed |
-| `1` | Declined at the confirmation prompt, or the execution failed |
+| `1` | Declined at the confirmation prompt, refused by `NANSEN_REQUIRE_CONFIRM`, or the execution failed |
 
 Amounts are in base units (lamports, wei) by default — use `--amount-unit token|usd|percent` for friendlier inputs. Common symbols (`SOL`, `ETH`, `USDC`, `USDT`) resolve automatically. A wallet is required — set one with `nansen wallet default <name>`.
 

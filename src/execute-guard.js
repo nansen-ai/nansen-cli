@@ -15,6 +15,11 @@
  * the command proceeds without asking, so no automated workflow can hang on a
  * question nobody is there to answer. `--yes` is still accepted there and is
  * simply a no-op. Declining the prompt exits 1 with nothing signed.
+ *
+ * Opt-in stop point: an operator who wants their agent to pause before moving
+ * funds sets `NANSEN_REQUIRE_CONFIRM=1`. With it set and stdin not a terminal,
+ * a run without --yes / NANSEN_YES fails with CONFIRMATION_REQUIRED before the
+ * command does anything else; --dry-run still previews. Unset, nothing changes.
  */
 
 import { CommandError } from './api.js';
@@ -23,21 +28,49 @@ import { CommandError } from './api.js';
 // empty string) leaves the confirmation in place.
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
-export function isYesEnvSet(env = process.env) {
-  const raw = env?.NANSEN_YES;
+function isTruthyEnv(raw) {
   return typeof raw === 'string' && TRUTHY_ENV_VALUES.has(raw.trim().toLowerCase());
+}
+
+export function isYesEnvSet(env = process.env) {
+  return isTruthyEnv(env?.NANSEN_YES);
+}
+
+// Same spellings as NANSEN_YES. Anything else keeps today's behaviour.
+export function isRequireConfirmEnvSet(env = process.env) {
+  return isTruthyEnv(env?.NANSEN_REQUIRE_CONFIRM);
+}
+
+function confirmationRequiredError() {
+  return new CommandError(
+    'Confirmation required: NANSEN_REQUIRE_CONFIRM is set and stdin is not a terminal, so nothing was signed or broadcast. '
+      + 'Pass --yes (or set NANSEN_YES=1) to proceed, or --dry-run to preview.',
+    'CONFIRMATION_REQUIRED',
+  );
 }
 
 /**
  * Read the guard's inputs off the parsed flags. `-y` arrives as `flags.y`
  * because single-dash tokens are always parsed as valueless flags.
+ *
+ * Every guarded command calls this first, so the NANSEN_REQUIRE_CONFIRM refusal
+ * is thrown here, before any API request. Those requests can sign an x402
+ * payment on a 402 response, so refusing only at guardExecution could spend
+ * funds and then claim nothing was signed.
  */
 export function resolveExecuteGuard(flags = {}, { env = process.env, isTTY = false } = {}) {
-  return {
+  const guard = {
     dryRun: Boolean(flags['dry-run']),
     assumeYes: Boolean(flags.yes || flags.y) || isYesEnvSet(env),
     isTTY: Boolean(isTTY),
+    requireConfirm: isRequireConfirmEnvSet(env),
   };
+  if (needsConfirmationOffTerminal(guard)) throw confirmationRequiredError();
+  return guard;
+}
+
+function needsConfirmationOffTerminal({ dryRun, assumeYes, isTTY, requireConfirm }) {
+  return Boolean(requireConfirm) && !dryRun && !assumeYes && !isTTY;
 }
 
 /**
@@ -70,6 +103,7 @@ export async function guardExecution({
   dryRun = false,
   assumeYes = false,
   isTTY = false,
+  requireConfirm = false,
   promptFn,
   log = () => {},
   confirmationLog = log,
@@ -83,6 +117,12 @@ export async function guardExecution({
     log(plan);
     for (const line of dryRunNotice) log(line);
     return false;
+  }
+
+  // Backstop for callers that build the guard themselves; resolveExecuteGuard
+  // normally refuses this case before the command makes any request.
+  if (needsConfirmationOffTerminal({ dryRun, assumeYes, isTTY, requireConfirm })) {
+    throw confirmationRequiredError();
   }
 
   // Non-interactive stdin (agents, CI, pipes): unchanged, deterministic, never

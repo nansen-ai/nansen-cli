@@ -122,7 +122,10 @@ CLI output so the user can verify on Solscan.
 `create` and `cancel` accept `--dry-run` (print the plan and exit 0; no API
 request, no signature, nothing submitted) and `--yes`/`-y` (skip the
 confirmation prompt, same as `NANSEN_YES=1`). The prompt only appears in an
-interactive terminal; agents and CI run unprompted. Use `--dry-run` to show the
+interactive terminal; agents and CI run unprompted, unless the user set
+`NANSEN_REQUIRE_CONFIRM=1`: then a non-terminal run without `--yes` fails with
+`CONFIRMATION_REQUIRED` before any request, so show the `--dry-run` plan and
+re-run with `--yes` only after the user approves. Use `--dry-run` to show the
 user what will be created or cancelled before running it for real.
 
 ### Update

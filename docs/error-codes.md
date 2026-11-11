@@ -185,6 +185,7 @@ A connection failure is `NETWORK_ERROR` and never `UNAUTHORIZED`: the CLI could 
 | `RPC_JSON_ERROR` | The RPC answered with a body that is not JSON. | No |
 | `RPC_NETWORK_ERROR` | The CLI could not reach the RPC. | Yes |
 | `CONFIRMATION_DECLINED` | The confirmation prompt was declined; nothing was signed. | No |
+| `CONFIRMATION_REQUIRED` | NANSEN_REQUIRE_CONFIRM is set and stdin is not a terminal; nothing was signed. Pass --yes to proceed or --dry-run to preview. | No |
 | `CONFIRMATION_UNAVAILABLE` | Confirmation is required but no terminal is available. Pass --yes to confirm. | No |
 
 ### Bridge

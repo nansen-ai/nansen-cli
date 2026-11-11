@@ -416,6 +416,34 @@ describe('perp --dry-run', () => {
   });
 });
 
+describe('perp NANSEN_REQUIRE_CONFIRM (stdin is not a terminal)', () => {
+  it.each([
+    ['order', ORDER],
+    ['close', CLOSE],
+    ['cancel', CANCEL],
+    ['leverage', LEVERAGE],
+  ])('%s: refuses with CONFIRMATION_REQUIRED before any request or signature', async (name, options) => {
+    const promptFn = vi.fn();
+    const { cmds } = capture({ isTTY: false, promptFn, env: { NANSEN_REQUIRE_CONFIRM: '1' } });
+    const api = mockApi({ positions: LONG_ETH });
+
+    const err = await cmds[name]([], api, {}, options).catch(e => e);
+
+    expect(err.code).toBe('CONFIRMATION_REQUIRED');
+    expect(promptFn).not.toHaveBeenCalled();
+    // No API request at all: any of them could pay for itself via x402.
+    expect(api.request).not.toHaveBeenCalled();
+    expect(exportWallet).not.toHaveBeenCalled();
+    expectNothingSigned();
+  });
+
+  it('--yes still submits', async () => {
+    const { cmds } = capture({ isTTY: false, env: { NANSEN_REQUIRE_CONFIRM: '1' } });
+    await cmds.leverage([], mockApi(), { yes: true }, LEVERAGE);
+    expect(submitExchange).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('perp confirmation prompt (stdin is a terminal)', () => {
   it.each([
     ['order', ORDER, 'Submit this order to Hyperliquid?'],

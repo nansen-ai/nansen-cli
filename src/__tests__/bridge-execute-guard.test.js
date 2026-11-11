@@ -371,6 +371,48 @@ describe('bridge execute --dry-run / --yes', () => {
     expect(logs.join('\n')).not.toContain('Bridge plan');
   });
 
+  it('NANSEN_REQUIRE_CONFIRM refuses a non-TTY execute before any request or signature', async () => {
+    const quoteId = writeQuote('bridge-require-confirm');
+    const cmds = buildBridgeCommands({
+      log: () => {}, promptFn: vi.fn(), isTTY: false, env: { NANSEN_REQUIRE_CONFIRM: '1' },
+    });
+
+    await expect(cmds.execute([], api, {}, { quote: quoteId, wallet: 'w' }))
+      .rejects.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+
+    // No screening request either: it could pay for itself via x402.
+    expect(api.request).not.toHaveBeenCalled();
+    expect(exportWallet).not.toHaveBeenCalled();
+    expect(signEvmTransaction).not.toHaveBeenCalled();
+    expect(sendCalls()).toHaveLength(0);
+    expect(readQuote(quoteId).executedAt).toBeUndefined();
+  });
+
+  it('NANSEN_REQUIRE_CONFIRM with NANSEN_YES broadcasts off a terminal', async () => {
+    allowBroadcast();
+    const quoteId = writeQuote('bridge-require-confirm-yes');
+    const cmds = buildBridgeCommands({
+      log: () => {}, promptFn: vi.fn(), isTTY: false, env: { NANSEN_REQUIRE_CONFIRM: '1', NANSEN_YES: '1' },
+    });
+
+    await cmds.execute([], api, {}, { quote: quoteId, wallet: 'w' });
+
+    expect(sendCalls()).toHaveLength(1);
+  });
+
+  it('NANSEN_REQUIRE_CONFIRM still allows a non-TTY --dry-run', async () => {
+    const quoteId = writeQuote('bridge-require-confirm-dry-run');
+    const logs = [];
+    const cmds = buildBridgeCommands({
+      log: m => logs.push(m), promptFn: vi.fn(), isTTY: false, env: { NANSEN_REQUIRE_CONFIRM: '1' },
+    });
+
+    await cmds.execute([], api, { 'dry-run': true }, { quote: quoteId, wallet: 'w' });
+
+    expect(logs.join('\n')).toContain('DRY RUN — nothing was broadcast');
+    expect(sendCalls()).toHaveLength(0);
+  });
+
   it('treats NANSEN_YES=1 like --yes on a terminal', async () => {
     allowBroadcast();
     const quoteId = writeQuote('bridge-env-yes');
