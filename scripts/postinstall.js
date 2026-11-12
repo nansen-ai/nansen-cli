@@ -4,7 +4,7 @@
  * Post-install onboarding for nansen-cli.
  *
  * Runs after `npm install -g nansen-cli` and offers two optional steps:
- *   1. Install the Nansen AI coding skill (`npx skills add nansen-ai/nansen-cli`)
+ *   1. Install the Nansen AI coding skills (prints `npx -y skills add nansen-ai/nansen-cli --skill '*' -y`)
  *   2. Check account status to verify the effective credential (0 credits)
  *
  * Non-interactive environments (CI, piped stdin) get a one-liner tip instead.
@@ -27,6 +27,9 @@ const CYAN = "\x1b[36m";
 const RESET = "\x1b[0m";
 
 const SKILL_REPO = "nansen-ai/nansen-cli";
+// Non-interactive: the first -y skips npx's own install prompt, --skill '*' -y
+// skips the skills picker. Agents cannot drive the picker.
+const SKILL_INSTALL_CMD = `npx -y skills add ${SKILL_REPO} --skill '*' -y`;
 const TEST_QUERY = ["account"];
 const TEST_QUERY_DISPLAY = "nansen account";
 
@@ -97,7 +100,7 @@ async function installSkill() {
   }
 
   if (!hasNpx()) {
-    log(`${DIM}Tip: Run 'npx skills add ${SKILL_REPO}' to install the Nansen AI coding skill.${RESET}`);
+    log(`${DIM}Tip: Run ${SKILL_INSTALL_CMD} to install the Nansen AI coding skills.${RESET}`);
     return;
   }
 
@@ -106,14 +109,15 @@ async function installSkill() {
   const answer = await prompt(`  Install Nansen skill for your AI coding agent? [y/N] `);
 
   if (!/^y(es)?$/i.test(answer)) {
-    log(`Skipped. You can install it later with: ${CYAN}npx skills add ${SKILL_REPO}${RESET}`);
+    log(`Skipped. You can install it later with: ${CYAN}${SKILL_INSTALL_CMD}${RESET}`);
     return;
   }
 
   log(`Installing Nansen skill...`);
+  log(`In the picker, space selects a skill and enter confirms.`);
   const ok = await runCommand(...npxInvocation(["-y", "skills", "add", SKILL_REPO]));
   if (!ok) {
-    log(`${YELLOW}Skill installation failed. You can retry with: npx skills add ${SKILL_REPO}${RESET}`);
+    log(`${YELLOW}Skill installation failed. You can retry with: ${SKILL_INSTALL_CMD}${RESET}`);
   }
 }
 
@@ -170,7 +174,7 @@ export async function main() {
   if (!hasTTY()) {
     log(`${BOLD}Nansen CLI installed!${RESET}`);
     log();
-    log(`Tip: Run '${CYAN}npx skills add ${SKILL_REPO}${RESET}' to install the Nansen AI coding skill.`);
+    log(`Tip: Run ${CYAN}${SKILL_INSTALL_CMD}${RESET} to install the Nansen AI coding skills.`);
     log(`Tip: Run '${CYAN}nansen login${RESET}' for browser approval, or use NANSEN_API_KEY directly.`);
     log(`Tip: To trade, first create a wallet with '${CYAN}nansen wallet create${RESET}', then quote with '${CYAN}nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000${RESET}' and execute with '${CYAN}nansen trade execute --quote <id>${RESET}'.`);
     return;
