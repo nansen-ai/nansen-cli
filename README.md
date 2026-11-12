@@ -11,8 +11,10 @@ Use it for both analytics and execution: `nansen research ...` returns structure
 
 ```bash
 npm install -g nansen-cli
-npx skills add nansen-ai/nansen-cli  # load agent skill files
+npx -y skills add nansen-ai/nansen-cli --skill "*" -y  # install every agent skill, no prompts
 ```
+
+Without `--skill "*" -y`, `skills add` opens a picker: space selects a skill, enter confirms.
 
 ## Feedback
 

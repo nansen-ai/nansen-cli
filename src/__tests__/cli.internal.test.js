@@ -2156,6 +2156,12 @@ describe('HELP', () => {
     expect(HELP).toContain('DO_NOT_TRACK=1');
   });
 
+  // The plain `skills add` opens a multi-select picker that agents cannot drive.
+  it('shows the non-interactive skills install command', () => {
+    const skillsLine = HELP.split('\n').find(line => line.trim().startsWith('Skills:'));
+    expect(skillsLine).toContain('npx -y skills add nansen-ai/nansen-cli --skill "*" -y');
+  });
+
   it('gets a new user started with login, research and a trade quote', () => {
     const start = HELP.split('GET STARTED:')[1].split('\n\n')[0];
     expect(start).toContain('nansen login');

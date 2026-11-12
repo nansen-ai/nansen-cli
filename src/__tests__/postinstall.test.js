@@ -10,6 +10,7 @@ vi.mock('readline', () => ({ createInterface: () => {
 } }));
 vi.mock('child_process', () => ({ execFileSync: controls.exec, spawn: controls.spawn }));
 import { main } from '../../scripts/postinstall.js';
+const INSTALL_CMD = 'npx -y skills add nansen-ai/nansen-cli --skill "*" -y';
 const config = () => path.join(process.env.HOME, '.nansen/config.json');
 let output;
 const ttyDescriptors = [process.stdin, process.stderr].map(stream => Object.getOwnPropertyDescriptor(stream, 'isTTY'));
@@ -40,6 +41,7 @@ describe('offline postinstall selection with shared resolver', () => {
     if (answer === 'y' || answer === 'YES') {
       const args = ['-y', 'skills', 'add', 'nansen-ai/nansen-cli'];
       expect(controls.spawn).toHaveBeenCalledTimes(1);
+      expect(output).toContain('In the picker, space selects a skill and enter confirms.');
       expect(controls.spawn).toHaveBeenCalledWith(
         process.platform === 'win32' ? 'cmd.exe' : 'npx',
         process.platform === 'win32' ? ['/c', 'npx', ...args] : args,
@@ -47,7 +49,7 @@ describe('offline postinstall selection with shared resolver', () => {
       );
     } else {
       expect(controls.spawn).not.toHaveBeenCalled();
-      expect(output).toContain('Skipped. You can install it later');
+      expect(output).toContain(`Skipped. You can install it later with: \x1b[36m${INSTALL_CMD}`);
     }
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
@@ -93,9 +95,19 @@ describe('offline postinstall selection with shared resolver', () => {
     expect(controls.prompts).toEqual([]); expect(controls.spawn).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
+  it('offers the non-interactive install command when the install fails or npx is missing', async () => {
+    fs.rmSync(path.join(process.env.HOME, '.claude/skills/nansen-cli'), { recursive: true });
+    controls.answers.push('y');
+    controls.spawn.mockImplementationOnce(() => { const child = new EventEmitter(); queueMicrotask(() => child.emit('close', 1)); return child; });
+    await main();
+    expect(output).toContain(`Skill installation failed. You can retry with: ${INSTALL_CMD}`);
+    output = ''; controls.prompts = []; controls.exec.mockImplementation(() => { throw new Error('npx unavailable'); });
+    await main();
+    expect(output).toContain(`Tip: Run ${INSTALL_CMD} to install`);
+  });
   it('preserves local-install and non-TTY guards', async () => {
     vi.stubEnv('npm_config_global', 'false'); await main(); expect(output).toBe('');
     vi.stubEnv('npm_config_global', 'true'); tty(process.stdin, false);
-    await main(); expect(output).toContain('nansen login'); expect(controls.prompts).toEqual([]); expect(controls.spawn).not.toHaveBeenCalled();
+    await main(); expect(output).toContain('nansen login'); expect(output).toContain(`Tip: Run \x1b[36m${INSTALL_CMD}\x1b[0m to install`); expect(controls.prompts).toEqual([]); expect(controls.spawn).not.toHaveBeenCalled();
   });
 });
