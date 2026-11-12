@@ -608,6 +608,8 @@ Every failure exits 1. The full list of codes is in [docs/error-codes.md](docs/e
 
 Research commands check their options before calling the API: an unknown or ignored option, a missing required option, a bad value or a chain the endpoint does not accept fails locally with the option named. `nansen schema <command>` lists each command's options and `supportedChains`.
 
+`nansen research profiler trace` fails with the original API error if the root lookup fails, rather than reporting an empty graph as a success. Once the root lookup succeeds, later lookups remain best-effort: a failed branch is skipped while traversal continues through the others.
+
 **Error metadata.** When the API reports them, `details` carries:
 
 | Field | Meaning |
