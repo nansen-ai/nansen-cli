@@ -2637,6 +2637,18 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
   return lines.join('\n');
 }
 
+// A research command run without --chain/--chains uses its schema default
+// chain. Say so in `_meta.defaults.chain`, so an agent that left the chain out
+// knows which chain the data is for. The schema default is the chain the
+// handler sends (a test checks this). Only plain-object results get it, like
+// `_meta.search`; arrays, --fields, --stream, --table and CSV are unchanged.
+export function withDefaultChainMeta(result, researchCommand, options) {
+  const chain = researchCommand?.leaf?.options?.chain?.default;
+  if (chain === undefined || options.chain !== undefined || options.chains !== undefined) return result;
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+  return { ...result, _meta: { ...result._meta, defaults: { ...result._meta?.defaults, chain } } };
+}
+
 function emitResponseMetadata(api, errorOutput) {
   if (!api) return;
   const responseMeta = api.paginatedResponseMeta || api.lastResponseMeta;
@@ -3083,6 +3095,8 @@ export async function runCLI(rawArgs, deps = {}) {
         returns: researchCommand?.leaf?.returns,
       });
       result = filterFields(result, fields);
+    } else if (!stream && !table && !csv) {
+      result = withDefaultChainMeta(result, researchCommand, options);
     }
 
     // Alerts list with --table uses custom table format
