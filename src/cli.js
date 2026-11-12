@@ -1183,7 +1183,7 @@ MORE HELP:
   nansen help <topic>       One topic (see "help" above)
   nansen schema             JSON schema for every command
   Docs: https://docs.nansen.ai
-  Skills: npx -y skills add nansen-ai/nansen-cli --skill '*' -y (agent docs per command group)
+  Skills: npx -y skills add nansen-ai/nansen-cli --skill "*" -y (agent docs per command group)
 
 Telemetry: anonymous usage stats. Details: nansen help telemetry. Disable: DO_NOT_TRACK=1
 `;

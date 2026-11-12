@@ -10,7 +10,7 @@ vi.mock('readline', () => ({ createInterface: () => {
 } }));
 vi.mock('child_process', () => ({ execFileSync: controls.exec, spawn: controls.spawn }));
 import { main } from '../../scripts/postinstall.js';
-const INSTALL_CMD = "npx -y skills add nansen-ai/nansen-cli --skill '*' -y";
+const INSTALL_CMD = 'npx -y skills add nansen-ai/nansen-cli --skill "*" -y';
 const config = () => path.join(process.env.HOME, '.nansen/config.json');
 let output;
 const ttyDescriptors = [process.stdin, process.stderr].map(stream => Object.getOwnPropertyDescriptor(stream, 'isTTY'));

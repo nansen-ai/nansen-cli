@@ -4,7 +4,7 @@
  * Post-install onboarding for nansen-cli.
  *
  * Runs after `npm install -g nansen-cli` and offers two optional steps:
- *   1. Install the Nansen AI coding skills (prints `npx -y skills add nansen-ai/nansen-cli --skill '*' -y`)
+ *   1. Install the Nansen AI coding skills (prints `npx -y skills add nansen-ai/nansen-cli --skill "*" -y`)
  *   2. Check account status to verify the effective credential (0 credits)
  *
  * Non-interactive environments (CI, piped stdin) get a one-liner tip instead.
@@ -27,9 +27,10 @@ const CYAN = "\x1b[36m";
 const RESET = "\x1b[0m";
 
 const SKILL_REPO = "nansen-ai/nansen-cli";
-// Non-interactive: the first -y skips npx's own install prompt, --skill '*' -y
-// skips the skills picker. Agents cannot drive the picker.
-const SKILL_INSTALL_CMD = `npx -y skills add ${SKILL_REPO} --skill '*' -y`;
+// Non-interactive: the first -y skips npx's own install prompt, --skill "*" -y
+// skips the skills picker. Agents cannot drive the picker. Double quotes, not
+// single: Windows cmd.exe keeps single quotes and would pass a literal '*'.
+const SKILL_INSTALL_CMD = `npx -y skills add ${SKILL_REPO} --skill "*" -y`;
 const TEST_QUERY = ["account"];
 const TEST_QUERY_DISPLAY = "nansen account";
 
