@@ -13,7 +13,7 @@
 
 import { createInterface } from "readline";
 import { execFileSync, spawn } from "child_process";
-import { existsSync, realpathSync } from "fs";
+import { existsSync, readdirSync, realpathSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -64,13 +64,31 @@ function hasNpx() {
   }
 }
 
+// `skills add nansen-ai/nansen-cli` writes one directory per skill, named after
+// the skill, into ~/.agents/skills and links it into each agent's skills
+// directory (~/.claude/skills for Claude Code). Match the skill names shipped in
+// this package rather than a `nansen-` prefix, which unrelated skills also use.
+// The legacy names cover installs from before the skills were split.
+const PACKAGED_SKILLS_DIR = join(__dirname, "..", "skills");
+const LEGACY_SKILL_NAMES = ["nansen-cli", "nansen-ai--nansen-cli"];
+
+function packagedSkillNames() {
+  try {
+    return readdirSync(PACKAGED_SKILLS_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
 function isSkillInstalled() {
   const home = process.env.HOME || process.env.USERPROFILE || "";
-  const locations = [
-    join(home, ".claude", "skills", "nansen-cli"),
-    join(home, ".claude", "skills", "nansen-ai--nansen-cli"),
-  ];
-  return locations.some((loc) => existsSync(loc));
+  const roots = [join(home, ".agents", "skills"), join(home, ".claude", "skills")];
+  const names = packagedSkillNames();
+  const installed = roots.some((root) => names.some((name) => existsSync(join(root, name, "SKILL.md"))));
+  const legacy = LEGACY_SKILL_NAMES.some((name) => existsSync(join(home, ".claude", "skills", name)));
+  return installed || legacy;
 }
 
 function prompt(question) {
@@ -175,7 +193,9 @@ export async function main() {
   if (!hasTTY()) {
     log(`${BOLD}Nansen CLI installed!${RESET}`);
     log();
-    log(`Tip: Run ${CYAN}${SKILL_INSTALL_CMD}${RESET} to install the Nansen AI coding skills.`);
+    if (!isSkillInstalled()) {
+      log(`Tip: Run ${CYAN}${SKILL_INSTALL_CMD}${RESET} to install the Nansen AI coding skills.`);
+    }
     log(`Tip: Run '${CYAN}nansen login${RESET}' for browser approval, or use NANSEN_API_KEY directly.`);
     log(`Tip: To trade, first create a wallet with '${CYAN}nansen wallet create${RESET}', then quote with '${CYAN}nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000${RESET}' and execute with '${CYAN}nansen trade execute --quote <id>${RESET}'.`);
     return;
