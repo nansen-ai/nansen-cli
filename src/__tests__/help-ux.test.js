@@ -479,6 +479,27 @@ describe('command-specific help', () => {
     expect(log.mock.calls.join('\n')).toMatch(/^ {2}--reveal +Show full channel URLs/m);
   });
 
+  it('lists every alerts list filter from its help in the schema', async () => {
+    const log = vi.fn();
+    await runCLI(['alerts', 'list', '--help'], { output: vi.fn(), log, exit: vi.fn() });
+    const optionsBlock = log.mock.calls.join('\n').split(/^OPTIONS:$/m)[1].split(/^[A-Z]+:$/m)[0];
+    const documented = [...optionsBlock.matchAll(/--([a-z][a-z0-9-]*)/g)]
+      .map(m => m[1])
+      .filter(name => name !== 'table' && name !== 'pretty');
+    // Guards against a help-format change making the check pass vacuously.
+    expect(documented.length).toBeGreaterThan(5);
+
+    const schemaOptions = SCHEMA.commands.alerts.subcommands.list.options;
+    const known = Object.entries(schemaOptions).flatMap(([name, opt]) => [name, ...(opt.aliases ?? [])]);
+    for (const name of documented) expect(known, `--${name}`).toContain(name);
+
+    const types = { type: 'string', enabled: 'boolean', disabled: 'boolean', chain: 'string', limit: 'number', offset: 'number' };
+    for (const [name, type] of Object.entries(types)) {
+      expect(schemaOptions[name]?.type, `--${name}`).toBe(type);
+      expect(schemaOptions[name]?.description, `--${name}`).toBeTruthy();
+    }
+  });
+
   it('exposes quote controls and their units', () => {
     const help = generateSubcommandHelp('trade', 'quote');
     expect(help).toContain('--slippage — Slippage tolerance as a decimal');
