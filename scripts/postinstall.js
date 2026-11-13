@@ -193,7 +193,9 @@ export async function main() {
   if (!hasTTY()) {
     log(`${BOLD}Nansen CLI installed!${RESET}`);
     log();
-    log(`Tip: Run ${CYAN}${SKILL_INSTALL_CMD}${RESET} to install the Nansen AI coding skills.`);
+    if (!isSkillInstalled()) {
+      log(`Tip: Run ${CYAN}${SKILL_INSTALL_CMD}${RESET} to install the Nansen AI coding skills.`);
+    }
     log(`Tip: Run '${CYAN}nansen login${RESET}' for browser approval, or use NANSEN_API_KEY directly.`);
     log(`Tip: To trade, first create a wallet with '${CYAN}nansen wallet create${RESET}', then quote with '${CYAN}nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000${RESET}' and execute with '${CYAN}nansen trade execute --quote <id>${RESET}'.`);
     return;

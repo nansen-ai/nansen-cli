@@ -135,7 +135,11 @@ describe('offline postinstall selection with shared resolver', () => {
   });
   it('preserves local-install and non-TTY guards', async () => {
     vi.stubEnv('npm_config_global', 'false'); await main(); expect(output).toBe('');
-    vi.stubEnv('npm_config_global', 'true'); tty(process.stdin, false);
+    vi.stubEnv('npm_config_global', 'true'); tty(process.stdin, false); removeSkills();
     await main(); expect(output).toContain('nansen login'); expect(output).toContain(`Tip: Run \x1b[36m${INSTALL_CMD}\x1b[0m to install`); expect(controls.prompts).toEqual([]); expect(controls.spawn).not.toHaveBeenCalled();
+  });
+  it('omits the skills install tip in non-TTY mode when the skills are installed', async () => {
+    tty(process.stdin, false);
+    await main(); expect(output).toContain('nansen login'); expect(output).not.toContain(INSTALL_CMD); expect(controls.prompts).toEqual([]); expect(controls.spawn).not.toHaveBeenCalled();
   });
 });
