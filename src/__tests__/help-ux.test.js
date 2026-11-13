@@ -500,6 +500,36 @@ describe('command-specific help', () => {
     }
   });
 
+  it('lists every alerts create option from its help in the create and update schema', async () => {
+    const log = vi.fn();
+    await runCLI(['alerts', 'create', '--help'], { output: vi.fn(), log, exit: vi.fn() });
+    // The help writes a range pair as `--usd-min/max`; expand it to both names.
+    const documented = [...new Set([...log.mock.calls.join('\n').matchAll(/--([a-z][a-z0-9-]*)(\/max)?/g)]
+      .flatMap(([, name, max]) => (max ? [name, name.replace(/-min$/, '-max')] : [name])))];
+    // Guards against a help-format change making the check pass vacuously.
+    expect(documented.length).toBeGreaterThan(40);
+    expect(documented).toContain('netflow-7d-max');
+
+    const { create, update } = SCHEMA.commands.alerts.subcommands;
+    for (const sub of [create, update]) {
+      const known = Object.entries(sub.options).flatMap(([name, opt]) => [name, ...(opt.aliases ?? [])]);
+      for (const name of documented) expect(known, `--${name}`).toContain(name);
+    }
+    // "All create options are accepted" by update.
+    for (const name of Object.keys(create.options)) expect(update.options, `--${name}`).toHaveProperty(name);
+
+    for (const name of ['inflow-1h-min', 'usd-max', 'token-age-min', 'fdv-max']) {
+      expect(create.options[name].type, `--${name}`).toBe('number');
+    }
+    for (const name of ['token', 'subject', 'signature-hash', 'exclude-contract']) {
+      expect(create.options[name].repeatable, `--${name}`).toBe(true);
+    }
+    const alertTypes = /^(sm-token-flows|common-token-transfer|smart-contract-call)(, (sm-token-flows|common-token-transfer|smart-contract-call))*: /;
+    for (const name of ['inflow-1h-min', 'token', 'events', 'usd-min', 'caller']) {
+      expect(create.options[name].description, `--${name}`).toMatch(alertTypes);
+    }
+  });
+
   it('exposes quote controls and their units', () => {
     const help = generateSubcommandHelp('trade', 'quote');
     expect(help).toContain('--slippage — Slippage tolerance as a decimal');
