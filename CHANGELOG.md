@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.6.0
+
+### Minor Changes
+
+- [#828](https://github.com/nansen-ai/nansen-cli/pull/828) [`f143625`](https://github.com/nansen-ai/nansen-cli/commit/f1436251fe7b07314980918f2202bf31fe9e6577) Thanks [@kome12](https://github.com/kome12)! - One flag name per input across commands, with the old names still accepted: `--token` for a token address (historical-\* commands, `alerts list`, `trade limit-order list`; `--token-address` and `--mint` still work), `--days` for a lookback in days (`chain-rank`, `smart-money-pnl-leaderboard`, `historical-token-screener`; `--timeframe-days` still works), `--interval` for the candle size on `token ohlcv` and `historical-token-ohlcv` (`--timeframe` still works), and `--symbol` for a perp market (`perp order/cancel/close/leverage`, and research perp commands now accept `--coin`). Giving one input under two names now fails instead of silently using one of them. `--days` on `token screener`, `info` or `flow-intelligence` now points to `--timeframe`.
+
+- [#829](https://github.com/nansen-ai/nansen-cli/pull/829) [`61520f7`](https://github.com/nansen-ai/nansen-cli/commit/61520f75c23a76ddfb0267a67354ed6ef1a02cfe) Thanks [@kome12](https://github.com/kome12)! - Research commands now report the chain they used when `--chain` is left out, as `_meta.defaults.chain` in the JSON response. `--help` and `nansen schema` now show the default chain each command actually uses: `token indicators` defaults to `solana` (it said `ethereum`), the wallet `profiler` commands default to `all` (they said `ethereum`), and `smart-money-pnl-leaderboard`, `historical-smart-money-balances` and `historical-token-screener` now document their `solana` default. No command's default chain changed.
+
+- [#820](https://github.com/nansen-ai/nansen-cli/pull/820) [`f04ecb2`](https://github.com/nansen-ai/nansen-cli/commit/f04ecb2e2c9fb5e8c763a5d6aabff39d1b280316) Thanks [@kome12](https://github.com/kome12)! - `--help` for every command now prints one line per option with what it does (from the schema), plus its aliases, default, allowed values and whether it is repeatable or required. Research and wallet commands used to list only option names on one `Params` line. `nansen alerts delete --help` now lists `--reveal`.
+
+- [#825](https://github.com/nansen-ai/nansen-cli/pull/825) [`774eb34`](https://github.com/nansen-ai/nansen-cli/commit/774eb342eeea5191ee821b80d1f06ec945269ef0) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - **Removed `nansen web fetch` and the `nansen-web-fetcher` skill.** The Nansen API removed `POST /api/v1/search/web-fetch`, the only endpoint the command called, so it no longer returns results on any CLI version. `nansen web fetch` now fails with the usual unknown-subcommand error listing `search`. There is no replacement command.
+
+  This removes a published subcommand and its `schema.json` entry. It ships as a minor because it was released only after the endpoint was gone, as with the points leaderboard removal (#542).
+
+- [#827](https://github.com/nansen-ai/nansen-cli/pull/827) [`156cfef`](https://github.com/nansen-ai/nansen-cli/commit/156cfefb7d328a1fb566384cc7ca7d68b5a167cd) Thanks [@kome12](https://github.com/kome12)! - Add `NANSEN_REQUIRE_CONFIRM=1`, an opt-in stop point for agents: when stdin is not a terminal, `trade execute`, `bridge execute`, `trade limit-order create`/`cancel` and `perp order`/`close`/`cancel`/`leverage` run without `--yes` (or `NANSEN_YES=1`) now fail with `CONFIRMATION_REQUIRED` before any request or signature. `--dry-run` still previews. Unset, behaviour is unchanged.
+
+- [#821](https://github.com/nansen-ai/nansen-cli/pull/821) [`420e123`](https://github.com/nansen-ai/nansen-cli/commit/420e1235e6c768b23a32104374f12d98cbf0ea19) Thanks [@kome12](https://github.com/kome12)! - Shorter top-level help. `nansen` and `nansen --help` now print a short index (get-started commands, the command list, and where to find more) instead of 82 lines, and make no network call: no credit-cost fetch before printing, and no update check or update notice. The detail moved behind `nansen help <topic>` (`auth`, `options`, `examples`, `chains`, `labels`, `deprecated`, `telemetry`). `nansen help <command> [subcommand]` prints the same as `nansen <command> [subcommand] --help`, and `nansen help <unknown>` now fails with `UNKNOWN_COMMAND` instead of printing the full page.
+
+### Patch Changes
+
+- [#833](https://github.com/nansen-ai/nansen-cli/pull/833) [`b542d75`](https://github.com/nansen-ai/nansen-cli/commit/b542d75538aa3dc6b89f3b29fdd185bb176dc172) Thanks [@kome12](https://github.com/kome12)! - `nansen schema` now lists the `alerts list` filters: `--type`, `--enabled`, `--disabled`, `--chain`, `--limit` and `--offset`.
+
+- [#831](https://github.com/nansen-ai/nansen-cli/pull/831) [`378e96c`](https://github.com/nansen-ai/nansen-cli/commit/378e96ca6adbdb4a2cb2795061034a31b78687b1) Thanks [@kome12](https://github.com/kome12)! - Show a non-interactive skills install command (`npx -y skills add nansen-ai/nansen-cli --skill "*" -y`) in the README, top-level help and install messages. The plain command opens a picker that agents cannot drive; the README and the install prompt now also say that space selects a skill and enter confirms.
+
+- [#832](https://github.com/nansen-ai/nansen-cli/pull/832) [`cac6ee8`](https://github.com/nansen-ai/nansen-cli/commit/cac6ee8d212d73c34acf640a69f085d09a9ec5ff) Thanks [@kome12](https://github.com/kome12)! - The global-install onboarding now recognises Nansen skills installed with `skills add nansen-ai/nansen-cli` (in `~/.agents/skills` or `~/.claude/skills`) and no longer offers to install them again on every upgrade.
+
+- [#822](https://github.com/nansen-ai/nansen-cli/pull/822) [`bd44df9`](https://github.com/nansen-ai/nansen-cli/commit/bd44df90d21e81d01802abe4dec46ee42548c01b) Thanks [@erkancamli](https://github.com/erkancamli)! - x402 auto-payment with a Privy default wallet now tries the payment options cheapest first, like the local wallet and WalletConnect. It used to sign them in the server's order (every EVM option before Solana), so a 402 that listed a pricier option first was paid that one. Privy also no longer signs a Permit2 (`permit2-exact`) or unknown `assetTransferMethod` option as an EIP-3009 authorization the server cannot settle; it skips that option with the reason and tries the next one. A failed Privy wallet lookup now skips only that chain's options, so an option on the other chain can still be paid; when no option can be signed, the lookup error is still reported.
+
+- [#830](https://github.com/nansen-ai/nansen-cli/pull/830) [`da57038`](https://github.com/nansen-ai/nansen-cli/commit/da570383b2d81c2c9e92ba090d8dcccb3f2601de) Thanks [@omerbek](https://github.com/omerbek)! - Report the original API error when a profiler trace's root lookup fails instead of returning a successful empty graph. Keep later branch lookups best-effort after a successful root lookup.
+
 ## 2.5.0
 
 ### Minor Changes
