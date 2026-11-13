@@ -3053,7 +3053,7 @@
             },
             "type": {
               "type": "string",
-              "description": "Only alerts of this type (sm-token-flows, common-token-transfer, smart-contract-call)"
+              "description": "Only alerts of this type (sm-token-flows, common-token-transfer)"
             },
             "enabled": {
               "type": "boolean",
@@ -3094,7 +3094,11 @@
             "type": {
               "type": "string",
               "required": true,
-              "description": "Alert type (e.g. sm-token-flows, common-token-transfer)"
+              "enum": [
+                "sm-token-flows",
+                "common-token-transfer"
+              ],
+              "description": "Alert type: sm-token-flows or common-token-transfer"
             },
             "chains": {
               "type": "string",
@@ -3222,11 +3226,11 @@
             },
             "usd-min": {
               "type": "number",
-              "description": "common-token-transfer, smart-contract-call: Minimum transfer or call value, in USD"
+              "description": "common-token-transfer: Minimum transfer value, in USD"
             },
             "usd-max": {
               "type": "number",
-              "description": "common-token-transfer, smart-contract-call: Maximum transfer or call value, in USD"
+              "description": "common-token-transfer: Maximum transfer value, in USD"
             },
             "token-amount-min": {
               "type": "number",
@@ -3255,31 +3259,6 @@
               "type": "string",
               "repeatable": true,
               "description": "common-token-transfer: Exclude transfers sent to this subject, as type:value"
-            },
-            "signature-hash": {
-              "type": "string",
-              "repeatable": true,
-              "description": "smart-contract-call: Only calls with this function signature hash, e.g. 0xa9059cbb"
-            },
-            "caller": {
-              "type": "string",
-              "repeatable": true,
-              "description": "smart-contract-call: Only calls made by this subject, as type:value"
-            },
-            "exclude-caller": {
-              "type": "string",
-              "repeatable": true,
-              "description": "smart-contract-call: Exclude calls made by this subject, as type:value"
-            },
-            "contract": {
-              "type": "string",
-              "repeatable": true,
-              "description": "smart-contract-call: Only calls to this contract, as type:value"
-            },
-            "exclude-contract": {
-              "type": "string",
-              "repeatable": true,
-              "description": "smart-contract-call: Exclude calls to this contract, as type:value"
             },
             "telegram": {
               "type": "string",
@@ -3334,7 +3313,11 @@
             },
             "type": {
               "type": "string",
-              "description": "Alert type"
+              "enum": [
+                "sm-token-flows",
+                "common-token-transfer"
+              ],
+              "description": "Alert type: sm-token-flows or common-token-transfer. Must match the alert's current type; it cannot be changed"
             },
             "chains": {
               "type": "string",
@@ -3462,11 +3445,11 @@
             },
             "usd-min": {
               "type": "number",
-              "description": "common-token-transfer, smart-contract-call: Minimum transfer or call value, in USD"
+              "description": "common-token-transfer: Minimum transfer value, in USD"
             },
             "usd-max": {
               "type": "number",
-              "description": "common-token-transfer, smart-contract-call: Maximum transfer or call value, in USD"
+              "description": "common-token-transfer: Maximum transfer value, in USD"
             },
             "token-amount-min": {
               "type": "number",
@@ -3495,31 +3478,6 @@
               "type": "string",
               "repeatable": true,
               "description": "common-token-transfer: Exclude transfers sent to this subject, as type:value"
-            },
-            "signature-hash": {
-              "type": "string",
-              "repeatable": true,
-              "description": "smart-contract-call: Only calls with this function signature hash, e.g. 0xa9059cbb"
-            },
-            "caller": {
-              "type": "string",
-              "repeatable": true,
-              "description": "smart-contract-call: Only calls made by this subject, as type:value"
-            },
-            "exclude-caller": {
-              "type": "string",
-              "repeatable": true,
-              "description": "smart-contract-call: Exclude calls made by this subject, as type:value"
-            },
-            "contract": {
-              "type": "string",
-              "repeatable": true,
-              "description": "smart-contract-call: Only calls to this contract, as type:value"
-            },
-            "exclude-contract": {
-              "type": "string",
-              "repeatable": true,
-              "description": "smart-contract-call: Exclude calls to this contract, as type:value"
             },
             "telegram": {
               "type": "string",

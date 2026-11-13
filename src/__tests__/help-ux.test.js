@@ -521,12 +521,18 @@ describe('command-specific help', () => {
     for (const name of ['inflow-1h-min', 'usd-max', 'token-age-min', 'fdv-max']) {
       expect(create.options[name].type, `--${name}`).toBe('number');
     }
-    for (const name of ['token', 'subject', 'signature-hash', 'exclude-contract']) {
+    for (const name of ['token', 'subject', 'exclude-token', 'counterparty']) {
       expect(create.options[name].repeatable, `--${name}`).toBe(true);
     }
-    const alertTypes = /^(sm-token-flows|common-token-transfer|smart-contract-call)(, (sm-token-flows|common-token-transfer|smart-contract-call))*: /;
-    for (const name of ['inflow-1h-min', 'token', 'events', 'usd-min', 'caller']) {
+    const alertTypes = /^(sm-token-flows|common-token-transfer)(, (sm-token-flows|common-token-transfer))*: /;
+    for (const name of ['inflow-1h-min', 'token', 'events', 'usd-min', 'counterparty']) {
       expect(create.options[name].description, `--${name}`).toMatch(alertTypes);
+    }
+    // The retired smart-contract-call type and its flags are gone from help and schema.
+    for (const sub of [create, update]) expect(sub.options.type.enum).toEqual(['sm-token-flows', 'common-token-transfer']);
+    for (const name of ['signature-hash', 'caller', 'contract', 'exclude-caller', 'exclude-contract']) {
+      expect(create.options, `--${name}`).not.toHaveProperty(name);
+      expect(update.options, `--${name}`).not.toHaveProperty(name);
     }
   });
 
