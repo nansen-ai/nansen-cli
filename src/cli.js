@@ -1166,7 +1166,7 @@ COMMANDS:
   agent       Ask the Nansen AI research agent (fast/expert modes)
   alerts      list, create, update, toggle, delete
   feedback    preferences, submit, resume, forget local data, or get a receipt (--json for structured output)
-  web         search, fetch
+  web         search
   mcp         install/uninstall/verify the Nansen MCP server
   account     Check the effective credential, plan, and remaining credits (free)
   auth        status — offline credential source and cached/unverified session metadata
@@ -1266,7 +1266,7 @@ WHAT CACHES:
   every read the CLI makes through the Nansen API client is served from and
   written to the response cache — that is all of "nansen research ...", plus
   "alerts list" and "alerts get".
-  Never cached: account, web search, web fetch, alerts create/update/toggle/delete,
+  Never cached: account, web search, alerts create/update/toggle/delete,
   agent (streamed), feedback, every trade, bridge, wallet and mcp command, and perp trading.
   The analytics commands "perp screener" and "perp leaderboard" are cached.
 
@@ -1539,46 +1539,18 @@ export function buildCommands(deps = {}) {
           return apiInstance.webSearch({ queries, numResults });
         },
 
-        'fetch': async () => {
-          // Accept URLs as positional args or --url (repeated)
-          let urls = subArgs.length > 0 ? subArgs : [];
-          if (options.url !== undefined) {
-            const fromOption = Array.isArray(options.url) ? options.url : [options.url];
-            urls = urls.concat(fromOption);
-          }
-          if (urls.length === 0) {
-            throw new NansenError('At least one URL is required. Usage: nansen web fetch https://example.com --question "What is this about?"', ErrorCode.MISSING_PARAM);
-          }
-          for (const u of urls) {
-            try { new URL(u); } catch {
-              throw new NansenError(`Invalid URL: "${u}". URLs must include a scheme, e.g. https://example.com`, ErrorCode.INVALID_PARAMS);
-            }
-          }
-          if (Array.isArray(options.question)) {
-            throw new NansenError('--question may only be specified once', ErrorCode.INVALID_PARAMS);
-          }
-          if (options.question !== undefined && typeof options.question !== 'string') {
-            throw new NansenError('--question must be a string', ErrorCode.INVALID_PARAMS);
-          }
-          if (!options.question || !options.question.trim()) {
-            throw new NansenError('--question is required and cannot be blank. Usage: nansen web fetch https://example.com --question "What is this about?"', ErrorCode.MISSING_PARAM);
-          }
-          return apiInstance.webFetch({ urls, question: options.question });
-        },
-
         'help': async () => ({
-          subcommands: ['search', 'fetch'],
-          description: 'Web search and fetch commands',
+          subcommands: ['search'],
+          description: 'Web search commands',
           examples: [
             'nansen web search "bitcoin price"',
             'nansen web search "solana news" --num-results 5',
-            'nansen web fetch https://nansen.ai --question "What does Nansen do?"',
           ],
         }),
       };
 
       if (!Object.hasOwn(handlers, subcommand)) {
-        throw unknownCommandError('web subcommand', subcommand, ['search', 'fetch']);
+        throw unknownCommandError('web subcommand', subcommand, ['search']);
       }
 
       return handlers[subcommand]();

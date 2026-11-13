@@ -1717,20 +1717,6 @@ export class NansenAPI {
     }, { cache: false });
   }
 
-  async webFetch(params = {}) {
-    const { urls, question } = params;
-    if (!urls || urls.length === 0) {
-      throw new NansenError('At least one URL is required', ErrorCode.MISSING_PARAM);
-    }
-    if (!question) {
-      throw new NansenError('A question is required', ErrorCode.MISSING_PARAM);
-    }
-    return this.request('/api/v1/search/web-fetch', {
-      urls,
-      question,
-    }, { cache: false });
-  }
-
   async addressHistoricalBalances(params = {}) {
     const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30 } = params;
     if (address) requireValidAddress(address, chain);

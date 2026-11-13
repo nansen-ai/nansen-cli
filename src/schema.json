@@ -3760,7 +3760,7 @@
       ]
     },
     "web": {
-      "description": "Web search and fetch commands",
+      "description": "Web search commands",
       "subcommands": {
         "search": {
           "endpoint": "/api/v1/search/web-search",
@@ -3779,24 +3779,6 @@
             "nansen web search \"solana news\" --num-results 5",
             "nansen web search --query \"btc\" --query \"eth\"",
             "nansen web search \"btc\" --query \"eth\"  # positional + flag merged"
-          ]
-        },
-        "fetch": {
-          "endpoint": "/api/v1/search/web-fetch",
-          "description": "Fetch and analyze content from one or more URLs using AI",
-          "options": {
-            "url": {
-              "description": "URL to fetch (can be repeated for multiple URLs)"
-            },
-            "question": {
-              "description": "Question to answer about the URL content",
-              "required": true
-            }
-          },
-          "examples": [
-            "nansen web fetch https://nansen.ai --question \"What does Nansen do?\"",
-            "nansen web fetch --url https://a.com --url https://b.com --question \"Compare these\"",
-            "nansen web fetch https://a.com --url https://b.com --question \"Diff?\"  # positional + flag merged"
           ]
         }
       }
@@ -4160,7 +4142,6 @@
     "neverCached": [
       "account",
       "web search",
-      "web fetch",
       "alerts create",
       "alerts update",
       "alerts toggle",

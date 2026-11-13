@@ -146,13 +146,6 @@ describe('telemetry tracking for all first-level commands', () => {
     expect(trackSucceeded.mock.calls[0][0].command).toBe('web search');
   });
 
-  it('web fetch', async () => {
-    await runCLI(['web', 'fetch', '--url', 'https://example.com', '--question', 'What is this?'], depsWithApi());
-    expect(wasTracked()).toBe(1);
-    expect(trackSucceeded).toHaveBeenCalledOnce();
-    expect(trackSucceeded.mock.calls[0][0].command).toBe('web fetch');
-  });
-
   it('login (with --api-key)', async () => {
     const err = Object.assign(new Error('Unauthorized'), { code: 'UNAUTHORIZED' });
     const getAccount = vi.fn().mockRejectedValue(err);
