@@ -8,11 +8,11 @@
  * from the request instead of failing loudly.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   buildSmTokenFlowsData,
   buildCommonTokenTransferData,
-  buildSmartContractCallData,
+  buildAlertsCommands,
 } from '../commands/alerts.js';
 
 describe('alerts numeric range validation', () => {
@@ -47,8 +47,8 @@ describe('alerts numeric range validation', () => {
     expect(() => buildCommonTokenTransferData({ 'token-age-max': 'y' })).toThrow(/--token-age-max/);
   });
 
-  it('rejects non-numeric --usd-max on smart-contract-call', () => {
-    expect(() => buildSmartContractCallData({ 'usd-max': 'not-a-number' })).toThrow(/--usd-max/);
+  it('rejects non-numeric --usd-max instead of silently sending null', () => {
+    expect(() => buildCommonTokenTransferData({ 'usd-max': 'not-a-number' })).toThrow(/--usd-max/);
   });
 
   it('leaves ranges undefined when no min/max flags are given', () => {
@@ -89,11 +89,6 @@ describe('alerts string/array option validation', () => {
     expect(() => buildCommonTokenTransferData({ subject: true })).toThrow(/--subject/);
   });
 
-  it('rejects non-string --caller/--contract on smart-contract-call', () => {
-    expect(() => buildSmartContractCallData({ caller: true })).toThrow(/--caller/);
-    expect(() => buildSmartContractCallData({ contract: false })).toThrow(/--contract/);
-  });
-
   it('rejects --events true/[true] instead of passing them through into the payload', () => {
     expect(() => buildCommonTokenTransferData({ events: true })).toThrow(/--events/);
     expect(() => buildCommonTokenTransferData({ events: [true] })).toThrow(/--events/);
@@ -105,11 +100,6 @@ describe('alerts string/array option validation', () => {
     expect(data.events).toEqual(['send', 'receive']);
   });
 
-  it('rejects non-string --signature-hash instead of passing it through unchecked', () => {
-    expect(() => buildSmartContractCallData({ 'signature-hash': true })).toThrow(/--signature-hash/);
-    expect(() => buildSmartContractCallData({ 'signature-hash': [true] })).toThrow(/--signature-hash/);
-  });
-
   it('rejects non-string --token-sector instead of dropping it silently', () => {
     expect(() => buildSmTokenFlowsData({ 'token-sector': true })).toThrow(/--token-sector/);
     expect(() => buildSmTokenFlowsData({ 'token-sector': false })).toThrow(/--token-sector/);
@@ -118,5 +108,75 @@ describe('alerts string/array option validation', () => {
   it('accepts a valid --token-sector value', () => {
     const data = buildSmTokenFlowsData({ 'token-sector': 'real-world-assets' });
     expect(data.inclusion.tokenSectors).toEqual(['real-world-assets']);
+  });
+});
+
+/**
+ * The smart-contract-call alert type was retired by the backend, which now
+ * rejects every create for it. The CLI rejects the type, and the flags only
+ * that type used, before it reads stdin or sends any request, so a stale
+ * script gets a clear error instead of a silently ignored filter.
+ */
+describe('alerts: retired smart-contract-call type', () => {
+  const RETIRED_FLAGS = ['signature-hash', 'caller', 'contract', 'exclude-caller', 'exclude-contract'];
+  const cmd = () => buildAlertsCommands({ log: vi.fn() })['alerts'];
+  const createOptions = { name: 'Test', type: 'common-token-transfer', chains: 'ethereum', telegram: '123', subject: 'label:Binance' };
+  const mockApi = () => ({
+    alertsCreate: vi.fn().mockResolvedValue({ id: 'new' }),
+    alertsGet: vi.fn().mockResolvedValue({ id: 'abc', type: 'common-token-transfer', data: { chains: ['ethereum'] } }),
+    alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc' }),
+  });
+
+  it('rejects create --type smart-contract-call as retired without sending it', async () => {
+    const api = mockApi();
+    await expect(cmd()(['create'], api, {}, { ...createOptions, type: 'smart-contract-call', caller: 'address:0x1' }))
+      .rejects.toMatchObject({ code: 'INVALID_PARAMS', message: expect.stringMatching(/smart-contract-call.*retired/) });
+    expect(api.alertsCreate).not.toHaveBeenCalled();
+  });
+
+  for (const flag of RETIRED_FLAGS) {
+    it(`rejects create with --${flag} <value> instead of ignoring it`, async () => {
+      const api = mockApi();
+      await expect(cmd()(['create'], api, {}, { ...createOptions, [flag]: 'address:0x1' }))
+        .rejects.toMatchObject({ code: 'INVALID_PARAMS', message: expect.stringContaining(`--${flag}`) });
+      expect(api.alertsCreate).not.toHaveBeenCalled();
+    });
+
+    it(`rejects create with a bare --${flag} instead of ignoring it`, async () => {
+      const api = mockApi();
+      await expect(cmd()(['create'], api, { [flag]: true }, createOptions))
+        .rejects.toMatchObject({ code: 'INVALID_PARAMS', message: expect.stringContaining(`--${flag}`) });
+      expect(api.alertsCreate).not.toHaveBeenCalled();
+    });
+  }
+
+  it('rejects update --signature-hash before fetching the alert', async () => {
+    const api = mockApi();
+    await expect(cmd()(['update', 'abc'], api, {}, { 'signature-hash': '0xa9059cbb' }))
+      .rejects.toMatchObject({ code: 'INVALID_PARAMS', message: expect.stringMatching(/--signature-hash.*retired/) });
+    expect(api.alertsGet).not.toHaveBeenCalled();
+    expect(api.alertsUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejects update --type smart-contract-call as retired before fetching the alert', async () => {
+    const api = mockApi();
+    await expect(cmd()(['update', 'abc'], api, {}, { type: 'smart-contract-call' }))
+      .rejects.toMatchObject({ code: 'INVALID_PARAMS', message: expect.stringMatching(/retired/) });
+    expect(api.alertsGet).not.toHaveBeenCalled();
+    expect(api.alertsUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown --type and lists the valid ones', async () => {
+    const api = mockApi();
+    await expect(cmd()(['create'], api, {}, { ...createOptions, type: 'bogus' }))
+      .rejects.toMatchObject({ code: 'INVALID_PARAMS', message: expect.stringMatching(/sm-token-flows.*common-token-transfer/) });
+    expect(api.alertsCreate).not.toHaveBeenCalled();
+  });
+
+  it('still creates a common-token-transfer alert with --token', async () => {
+    const api = mockApi();
+    await cmd()(['create'], api, {}, { ...createOptions, token: '0xa0b8:ethereum' });
+    expect(api.alertsCreate).toHaveBeenCalledTimes(1);
+    expect(api.alertsCreate.mock.calls[0][0].data.inclusion.tokens).toEqual([{ address: '0xa0b8', chain: 'ethereum' }]);
   });
 });
