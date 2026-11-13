@@ -3100,6 +3100,187 @@
               "type": "string",
               "description": "Comma-separated chains (e.g. ethereum,solana). Merged into data."
             },
+            "inflow-1h-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money inflow over the last hour, in USD"
+            },
+            "inflow-1h-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money inflow over the last hour, in USD"
+            },
+            "inflow-1d-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money inflow over the last day, in USD"
+            },
+            "inflow-1d-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money inflow over the last day, in USD"
+            },
+            "inflow-7d-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money inflow over the last 7 days, in USD"
+            },
+            "inflow-7d-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money inflow over the last 7 days, in USD"
+            },
+            "outflow-1h-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money outflow over the last hour, in USD"
+            },
+            "outflow-1h-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money outflow over the last hour, in USD"
+            },
+            "outflow-1d-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money outflow over the last day, in USD"
+            },
+            "outflow-1d-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money outflow over the last day, in USD"
+            },
+            "outflow-7d-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money outflow over the last 7 days, in USD"
+            },
+            "outflow-7d-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money outflow over the last 7 days, in USD"
+            },
+            "netflow-1h-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money netflow over the last hour, in USD"
+            },
+            "netflow-1h-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money netflow over the last hour, in USD"
+            },
+            "netflow-1d-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money netflow over the last day, in USD"
+            },
+            "netflow-1d-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money netflow over the last day, in USD"
+            },
+            "netflow-7d-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money netflow over the last 7 days, in USD"
+            },
+            "netflow-7d-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money netflow over the last 7 days, in USD"
+            },
+            "token": {
+              "type": "string",
+              "repeatable": true,
+              "description": "sm-token-flows, common-token-transfer: Only this token, as address:chain"
+            },
+            "exclude-token": {
+              "type": "string",
+              "repeatable": true,
+              "description": "sm-token-flows, common-token-transfer: Exclude this token, as address:chain"
+            },
+            "token-sector": {
+              "type": "string",
+              "repeatable": true,
+              "description": "sm-token-flows, common-token-transfer: Only tokens in this sector"
+            },
+            "exclude-token-sector": {
+              "type": "string",
+              "repeatable": true,
+              "description": "sm-token-flows, common-token-transfer: Exclude tokens in this sector"
+            },
+            "token-age-min": {
+              "type": "number",
+              "description": "common-token-transfer: Minimum token age, in days"
+            },
+            "token-age-max": {
+              "type": "number",
+              "description": "sm-token-flows, common-token-transfer: Maximum token age, in days"
+            },
+            "market-cap-min": {
+              "type": "number",
+              "description": "sm-token-flows, common-token-transfer: Minimum token market cap, in USD"
+            },
+            "market-cap-max": {
+              "type": "number",
+              "description": "sm-token-flows, common-token-transfer: Maximum token market cap, in USD"
+            },
+            "fdv-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum token fully diluted valuation, in USD"
+            },
+            "fdv-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum token fully diluted valuation, in USD"
+            },
+            "events": {
+              "type": "string",
+              "description": "common-token-transfer: Comma-separated event types: buy, sell, swap, send, receive"
+            },
+            "usd-min": {
+              "type": "number",
+              "description": "common-token-transfer, smart-contract-call: Minimum transfer or call value, in USD"
+            },
+            "usd-max": {
+              "type": "number",
+              "description": "common-token-transfer, smart-contract-call: Maximum transfer or call value, in USD"
+            },
+            "token-amount-min": {
+              "type": "number",
+              "description": "common-token-transfer: Minimum token amount transferred"
+            },
+            "token-amount-max": {
+              "type": "number",
+              "description": "common-token-transfer: Maximum token amount transferred"
+            },
+            "subject": {
+              "type": "string",
+              "repeatable": true,
+              "description": "common-token-transfer: Only transfers by this subject, as type:value (address, entity, label, custom-label), e.g. label:\"Centralized Exchange\""
+            },
+            "counterparty": {
+              "type": "string",
+              "repeatable": true,
+              "description": "common-token-transfer: Only transfers with this counterparty, as type:value. Requires --subject"
+            },
+            "exclude-from": {
+              "type": "string",
+              "repeatable": true,
+              "description": "common-token-transfer: Exclude transfers sent from this subject, as type:value"
+            },
+            "exclude-to": {
+              "type": "string",
+              "repeatable": true,
+              "description": "common-token-transfer: Exclude transfers sent to this subject, as type:value"
+            },
+            "signature-hash": {
+              "type": "string",
+              "repeatable": true,
+              "description": "smart-contract-call: Only calls with this function signature hash, e.g. 0xa9059cbb"
+            },
+            "caller": {
+              "type": "string",
+              "repeatable": true,
+              "description": "smart-contract-call: Only calls made by this subject, as type:value"
+            },
+            "exclude-caller": {
+              "type": "string",
+              "repeatable": true,
+              "description": "smart-contract-call: Exclude calls made by this subject, as type:value"
+            },
+            "contract": {
+              "type": "string",
+              "repeatable": true,
+              "description": "smart-contract-call: Only calls to this contract, as type:value"
+            },
+            "exclude-contract": {
+              "type": "string",
+              "repeatable": true,
+              "description": "smart-contract-call: Exclude calls to this contract, as type:value"
+            },
             "telegram": {
               "type": "string",
               "description": "Telegram chat ID for notifications"
@@ -3158,6 +3339,187 @@
             "chains": {
               "type": "string",
               "description": "Comma-separated chains. Merged into data."
+            },
+            "inflow-1h-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money inflow over the last hour, in USD"
+            },
+            "inflow-1h-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money inflow over the last hour, in USD"
+            },
+            "inflow-1d-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money inflow over the last day, in USD"
+            },
+            "inflow-1d-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money inflow over the last day, in USD"
+            },
+            "inflow-7d-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money inflow over the last 7 days, in USD"
+            },
+            "inflow-7d-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money inflow over the last 7 days, in USD"
+            },
+            "outflow-1h-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money outflow over the last hour, in USD"
+            },
+            "outflow-1h-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money outflow over the last hour, in USD"
+            },
+            "outflow-1d-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money outflow over the last day, in USD"
+            },
+            "outflow-1d-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money outflow over the last day, in USD"
+            },
+            "outflow-7d-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money outflow over the last 7 days, in USD"
+            },
+            "outflow-7d-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money outflow over the last 7 days, in USD"
+            },
+            "netflow-1h-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money netflow over the last hour, in USD"
+            },
+            "netflow-1h-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money netflow over the last hour, in USD"
+            },
+            "netflow-1d-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money netflow over the last day, in USD"
+            },
+            "netflow-1d-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money netflow over the last day, in USD"
+            },
+            "netflow-7d-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum smart money netflow over the last 7 days, in USD"
+            },
+            "netflow-7d-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum smart money netflow over the last 7 days, in USD"
+            },
+            "token": {
+              "type": "string",
+              "repeatable": true,
+              "description": "sm-token-flows, common-token-transfer: Only this token, as address:chain"
+            },
+            "exclude-token": {
+              "type": "string",
+              "repeatable": true,
+              "description": "sm-token-flows, common-token-transfer: Exclude this token, as address:chain"
+            },
+            "token-sector": {
+              "type": "string",
+              "repeatable": true,
+              "description": "sm-token-flows, common-token-transfer: Only tokens in this sector"
+            },
+            "exclude-token-sector": {
+              "type": "string",
+              "repeatable": true,
+              "description": "sm-token-flows, common-token-transfer: Exclude tokens in this sector"
+            },
+            "token-age-min": {
+              "type": "number",
+              "description": "common-token-transfer: Minimum token age, in days"
+            },
+            "token-age-max": {
+              "type": "number",
+              "description": "sm-token-flows, common-token-transfer: Maximum token age, in days"
+            },
+            "market-cap-min": {
+              "type": "number",
+              "description": "sm-token-flows, common-token-transfer: Minimum token market cap, in USD"
+            },
+            "market-cap-max": {
+              "type": "number",
+              "description": "sm-token-flows, common-token-transfer: Maximum token market cap, in USD"
+            },
+            "fdv-min": {
+              "type": "number",
+              "description": "sm-token-flows: Minimum token fully diluted valuation, in USD"
+            },
+            "fdv-max": {
+              "type": "number",
+              "description": "sm-token-flows: Maximum token fully diluted valuation, in USD"
+            },
+            "events": {
+              "type": "string",
+              "description": "common-token-transfer: Comma-separated event types: buy, sell, swap, send, receive"
+            },
+            "usd-min": {
+              "type": "number",
+              "description": "common-token-transfer, smart-contract-call: Minimum transfer or call value, in USD"
+            },
+            "usd-max": {
+              "type": "number",
+              "description": "common-token-transfer, smart-contract-call: Maximum transfer or call value, in USD"
+            },
+            "token-amount-min": {
+              "type": "number",
+              "description": "common-token-transfer: Minimum token amount transferred"
+            },
+            "token-amount-max": {
+              "type": "number",
+              "description": "common-token-transfer: Maximum token amount transferred"
+            },
+            "subject": {
+              "type": "string",
+              "repeatable": true,
+              "description": "common-token-transfer: Only transfers by this subject, as type:value (address, entity, label, custom-label), e.g. label:\"Centralized Exchange\""
+            },
+            "counterparty": {
+              "type": "string",
+              "repeatable": true,
+              "description": "common-token-transfer: Only transfers with this counterparty, as type:value. Requires --subject"
+            },
+            "exclude-from": {
+              "type": "string",
+              "repeatable": true,
+              "description": "common-token-transfer: Exclude transfers sent from this subject, as type:value"
+            },
+            "exclude-to": {
+              "type": "string",
+              "repeatable": true,
+              "description": "common-token-transfer: Exclude transfers sent to this subject, as type:value"
+            },
+            "signature-hash": {
+              "type": "string",
+              "repeatable": true,
+              "description": "smart-contract-call: Only calls with this function signature hash, e.g. 0xa9059cbb"
+            },
+            "caller": {
+              "type": "string",
+              "repeatable": true,
+              "description": "smart-contract-call: Only calls made by this subject, as type:value"
+            },
+            "exclude-caller": {
+              "type": "string",
+              "repeatable": true,
+              "description": "smart-contract-call: Exclude calls made by this subject, as type:value"
+            },
+            "contract": {
+              "type": "string",
+              "repeatable": true,
+              "description": "smart-contract-call: Only calls to this contract, as type:value"
+            },
+            "exclude-contract": {
+              "type": "string",
+              "repeatable": true,
+              "description": "smart-contract-call: Exclude calls to this contract, as type:value"
             },
             "telegram": {
               "type": "string",
