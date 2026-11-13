@@ -3051,6 +3051,30 @@
               ],
               "description": "Only alerts that include or exclude this token address"
             },
+            "type": {
+              "type": "string",
+              "description": "Only alerts of this type (sm-token-flows, common-token-transfer, smart-contract-call)"
+            },
+            "enabled": {
+              "type": "boolean",
+              "description": "Only enabled alerts. Cannot be combined with --disabled"
+            },
+            "disabled": {
+              "type": "boolean",
+              "description": "Only disabled alerts. Cannot be combined with --enabled"
+            },
+            "chain": {
+              "type": "string",
+              "description": "Only alerts that watch this chain (alerts on all chains also match)"
+            },
+            "limit": {
+              "type": "number",
+              "description": "Max results (non-negative integer)"
+            },
+            "offset": {
+              "type": "number",
+              "description": "Skip the first N results (non-negative integer)"
+            },
             "reveal": {
               "type": "boolean",
               "description": "Show full channel webhook URLs and webhook signing secrets (redacted by default)"
