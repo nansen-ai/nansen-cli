@@ -12,6 +12,14 @@ vi.mock('child_process', () => ({ execFileSync: controls.exec, spawn: controls.s
 import { main } from '../../scripts/postinstall.js';
 const INSTALL_CMD = 'npx -y skills add nansen-ai/nansen-cli --skill "*" -y';
 const config = () => path.join(process.env.HOME, '.nansen/config.json');
+// `skills add nansen-ai/nansen-cli -g` writes ~/.agents/skills/<skill>/SKILL.md and links it into ~/.claude/skills.
+const skillRoots = () => ['.agents/skills', '.claude/skills'].map(root => path.join(process.env.HOME, root));
+function addSkill(root, name, { skillMd = true } = {}) {
+  const dir = path.join(process.env.HOME, root, name);
+  fs.mkdirSync(dir, { recursive: true });
+  if (skillMd) fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${name}\n---\n`);
+}
+const removeSkills = () => skillRoots().forEach(root => fs.rmSync(root, { recursive: true, force: true }));
 let output;
 const ttyDescriptors = [process.stdin, process.stderr].map(stream => Object.getOwnPropertyDescriptor(stream, 'isTTY'));
 function tty(stream, value) { Object.defineProperty(stream, 'isTTY', { configurable: true, value }); }
@@ -21,19 +29,19 @@ beforeEach(() => {
   controls.answers = []; controls.prompts = []; controls.spawn.mockReset(); controls.exec.mockReset();
   controls.spawn.mockImplementation(() => { const child = new EventEmitter(); queueMicrotask(() => child.emit('close', 0)); return child; });
   fs.mkdirSync(path.dirname(config()), { recursive: true }); fs.rmSync(config(), { force: true });
-  fs.mkdirSync(path.join(process.env.HOME, '.claude/skills/nansen-cli'), { recursive: true });
+  removeSkills(); addSkill('.agents/skills', 'nansen-agent-guide');
   output = '';
   vi.spyOn(process.stderr, 'write').mockImplementation(text => { output += text; return true; });
   tty(process.stdin, true);
   tty(process.stderr, true);
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Network forbidden'); }));
 });
-afterEach(() => { [process.stdin, process.stderr].forEach((stream, i) => { if (ttyDescriptors[i]) Object.defineProperty(stream, 'isTTY', ttyDescriptors[i]); else delete stream.isTTY; }); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+afterEach(() => { removeSkills(); [process.stdin, process.stderr].forEach((stream, i) => { if (ttyDescriptors[i]) Object.defineProperty(stream, 'isTTY', ttyDescriptors[i]); else delete stream.isTTY; }); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 function save(value) { fs.writeFileSync(config(), typeof value === 'string' ? value : JSON.stringify(value)); }
 const pointer = version => ({ auth: { version, selectionEpoch: '00000000-0000-0000-0000-000000000001', active: { kind: 'session', generation: '00000000-0000-0000-0000-000000000002', issuer: 'https://idp.nansen.ai', audience: 'https://api.nansen.ai', accountId: 'synthetic-account', expiresAt: Date.now() + 3600000 } } });
 describe('offline postinstall selection with shared resolver', () => {
   it.each(['', 'n', 'maybe', 'yes please', 'y', 'YES'])('requires explicit consent to install the skill for %j', async answer => {
-    fs.rmSync(path.join(process.env.HOME, '.claude/skills/nansen-cli'), { recursive: true });
+    removeSkills();
     controls.answers.push(answer);
     await main();
     expect(controls.prompts).toHaveLength(1);
@@ -52,6 +60,26 @@ describe('offline postinstall selection with shared resolver', () => {
       expect(output).toContain(`Skipped. You can install it later with: \x1b[36m${INSTALL_CMD}`);
     }
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+  it.each([
+    ['global install in ~/.agents/skills', '.agents/skills', 'nansen-agent-guide'],
+    ['Claude Code skills directory', '.claude/skills', 'nansen-trading'],
+    ['legacy single-skill install', '.claude/skills', 'nansen-cli'],
+  ])('recognises an existing skill install: %s', async (_name, root, skill) => {
+    removeSkills(); addSkill(root, skill);
+    await main();
+    expect(output).toContain('Nansen skill already installed.');
+    expect(controls.prompts.some(q => q.includes('Install Nansen skill'))).toBe(false);
+    expect(controls.spawn).not.toHaveBeenCalled();
+  });
+  it.each([
+    ['an unrelated skill with the nansen- prefix', 'nansen-ra-local-stack', {}],
+    ['a packaged skill directory without SKILL.md', 'nansen-agent-guide', { skillMd: false }],
+  ])('still offers the install for %s', async (_name, skill, opts) => {
+    removeSkills(); addSkill('.claude/skills', skill, opts);
+    await main();
+    expect(output).not.toContain('Nansen skill already installed.');
+    expect(controls.prompts[0]).toContain('Install Nansen skill for your AI coding agent? [y/N]');
   });
   it.each([
     ['environment only', null, 'synthetic-env-secret', 'API key is configured', true],
@@ -96,7 +124,7 @@ describe('offline postinstall selection with shared resolver', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
   it('offers the non-interactive install command when the install fails or npx is missing', async () => {
-    fs.rmSync(path.join(process.env.HOME, '.claude/skills/nansen-cli'), { recursive: true });
+    removeSkills();
     controls.answers.push('y');
     controls.spawn.mockImplementationOnce(() => { const child = new EventEmitter(); queueMicrotask(() => child.emit('close', 1)); return child; });
     await main();
