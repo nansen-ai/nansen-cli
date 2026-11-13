@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.6.1
+
+### Patch Changes
+
+- [#834](https://github.com/nansen-ai/nansen-cli/pull/834) [`c2e511e`](https://github.com/nansen-ai/nansen-cli/commit/c2e511efbbfc32174083dc9b3f00eda8e0fef519) Thanks [@kome12](https://github.com/kome12)! - `nansen schema` and shell completion now list the type-specific filter options of `alerts create` and `alerts update` (flow thresholds, token, sector, market cap, FDV, event, value, subject and contract filters), with the alert types each one applies to.
+
+- [#835](https://github.com/nansen-ai/nansen-cli/pull/835) [`197996b`](https://github.com/nansen-ai/nansen-cli/commit/197996b565823ca4e4239dc3dd2376ca510c3eff) Thanks [@kome12](https://github.com/kome12)! - `wallet send --dry-run` from a Privy wallet now rejects a malformed, zero or too-small SPL token amount on Solana, as the real send does, instead of previewing it as a success.
+
 ## 2.6.0
 
 ### Minor Changes
