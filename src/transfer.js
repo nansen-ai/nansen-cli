@@ -742,13 +742,19 @@ async function sendTokensViaPrivy({ to, amount, chain, token, max, dryRun, walle
       const maxAmount = BigInt(balResult.value) - fee;
       if (maxAmount <= 0n) throw new Error('Insufficient SOL balance for fees');
       amount = formatAmount(maxAmount, 9);
-    } else if (max && token) {
+    } else if (token) {
       const rpcUrl = CHAIN_RPCS.solana;
-      const { tokenProgram, decimals: _decimals } = await getTokenInfo(rpcUrl, token);
-      const sourceATA = deriveATA(fromAddress, token, tokenProgram);
-      const sourceAtaAddr = base58Encode(sourceATA);
-      const ataInfo = await rpcCall(rpcUrl, 'getTokenAccountBalance', [sourceAtaAddr]);
-      amount = ataInfo.value.uiAmountString;
+      const { tokenProgram, decimals } = await getTokenInfo(rpcUrl, token);
+      if (max) {
+        const sourceATA = deriveATA(fromAddress, token, tokenProgram);
+        const sourceAtaAddr = base58Encode(sourceATA);
+        const ataInfo = await rpcCall(rpcUrl, 'getTokenAccountBalance', [sourceAtaAddr]);
+        amount = ataInfo.value.uiAmountString;
+      }
+      // The SPL amount is otherwise parsed only while building the transaction,
+      // after the dry-run return. Parse it here so a preview refuses the same
+      // malformed, zero or sub-unit amounts the real send does.
+      parseAmount(amount, decimals);
     }
 
     if (dryRun) return { dryRun: true, from: fromAddress, to, amount, token, chain };

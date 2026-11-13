@@ -1253,7 +1253,9 @@ describe('sendTokens via Privy', () => {
 
   afterEach(() => {
     process.env = originalEnv;
-    getWalletSpy.mockRestore();
+    // Restore every spy here, not at the end of a test: a failed assertion
+    // would skip a trailing mockRestore() and leak the spy into later tests.
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -1271,7 +1273,6 @@ describe('sendTokens via Privy', () => {
 
     expect(getWalletSpy).toHaveBeenCalledOnce();
     expect(sendSpy).not.toHaveBeenCalled();
-    sendSpy.mockRestore();
   });
 
   test('refuses a mismatched Solana Privy wallet before preview or signing', async () => {
@@ -1288,7 +1289,6 @@ describe('sendTokens via Privy', () => {
 
     expect(getWalletSpy).toHaveBeenCalledOnce();
     expect(signSpy).not.toHaveBeenCalled();
-    signSpy.mockRestore();
   });
 
   test('rejects an unsupported EVM chain before looking up the Privy wallet', async () => {
@@ -1556,6 +1556,61 @@ describe('sendTokens via Privy', () => {
     expect(result.from).toBe('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
     expect(result.chain).toBe('solana');
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  describe('SPL token dry run validates the amount at the mint precision', () => {
+    const TOKEN_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+
+    function mockSplRpc({ uiAmountString = '5.0' } = {}) {
+      fetch.mockImplementation(async (_url, opts) => {
+        const body = typeof opts?.body === 'string' ? JSON.parse(opts.body) : null;
+        const reply = (result) => ({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body?.id, result }) });
+        if (body?.method === 'getAccountInfo' && body.params?.[0] === TOKEN_MINT) {
+          return reply({ value: { owner: TOKEN_PROGRAM, data: { parsed: { info: { decimals: 6 } } } }, context: { slot: 1 } });
+        }
+        if (body?.method === 'getTokenAccountBalance') {
+          return reply({ value: { amount: '0', uiAmountString }, context: { slot: 1 } });
+        }
+        return reply(null);
+      });
+    }
+
+    test.each([
+      ['a malformed amount', 'abc', /valid number/],
+      ['an amount below the token smallest unit', '0.0000001', /below the smallest unit/],
+      ['a zero amount', '0', /greater than zero/],
+    ])('rejects %s without signing', async (_label, amount, error) => {
+      mockSplRpc();
+      const signSpy = vi.spyOn(PrivyClient.prototype, 'signSolanaTransaction');
+
+      await expect(sendTokens({
+        to: '11111111111111111111111111111112',
+        amount, chain: 'solana', wallet: 'pv', token: TOKEN_MINT, dryRun: true,
+      })).rejects.toThrow(error);
+
+      expect(signSpy).not.toHaveBeenCalled();
+    });
+
+    test('rejects a --max dry run when the token balance is zero', async () => {
+      mockSplRpc({ uiAmountString: '0' });
+
+      await expect(sendTokens({
+        to: '11111111111111111111111111111112',
+        amount: '0', chain: 'solana', wallet: 'pv', token: TOKEN_MINT, max: true, dryRun: true,
+      })).rejects.toThrow(/greater than zero/);
+    });
+
+    test('previews a valid amount', async () => {
+      mockSplRpc();
+
+      const result = await sendTokens({
+        to: '11111111111111111111111111111112',
+        amount: '1.5', chain: 'solana', wallet: 'pv', token: TOKEN_MINT, dryRun: true,
+      });
+
+      expect(result).toMatchObject({ dryRun: true, amount: '1.5', token: TOKEN_MINT, chain: 'solana' });
+    });
   });
 });
 
