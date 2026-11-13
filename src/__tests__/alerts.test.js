@@ -166,6 +166,14 @@ describe('alerts: retired smart-contract-call type', () => {
     expect(api.alertsUpdate).not.toHaveBeenCalled();
   });
 
+  it('rejects an update of an existing smart-contract-call alert without sending it', async () => {
+    const api = mockApi();
+    api.alertsGet.mockResolvedValue({ id: 'abc', type: 'smart-contract-call', data: { chains: ['ethereum'] } });
+    await expect(cmd()(['update', 'abc'], api, {}, { name: 'renamed' }))
+      .rejects.toMatchObject({ code: 'INVALID_PARAMS', message: expect.stringMatching(/smart-contract-call.*retired/) });
+    expect(api.alertsUpdate).not.toHaveBeenCalled();
+  });
+
   it('rejects an unknown --type and lists the valid ones', async () => {
     const api = mockApi();
     await expect(cmd()(['create'], api, {}, { ...createOptions, type: 'bogus' }))

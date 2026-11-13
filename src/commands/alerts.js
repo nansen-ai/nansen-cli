@@ -582,6 +582,13 @@ export const ALERT_TYPES = ['sm-token-flows', 'common-token-transfer'];
 /** Flags that only the retired smart-contract-call type used. */
 const RETIRED_CONTRACT_CALL_FLAGS = ['signature-hash', 'caller', 'contract', 'exclude-caller', 'exclude-contract'];
 
+function retiredTypeError() {
+  return new NansenError(
+    `The smart-contract-call alert type was retired and can no longer be created or updated. Use one of: ${ALERT_TYPES.join(', ')}.`,
+    ErrorCode.INVALID_PARAMS,
+  );
+}
+
 /**
  * Reject create/update input the backend can no longer act on, before any
  * stdin read or request. The smart-contract-call type was retired, and its
@@ -591,12 +598,7 @@ const RETIRED_CONTRACT_CALL_FLAGS = ['signature-hash', 'caller', 'contract', 'ex
 export function checkAlertInput(options = {}, flags = {}) {
   const valid = ALERT_TYPES.join(', ');
   const type = options.type;
-  if (type === 'smart-contract-call') {
-    throw new NansenError(
-      `The smart-contract-call alert type was retired and can no longer be created or updated. Use one of: ${valid}.`,
-      ErrorCode.INVALID_PARAMS,
-    );
-  }
+  if (type === 'smart-contract-call') throw retiredTypeError();
   if (type !== undefined && !ALERT_TYPES.includes(type)) {
     throw new NansenError(`Invalid --type "${type}". Use one of: ${valid}.`, ErrorCode.INVALID_PARAMS);
   }
@@ -1019,6 +1021,7 @@ OPTIONS:
           const existing = await apiInstance.alertsGet(id);
           if (!existing) throw new NansenError(`Alert not found: ${id}`, ErrorCode.NOT_FOUND);
           const existingType = existing.type ?? existing.data?.type;
+          if (existingType === 'smart-contract-call') throw retiredTypeError();
           if (options.type && options.type !== existingType) {
             throw new NansenError(
               `Cannot change alert type (${existingType} → ${options.type}). Delete and recreate the alert instead.`,
