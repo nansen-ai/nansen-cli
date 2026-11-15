@@ -316,7 +316,7 @@ Example summary format:
 3. Create an alert pointing to your webhook (fill in your alert details):
    nansen alerts create \
      --name '<your alert name>' \
-     --type <sm-token-flows|common-token-transfer|smart-contract-call> \
+     --type <sm-token-flows|common-token-transfer> \
      --chains <chains> \
      --webhook 'https://<your-tunnel-url>/webhook' \
      --webhook-secret-stdin \

@@ -39,7 +39,6 @@ import {
   buildAlertData,
   buildSmTokenFlowsData,
   buildCommonTokenTransferData,
-  buildSmartContractCallData,
   buildAlertsCommands,
   validateAlertData,
 } from '../commands/alerts.js';
@@ -589,34 +588,11 @@ describe('buildAlertData', () => {
     expect(result.exclusion).toEqual({});
   });
 
-  it('should apply smart-contract-call defaults for all required fields', () => {
-    const result = buildAlertData({ type: 'smart-contract-call' });
-    expect(result.chains).toEqual([]);
-    expect(result.events).toEqual(['smart-contract-call']);
-    expect(result.usdValue).toEqual({});
-    expect(result.signatureHash).toEqual([]);
-    expect(result.inclusion).toEqual({ caller: [], smartContract: [] });
-    expect(result.exclusion).toEqual({ caller: [], smartContract: [] });
-  });
-
-  it('should deep-merge inclusion/exclusion so partial flags keep sibling defaults (smart-contract-call)', () => {
-    const result = buildAlertData({
-      type: 'smart-contract-call',
-      chains: 'ethereum',
-      caller: 'address:0xabc',
-    });
-    // --caller sets inclusion.caller, but smartContract should still be present from defaults
-    expect(result.inclusion.caller).toEqual([{ type: 'address', value: '0xabc' }]);
-    expect(result.inclusion.smartContract).toEqual([]);
-    // exclusion untouched — both sub-fields from defaults
-    expect(result.exclusion).toEqual({ caller: [], smartContract: [] });
-  });
-
   it('should not share mutable references between calls', () => {
-    const result1 = buildAlertData({ type: 'smart-contract-call' });
-    const result2 = buildAlertData({ type: 'smart-contract-call' });
-    result1.inclusion.caller.push({ type: 'address', value: '0x1' });
-    expect(result2.inclusion.caller).toEqual([]);
+    const result1 = buildAlertData({ type: 'common-token-transfer' });
+    const result2 = buildAlertData({ type: 'common-token-transfer' });
+    result1.subjects.push({ type: 'address', value: '0x1' });
+    expect(result2.subjects).toEqual([]);
   });
 
   it('should let user flags override defaults', () => {
@@ -691,50 +667,6 @@ describe('buildCommonTokenTransferData counterparty', () => {
   it('should not add counterparties when flag is absent', () => {
     const result = buildCommonTokenTransferData({ chains: 'ethereum' });
     expect(result.counterparties).toBeUndefined();
-  });
-});
-
-describe('buildSmartContractCallData', () => {
-  it('should build data with chains and usd range', () => {
-    const result = buildSmartContractCallData({ chains: 'ethereum,base', 'usd-min': '1000', 'usd-max': '9999' });
-    expect(result.chains).toEqual(['ethereum', 'base']);
-    expect(result.usdValue).toEqual({ min: 1000, max: 9999 });
-  });
-
-  it('should build signatureHash as array from single value', () => {
-    const result = buildSmartContractCallData({ 'signature-hash': '0xa9059cbb' });
-    expect(result.signatureHash).toEqual(['0xa9059cbb']);
-  });
-
-  it('should build signatureHash as array from repeated flags', () => {
-    const result = buildSmartContractCallData({ 'signature-hash': ['0xa9059cbb', '0x23b872dd'] });
-    expect(result.signatureHash).toEqual(['0xa9059cbb', '0x23b872dd']);
-  });
-
-  it('should build inclusion.caller from --caller', () => {
-    const result = buildSmartContractCallData({ caller: 'address:0xabc' });
-    expect(result.inclusion.caller).toEqual([{ type: 'address', value: '0xabc' }]);
-  });
-
-  it('should build inclusion.smartContract from --contract', () => {
-    const result = buildSmartContractCallData({ contract: 'address:0xdef' });
-    expect(result.inclusion.smartContract).toEqual([{ type: 'address', value: '0xdef' }]);
-  });
-
-  it('should build exclusion.caller from --exclude-caller', () => {
-    const result = buildSmartContractCallData({ 'exclude-caller': 'label:Bot' });
-    expect(result.exclusion.caller).toEqual([{ type: 'label', value: 'Bot' }]);
-  });
-
-  it('should build exclusion.smartContract from --exclude-contract', () => {
-    const result = buildSmartContractCallData({ 'exclude-contract': 'address:0x999' });
-    expect(result.exclusion.smartContract).toEqual([{ type: 'address', value: '0x999' }]);
-  });
-
-  it('should dispatch to buildSmartContractCallData for smart-contract-call type', () => {
-    const result = buildAlertData({ type: 'smart-contract-call', chains: 'ethereum', 'signature-hash': '0xa9059cbb' });
-    expect(result.chains).toEqual(['ethereum']);
-    expect(result.signatureHash).toEqual(['0xa9059cbb']);
   });
 });
 
@@ -1575,71 +1507,6 @@ describe('alerts update — type inference', () => {
     expect(sentData.inflow_1h).toEqual({ min: 1000, max: 50000 });
   });
 
-  // ── smart-contract-call update edge cases ──
-
-  it('should deep-merge usdValue range on smart-contract-call', async () => {
-    const mockApi = {
-      alertsGet: vi.fn().mockResolvedValue({
-        type: 'smart-contract-call',
-        data: {
-          chains: ['ethereum'],
-          usdValue: { min: 5000, max: 100000 },
-          signatureHash: ['0xa9059cbb'],
-          inclusion: { caller: [{ type: 'label', value: 'SM' }], smartContract: [] },
-          exclusion: { caller: [], smartContract: [] },
-        },
-      }),
-      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
-    };
-    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
-    await cmd(['update', 'abc123'], mockApi, {}, { 'usd-min': '25000' });
-    const sentData = mockApi.alertsUpdate.mock.calls[0][0].data;
-    expect(sentData.usdValue).toEqual({ min: 25000, max: 100000 });
-    expect(sentData.signatureHash).toEqual(['0xa9059cbb']);
-  });
-
-  it('should replace signatureHash array on smart-contract-call without dropping other fields', async () => {
-    const mockApi = {
-      alertsGet: vi.fn().mockResolvedValue({
-        type: 'smart-contract-call',
-        data: {
-          chains: ['ethereum'],
-          usdValue: { min: 5000, max: 100000 },
-          signatureHash: ['0xa9059cbb', '0x23b872dd'],
-          inclusion: { caller: [{ type: 'label', value: 'SM' }], smartContract: [] },
-          exclusion: { caller: [], smartContract: [] },
-        },
-      }),
-      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
-    };
-    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
-    await cmd(['update', 'abc123'], mockApi, {}, { 'signature-hash': '0xffffffff' });
-    const sentData = mockApi.alertsUpdate.mock.calls[0][0].data;
-    expect(sentData.signatureHash).toEqual(['0xffffffff']);
-    expect(sentData.usdValue).toEqual({ min: 5000, max: 100000 });
-    expect(sentData.inclusion.caller).toEqual([{ type: 'label', value: 'SM' }]);
-  });
-
-  it('should preserve smartContract when updating caller on smart-contract-call', async () => {
-    const mockApi = {
-      alertsGet: vi.fn().mockResolvedValue({
-        type: 'smart-contract-call',
-        data: {
-          chains: ['ethereum'],
-          usdValue: {},
-          inclusion: { caller: [{ type: 'label', value: 'old' }], smartContract: [{ type: 'address', value: '0xdead' }] },
-          exclusion: { caller: [], smartContract: [] },
-        },
-      }),
-      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
-    };
-    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
-    await cmd(['update', 'abc123'], mockApi, {}, { caller: 'entity:Binance' });
-    const sentData = mockApi.alertsUpdate.mock.calls[0][0].data;
-    expect(sentData.inclusion.caller).toEqual([{ type: 'entity', value: 'Binance' }]);
-    expect(sentData.inclusion.smartContract).toEqual([{ type: 'address', value: '0xdead' }]);
-  });
-
   // ── common-token-transfer update edge cases ──
 
   it('should deep-merge inclusion-nested marketCap range on common-token-transfer', async () => {
@@ -1732,30 +1599,6 @@ describe('alerts update — type inference', () => {
     const sentData = mockApi.alertsUpdate.mock.calls[0][0].data;
     expect(sentData.tokenAmount).toEqual({ min: 50, max: 2000 });
     expect(sentData.usdValue).toEqual({ min: 100, max: 999999 });
-  });
-
-  it('should deep-merge --data + named flags on smart-contract-call', async () => {
-    const mockApi = {
-      alertsGet: vi.fn().mockResolvedValue({
-        type: 'smart-contract-call',
-        data: {
-          chains: ['ethereum'],
-          usdValue: { min: 5000, max: 100000 },
-          signatureHash: ['0xa9059cbb'],
-          inclusion: { caller: [], smartContract: [] },
-          exclusion: { caller: [], smartContract: [] },
-        },
-      }),
-      alertsUpdate: vi.fn().mockResolvedValue({ id: 'abc123' }),
-    };
-    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
-    await cmd(['update', 'abc123'], mockApi, {}, {
-      'usd-min': '10000',
-      data: '{"usdValue":{"max":null}}',
-    });
-    const sentData = mockApi.alertsUpdate.mock.calls[0][0].data;
-    expect(sentData.usdValue).toEqual({ min: 10000, max: null });
-    expect(sentData.signatureHash).toEqual(['0xa9059cbb']);
   });
 
   it('should clear range bound with null on common-token-transfer', async () => {
@@ -7270,27 +7113,6 @@ describe('validateAlertData -- type-specific required fields', () => {
     })).toThrow('at least one --subject or --token');
   });
 
-  it('should pass for smart-contract-call with caller', () => {
-    expect(() => validateAlertData('smart-contract-call', {
-      inclusion: { caller: [{ type: 'address', value: '0x123' }], smartContract: [] },
-      signatureHash: [],
-    })).not.toThrow();
-  });
-
-  it('should pass for smart-contract-call with signature-hash', () => {
-    expect(() => validateAlertData('smart-contract-call', {
-      inclusion: { caller: [], smartContract: [] },
-      signatureHash: ['0xa9059cbb'],
-    })).not.toThrow();
-  });
-
-  it('should fail for smart-contract-call with nothing set', () => {
-    expect(() => validateAlertData('smart-contract-call', {
-      inclusion: { caller: [], smartContract: [] },
-      signatureHash: [],
-    })).toThrow('at least one --caller, --contract, or --signature-hash');
-  });
-
   it('should no-op when type is null', () => {
     expect(() => validateAlertData(null, { subjects: [] })).not.toThrow();
   });
@@ -7386,18 +7208,6 @@ describe('alerts create -- type-specific validation', () => {
       chains: 'ethereum',
       telegram: '123',
     })).rejects.toThrow('at least one --subject or --token');
-    expect(mockApi.alertsCreate).not.toHaveBeenCalled();
-  });
-
-  it('should reject smart-contract-call create with no caller/contract/signature-hash', async () => {
-    const mockApi = { alertsCreate: vi.fn() };
-    const cmd = buildAlertsCommands({ log: vi.fn() })['alerts'];
-    await expect(cmd(['create'], mockApi, {}, {
-      name: 'Test',
-      type: 'smart-contract-call',
-      chains: 'ethereum',
-      telegram: '123',
-    })).rejects.toThrow('at least one --caller, --contract, or --signature-hash');
     expect(mockApi.alertsCreate).not.toHaveBeenCalled();
   });
 

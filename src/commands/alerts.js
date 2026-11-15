@@ -545,34 +545,6 @@ export function buildCommonTokenTransferData(options) {
 }
 
 /**
- * Build the data payload for smart-contract-call alerts from named flags.
- */
-export function buildSmartContractCallData(options) {
-  const data = {};
-
-  const chains = parseChains(options.chains);
-  if (chains) data.chains = chains;
-
-  const usdRange = buildRange(options['usd-min'], options['usd-max'], 'usd');
-  if (usdRange) data.usdValue = usdRange;
-
-  const signatureHash = parseCsvOption(options['signature-hash'], 'signature-hash');
-  if (signatureHash) data.signatureHash = signatureHash;
-
-  const callers = parseSubjects(options.caller, 'caller');
-  const contracts = parseSubjects(options.contract, 'contract');
-  const excludeCallers = parseSubjects(options['exclude-caller'], 'exclude-caller');
-  const excludeContracts = parseSubjects(options['exclude-contract'], 'exclude-contract');
-
-  if (callers) data.inclusion = { ...data.inclusion, caller: callers };
-  if (contracts) data.inclusion = { ...data.inclusion, smartContract: contracts };
-  if (excludeCallers) data.exclusion = { ...data.exclusion, caller: excludeCallers };
-  if (excludeContracts) data.exclusion = { ...data.exclusion, smartContract: excludeContracts };
-
-  return data;
-}
-
-/**
  * Type-specific defaults for required fields.
  * Applied in buildAlertData so payloads always satisfy the backend schema.
  */
@@ -602,15 +574,42 @@ const TYPE_DEFAULTS = {
     inclusion: {},
     exclusion: {},
   },
-  'smart-contract-call': {
-    chains: [],
-    events: ['smart-contract-call'],
-    usdValue: {},
-    signatureHash: [],
-    inclusion: { caller: [], smartContract: [] },
-    exclusion: { caller: [], smartContract: [] },
-  },
 };
+
+/** Alert types the backend accepts. */
+export const ALERT_TYPES = ['sm-token-flows', 'common-token-transfer'];
+
+/** Flags that only the retired smart-contract-call type used. */
+const RETIRED_CONTRACT_CALL_FLAGS = ['signature-hash', 'caller', 'contract', 'exclude-caller', 'exclude-contract'];
+
+function retiredTypeError() {
+  return new NansenError(
+    `The smart-contract-call alert type was retired and can no longer be created or updated. Use one of: ${ALERT_TYPES.join(', ')}.`,
+    ErrorCode.INVALID_PARAMS,
+  );
+}
+
+/**
+ * Reject create/update input the backend can no longer act on, before any
+ * stdin read or request. The smart-contract-call type was retired, and its
+ * flags would otherwise be ignored without a word, since alerts does not
+ * reject unknown flags. A bare flag lands in `flags`, a valued one in `options`.
+ */
+export function checkAlertInput(options = {}, flags = {}) {
+  const valid = ALERT_TYPES.join(', ');
+  const type = options.type;
+  if (type === 'smart-contract-call') throw retiredTypeError();
+  if (type !== undefined && !ALERT_TYPES.includes(type)) {
+    throw new NansenError(`Invalid --type "${type}". Use one of: ${valid}.`, ErrorCode.INVALID_PARAMS);
+  }
+  const retired = RETIRED_CONTRACT_CALL_FLAGS.find(f => options[f] !== undefined || flags[f] !== undefined);
+  if (retired) {
+    throw new NansenError(
+      `--${retired} was only used by smart-contract-call alerts, which were retired. Remove it; supported types: ${valid}.`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+}
 
 /**
  * Build the alert data payload from named flags, dispatching on type.
@@ -626,8 +625,6 @@ export function buildAlertData(options, { applyDefaults = true } = {}) {
     data = buildSmTokenFlowsData(options);
   } else if (options.type === 'common-token-transfer') {
     data = buildCommonTokenTransferData(options);
-  } else if (options.type === 'smart-contract-call') {
-    data = buildSmartContractCallData(options);
   } else {
     // No type — only --chains and --data are valid; warn if type-specific flags are present
     const typeSpecificFlags = [
@@ -636,8 +633,7 @@ export function buildAlertData(options, { applyDefaults = true } = {}) {
       'netflow-1h-min', 'netflow-1h-max', 'netflow-1d-min', 'netflow-1d-max', 'netflow-7d-min', 'netflow-7d-max',
       'events', 'usd-min', 'usd-max', 'token-amount-min', 'token-amount-max',
       'token', 'exclude-token',
-      'subject', 'counterparty', 'signature-hash', 'caller', 'contract',
-      'exclude-caller', 'exclude-contract', 'exclude-from', 'exclude-to',
+      'subject', 'counterparty', 'exclude-from', 'exclude-to',
       'token-sector', 'exclude-token-sector', 'token-age-min', 'token-age-max',
       'market-cap-min', 'market-cap-max', 'fdv-min', 'fdv-max',
     ];
@@ -655,7 +651,7 @@ export function buildAlertData(options, { applyDefaults = true } = {}) {
 
   // Apply type defaults underneath so all required fields are present.
   // Use structuredClone to avoid shared mutable references, and deep-merge
-  // inclusion/exclusion so partial flags (e.g. --caller without --contract)
+  // inclusion/exclusion so partial flags (e.g. --token without --token-sector)
   // don't drop sibling required sub-fields.
   if (applyDefaults && TYPE_DEFAULTS[options.type]) {
     const defaults = structuredClone(TYPE_DEFAULTS[options.type]);
@@ -733,25 +729,12 @@ export function validateAlertData(type, data) {
       );
     }
   }
-
-  if (type === 'smart-contract-call') {
-    const hasCallers = Array.isArray(data.inclusion?.caller) && data.inclusion.caller.length > 0;
-    const hasContracts = Array.isArray(data.inclusion?.smartContract) && data.inclusion.smartContract.length > 0;
-    const hasSignatureHash = Array.isArray(data.signatureHash) && data.signatureHash.length > 0;
-    if (!hasCallers && !hasContracts && !hasSignatureHash) {
-      throw new NansenError(
-        'smart-contract-call requires at least one --caller, --contract, or --signature-hash',
-        ErrorCode.INVALID_PARAMS,
-      );
-    }
-  }
 }
 
 // ============= Command Builder =============
 
 const TIME_WINDOW_BY_TYPE = {
   'common-token-transfer': 'realtime',
-  'smart-contract-call': 'realtime',
   'sm-token-flows': '1h',
 };
 
@@ -787,7 +770,7 @@ OPTIONS:
   --table                      Human-readable table output (columns: ID, NAME, TYPE, ENABLED, CHANNELS)
   --pretty                     Indented JSON output
   --reveal                     Show full channel webhook URLs and secrets (redacted by default)
-  --type <type>                Filter by alert type (sm-token-flows, common-token-transfer, smart-contract-call)
+  --type <type>                Filter by alert type (sm-token-flows, common-token-transfer)
   --enabled / --disabled       Filter by enabled state
   --token <addr>               Filter by token address (alias --token-address)
   --chain <chain>              Filter by chain
@@ -806,7 +789,7 @@ USAGE:
 
 REQUIRED:
   --name <name>                Alert name
-  --type <type>                sm-token-flows | common-token-transfer | smart-contract-call
+  --type <type>                sm-token-flows | common-token-transfer
   At least one channel:        --telegram <chatId> | --slack <url> | --discord <url> | --webhook <url>
 
 OPTIONS (all types):
@@ -838,11 +821,6 @@ OPTIONS (common-token-transfer):
   --token-age-min/max <days>   --market-cap-min/max <usd>
   --exclude-from <type:value>  --exclude-to <type:value> (repeatable)
 
-OPTIONS (smart-contract-call):
-  --usd-min/max <usd>         --signature-hash <hash> (repeatable)
-  --caller <type:value>        --exclude-caller <type:value> (repeatable)
-  --contract <type:value>      --exclude-contract <type:value> (repeatable)
-
 SUBJECT TYPES: address, entity, label, custom-label
 CHAIN ALIASES: Hyperliquid = hyperevm, BSC = bnb
 
@@ -851,7 +829,6 @@ NOTE: Use single quotes for names with $ or special chars: --name 'SM >$1M'
 EXAMPLES:
   nansen alerts create --name 'ETH SM Inflow' --type sm-token-flows --chains ethereum --telegram 5238612255 --inflow-1h-min 1000000
   nansen alerts create --name 'USDC Transfers' --type common-token-transfer --chains ethereum --telegram 5238612255 --events send,receive --usd-min 1000000 --subject label:"Centralized Exchange"
-  nansen alerts create --name 'Contract Calls' --type smart-contract-call --chains ethereum --telegram 5238612255 --signature-hash 0xa9059cbb --caller address:0xabc
   nansen alerts create --name 'Hook' --type sm-token-flows --chains ethereum --webhook https://example.com/hook --inflow-1h-min 1000000 --webhook-secret-stdin < secret.txt
 
 WEBHOOK SIGNING SECRET (minimum 16 characters, webhook only):
@@ -1044,6 +1021,7 @@ OPTIONS:
           const existing = await apiInstance.alertsGet(id);
           if (!existing) throw new NansenError(`Alert not found: ${id}`, ErrorCode.NOT_FOUND);
           const existingType = existing.type ?? existing.data?.type;
+          if (existingType === 'smart-contract-call') throw retiredTypeError();
           if (options.type && options.type !== existingType) {
             throw new NansenError(
               `Cannot change alert type (${existingType} → ${options.type}). Delete and recreate the alert instead.`,
@@ -1104,6 +1082,7 @@ OPTIONS:
 
       try {
         if (sub === 'create' || sub === 'update') {
+          checkAlertInput(options, flags);
           webhookSecret = await resolveWebhookSecret(options, flags, { env, stdin, stdinTTY });
         }
         const result = await handlers[sub]();

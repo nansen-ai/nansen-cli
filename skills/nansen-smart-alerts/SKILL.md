@@ -113,27 +113,6 @@ nansen alerts create \
   --token 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48:ethereum
 ```
 
-### 3. `smart-contract-call` — Smart Contract Interactions
-
-Track contract calls matching specified criteria.
-
-**Type-specific flags:**
-- `--usd-min/max <usd>`
-- `--signature-hash <hash>` (repeatable, e.g. `0x095ea7b3` for `approve`)
-- `--caller <type:value>` / `--exclude-caller <type:value>` (repeatable)
-- `--contract <type:value>` / `--exclude-contract <type:value>` (repeatable)
-
-**Example:**
-```bash
-nansen alerts create \
-  --name 'Uniswap V3 Large Swaps' \
-  --type smart-contract-call \
-  --chains ethereum \
-  --telegram 123456789 \
-  --usd-min 1000000 \
-  --contract entity:"Uniswap V3"
-```
-
 ## Notes
 
 - Chain aliases: Hyperliquid = `hyperevm`, BSC = `bnb`.
