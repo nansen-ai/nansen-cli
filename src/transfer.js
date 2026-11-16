@@ -736,7 +736,9 @@ export { parseAmount, formatAmount, signEd25519, encodeCompactU16, base58Decode,
  * recipient's associated token account, and the ATA program accepts any owner,
  * so tokens sent to a token account, mint, program or program-owned data
  * account land where nobody can sign to move them. Only a System-owned account
- * (a wallet) or one that doesn't exist yet (a new, unfunded wallet) passes.
+ * with no data (a wallet) or one that doesn't exist yet (a new, unfunded wallet)
+ * passes. A System-owned account holding data, such as a durable nonce account,
+ * is not a wallet either.
  * Fails closed: if the lookup fails, the send doesn't happen.
  */
 async function assertSolanaRecipientIsWallet(to) {
@@ -750,6 +752,14 @@ async function assertSolanaRecipientIsWallet(to) {
   if (info.value && owner !== SYSTEM_PROGRAM) {
     throw new Error(
       `Recipient ${to} is not a wallet address (it is an account owned by program ${owner}, such as a token account, mint or program). ` +
+      `Tokens sent there can't be moved out. Pass the recipient's wallet address.`,
+    );
+  }
+  const data = info.value?.data;
+  const dataLength = Array.isArray(data) && typeof data[0] === 'string' ? Buffer.from(data[0], 'base64').length : 0;
+  if (info.value && (dataLength > 0 || (typeof info.value.space === 'number' && info.value.space > 0))) {
+    throw new Error(
+      `Recipient ${to} is not a wallet address (it is a System account holding data, such as a nonce account). ` +
       `Tokens sent there can't be moved out. Pass the recipient's wallet address.`,
     );
   }

@@ -679,6 +679,17 @@ describe('sendTokens integration', () => {
         expect(sent()).toBe(false);
       });
 
+      test('refuses a System-owned account holding data (a nonce account) for SPL and native sends, and in dry run', async () => {
+        mockRecipient({ owner: '11111111111111111111111111111111', executable: false, lamports: 1447680, data: [Buffer.alloc(80, 1).toString('base64'), 'base64'], space: 80 });
+        await expect(sendTokens({ to: TO, amount: '1', chain: 'solana', token: USDC, password: 'test' }))
+          .rejects.toThrow(/is not a wallet address \(it is a System account holding data/);
+        await expect(sendTokens({ to: TO, amount: '0.5', chain: 'solana', password: 'test' }))
+          .rejects.toThrow(/is not a wallet address/);
+        await expect(sendTokens({ to: TO, amount: '0.5', chain: 'solana', password: 'test', dryRun: true }))
+          .rejects.toThrow(/is not a wallet address/);
+        expect(sent()).toBe(false);
+      });
+
       test.each([
         ['a System-owned wallet', account('11111111111111111111111111111111')],
         ['an address with no account yet (new wallet)', null],
