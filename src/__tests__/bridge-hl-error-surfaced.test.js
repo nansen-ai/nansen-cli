@@ -74,7 +74,7 @@ function writeWithdrawQuote(quoteId) {
                 type: 'sendAsset',
                 parameters: {
                   hyperliquidChain: 'Mainnet',
-                  destination: WALLET,
+                  destination: '0x66cf0aace1b4e562593bec10ec7868fba9932224', // Relay's HL deposit address (pinned)
                   sourceDex: '',
                   destinationDex: '',
                   token: 'USDC:0x6d1e7cde53ba9467b783cb7c530ce054',
