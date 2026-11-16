@@ -740,11 +740,20 @@ describe('bridge execute — Hyperliquid withdrawal leg count and destination', 
     expect(posted(calls)).toEqual([]);
   });
 
-  it('does not count a sendAsset leg already marked complete (resumed plan)', async () => {
+  it('counts a sendAsset leg already marked complete toward the total (resumed plan)', async () => {
     const done = depositStep();
     done.items[0].status = 'complete';
     writeQuote('bridge-resumed', [authorizeStep(), done, { ...depositStep(), id: 'deposit-2' }]);
-    await expect(execute('bridge-resumed')).resolves.toBeUndefined();
+    const calls = [];
+    await expect(execute('bridge-resumed', {}, calls)).rejects.toThrow(/1 authorize and 2 sendAsset leg\(s\) \(1 pending\)/);
+    expect(posted(calls)).toEqual([]);
+  });
+
+  it('still executes a resumed plan whose authorize leg is already complete', async () => {
+    const auth = authorizeStep();
+    auth.items[0].status = 'complete';
+    writeQuote('bridge-resumed-auth', [auth, depositStep()]);
+    await expect(execute('bridge-resumed-auth')).resolves.toBeUndefined();
   });
 
   it('refuses a sendAsset to a non-relayer destination before the authorize leg is posted', async () => {

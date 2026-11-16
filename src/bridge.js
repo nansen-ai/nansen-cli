@@ -694,13 +694,16 @@ function buildHlBridgeAction(signData) {
 // Per-item checks cannot bound a REPEATED plan: [authorize, sendAsset,
 // sendAsset, ...] passes them leg by leg, each sendAsset within the amount cap,
 // and would withdraw N times the reviewed amount. So, mirroring
-// preflightEvmBridgeSteps, count the incomplete legs: at most one authorize and
-// exactly one sendAsset.
+// preflightEvmBridgeSteps, count the legs: at most one incomplete authorize,
+// and exactly one sendAsset in total (completed sendAsset legs count toward
+// the total, since a real withdrawal never has two) which is still incomplete.
 function preflightHlBridgeSteps(steps, intent) {
   let authorizeCount = 0;
   let actionCount = 0;
+  let totalActionCount = 0;
   for (const step of steps) {
     for (const item of step.items || []) {
+      if (item.data?.action) totalActionCount++;
       // Skip already-signed-and-submitted items, matching the processors
       // (:769/:838): on resume of a partially-executed bridge, re-validating a
       // completed step against these now-stricter checks could wedge it.
@@ -732,9 +735,9 @@ function preflightHlBridgeSteps(steps, intent) {
       }
     }
   }
-  if (authorizeCount > 1 || actionCount !== 1) {
+  if (authorizeCount > 1 || totalActionCount !== 1 || actionCount !== 1) {
     throw new CommandError(
-      `Bridge plan has ${authorizeCount} authorize and ${actionCount} sendAsset leg(s); a legitimate withdrawal is at most one authorize and exactly one sendAsset. `
+      `Bridge plan has ${authorizeCount} authorize and ${totalActionCount} sendAsset leg(s) (${actionCount} pending); a legitimate withdrawal is at most one authorize and exactly one sendAsset. `
         + `Refusing to sign — repeated legs could withdraw more than the amount you requested. Request a new quote.`,
       'UNEXPECTED_ACTION',
     );
