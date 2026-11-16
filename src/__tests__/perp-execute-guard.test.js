@@ -51,6 +51,7 @@ import { submitExchange } from '../hl-client.js';
 import { signSecp256k1 } from '../crypto.js';
 import { buildPerpCommands } from '../perp.js';
 import { buildCommands } from '../cli.js';
+import { HL_TESTNET_API_URL } from '../hl-env.js';
 
 const WALLET = '0x' + '1'.repeat(40);
 const BUILDER = '0x' + 'ab'.repeat(20);
@@ -648,6 +649,20 @@ describe('perp transfer and approve-builder-fee', () => {
     await expect(cmds.transfer([], mockApi(), { 'dry-run': true }, { ...TRANSFER, amount: '1e21' }))
       .rejects.toMatchObject({ code: 'INVALID_INPUT' });
     expectNothingSigned();
+  });
+
+  it('transfer --dry-run refuses a testnet NANSEN_HL_API_URL, as a real run does', async () => {
+    const prev = process.env.NANSEN_HL_API_URL;
+    process.env.NANSEN_HL_API_URL = HL_TESTNET_API_URL;
+    try {
+      const { cmds } = capture();
+      await expect(cmds.transfer([], mockApi(), { 'dry-run': true }, TRANSFER))
+        .rejects.toMatchObject({ code: 'UNSUPPORTED_NETWORK' });
+      expectNothingSigned();
+    } finally {
+      if (prev === undefined) delete process.env.NANSEN_HL_API_URL;
+      else process.env.NANSEN_HL_API_URL = prev;
+    }
   });
 
   it.each(COMMANDS)('%s --dry-run: a blocked wallet fails the preview', async (name, options) => {

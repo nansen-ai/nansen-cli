@@ -1265,6 +1265,9 @@ OPTIONS:
       // Built (pure, nothing signed) before the gate: validates the amount on a
       // dry run too, and gives the plan the exact amount string that is signed.
       const signedAmount = buildUsdClassTransferAction({ amount, toPerp, nonce: 0 }).action.amount;
+      // transfer makes no proxy read before the gate, so check the network here:
+      // otherwise a dry run previews a transfer the real run refuses.
+      assertPerpNetworkSupported();
 
       const wallet = resolveWalletAddress(walletName);
       let ctx = await signingCtxBeforeGate(wallet, guard, log);
