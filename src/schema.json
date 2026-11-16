@@ -418,11 +418,22 @@
             "amount": {
               "type": "string",
               "required": true,
-              "description": "USDC amount to transfer"
+              "description": "USDC amount to transfer, at most 8 decimal places. An amount that can't be signed exactly is refused."
             },
             "wallet": {
               "type": "string",
               "description": "Wallet name (defaults to the configured default wallet)"
+            },
+            "dry-run": {
+              "type": "boolean",
+              "description": "Run the normal validation and the compliance screen, print the transfer plan (wallet, direction, the exact USDC amount that would be signed), then stop. Nothing is signed or sent to Hyperliquid and no wallet password is needed. Exits 0."
+            },
+            "yes": {
+              "type": "boolean",
+              "aliases": [
+                "y"
+              ],
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed, unless NANSEN_REQUIRE_CONFIRM=1 is set, in which case this (or NANSEN_YES=1) is required and a run without it fails with CONFIRMATION_REQUIRED before any request or signature. Declining the prompt exits 1 with nothing signed."
             }
           }
         },
@@ -437,6 +448,17 @@
             "wallet": {
               "type": "string",
               "description": "Wallet name (defaults to the configured default wallet)"
+            },
+            "dry-run": {
+              "type": "boolean",
+              "description": "Read the builder-fee status and run the compliance screen, print the approval plan (wallet, builder address, maximum fee rate), then stop. Nothing is signed or sent to Hyperliquid and no wallet password is needed. When the fee is already approved it says so and stops with nothing to preview. Exits 0."
+            },
+            "yes": {
+              "type": "boolean",
+              "aliases": [
+                "y"
+              ],
+              "description": "Skip the confirmation prompt (alias: -y, or set NANSEN_YES=1). The prompt is only shown when stdin is an interactive terminal; when stdin is not a terminal (agents, CI, pipes) the command proceeds unprompted whether or not this is passed, unless NANSEN_REQUIRE_CONFIRM=1 is set, in which case this (or NANSEN_YES=1) is required and a run without it fails with CONFIRMATION_REQUIRED before any request or signature. Declining the prompt exits 1 with nothing signed."
             }
           }
         },

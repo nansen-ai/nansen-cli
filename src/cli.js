@@ -2435,7 +2435,7 @@ USAGE:
   nansen perp positions
   nansen perp account
 
-BEFORE SUBMITTING (order, cancel, close, leverage):
+BEFORE SUBMITTING (order, cancel, close, leverage, transfer, approve-builder-fee):
   --dry-run   Validate and print what would be submitted, then stop. Exits 0.
   --yes, -y   Skip the confirmation prompt (same as NANSEN_YES=1). The prompt only
               appears when stdin is a terminal; declining exits 1, signing nothing.`);
