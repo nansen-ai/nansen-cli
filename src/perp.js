@@ -1248,7 +1248,7 @@ OPTIONS:
 
       if (!direction || options.amount === undefined) {
         throw new CommandError(
-          'Usage: nansen perp transfer --direction <spot-to-perp|perp-to-spot> --amount <usdc> [--wallet <name>]',
+          'Usage: nansen perp transfer --direction <spot-to-perp|perp-to-spot> --amount <usdc> [--wallet <name>] [--dry-run] [--yes]',
           'MISSING_PARAM',
         );
       }
@@ -1260,13 +1260,33 @@ OPTIONS:
         throw invalid(`Invalid --direction "${direction}". Must be one of: spot-to-perp, perp-to-spot.`);
       }
       const amount = parsePositiveNumber(options.amount, 'amount');
+      const guard = resolveExecuteGuard(flags, { env, isTTY });
+      const directionLabel = toPerp ? 'Spot → Perps' : 'Perps → Spot';
+      // Built (pure, nothing signed) before the gate: validates the amount on a
+      // dry run too, and gives the plan the exact amount string that is signed.
+      const signedAmount = buildUsdClassTransferAction({ amount, toPerp, nonce: 0 }).action.amount;
 
       const wallet = resolveWalletAddress(walletName);
-      const ctx = await resolveSigningCtx(wallet, log);
+      let ctx = await signingCtxBeforeGate(wallet, guard, log);
 
-      log(`\n  Transfer: ${amount} USDC ${toPerp ? 'Spot → Perps' : 'Perps → Spot'}`);
+      const proceed = await guardPerpAction(apiInstance, {
+        guard,
+        walletAddress: wallet.address,
+        question: 'Submit this transfer to Hyperliquid? [y/N] ',
+        buildPlan: async () => formatPlan('Perp transfer plan — USDC', [
+          ['Wallet', wallet.address],
+          ['Direction', directionLabel],
+          ['Amount', `${signedAmount} USDC`],
+        ]),
+      }, guardDeps);
+      if (!proceed) return undefined;
+      ctx ??= await resolveSigningCtx(wallet, log);
+
+      log(`\n  Transfer: ${signedAmount} USDC ${directionLabel}`);
 
       // usdClassTransfer is user-signed: the nonce is embedded in the action.
+      // Taken after the gate, since a prompt can wait long enough for a nonce
+      // taken before it to go stale.
       const nonce = hlNonce();
       const { action, primaryType, signTypes } = buildUsdClassTransferAction({ amount, toPerp, nonce });
       const eip712 = userSignedEip712(primaryType, signTypes, action);
@@ -1281,14 +1301,30 @@ OPTIONS:
       // the builder code. order/close auto-fire this on the first trade; this
       // command lets a client approve up front. No-op when already approved.
       const walletName = scalar(options.wallet, 'wallet');
+      const guard = resolveExecuteGuard(flags, { env, isTTY });
       const wallet = resolveWalletAddress(walletName);
-      const ctx = await resolveSigningCtx(wallet, log);
+      let ctx = await signingCtxBeforeGate(wallet, guard, log);
 
       const builderStatus = await fetchBuilderFee(apiInstance, wallet.address);
       if (builderStatus.approved) {
+        // Nothing would be signed, so there is nothing to preview or confirm.
         log(`\n  Builder fee already approved for ${wallet.address}\n`);
         return undefined;
       }
+
+      const proceed = await guardPerpAction(apiInstance, {
+        guard,
+        walletAddress: wallet.address,
+        question: 'Submit this builder-fee approval to Hyperliquid? [y/N] ',
+        buildPlan: async () => formatPlan('Perp builder-fee approval plan', [
+          ['Wallet', wallet.address],
+          ['Builder', String(builderStatus.builder_address).toLowerCase()],
+          ['Max fee rate', `${builderMaxFeeRate(builderStatus.required_fee)} of the order value`],
+          ['Effect', 'One-time approval that lets orders carry the Nansen builder code'],
+        ]),
+      }, guardDeps);
+      if (!proceed) return undefined;
+      ctx ??= await resolveSigningCtx(wallet, log);
 
       log(`\n  Approve builder fee: ${wallet.address}`);
       await ensureBuilderApproved(apiInstance, builderStatus, ctx);

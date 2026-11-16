@@ -207,7 +207,7 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 |-----|---------|
 | `NANSEN_WALLET_PASSWORD` | **Required for `trade execute`.** Wallet encryption password — persisted in `~/.nansen/.env`. Source before executing: `source ~/.nansen/.env && nansen trade execute ...` |
 | `NANSEN_API_KEY` | API key (also set via explicit `nansen login --human`; browser sessions are not wallet or RPC keys) |
-| `NANSEN_YES` | Set to `1` to skip the confirmation prompt of `trade execute`, `bridge execute`, `trade limit-order create`/`cancel` and `perp order`/`close`/`cancel`/`leverage`, like `--yes` |
+| `NANSEN_YES` | Set to `1` to skip the confirmation prompt of `trade execute`, `bridge execute`, `trade limit-order create`/`cancel` and `perp order`/`close`/`cancel`/`leverage`/`transfer`/`approve-builder-fee`, like `--yes` |
 | `NANSEN_REQUIRE_CONFIRM` | Set to `1` to make those same commands fail with `CONFIRMATION_REQUIRED`, before any request or signature, when stdin is not a terminal and neither `--yes` nor `NANSEN_YES=1` is given. `--dry-run` still works. Opt-in; unset keeps today's behaviour |
 
 > **Agents:** Never hold a wallet password only in session memory. If `NANSEN_WALLET_PASSWORD` is not in `~/.nansen/.env`, follow the setup flow in the nansen-wallet-manager skill Password Policy to generate and persist one before proceeding.
@@ -223,7 +223,7 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 
 Use `nansen perp` for Hyperliquid perpetual trading. Uses the same wallet and `NANSEN_WALLET_PASSWORD` as DEX trading; requires an **EVM** wallet. **Perp orders are irreversible once signed.**
 
-Subcommands: `order`, `cancel`, `close`, `leverage`, `positions`, `orders`, `account`, `meta`.
+Subcommands: `order`, `cancel`, `close`, `leverage`, `transfer`, `approve-builder-fee`, `positions`, `orders`, `account`, `meta`.
 
 The asset is selected with `--symbol` (e.g. `BTC`, `ETH`); `--coin` is accepted as an alias. List tradable assets and their max leverage with `nansen perp meta` (use `--filter <text>` or `--all` to see beyond the first 20).
 
@@ -236,13 +236,13 @@ nansen perp order --symbol ETH --side buy --size 0.1 --price 1600 --dry-run   # 
 nansen perp order --symbol ETH --side buy --size 0.1 --price 1600 --yes       # skip the confirmation prompt
 ```
 
-**`--dry-run`** runs the normal validation and read-only lookups (asset metadata, builder fee, open position, compliance screen), prints the plan (coin, side, rounded size, price and type, take-profit/stop-loss, estimated notional, leverage, builder fee) and exits 0. Nothing is signed or sent to Hyperliquid, no wallet password is needed, and the one-time builder-fee approval is not submitted. `close` also shows the worst fill price after slippage and the open position, `cancel` shows the open order it would cancel, and `leverage` shows the new setting next to the asset maximum.
+**`--dry-run`** runs the normal validation and read-only lookups (asset metadata, builder fee, open position, compliance screen), prints the plan (coin, side, rounded size, price and type, take-profit/stop-loss, estimated notional, leverage, builder fee) and exits 0. Nothing is signed or sent to Hyperliquid, no wallet password is needed, and the one-time builder-fee approval is not submitted. `close` also shows the worst fill price after slippage and the open position, `cancel` shows the open order it would cancel, `leverage` shows the new setting next to the asset maximum, `transfer` shows the direction and the exact USDC amount, and `approve-builder-fee` shows the builder address and maximum fee rate (or says the fee is already approved, with nothing to preview).
 
 **Exception: `close --dry-run` exits 1 with `NO_OPEN_POSITION` when the wallet has no open position in that coin.** That is a definite "nothing to close" answer, not a crash. If the position was opened moments ago, the positions data may not show it yet: retry after a few seconds. A real `close` skips this check and lets Hyperliquid decide; with a prompt, its plan shows a warning instead.
 
-**Confirmation.** When stdin is an interactive terminal, these four commands print the plan and ask, for example, `Submit this order to Hyperliquid? [y/N]` before signing. Answering anything but `y`/`yes` exits 1 with nothing signed (code `CONFIRMATION_DECLINED`). Pass `--yes` (`-y`), or set `NANSEN_YES=1`, to skip the question.
+**Confirmation.** When stdin is an interactive terminal, these commands (`order`, `close`, `cancel`, `leverage`, `transfer`, `approve-builder-fee`) print the plan and ask, for example, `Submit this order to Hyperliquid? [y/N]` before signing. Answering anything but `y`/`yes` exits 1 with nothing signed (code `CONFIRMATION_DECLINED`). Pass `--yes` (`-y`), or set `NANSEN_YES=1`, to skip the question.
 
-**When stdin is *not* a terminal** (agents, CI) the commands submit without prompting, exactly as before, and `--yes` is a no-op. **Exception:** if `NANSEN_REQUIRE_CONFIRM=1` is set, they fail with `CONFIRMATION_REQUIRED` (exit 1) before any request or signature unless `--yes` or `NANSEN_YES=1` is given; follow the operator stop point described above. These are the same rules as `trade execute` and `bridge execute`. `transfer` and `approve-builder-fee` are unchanged.
+**When stdin is *not* a terminal** (agents, CI) the commands submit without prompting, exactly as before, and `--yes` is a no-op. **Exception:** if `NANSEN_REQUIRE_CONFIRM=1` is set, they fail with `CONFIRMATION_REQUIRED` (exit 1) before any request or signature unless `--yes` or `NANSEN_YES=1` is given; follow the operator stop point described above. These are the same rules as `trade execute` and `bridge execute`.
 
 ## Open a position
 

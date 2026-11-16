@@ -1,6 +1,6 @@
 /**
  * --dry-run / --yes gate on the perp commands that change Hyperliquid state
- * (order, close, cancel, leverage).
+ * (order, close, cancel, leverage, transfer, approve-builder-fee).
  *
  * The signing seams (local secp256k1 signing, Privy typed-data signing) and the
  * only Hyperliquid submission seam (submitExchange) are spies, and global fetch
@@ -61,6 +61,8 @@ const ORDER = { coin: 'ETH', side: 'buy', size: '0.01', price: '2000', type: 'li
 const CLOSE = { coin: 'ETH', side: 'sell', size: '0.01', price: '2000', wallet: 'x' };
 const CANCEL = { coin: 'ETH', oid: '4242', wallet: 'x' };
 const LEVERAGE = { coin: 'ETH', leverage: '5', 'margin-type': 'isolated', wallet: 'x' };
+const TRANSFER = { direction: 'perp-to-spot', amount: '500', wallet: 'x' };
+const APPROVE = { wallet: 'x' };
 // An open long, so `close` (sell) has something to close.
 const LONG_ETH = [{ coin: 'ETH', szi: '0.02', entryPx: '1950' }];
 
@@ -600,6 +602,165 @@ describe('perp guard wiring through the CLI command table', () => {
     const cmds = buildCommands({ log: m => out.push(m) });
     await cmds.perp(['leverage'], mockApi(), { 'dry-run': true }, LEVERAGE);
     expect(out.join('\n')).toContain('Perp leverage plan — ETH');
+    expectNothingSigned();
+  });
+});
+
+// transfer and approve-builder-fee sign one action each (usdClassTransfer,
+// approveBuilderFee). approve-builder-fee only signs when the fee is not yet
+// approved, so these cases use approved: false unless they say otherwise.
+describe('perp transfer and approve-builder-fee', () => {
+  const COMMANDS = [
+    ['transfer', TRANSFER, 'Perp transfer plan — USDC', 'Submit this transfer to Hyperliquid?', 'usdClassTransfer'],
+    ['approve-builder-fee', APPROVE, 'Perp builder-fee approval plan', 'Submit this builder-fee approval to Hyperliquid?', 'approveBuilderFee'],
+  ];
+
+  it('transfer --dry-run prints the direction and the signed amount, and signs nothing', async () => {
+    const { cmds, text } = capture();
+    await cmds.transfer([], mockApi(), { 'dry-run': true }, { ...TRANSFER, amount: '12.50' });
+    expectNothingSigned();
+    expect(text()).toContain('Perp transfer plan — USDC');
+    expect(text()).toMatch(/Direction:\s+Perps → Spot/);
+    expect(text()).toMatch(/Amount:\s+12\.5 USDC/);
+    expect(text()).toContain('DRY RUN — nothing was sent to Hyperliquid');
+  });
+
+  it('approve-builder-fee --dry-run prints the builder and the maximum rate, and signs nothing', async () => {
+    const { cmds, text } = capture();
+    await cmds['approve-builder-fee']([], mockApi({ approved: false }), { 'dry-run': true }, APPROVE);
+    expectNothingSigned();
+    expect(text()).toContain('Perp builder-fee approval plan');
+    expect(text()).toMatch(new RegExp(`Builder:\\s+${BUILDER}`));
+    expect(text()).toMatch(/Max fee rate:\s+0\.08% of the order value/);
+    expect(text()).toContain('DRY RUN — nothing was sent to Hyperliquid');
+  });
+
+  it('approve-builder-fee --dry-run on an approved wallet says so and has nothing to preview', async () => {
+    const { cmds, text } = capture();
+    await cmds['approve-builder-fee']([], mockApi({ approved: true }), { 'dry-run': true }, APPROVE);
+    expect(text()).toContain('Builder fee already approved');
+    expect(text()).not.toContain('plan');
+    expectNothingSigned();
+  });
+
+  it('transfer --dry-run still refuses an amount Hyperliquid cannot parse', async () => {
+    const { cmds } = capture();
+    await expect(cmds.transfer([], mockApi(), { 'dry-run': true }, { ...TRANSFER, amount: '1e21' }))
+      .rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    expectNothingSigned();
+  });
+
+  it.each(COMMANDS)('%s --dry-run: a blocked wallet fails the preview', async (name, options) => {
+    const { cmds } = capture();
+    await expect(cmds[name]([], mockApi({ approved: false, sanctioned: true }), { 'dry-run': true }, options))
+      .rejects.toMatchObject({ code: 'SANCTIONED' });
+    expectNothingSigned();
+  });
+
+  it.each(COMMANDS)('%s --dry-run: needs no password for an encrypted wallet', async (name, options, title) => {
+    getWalletConfig.mockReturnValue({ passwordHash: 'hash', defaultWallet: 'x' });
+    const { cmds, text } = capture();
+    await cmds[name]([], mockApi({ approved: false }), { 'dry-run': true }, options);
+    expect(text()).toContain(title);
+    expect(exportWallet).not.toHaveBeenCalled();
+    expectNothingSigned();
+  });
+
+  it.each(COMMANDS)('%s: NANSEN_REQUIRE_CONFIRM refuses before any request or signature', async (name, options) => {
+    const promptFn = vi.fn();
+    const { cmds } = capture({ isTTY: false, promptFn, env: { NANSEN_REQUIRE_CONFIRM: '1' } });
+    const api = mockApi({ approved: false });
+    const err = await cmds[name]([], api, {}, options).catch(e => e);
+    expect(err.code).toBe('CONFIRMATION_REQUIRED');
+    expect(promptFn).not.toHaveBeenCalled();
+    expect(api.request).not.toHaveBeenCalled();
+    expect(exportWallet).not.toHaveBeenCalled();
+    expectNothingSigned();
+  });
+
+  it.each(COMMANDS)('%s: NANSEN_REQUIRE_CONFIRM with --yes submits', async (name, options, _title, _question, type) => {
+    const { cmds } = capture({ isTTY: false, env: { NANSEN_REQUIRE_CONFIRM: '1' } });
+    await cmds[name]([], mockApi({ approved: false }), { yes: true }, options);
+    expect(submitExchange.mock.calls.map(([c]) => c.action.type)).toEqual([type]);
+  });
+
+  it.each(COMMANDS)('%s: declining the terminal prompt exits with CONFIRMATION_DECLINED and signs nothing', async (name, options, title, question) => {
+    const promptFn = vi.fn(async () => 'n');
+    const { cmds, errText, text } = capture({ isTTY: true, promptFn });
+    const err = await cmds[name]([], mockApi({ approved: false }), {}, options).catch(e => e);
+    expect(err.code).toBe('CONFIRMATION_DECLINED');
+    expect(promptFn).toHaveBeenCalledWith(`${question} [y/N] `);
+    expect(errText()).toContain(title);
+    expect(text()).not.toContain(title);
+    expect(exportWallet).not.toHaveBeenCalled();
+    expectNothingSigned();
+  });
+
+  it.each(COMMANDS)('%s: accepting the terminal prompt loads the key afterwards and submits once', async (name, options, _title, _question, type) => {
+    const promptFn = vi.fn(async () => {
+      expect(exportWallet).not.toHaveBeenCalled();
+      return 'y';
+    });
+    const { cmds } = capture({ isTTY: true, promptFn });
+    await cmds[name]([], mockApi({ approved: false }), {}, options);
+    expect(promptFn).toHaveBeenCalledTimes(1);
+    expect(exportWallet).toHaveBeenCalledTimes(1);
+    expect(submitExchange.mock.calls.map(([c]) => c.action.type)).toEqual([type]);
+  });
+
+  it.each(COMMANDS)('%s: off a terminal it submits without a prompt, as before', async (name, options, title, _question, type) => {
+    const promptFn = vi.fn(async () => 'n');
+    const { cmds, text } = capture({ isTTY: false, promptFn });
+    await cmds[name]([], mockApi({ approved: false }), {}, options);
+    expect(promptFn).not.toHaveBeenCalled();
+    expect(text()).not.toContain(title);
+    expect(submitExchange.mock.calls.map(([c]) => c.action.type)).toEqual([type]);
+  });
+
+  it('approve-builder-fee on an approved wallet does not prompt or sign', async () => {
+    const promptFn = vi.fn(async () => 'y');
+    const { cmds, text } = capture({ isTTY: true, promptFn });
+    await cmds['approve-builder-fee']([], mockApi({ approved: true }), {}, APPROVE);
+    expect(text()).toContain('Builder fee already approved');
+    expect(promptFn).not.toHaveBeenCalled();
+    expectNothingSigned();
+  });
+
+  it('transfer signs with a nonce taken after the prompt is answered', async () => {
+    let now = 1_700_000_000_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const promptFn = vi.fn(async () => {
+        now += 60 * 60 * 1000; // the user takes an hour to answer
+        return 'y';
+      });
+      const { cmds } = capture({ isTTY: true, promptFn });
+      await cmds.transfer([], mockApi(), {}, TRANSFER);
+      const [{ action, nonce }] = submitExchange.mock.calls[0];
+      expect(nonce).toBe(now);
+      expect(action.nonce).toBe(now);
+      expect(action.amount).toBe('500');
+      expect(action.toPerp).toBe(false);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('nansen perp transfer --dry-run through the CLI command table returns without submitting', async () => {
+    const out = [];
+    const cmds = buildCommands({ log: m => out.push(m) });
+    await cmds.perp(['transfer'], mockApi(), { 'dry-run': true }, TRANSFER);
+    expect(out.join('\n')).toContain('Perp transfer plan — USDC');
+    expectNothingSigned();
+  });
+
+  it('nansen perp approve-builder-fee asks the terminal user before submitting', async () => {
+    const confirmationPromptFn = vi.fn(async () => 'no');
+    const stderr = [];
+    const cmds = buildCommands({ log: () => {}, isTTY: true, confirmationPromptFn, confirmationLog: m => stderr.push(m) });
+    const err = await cmds.perp(['approve-builder-fee'], mockApi({ approved: false }), {}, APPROVE).catch(e => e);
+    expect(err.code).toBe('CONFIRMATION_DECLINED');
+    expect(stderr.join('\n')).toContain('Perp builder-fee approval plan');
     expectNothingSigned();
   });
 });
