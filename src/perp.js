@@ -548,6 +548,16 @@ function parsePositiveNumber(raw, name) {
   return n;
 }
 
+// Canonical form of a decimal string already validated by parsePositiveNumber,
+// using string operations only: "025" -> "25", "12.50" -> "12.5", ".5" -> "0.5".
+function normalizeDecimalString(raw) {
+  const s = String(scalar(raw, 'amount') ?? '').trim();
+  const [intPart, fracPart = ''] = s.split('.');
+  const int = intPart.replace(/^0+/, '') || '0';
+  const frac = fracPart.replace(/0+$/, '');
+  return frac ? `${int}.${frac}` : int;
+}
+
 function parsePositiveInt(raw, name) {
   // Digits-only check before parseInt — parseInt("2.5") floors to 2 and
   // parseInt("123abc") yields 123, so a fractional or garbage value would
@@ -1265,6 +1275,11 @@ OPTIONS:
       // Built (pure, nothing signed) before the gate: validates the amount on a
       // dry run too, and gives the plan the exact amount string that is signed.
       const signedAmount = buildUsdClassTransferAction({ amount, toPerp, nonce: 0 }).action.amount;
+      // The amount goes through a float and an 8-decimal string; refuse an
+      // input that string can't carry exactly instead of signing another amount.
+      if (normalizeDecimalString(options.amount) !== signedAmount) {
+        throw invalid(`Invalid --amount "${options.amount}". Hyperliquid takes USDC amounts with at most 8 decimal places, and this amount can't be signed exactly; it would be signed as ${signedAmount}.`);
+      }
       // transfer makes no proxy read before the gate, so check the network here:
       // otherwise a dry run previews a transfer the real run refuses.
       assertPerpNetworkSupported();

@@ -651,6 +651,41 @@ describe('perp transfer and approve-builder-fee', () => {
     expectNothingSigned();
   });
 
+  // The amount is signed as an 8-decimal string; an input that string can't
+  // carry exactly is refused rather than signed as a different amount.
+  it.each([
+    ['0.000000019', '0.00000002'],
+    ['12.345678901', '12.3456789'],
+    ['9007199254740993', '9007199254740992'],
+  ])('transfer refuses --amount %s, which would be signed as %s, before any request', async (amount, signed) => {
+    for (const flags of [{ 'dry-run': true }, { yes: true }]) {
+      const { cmds } = capture();
+      const api = mockApi();
+      const err = await cmds.transfer([], api, flags, { ...TRANSFER, amount }).catch(e => e);
+      expect(err.code).toBe('INVALID_INPUT');
+      expect(err.message).toContain(`signed as ${signed}`);
+      expect(api.request).not.toHaveBeenCalled();
+      expect(exportWallet).not.toHaveBeenCalled();
+      expectNothingSigned();
+    }
+  });
+
+  it.each([
+    ['25', '25'],
+    ['25.0', '25'],
+    ['025', '25'],
+    ['0.1', '0.1'],
+    ['.5', '0.5'],
+    ['12.50', '12.5'],
+    ['0.00000001', '0.00000001'],
+    ['12.34567890', '12.3456789'],
+  ])('transfer --dry-run accepts --amount %s and plans %s USDC', async (amount, planned) => {
+    const { cmds, text } = capture();
+    await cmds.transfer([], mockApi(), { 'dry-run': true }, { ...TRANSFER, amount });
+    expect(text()).toMatch(new RegExp(`Amount:\\s+${planned.replace('.', '\\.')} USDC`));
+    expectNothingSigned();
+  });
+
   it('transfer --dry-run refuses a testnet NANSEN_HL_API_URL, as a real run does', async () => {
     const prev = process.env.NANSEN_HL_API_URL;
     process.env.NANSEN_HL_API_URL = HL_TESTNET_API_URL;

@@ -418,7 +418,7 @@
             "amount": {
               "type": "string",
               "required": true,
-              "description": "USDC amount to transfer"
+              "description": "USDC amount to transfer, at most 8 decimal places. An amount that can't be signed exactly is refused."
             },
             "wallet": {
               "type": "string",
