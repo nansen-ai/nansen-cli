@@ -15,6 +15,23 @@ export function keccak256(input) {
   return Buffer.from(hash);
 }
 
+// ============= EIP-55 =============
+
+/**
+ * EIP-55 mixed-case checksum form of a 20-byte hex address (with or without
+ * 0x, any case). Each hex letter is uppercased when the matching nibble of
+ * keccak256(lowercase hex) is 8 or more.
+ */
+export function toChecksumAddress(address) {
+  const hex = String(address).replace(/^0x/i, '').toLowerCase();
+  const hash = keccak256(Buffer.from(hex, 'utf8')).toString('hex');
+  let out = '0x';
+  for (let i = 0; i < hex.length; i++) {
+    out += parseInt(hash[i], 16) >= 8 ? hex[i].toUpperCase() : hex[i];
+  }
+  return out;
+}
+
 // ============= secp256k1 ECDSA =============
 
 /**
