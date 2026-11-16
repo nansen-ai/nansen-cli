@@ -2645,6 +2645,108 @@ describe('EVM swap gas zero fallback (execute)', () => {
     expect(privyTransactions.some(t => t.gas_limit === '0x33450')).toBe(true); // 210000
   });
 
+  // Divergent input aliases: inputAmount (what the intent binding reads) matches
+  // the request, but inAmount and tx.value are 5x larger. The native value must
+  // be bound to the same field as the intent check and capped at maxInputAmount,
+  // so this is refused before signing even with outcome verification off.
+  function divergentNativeQuote() {
+    return {
+      aggregator: 'lifi',
+      inputMint: BASE_ETH,
+      outputMint: BASE_USDC,
+      inputAmount: '1000000000000000000', // 1 ETH: matches the request
+      inAmount: '5000000000000000000', // 5 ETH
+      outAmount: '3000000000',
+      gas: '210000',
+      transaction: {
+        to: LIFI_ROUTER,
+        data: '0x12345678',
+        value: '5000000000000000000', // 5 ETH
+        gas: '210000',
+        maxFeePerGas: '1000000',
+        maxPriorityFeePerGas: '1000000',
+      },
+    };
+  }
+
+  it('Privy: refuses a native swap whose tx.value follows inAmount instead of the bound inputAmount', async () => {
+    process.env.PRIVY_APP_ID = 'test-app-id';
+    process.env.PRIVY_APP_SECRET = 'test-secret';
+    const { privyTransactions, executeBodies } = stubGasFallbackFetch();
+
+    const quoteId = saveQuote({ success: true, quotes: [divergentNativeQuote()] }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({
+        walletAddress: '0xPrivyAddr',
+        fromToken: BASE_ETH,
+        toToken: BASE_USDC,
+        amount: '1000000000000000000',
+        maxInputAmount: '1000000000000000000',
+      }),
+    });
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toThrow(/All quotes failed/);
+
+    expect(logs.some(l => l.includes('value mismatch'))).toBe(true);
+    expect(privyTransactions).toHaveLength(0);
+    expect(executeBodies).toHaveLength(0);
+  });
+
+  it('local: refuses a native swap whose tx.value follows inAmount instead of the bound inputAmount', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    const { executeBodies } = stubGasFallbackFetch();
+
+    const quoteId = saveQuote({ success: true, quotes: [divergentNativeQuote()] }, 'base', 'local', null, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({
+        walletAddress: showWallet('default').evm,
+        fromToken: BASE_ETH,
+        toToken: BASE_USDC,
+        amount: '1000000000000000000',
+        maxInputAmount: '1000000000000000000',
+      }),
+    });
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toThrow(/All quotes failed/);
+
+    expect(logs.some(l => l.includes('value mismatch'))).toBe(true);
+    expect(executeBodies).toHaveLength(0);
+    delete process.env.NANSEN_WALLET_PASSWORD;
+  });
+
+  it('WalletConnect: refuses a native swap whose tx.value follows inAmount instead of the bound inputAmount', async () => {
+    const wcAddress = '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4';
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(wcAddress);
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmocktx' });
+    stubGasFallbackFetch();
+
+    const quoteId = saveQuote({ success: true, quotes: [divergentNativeQuote()] }, 'base', 'walletconnect', null, null, {
+      swapMode: 'exactIn',
+      request: evmIntent({
+        walletAddress: wcAddress,
+        fromToken: BASE_ETH,
+        toToken: BASE_USDC,
+        amount: '1000000000000000000',
+        maxInputAmount: '1000000000000000000',
+      }),
+    });
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
+    await expect(cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId }))
+      .rejects.toThrow(/All quotes failed/);
+
+    expect(logs.some(l => l.includes('value mismatch'))).toBe(true);
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
   it('Privy: logs estimated gas when quote has no gas fields', async () => {
     process.env.PRIVY_APP_ID = 'test-app-id';
     process.env.PRIVY_APP_SECRET = 'test-secret';

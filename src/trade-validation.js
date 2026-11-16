@@ -681,6 +681,61 @@ function tokensEqual(a, b, chain) {
 }
 
 /**
+ * The quote's input amount as the intent binding reads it: `inputAmount`, or
+ * the legacy `inAmount` alias when `inputAmount` is absent. Every pre-sign
+ * check that bounds the input (intent match, spend ceiling, native tx.value)
+ * must read this same field, or a quote carrying both aliases with different
+ * values satisfies each check with a different one.
+ */
+export function quoteInputAmountRaw(quote) {
+  return quote?.inputAmount ?? quote?.inAmount;
+}
+
+/**
+ * Check a native-token-input EVM transaction's `value` against the quote and
+ * the persisted request intent. Returns null when it is safe to sign, or a
+ * reason string the caller reports as a value mismatch.
+ *
+ *   - tx.value must equal the bound input (quoteInputAmountRaw), the same field
+ *     assertQuoteMatchesRequest / assertInputWithinMax already checked.
+ *   - tx.value must also not exceed request.maxInputAmount, independently, so
+ *     the native value is capped by persisted intent whichever alias the API
+ *     populated.
+ *
+ * @param {object} request - Persisted intent (quoteData.request)
+ * @param {object} quote - The quote being executed
+ * @param {bigint} txValue - The transaction value about to be signed
+ * @returns {string|null}
+ */
+export function nativeValueMismatch(request, quote, txValue) {
+  const inRaw = quoteInputAmountRaw(quote);
+  if (inRaw == null || inRaw === '') {
+    return `tx.value=${txValue}, but the quote has no input amount to bind it to`;
+  }
+  let expected;
+  try {
+    expected = BigInt(inRaw);
+  } catch {
+    return `tx.value=${txValue}, but the quote input amount (${inRaw}) is not an integer`;
+  }
+  if (txValue !== expected) {
+    return `tx.value=${txValue}, expected=${expected}`;
+  }
+  if (request?.maxInputAmount != null) {
+    let cap;
+    try {
+      cap = BigInt(request.maxInputAmount);
+    } catch {
+      return `tx.value=${txValue}, but the persisted maximum input (${request.maxInputAmount}) is not an integer`;
+    }
+    if (txValue > cap) {
+      return `tx.value=${txValue} exceeds the maximum input ${cap}`;
+    }
+  }
+  return null;
+}
+
+/**
  * Revalidate a quote against the immutable request intent that was persisted
  * when the quote was fetched. The Trading API supplies the amounts, token
  * pair, and transaction that the execute path signs; without this check a
@@ -802,7 +857,7 @@ export function assertQuoteMatchesRequest(request, quote, { chain, walletAddress
         );
       }
     } else {
-      const inRaw = quote.inputAmount ?? quote.inAmount;
+      const inRaw = quoteInputAmountRaw(quote);
       if (inRaw == null) {
         throw new Error(
           `Quote is missing the input amount; cannot confirm it matches the requested input (${requested}). Refusing to sign.`,
@@ -882,7 +937,7 @@ export function assertInputWithinMax(request, quote, slippage) {
     );
   }
 
-  const inRaw = quote.inputAmount ?? quote.inAmount;
+  const inRaw = quoteInputAmountRaw(quote);
   if (inRaw == null) {
     throw new Error(
       'Quote is missing the input amount; cannot enforce the maximum input. Refusing to sign.',

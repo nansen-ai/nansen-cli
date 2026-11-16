@@ -465,6 +465,32 @@ describe('trade execute --dry-run / --yes', () => {
     expect(JSON.parse(fs.readFileSync(quotePath, 'utf8')).executedAt).toBeUndefined();
   });
 
+  it('--dry-run rejects a native quote whose tx.value follows a divergent inAmount', async () => {
+    stubFetch();
+    const quoteId = nativeQuote('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    const quotePath = path.join(tmpHome, '.nansen', 'quotes', `${quoteId}.json`);
+    const saved = JSON.parse(fs.readFileSync(quotePath, 'utf8'));
+    // inputAmount (what the intent binding reads) still matches the request;
+    // inAmount and the native value are 5x larger.
+    saved.response.quotes[0].inAmount = '5000000000000000000';
+    saved.response.quotes[0].transaction.value = '5000000000000000000';
+    fs.writeFileSync(quotePath, JSON.stringify(saved, null, 2));
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: m => logs.push(m), isTTY: false, env: {} });
+    for (const signerType of ['local', 'privy', 'walletconnect']) {
+      const variant = JSON.parse(fs.readFileSync(quotePath, 'utf8'));
+      variant.signerType = signerType;
+      fs.writeFileSync(quotePath, JSON.stringify(variant, null, 2));
+      await expect(cmds.execute([], api, { 'dry-run': true, 'no-verify-outcome': true }, { quote: quoteId }))
+        .rejects.toMatchObject({ code: 'ALL_QUOTES_FAILED', message: expect.stringMatching(/value mismatch/) });
+    }
+
+    expect(logs.join('\n')).not.toContain('DRY RUN — nothing was broadcast');
+    expect(executeBodies).toHaveLength(0);
+    expect(JSON.parse(fs.readFileSync(quotePath, 'utf8')).executedAt).toBeUndefined();
+  });
+
   it('--dry-run applies request-intent validation to Solana quotes before signer resolution', async () => {
     const walletAddress = 'Wallet1111111111111111111111111111111111';
     const quoteId = saveQuote({
