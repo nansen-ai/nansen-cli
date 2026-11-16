@@ -404,6 +404,12 @@ describe('fetchTokenBalance', () => {
   });
 });
 
+// eth_call / eth_getBalance reply carrying a base-unit balance.
+const evmBalanceReply = (raw) => ({
+  ok: true,
+  json: async () => ({ jsonrpc: '2.0', id: 1, result: '0x' + raw.toString(16).padStart(64, '0') }),
+});
+
 describe('validateBalance', () => {
   let originalFetch;
 
@@ -646,6 +652,46 @@ describe('validateBalance', () => {
     });
     expect(Number(result.adjustedAmount)).toBeCloseTo(100);
   });
+
+  // An 18-decimal balance does not fit in a float, so these compare in base units.
+  describe('with an 18-decimal token balance', () => {
+    let stderrSpy;
+    beforeEach(() => {
+      stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    });
+    afterEach(() => {
+      stderrSpy.mockRestore();
+    });
+
+    it('accepts an amount equal to the balance without auto-adjusting', async () => {
+      global.fetch = vi.fn().mockResolvedValue(evmBalanceReply(987654321987654321n));
+
+      const result = await validateBalance({
+        chain: 'base',
+        from: '0x1111111111111111111111111111111111111111',
+        amount: '0.987654321987654321',
+        amountUnit: 'token',
+        walletAddress: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+        decimals: 18,
+      });
+      expect(result.adjustedAmount).toBe('0.987654321987654321');
+      expect(stderrSpy).not.toHaveBeenCalled();
+    });
+
+    it('auto-adjusts to the exact balance', async () => {
+      global.fetch = vi.fn().mockResolvedValue(evmBalanceReply(1234567891234567891n));
+
+      const result = await validateBalance({
+        chain: 'base',
+        from: '0x1111111111111111111111111111111111111111',
+        amount: '1.24',
+        amountUnit: 'token',
+        walletAddress: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+        decimals: 18,
+      });
+      expect(result.adjustedAmount).toBe('1.234567891234567891');
+    });
+  });
 });
 
 describe('quote handler integration', () => {
@@ -822,6 +868,85 @@ describe('resolvePercentAmount', () => {
       decimals: 9,
     });
     expect(result).toBe('0.999');
+  });
+
+  it.each([
+    { raw: 1234567891234567891n, expected: '1.234567891234567891' },
+    { raw: 987654321987654321n, expected: '0.987654321987654321' },
+  ])('should return the whole 18-decimal balance $expected at percentage 100', async ({ raw, expected }) => {
+    global.fetch = vi.fn().mockResolvedValue(evmBalanceReply(raw));
+
+    const result = await resolvePercentAmount({
+      chain: 'base',
+      from: '0x1111111111111111111111111111111111111111',
+      walletAddress: '0x1234567890abcdef1234567890abcdef12345678',
+      percentage: 100,
+      decimals: 18,
+    });
+    expect(result).toBe(expected);
+  });
+
+  it('should return the exact balance for 100% of a large SPL balance', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0', id: 1,
+        result: { value: [{ account: { data: { parsed: { info: { tokenAmount: { amount: '123456789123456789' } } } } } }] },
+      }),
+    });
+
+    const result = await resolvePercentAmount({
+      chain: 'solana',
+      from: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+      walletAddress: '11111111111111111111111111111111',
+      percentage: 100,
+      decimals: 9,
+    });
+    expect(result).toBe('123456789.123456789');
+  });
+
+  it('should not use exponent notation for a small balance', async () => {
+    global.fetch = vi.fn().mockResolvedValue(evmBalanceReply(500_000_000_000n));
+
+    const result = await resolvePercentAmount({
+      chain: 'base',
+      from: '0x1111111111111111111111111111111111111111',
+      walletAddress: '0x1234567890abcdef1234567890abcdef12345678',
+      percentage: 100,
+      decimals: 18,
+    });
+    expect(result).toBe('0.0000005');
+  });
+
+  it('should apply a very small percentage exactly', async () => {
+    // 0.0000001% of 1,000,000 tokens (18 decimals) is 0.001 tokens.
+    global.fetch = vi.fn().mockResolvedValue(evmBalanceReply(10n ** 24n));
+
+    const result = await resolvePercentAmount({
+      chain: 'base',
+      from: '0x1111111111111111111111111111111111111111',
+      walletAddress: '0x1234567890abcdef1234567890abcdef12345678',
+      percentage: 0.0000001,
+      decimals: 18,
+    });
+    expect(result).toBe('0.001');
+  });
+
+  it('should keep the exact gas reserve at 100% of native ETH on Base', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: '0x' + (1234567891234567891n).toString(16) }),
+    });
+
+    const result = await resolvePercentAmount({
+      chain: 'base',
+      from: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      walletAddress: '0x1234567890abcdef1234567890abcdef12345678',
+      percentage: 100,
+      decimals: 18,
+    });
+    // 1234567891234567891 wei minus the 0.00004 ETH (40000000000000 wei) reserve
+    expect(result).toBe('1.234527891234567891');
   });
 });
 
