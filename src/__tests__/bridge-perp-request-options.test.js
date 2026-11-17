@@ -143,8 +143,45 @@ describe('bridge request options', () => {
               post: { endpoint: '/authorize', body: {} },
             },
           }],
+        }, {
+          // A real withdrawal is [authorize, sendAsset]; preflight refuses a
+          // plan without exactly one sendAsset.
+          id: 'deposit',
+          items: [{
+            data: {
+              action: {
+                type: 'sendAsset',
+                parameters: {
+                  hyperliquidChain: 'Mainnet',
+                  destination: '0x66cf0aace1b4e562593bec10ec7868fba9932224',
+                  sourceDex: '',
+                  destinationDex: '',
+                  token: 'USDC:0x6d1e7cde53ba9467b783cb7c530ce054',
+                  amount: '2.000000',
+                  fromSubAccount: '',
+                  nonce: 1,
+                },
+              },
+              eip712PrimaryType: 'HyperliquidTransaction:SendAsset',
+              eip712Types: {
+                'HyperliquidTransaction:SendAsset': [
+                  { name: 'hyperliquidChain', type: 'string' },
+                  { name: 'destination', type: 'string' },
+                  { name: 'sourceDex', type: 'string' },
+                  { name: 'destinationDex', type: 'string' },
+                  { name: 'token', type: 'string' },
+                  { name: 'amount', type: 'string' },
+                  { name: 'fromSubAccount', type: 'string' },
+                  { name: 'nonce', type: 'uint64' },
+                ],
+              },
+              nonce: 1,
+            },
+          }],
         }],
+        details: { currencyIn: { amount: '200000000' } },
       },
+      requestedAmountBaseUnits: '200000000',
     }));
 
     const api = recordingApi((endpoint) => {
@@ -160,10 +197,12 @@ describe('bridge request options', () => {
 
     await buildBridgeCommands({ log: () => {} }).execute([], api, {}, { quote: 'bridge-r1' });
 
-    const opts = api.optionsFor('/perp/bridge/execute');
-    expect(opts).toBeDefined();
-    expect(opts.retry).toBe(false);
-    expect(opts.cache).toBe(false);
+    const executeCalls = api.calls.filter(c => c.endpoint.includes('/perp/bridge/execute'));
+    expect(executeCalls).toHaveLength(2); // authorize + sendAsset
+    for (const { options } of executeCalls) {
+      expect(options.retry).toBe(false);
+      expect(options.cache).toBe(false);
+    }
   });
 });
 

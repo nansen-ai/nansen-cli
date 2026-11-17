@@ -430,6 +430,19 @@ const HL_SENDASSET_FIELDS = [
   { name: 'nonce', type: 'uint64' },
 ];
 
+// Relay's Hyperliquid deposit address: the only `destination` a bridge
+// withdrawal's sendAsset may name. The signature commits to `destination`
+// (it is in HL_SENDASSET_FIELDS), so leaving it unchecked would let a tampered
+// quote send the withdrawal to any HL address. Captured from real read-only
+// `bridge quote` responses for all three withdrawal routes (HL -> base,
+// ethereum, arbitrum) on 2026-08-28 and again on 2026-11-16: identical every
+// time. Lower-cased for comparison. If Relay rotates this address, every HL
+// withdrawal fails closed until nansen-cli is updated (the same trade-off as
+// BRIDGE_DEPOSIT_TARGETS on the EVM deposit leg).
+export const HL_BRIDGE_RELAYER_DESTINATIONS = new Set([
+  '0x66cf0aace1b4e562593bec10ec7868fba9932224',
+]);
+
 // Parse a non-negative decimal string ("2", "2.000000", "1.97859") to an integer
 // scaled by `decimals`, via digit slicing (never parseFloat) so it is exact.
 export function decimalToScaled(raw, decimals = 8) {
@@ -447,10 +460,12 @@ export function decimalToScaled(raw, decimals = 8) {
 // action; it says nothing about what the action does. Static only, no RPC.
 //
 // NOTE ON DESTINATION: in the relayer-mediated flow, action.destination is the
-// RELAYER's deposit address, not the user's — so it is deliberately NOT bound to
-// the recipient (doing so would reject every legitimate withdrawal). The final
-// payout recipient is held off-chain by the relayer and is not in anything we
-// sign; the amount cap below is what bounds the loss.
+// RELAYER's deposit address, not the user's — so it is NOT bound to the
+// recipient (doing so would reject every legitimate withdrawal). It IS pinned
+// to the relayer (HL_BRIDGE_RELAYER_DESTINATIONS), so the withdrawal can only
+// go to Relay. The final payout recipient is held off-chain by the relayer and
+// is not in anything we sign; the amount cap below bounds the loss per leg, and
+// preflightHlBridgeSteps bounds the number of legs to one.
 //
 // Every check below fails CLOSED (throws) rather than silently skipping when
 // its anchor is missing. An earlier version skipped the amount cap whenever
@@ -483,6 +498,15 @@ export function assertHlBridgeActionIntent(action, intent, context = 'Bridge act
     throw new CommandError(
       `${context} targets Hyperliquid "${net}", expected "${intent.hlNetwork}". Refusing to sign.`,
       'UNEXPECTED_NETWORK',
+    );
+  }
+  // D. destination — must be Relay's deposit address. Fails closed when absent.
+  const destination = action.destination ?? action.parameters?.destination;
+  if (typeof destination !== 'string' || !HL_BRIDGE_RELAYER_DESTINATIONS.has(destination.toLowerCase())) {
+    throw new CommandError(
+      `${context} sends to ${destination}, not the Relay deposit address. `
+        + `Refusing to sign. Update nansen-cli if Relay changed its deposit address, otherwise request a new quote.`,
+      'UNEXPECTED_ACTION',
     );
   }
   // B. amount cap — required, not optional. sendAsset's entire purpose is
@@ -666,9 +690,20 @@ function buildHlBridgeAction(signData) {
 // endpoint pin, and the EIP-712 type-list guard — so this is a strict
 // superset of the per-step processors' checks, run up front across the whole
 // plan first.
+//
+// Per-item checks cannot bound a REPEATED plan: [authorize, sendAsset,
+// sendAsset, ...] passes them leg by leg, each sendAsset within the amount cap,
+// and would withdraw N times the reviewed amount. So, mirroring
+// preflightEvmBridgeSteps, count the legs: at most one incomplete authorize,
+// and exactly one sendAsset in total (completed sendAsset legs count toward
+// the total, since a real withdrawal never has two) which is still incomplete.
 function preflightHlBridgeSteps(steps, intent) {
+  let authorizeCount = 0;
+  let actionCount = 0;
+  let totalActionCount = 0;
   for (const step of steps) {
     for (const item of step.items || []) {
+      if (item.data?.action) totalActionCount++;
       // Skip already-signed-and-submitted items, matching the processors
       // (:769/:838): on resume of a partially-executed bridge, re-validating a
       // completed step against these now-stricter checks could wedge it.
@@ -684,9 +719,11 @@ function preflightHlBridgeSteps(steps, intent) {
         assertHlBridgeAuthorizeIntent(signData.sign, intent.signerAddress, `Bridge step "${step.id}"`);
         resolveRelayTargetUrl(signData.post?.endpoint, `Bridge step "${step.id}"`);
         assertEip712TypeListNonEmpty(signData.sign.types, signData.sign.primaryType, `Bridge step "${step.id}"`);
+        authorizeCount++;
       } else if (signData.action) {
         assertHlBridgeActionIntent(buildHlBridgeAction(signData), intent, `Bridge step "${step.id}"`);
         assertHlSendAssetEip712Shape(signData.eip712Types, signData.eip712PrimaryType, `Bridge step "${step.id}"`);
+        actionCount++;
       } else {
         // A leg matching neither is never something to sign — the local
         // processor would silently no-op it (reporting success having signed
@@ -697,6 +734,13 @@ function preflightHlBridgeSteps(steps, intent) {
         );
       }
     }
+  }
+  if (authorizeCount > 1 || totalActionCount !== 1 || actionCount !== 1) {
+    throw new CommandError(
+      `Bridge plan has ${authorizeCount} authorize and ${totalActionCount} sendAsset leg(s) (${actionCount} pending); a legitimate withdrawal is at most one authorize and exactly one sendAsset. `
+        + `Refusing to sign — repeated legs could withdraw more than the amount you requested. Request a new quote.`,
+      'UNEXPECTED_ACTION',
+    );
   }
 }
 

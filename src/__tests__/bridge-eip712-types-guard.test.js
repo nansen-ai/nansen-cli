@@ -92,7 +92,7 @@ describe('refuses to sign a bridge step with no EIP-712 type definition', () => 
   // assertHlBridgeActionIntent, so it reaches signEip712Local's own guard.
   const sendAssetParams = (overrides = {}) => ({
     hyperliquidChain: 'Mainnet',
-    destination: WALLET,
+    destination: '0x66cf0aace1b4e562593bec10ec7868fba9932224', // Relay's HL deposit address (pinned)
     sourceDex: '',
     destinationDex: '',
     token: 'USDC:0x6d1e7cde53ba9467b783cb7c530ce054',

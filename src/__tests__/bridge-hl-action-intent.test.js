@@ -39,6 +39,7 @@ import {
   decimalToScaled,
   assertHlBridgeActionIntent,
   assertHlBridgeAuthorizeIntent,
+  HL_BRIDGE_RELAYER_DESTINATIONS,
 } from '../bridge.js';
 
 const WALLET = '0x8CB9c3F23C7d600fB430bbd171a313D9ea61cEBc';
@@ -73,10 +74,36 @@ describe('assertHlBridgeActionIntent', () => {
     expect(() => assertHlBridgeActionIntent(action, BASE_INTENT)).not.toThrow();
   });
 
-  it('passes even though destination is the relayer, not the user (destination is deliberately not bound)', () => {
+  it('passes when destination is the Relay deposit address, not the user (the recipient is held off-chain by Relay)', () => {
     const action = sendAssetAction({ destination: RELAYER });
     expect(action.destination).not.toBe(WALLET);
     expect(() => assertHlBridgeActionIntent(action, BASE_INTENT)).not.toThrow();
+  });
+
+  it('accepts the Relay deposit address in any letter case', () => {
+    const action = sendAssetAction({ destination: '0x66CF0AACE1B4E562593BEC10EC7868FBA9932224' });
+    expect(() => assertHlBridgeActionIntent(action, BASE_INTENT)).not.toThrow();
+  });
+
+  it.each([
+    ['another address', '0x' + 'ab'.repeat(20)],
+    ["the user's own wallet", WALLET],
+    ['a missing destination', undefined],
+    ['an empty destination', ''],
+  ])('throws UNEXPECTED_ACTION when destination is %s', (_label, destination) => {
+    const action = sendAssetAction({ destination });
+    expect(() => assertHlBridgeActionIntent(action, BASE_INTENT)).toThrow(/not the Relay deposit address/);
+    try { assertHlBridgeActionIntent(action, BASE_INTENT); } catch (e) { expect(e.code).toBe('UNEXPECTED_ACTION'); }
+  });
+
+  it('pins destination in the nested parameters shape too', () => {
+    const action = { type: 'sendAsset', parameters: sendAssetAction({ destination: '0x' + 'ab'.repeat(20) }) };
+    delete action.parameters.type;
+    expect(() => assertHlBridgeActionIntent(action, BASE_INTENT)).toThrow(/not the Relay deposit address/);
+  });
+
+  it('pins the exact relayer address captured from live quotes', () => {
+    expect([...HL_BRIDGE_RELAYER_DESTINATIONS]).toEqual([RELAYER]);
   });
 
   it('throws UNEXPECTED_ACTION for a type off the allowlist', () => {
@@ -656,6 +683,94 @@ describe('bridge execute — Hyperliquid action intent binding', () => {
     writeQuote('bridge-shape-swap-privy', [authorizeStep(), swapped], { walletProvider: 'privy' });
     showWallet.mockReturnValue({ name: 'p', evm: WALLET, provider: 'privy', privyWalletIds: { evm: 'pw-1' } });
     await expect(execute('bridge-shape-swap-privy')).rejects.toThrow(/unexpected EIP-712 type/);
+    expect(ethSignTypedDataV4).not.toHaveBeenCalled();
+  });
+});
+
+// Per-item checks pass every leg of a repeated plan (each sendAsset is within
+// the amount cap on its own), so the plan's leg count must be bounded as a
+// whole, before anything is signed.
+describe('bridge execute — Hyperliquid withdrawal leg count and destination', () => {
+  const twoLegDepositStep = () => {
+    const step = depositStep();
+    const second = JSON.parse(JSON.stringify(step.items[0]));
+    second.data.action.parameters.nonce += 1;
+    second.data.nonce += 1;
+    step.items.push(second);
+    return step;
+  };
+  const posted = calls => calls.filter(c => c.endpoint.includes('/bridge/execute'));
+  const usePrivy = () => showWallet.mockReturnValue({
+    name: 'p', evm: WALLET, provider: 'privy', privyWalletIds: { evm: 'pw-1' },
+  });
+
+  it.each([
+    ['two sendAsset items in one step', () => [authorizeStep(), twoLegDepositStep()]],
+    ['two sendAsset steps', () => [authorizeStep(), depositStep(), { ...depositStep(), id: 'deposit-2' }]],
+    ['two sendAsset steps and no authorize', () => [depositStep(), { ...depositStep(), id: 'deposit-2' }]],
+  ])('refuses %s before any leg is signed or posted, leaving the quote unconsumed', async (_label, plan) => {
+    writeQuote('bridge-two-legs', plan());
+    const calls = [];
+    await expect(execute('bridge-two-legs', {}, calls)).rejects.toThrow(/[01] authorize and 2 sendAsset leg\(s\)/);
+    expect(posted(calls)).toEqual([]);
+    const onDisk = JSON.parse(fs.readFileSync(path.join(quotesDir, 'bridge-two-legs.json'), 'utf8'));
+    expect(onDisk.executedAt).toBeUndefined();
+  });
+
+  it('Privy path: refuses two sendAsset legs before ethSignTypedDataV4 is called', async () => {
+    writeQuote('bridge-two-legs-privy', [authorizeStep(), twoLegDepositStep()], { walletProvider: 'privy' });
+    usePrivy();
+    const calls = [];
+    await expect(execute('bridge-two-legs-privy', {}, calls)).rejects.toThrow(/1 authorize and 2 sendAsset leg\(s\)/);
+    expect(ethSignTypedDataV4).not.toHaveBeenCalled();
+    expect(posted(calls)).toEqual([]);
+  });
+
+  it('refuses two authorize legs', async () => {
+    writeQuote('bridge-two-authorize', [authorizeStep(), authorizeStep(), depositStep()]);
+    const calls = [];
+    await expect(execute('bridge-two-authorize', {}, calls)).rejects.toThrow(/2 authorize and 1 sendAsset leg\(s\)/);
+    expect(posted(calls)).toEqual([]);
+  });
+
+  it('refuses an authorize-only plan with no sendAsset', async () => {
+    writeQuote('bridge-authorize-only', [authorizeStep()]);
+    const calls = [];
+    await expect(execute('bridge-authorize-only', {}, calls)).rejects.toThrow(/1 authorize and 0 sendAsset leg\(s\)/);
+    expect(posted(calls)).toEqual([]);
+  });
+
+  it('counts a sendAsset leg already marked complete toward the total (resumed plan)', async () => {
+    const done = depositStep();
+    done.items[0].status = 'complete';
+    writeQuote('bridge-resumed', [authorizeStep(), done, { ...depositStep(), id: 'deposit-2' }]);
+    const calls = [];
+    await expect(execute('bridge-resumed', {}, calls)).rejects.toThrow(/1 authorize and 2 sendAsset leg\(s\) \(1 pending\)/);
+    expect(posted(calls)).toEqual([]);
+  });
+
+  it('still executes a resumed plan whose authorize leg is already complete', async () => {
+    const auth = authorizeStep();
+    auth.items[0].status = 'complete';
+    writeQuote('bridge-resumed-auth', [auth, depositStep()]);
+    await expect(execute('bridge-resumed-auth')).resolves.toBeUndefined();
+  });
+
+  it('refuses a sendAsset to a non-relayer destination before the authorize leg is posted', async () => {
+    writeQuote('bridge-foreign-dest', [authorizeStep(), depositStep(undefined, { destination: '0x' + 'ab'.repeat(20) })]);
+    const calls = [];
+    await expect(execute('bridge-foreign-dest', {}, calls)).rejects.toThrow(/not the Relay deposit address/);
+    expect(posted(calls)).toEqual([]);
+    const onDisk = JSON.parse(fs.readFileSync(path.join(quotesDir, 'bridge-foreign-dest.json'), 'utf8'));
+    expect(onDisk.executedAt).toBeUndefined();
+  });
+
+  it('Privy path: refuses a non-relayer destination before ethSignTypedDataV4 is called', async () => {
+    writeQuote('bridge-foreign-dest-privy', [authorizeStep(), depositStep(undefined, { destination: '0x' + 'ab'.repeat(20) })], {
+      walletProvider: 'privy',
+    });
+    usePrivy();
+    await expect(execute('bridge-foreign-dest-privy')).rejects.toThrow(/not the Relay deposit address/);
     expect(ethSignTypedDataV4).not.toHaveBeenCalled();
   });
 });
