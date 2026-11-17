@@ -401,9 +401,22 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
       // Closing a token account needs a zero balance, so a non-zero pre-balance
       // already shows up as an outflow. An empty one is a silent 0n delta and
       // its rent can go anywhere. The WSOL account is the exception: Jupiter's
-      // wrap/unwrap cleanup closes it on every native-SOL swap (its rent stays
-      // inside the native fee/rent slack either way).
-      if (extractBalance('token', t.preInfo) === 0n && !isSolanaNativeMint(mint)) {
+      // wrap/unwrap cleanup closes it on every native-SOL swap. All of its
+      // lamports (rent + wrapped amount) go wherever the close sends them, so
+      // count the whole pre-balance as leaving under SOL_SENTINEL: a close back
+      // to the wallet nets out against the wallet's native inflow, and a close
+      // elsewhere shows as native outflow bounded by the fee/rent slack.
+      if (isSolanaNativeMint(mint)) {
+        let lamports;
+        try {
+          lamports = BigInt(t.preInfo.lamports);
+        } catch {
+          throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Could not parse the lamport balance of your WSOL account ${t.pubkey}.`);
+        }
+        if (lamports !== 0n) deltas[SOL_SENTINEL] = (deltas[SOL_SENTINEL] || 0n) - lamports;
+        return;
+      }
+      if (extractBalance('token', t.preInfo) === 0n) {
         throw controlChanged(`closes your empty token account ${t.pubkey} (mint ${mint}).`);
       }
     } else {

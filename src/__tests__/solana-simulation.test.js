@@ -545,9 +545,29 @@ describe('solana-simulation', () => {
     it('allows closing the wallet WSOL account (Jupiter wrap/unwrap cleanup)', async () => {
       const wsolAta = generateSolanaWallet().address;
       const pre = { ...basePre(), [wsolAta]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0 }) };
-      const post = { ...basePost(), [wsolAta]: null };
+      // The close returns the account's rent to the wallet.
+      const post = { ...basePost(), [wallet]: nativeAccountInfo(999_995_000 + 2_039_280), [wsolAta]: null };
       const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, wsolAta] });
       expect(result.deltas[mintOut]).toBe(1_000_000n);
+      expect(result.deltas[SOL_SENTINEL]).toBe(-5_000n);
+    });
+
+    it('counts a closed empty WSOL account rent sent elsewhere as a native outflow', async () => {
+      const wsolAta = generateSolanaWallet().address;
+      const pre = { ...basePre(), [wsolAta]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0 }) };
+      const post = { ...basePost(), [wsolAta]: null }; // rent went to another account
+      const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, wsolAta] });
+      expect(result.deltas[SOL_SENTINEL]).toBe(-(5_000n + 2_039_280n));
+    });
+
+    it('fails closed when a closed WSOL account has no readable pre-state lamports', async () => {
+      const wsolAta = generateSolanaWallet().address;
+      const wsolPre = tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0 });
+      delete wsolPre.lamports;
+      const pre = { ...basePre(), [wsolAta]: wsolPre };
+      const post = { ...basePost(), [wsolAta]: null };
+      await expect(run({ pre, post, extraWritableKeys: [ataIn, ataOut, wsolAta] }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
     });
 
     it('refuses reassigning the wallet account to another program (CPI Assign)', async () => {
