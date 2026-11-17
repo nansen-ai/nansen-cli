@@ -26,6 +26,9 @@ import { base58Encode } from './wallet.js';
 // both of those modules will import from this one).
 const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 export const SOL_SENTINEL = '11111111111111111111111111111111';
+// Same base58 string as SOL_SENTINEL, but here it means the program that owns
+// ordinary wallet (keypair) accounts.
+const SYSTEM_PROGRAM = '11111111111111111111111111111111';
 
 function isSolanaNativeMint(mint) {
   return mint === WSOL_MINT || mint === SOL_SENTINEL;
@@ -47,9 +50,15 @@ const MAX_ACCOUNTS_PER_CALL = 100;
  *   SIM_RESULT_UNPARSEABLE  - the sim ran AND returned the accounts we asked
  *                             for, but a tracked balance or lookup table
  *                             couldn't be resolved/parsed
+ *   SIM_ACCOUNT_CONTROL_CHANGED - the simulated post-state hands control of one
+ *                             of the wallet's own accounts to someone else (new
+ *                             owner, delegate or close authority, a closed empty
+ *                             token account, or the wallet reassigned to another
+ *                             program), whatever the balances say
  * NO_SIM_RPC and SIM_RPC_ERROR are degrade conditions (warn, proceed per
- * policy); the caller decides. SIM_REVERTED and SIM_RESULT_UNPARSEABLE are
- * outcome/parse problems and must not be silently ignored — fail closed.
+ * policy); the caller decides. SIM_REVERTED, SIM_RESULT_UNPARSEABLE and
+ * SIM_ACCOUNT_CONTROL_CHANGED are outcome/parse problems and must not be
+ * silently ignored — fail closed.
  */
 export class SolanaSimulationError extends Error {
   constructor(code, message) {
@@ -197,6 +206,52 @@ function extractBalance(kind, info) {
   }
 }
 
+/** The parsed SPL token-account fields of a jsonParsed account, or null. */
+function tokenAccountFields(info) {
+  const parsed = info?.data?.parsed;
+  if (parsed?.type !== 'account' || !parsed.info || typeof parsed.info !== 'object') return null;
+  return parsed.info;
+}
+
+function controlChanged(detail) {
+  return new SolanaSimulationError(
+    'SIM_ACCOUNT_CONTROL_CHANGED',
+    `Simulation shows this transaction ${detail} This changes who controls your wallet's accounts, which balance checks do not catch. Refusing to sign.`,
+  );
+}
+
+function tokenAmountOf(uiAmount) {
+  try {
+    return BigInt(uiAmount?.amount ?? 0);
+  } catch {
+    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Could not parse a simulated token delegation amount.');
+  }
+}
+
+/**
+ * Balance deltas can't see a transaction that leaves every balance alone but
+ * hands someone else control of the wallet's token account (a CPI'd Approve or
+ * SetAuthority carries the wallet's signature, and the static instruction check
+ * only classifies top-level instructions). Compare the authorities themselves.
+ * `pre` is null for an account the transaction creates.
+ */
+function assertTokenAccountControl(pubkey, pre, post, walletAddress) {
+  const label = `token account ${pubkey} (mint ${post.mint})`;
+  if (post.owner !== walletAddress) {
+    throw controlChanged(`transfers ownership of your ${label} to ${post.owner}.`);
+  }
+  if (post.delegate) {
+    const preDelegate = pre?.delegate || null;
+    const grew = tokenAmountOf(post.delegatedAmount) > tokenAmountOf(pre?.delegatedAmount);
+    if (post.delegate !== preDelegate || grew) {
+      throw controlChanged(`approves ${post.delegate} to spend ${post.delegatedAmount?.amount ?? 'an unknown amount'} from your ${label}.`);
+    }
+  }
+  if (post.closeAuthority && post.closeAuthority !== (pre?.closeAuthority || null)) {
+    throw controlChanged(`sets ${post.closeAuthority} as the close authority of your ${label}.`);
+  }
+}
+
 /**
  * Simulate a Solana swap transaction and return the normalised asset changes
  * it causes to `walletAddress`'s wallet.
@@ -251,6 +306,11 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
   // classify it from the created account's owner (below); a zero pre-balance
   // makes its whole post-balance the delta. Skipping these would report a 0n
   // output delta and false-block every first-time buy.
+  //
+  // A System-Program-owned pre-state is a candidate too: an address someone
+  // pre-funded with lamports (the ATA program accepts a pre-funded address)
+  // can become the wallet's token account in this tx, and an attacker could
+  // set a delegate on it as it's created. Its token pre-balance is zero.
   const tracked = []; // { pubkey, preInfo, classified, kind?, mint? }
   let sawWalletAccount = false;
   writableKeys.forEach((pubkey, i) => {
@@ -264,10 +324,14 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
       sawWalletAccount = true;
       return;
     }
-    const parsedInfo = info.data?.parsed;
-    if (parsedInfo?.type === 'account' && parsedInfo.info?.owner === walletAddress) {
-      tracked.push({ pubkey, preInfo: info, classified: true, kind: 'token', mint: parsedInfo.info.mint });
+    const fields = tokenAccountFields(info);
+    if (fields?.owner === walletAddress) {
+      tracked.push({ pubkey, preInfo: info, classified: true, kind: 'token', mint: fields.mint });
       sawWalletAccount = true;
+      return;
+    }
+    if (info.owner === SYSTEM_PROGRAM) {
+      tracked.push({ pubkey, preInfo: null, classified: false });
     }
   });
 
@@ -322,13 +386,35 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
       // count it only if the tx created it as one of the wallet's own accounts
       // (e.g. the output-token ATA). Anything else is another party's account.
       if (!postInfo) return;
-      const parsedInfo = postInfo.data?.parsed;
-      if (parsedInfo?.type === 'account' && parsedInfo.info?.owner === walletAddress) {
-        kind = 'token';
-        mint = parsedInfo.info.mint;
-      } else {
-        return;
+      const fields = tokenAccountFields(postInfo);
+      if (fields?.owner !== walletAddress) return;
+      assertTokenAccountControl(t.pubkey, null, fields, walletAddress);
+      kind = 'token';
+      mint = fields.mint;
+    } else if (kind === 'native') {
+      // A CPI'd System Program Assign (the wallet signs) hands the wallet's
+      // lamports to whichever program now owns it, with no balance change yet.
+      if (postInfo && postInfo.owner !== SYSTEM_PROGRAM) {
+        throw controlChanged(`reassigns your wallet account ${t.pubkey} to program ${postInfo.owner}.`);
       }
+    } else if (!postInfo) {
+      // Closing a token account needs a zero balance, so a non-zero pre-balance
+      // already shows up as an outflow. An empty one is a silent 0n delta and
+      // its rent can go anywhere. The WSOL account is the exception: Jupiter's
+      // wrap/unwrap cleanup closes it on every native-SOL swap (its rent stays
+      // inside the native fee/rent slack either way).
+      if (extractBalance('token', t.preInfo) === 0n && !isSolanaNativeMint(mint)) {
+        throw controlChanged(`closes your empty token account ${t.pubkey} (mint ${mint}).`);
+      }
+    } else {
+      const fields = tokenAccountFields(postInfo);
+      if (!fields) {
+        throw new SolanaSimulationError(
+          'SIM_RESULT_UNPARSEABLE',
+          `Simulation returned an unreadable post-state for your token account ${t.pubkey}; cannot verify who controls it.`,
+        );
+      }
+      assertTokenAccountControl(t.pubkey, tokenAccountFields(t.preInfo), fields, walletAddress);
     }
     const pre = extractBalance(kind, t.preInfo); // null preInfo (new account) → 0n
     const post = extractBalance(kind, postInfo);

@@ -7972,6 +7972,22 @@ describe('verifySolanaSwapOutcome (execute-path wiring)', () => {
     expect(r.proceed).toBe(true);
   });
 
+  it('blocks (proceed=false) when the simulated post-state adds a delegate on the output token account', async () => {
+    const attacker = generateSolanaWallet().address;
+    const outWithDelegate = solanaTokenAccountInfo({ mint: mintOut, owner: wallet, amount: 1_000_000 });
+    outWithDelegate.data.parsed.info.delegate = attacker;
+    outWithDelegate.data.parsed.info.delegatedAmount = { amount: '18446744073709551615', decimals: 6 };
+    const post = {
+      [wallet]: solanaNativeAccountInfo(999_995_000),
+      [tokenIn]: solanaTokenAccountInfo({ mint: mintIn, owner: wallet, amount: 0 }),
+      [tokenOut]: outWithDelegate, // balances are a clean swap; only the delegate is new
+    };
+    vi.stubGlobal('fetch', mockSolanaSimRpc({ pre, post }));
+    const r = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64, quote, quoteData });
+    expect(r.proceed).toBe(false);
+    expect(r.reason).toMatch(new RegExp(`approves ${attacker} to spend`));
+  });
+
   it('blocks (proceed=false) when a sibling token is drained', async () => {
     const siblingPre = { ...pre, [tokenOut]: solanaTokenAccountInfo({ mint: 'SiblingMint111111111111111111111111111111', owner: wallet, amount: 500 }) };
     const post = {

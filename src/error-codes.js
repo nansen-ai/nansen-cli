@@ -160,6 +160,7 @@ export const ERROR_CODES = {
   SIM_REVERTED: { group: 'trade', description: 'The transaction reverts in simulation.' },
   SIM_RPC_ERROR: { group: 'trade', description: 'The simulation RPC returned an error.' },
   SIM_RESULT_UNPARSEABLE: { group: 'trade', description: 'The simulation result could not be parsed.' },
+  SIM_ACCOUNT_CONTROL_CHANGED: { group: 'trade', description: 'The simulated transaction would hand control of one of your wallet accounts (owner, delegate, close authority) to someone else.' },
   NO_SIM_RPC: { group: 'trade', description: 'No simulation RPC is configured for the chain.' },
   NOT_SIM_CAPABLE: { group: 'trade', description: 'The RPC does not support simulation.' },
   RPC_UNCONFIGURED: { group: 'trade', description: 'No RPC URL is configured for the chain.' },
