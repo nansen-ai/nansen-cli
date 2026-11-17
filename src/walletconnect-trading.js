@@ -9,10 +9,14 @@
  */
 
 import { wcExec } from './walletconnect-exec.js';
-import { base58Encode } from './wallet.js';
+import { base58Decode, base58Encode } from './wallet.js';
 import { encodeApproveCalldata } from './trade-validation.js';
+import { assertEvmSignedMatches, assertSolanaSignedMatches } from './signed-tx-binding.js';
 
 const SOLANA_MAINNET_CHAIN = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
+
+// A wallet asked to send-transaction may also have broadcast what it returned.
+const WALLET_MAY_HAVE_SENT = 'The CLI did not broadcast it, but the wallet may have; check the wallet\'s activity before retrying.';
 
 /**
  * Extract the first JSON object from walletconnect CLI output.
@@ -140,11 +144,21 @@ async function markBroadcastAmbiguous(fn) {
  * The connected wallet signs and may broadcast the transaction.
  * Returns either { txHash } (wallet broadcast) or { signedTransaction } (we broadcast).
  *
+ * Signed bytes are checked before they are returned: sender, chain id, `to`,
+ * `value`, `data` and, when `gas` was sent, the gas limit must be what was
+ * sent (the wallet chooses nonce and fees). Otherwise throws
+ * SIGNED_TX_MISMATCH, so a caller never broadcasts a
+ * transaction other than the one it checked.
+ *
  * @param {object} txData - Transaction data: { to, data, value, gas, chainId }
  * @param {number} [timeoutMs=120000] - Timeout for user approval
+ * @param {object} opts
+ * @param {string} opts.from - the connected wallet's address
+ * @param {string} [opts.label] - what the transaction is, for errors
  * @returns {{ txHash?: string, signedTransaction?: string }}
  */
-export async function sendTransactionViaWalletConnect(txData, timeoutMs = 120000) {
+export async function sendTransactionViaWalletConnect(txData, timeoutMs = 120000, { from, label } = {}) {
+  if (!from) throw new Error('sendTransactionViaWalletConnect: the wallet address (from) is required to check a signed transaction');
   // The walletconnect CLI expects chainId as "eip155:<id>" string format
   const chainId = txData.chainId
     ? (String(txData.chainId).startsWith('eip155:') ? txData.chainId : `eip155:${txData.chainId}`)
@@ -158,16 +172,28 @@ export async function sendTransactionViaWalletConnect(txData, timeoutMs = 120000
     chainId,
   };
 
-  return markBroadcastAmbiguous(async () => {
+  const result = await markBroadcastAmbiguous(async () => {
     const output = await wcExec('walletconnect', ['send-transaction', JSON.stringify(payload)], timeoutMs);
-    const result = parseWcJson(output);
+    const parsed = parseWcJson(output);
 
-    if (result.transactionHash) return { txHash: result.transactionHash };
-    if (result.txHash) return { txHash: result.txHash };
-    if (result.signedTransaction) return { signedTransaction: result.signedTransaction };
+    if (parsed.transactionHash) return { txHash: parsed.transactionHash };
+    if (parsed.txHash) return { txHash: parsed.txHash };
+    if (parsed.signedTransaction) return { signedTransaction: parsed.signedTransaction };
 
     throw new Error('Unexpected response from walletconnect send-transaction');
   });
+
+  // Checked outside markBroadcastAmbiguous so the error keeps its own code.
+  if (result.signedTransaction) {
+    assertEvmSignedMatches(result.signedTransaction, {
+      chainId: String(chainId ?? '').replace(/^eip155:/, '') || undefined,
+      to: payload.to,
+      value: payload.value,
+      data: payload.data,
+      ...(payload.gas !== undefined && { gasLimit: payload.gas }),
+    }, { from, label, note: WALLET_MAY_HAVE_SENT });
+  }
+  return result;
 }
 
 /**
@@ -184,9 +210,11 @@ export async function sendTransactionViaWalletConnect(txData, timeoutMs = 120000
  * @param {bigint|string|number} [maxAllowance] - Hard cap from persisted request intent
  * @param {object} [opts]
  * @param {boolean} [opts.allowZero=false] - Allow a zero-amount revoke approval
+ * @param {string} opts.from - the connected wallet's address (see sendTransactionViaWalletConnect)
+ * @param {string} [opts.label] - what the transaction is, for errors
  * @returns {{ txHash?: string, signedTransaction?: string }}
  */
-export async function sendApprovalViaWalletConnect(tokenAddress, spenderAddress, chainId, amount, maxAllowance, { allowZero = false } = {}) {
+export async function sendApprovalViaWalletConnect(tokenAddress, spenderAddress, chainId, amount, maxAllowance, { allowZero = false, from, label = 'approval transaction' } = {}) {
   // encodeApproveCalldata enforces a valid 20-byte spender, a bounded (< MAX)
   // amount within the request cap, and exactly-68-byte calldata — so a
   // malformed or tampered spender/amount can't reshape the ABI word layout.
@@ -198,7 +226,7 @@ export async function sendApprovalViaWalletConnect(tokenAddress, spenderAddress,
     value: '0',
     gas: '100000',
     chainId,
-  });
+  }, undefined, { from, label });
 }
 
 /**
@@ -208,11 +236,20 @@ export async function sendApprovalViaWalletConnect(tokenAddress, spenderAddress,
  * - { signedTransaction: "<base58>" } — full signed transaction
  * - { signature: "<base58>" } — raw Ed25519 signature only
  *
+ * A full signed transaction is checked before it is returned: same message,
+ * valid signature from `signer`. Otherwise throws SIGNED_TX_MISMATCH. A bare
+ * signature is returned as is; the caller places it in the transaction it
+ * sent and checks the result.
+ *
  * @param {string} txBase58 - Base58-encoded Solana transaction
  * @param {number} [timeoutMs=120000] - Timeout for user approval
+ * @param {object} opts
+ * @param {string} opts.signer - the connected wallet's base58 address
+ * @param {string} [opts.label] - what the transaction is, for errors
  * @returns {{ signedTransaction?: string, signature?: string }}
  */
-export async function sendSolanaTransactionViaWalletConnect(txBase58, timeoutMs = 120000) {
+export async function sendSolanaTransactionViaWalletConnect(txBase58, timeoutMs = 120000, { signer, label } = {}) {
+  if (!signer) throw new Error('sendSolanaTransactionViaWalletConnect: the wallet address (signer) is required to check a signed transaction');
   const payload = {
     transaction: txBase58,
     chainId: SOLANA_MAINNET_CHAIN,
@@ -221,17 +258,29 @@ export async function sendSolanaTransactionViaWalletConnect(txBase58, timeoutMs 
   // Marked ambiguous for the same reason as the EVM send: this goes out over the
   // CLI's `send-transaction` verb, so a wallet that signs-and-sends has already
   // broadcast by the time a timeout or an unreadable reply reaches us.
-  return markBroadcastAmbiguous(async () => {
+  const result = await markBroadcastAmbiguous(async () => {
     const output = await wcExec('walletconnect', ['send-transaction', JSON.stringify(payload)], timeoutMs);
-    const result = parseWcJson(output);
+    const parsed = parseWcJson(output);
 
-    if (result.signedTransaction) return { signedTransaction: result.signedTransaction };
-    if (result.signature) return { signature: result.signature };
+    if (parsed.signedTransaction) return { signedTransaction: parsed.signedTransaction };
+    if (parsed.signature) return { signature: parsed.signature };
     // Some wallets (e.g. Phantom) return 'transaction' instead of 'signedTransaction'
-    if (result.transaction) return { signedTransaction: result.transaction };
+    if (parsed.transaction) return { signedTransaction: parsed.transaction };
 
     throw new Error('Unexpected response from walletconnect Solana sign');
   });
+
+  // Checked outside markBroadcastAmbiguous so the error keeps its own code.
+  if (result.signedTransaction) {
+    let signedBase64;
+    try {
+      signedBase64 = base58Decode(result.signedTransaction).toString('base64');
+    } catch {
+      signedBase64 = '';
+    }
+    assertSolanaSignedMatches(base58Decode(txBase58).toString('base64'), signedBase64, { signer, label, note: WALLET_MAY_HAVE_SENT });
+  }
+  return result;
 }
 
 /**

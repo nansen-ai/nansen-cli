@@ -405,7 +405,7 @@ export async function signTransaction(txBase64, walletType, walletInfo, { signer
     // WC expects base58 for Solana transactions
     const txBytes = Buffer.from(txBase64, 'base64');
     const txBase58 = base58Encode(txBytes);
-    const result = await sendSolanaTransactionViaWalletConnect(txBase58);
+    const result = await sendSolanaTransactionViaWalletConnect(txBase58, undefined, { signer, label });
     if (result.signedTransaction) {
       // WC returns base58; convert to base64
       const signedBytes = base58Decode(result.signedTransaction);

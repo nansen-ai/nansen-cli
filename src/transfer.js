@@ -1113,7 +1113,7 @@ async function sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRu
     value: txValue,
     gas: gasLimit,
     chainId,
-  });
+  }, undefined, { from: wcAddress, label: 'transfer transaction' });
 
   const txHash = await (async () => {
     if (wcResult.txHash) return wcResult.txHash;

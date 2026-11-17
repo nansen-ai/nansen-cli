@@ -15,11 +15,34 @@ vi.mock('child_process', () => ({
 import { execFile } from 'child_process';
 import {
   getWalletConnectAddress,
-  sendTransactionViaWalletConnect,
-  sendSolanaTransactionViaWalletConnect,
-  sendApprovalViaWalletConnect,
+  sendTransactionViaWalletConnect as sendTransactionRaw,
+  sendSolanaTransactionViaWalletConnect as sendSolanaRaw,
+  sendApprovalViaWalletConnect as sendApprovalRaw,
   parseWcJson,
 } from '../walletconnect-trading.js';
+import { signEip1559Transaction } from '../trading.js';
+import { base58Encode } from '../wallet.js';
+import { TEST_EVM_ADDRESS, TEST_EVM_KEY, TEST_SOL_ADDRESS, TEST_SOL_PUBKEY_BYTES, signSolanaSlot } from './fixtures/remote-signers.js';
+
+// The send functions check signed bytes against the connected wallet, so they
+// take its address. Most tests here are about the subprocess call, not that
+// check, so these wrappers supply the test wallet.
+const sendTransactionViaWalletConnect = (txData, timeoutMs, opts = { from: TEST_EVM_ADDRESS }) => sendTransactionRaw(txData, timeoutMs, opts);
+const sendSolanaTransactionViaWalletConnect = (txBase58, timeoutMs, opts = { signer: TEST_SOL_ADDRESS }) => sendSolanaRaw(txBase58, timeoutMs, opts);
+const sendApprovalViaWalletConnect = (token, spender, chainId, amount, maxAllowance, opts = {}) =>
+  sendApprovalRaw(token, spender, chainId, amount, maxAllowance, { from: TEST_EVM_ADDRESS, ...opts });
+
+// An unsigned one-instruction Solana transaction (fee payer = test wallet), and
+// the same transaction signed by the test wallet, both base58 as WalletConnect
+// carries them.
+function solanaTxBase64(blockhashByte = 3) {
+  return Buffer.concat([
+    Buffer.from([1]), Buffer.alloc(64),
+    Buffer.from([1, 0, 1, 2]), TEST_SOL_PUBKEY_BYTES, Buffer.alloc(32, 2), Buffer.alloc(32, blockhashByte), Buffer.from([1, 1, 1, 0, 1, 0]),
+  ]).toString('base64');
+}
+const TX_B58 = base58Encode(Buffer.from(solanaTxBase64(), 'base64'));
+const SIGNED_B58 = base58Encode(Buffer.from(signSolanaSlot(solanaTxBase64()), 'base64'));
 
 function mockExecFile(stdout, err = null) {
   execFile.mockImplementation((cmd, args, opts, cb) => {
@@ -287,16 +310,60 @@ describe('sendTransactionViaWalletConnect', () => {
     expect(payload.chainId).toBe('eip155:10');
   });
 
+  // The wallet chooses nonce and fees (and gas when none is sent); the rest must be what was sent.
+  const signedByWallet = (overrides = {}, key = TEST_EVM_KEY) => signEip1559Transaction({
+    chainId: 1, nonce: '0x9', maxPriorityFeePerGas: '0x1', maxFeePerGas: '0x2', gasLimit: '0x5208',
+    to: '0x1234567890123456789012345678901234567890', value: '0x0', data: '0x', ...overrides,
+  }, key);
+  const sentTx = { to: '0x1234567890123456789012345678901234567890', value: '0', chainId: 1 };
+
   it('handles signedTransaction response', async () => {
-    mockExecFile(JSON.stringify({ signedTransaction: '0xf86c...' }));
+    const signed = signedByWallet();
+    mockExecFile(JSON.stringify({ signedTransaction: signed }));
 
-    const result = await sendTransactionViaWalletConnect({
-      to: '0x1234567890123456789012345678901234567890',
-      value: '0',
-      chainId: 1,
-    });
+    const result = await sendTransactionViaWalletConnect(sentTx);
 
-    expect(result).toEqual({ signedTransaction: '0xf86c...' });
+    expect(result).toEqual({ signedTransaction: signed });
+  });
+
+  it.each([
+    ['a different recipient', { to: '0x000000000000000000000000000000000000dead' }, /to is 0x0+dead/],
+    ['a different value', { value: '0x1' }, /value is 1, expected 0/],
+    ['calldata added', { data: '0xa9059cbb' }, /data differs/],
+    ['a different chain', { chainId: 8453 }, /chainId is 8453, expected 1/],
+  ])('refuses a signedTransaction with %s, keeping its own error code', async (_name, change, message) => {
+    mockExecFile(JSON.stringify({ signedTransaction: signedByWallet(change) }));
+
+    const err = await sendTransactionViaWalletConnect(sentTx, undefined, { from: TEST_EVM_ADDRESS, label: 'swap transaction' }).catch(e => e);
+
+    expect(err).toMatchObject({ code: 'SIGNED_TX_MISMATCH', message: expect.stringMatching(message) });
+    expect(err.message).toMatch(/the wallet may have; check the wallet's activity before retrying/);
+  });
+
+  it('refuses a signedTransaction whose gas limit differs from the gas sent', async () => {
+    mockExecFile(JSON.stringify({ signedTransaction: signedByWallet({ gasLimit: '0x7530' }) }));
+
+    await expect(sendTransactionViaWalletConnect({ ...sentTx, gas: 210000 }))
+      .rejects.toMatchObject({ code: 'SIGNED_TX_MISMATCH', message: expect.stringMatching(/gasLimit is 30000, expected 210000/) });
+  });
+
+  it('accepts any gas limit when no gas was sent', async () => {
+    const signed = signedByWallet({ gasLimit: '0x7530' });
+    mockExecFile(JSON.stringify({ signedTransaction: signed }));
+
+    await expect(sendTransactionViaWalletConnect(sentTx)).resolves.toEqual({ signedTransaction: signed });
+  });
+
+  it('refuses a signedTransaction from another key', async () => {
+    mockExecFile(JSON.stringify({ signedTransaction: signedByWallet({}, '22'.repeat(32)) }));
+
+    await expect(sendTransactionViaWalletConnect(sentTx)).rejects.toMatchObject({ code: 'SIGNED_TX_MISMATCH', message: expect.stringMatching(/signed by 0x/) });
+  });
+
+  it('requires the wallet address it checks signed bytes against', async () => {
+    await expect(sendTransactionRaw(sentTx)).rejects.toThrow(/wallet address \(from\) is required/);
+    await expect(sendSolanaRaw(TX_B58)).rejects.toThrow(/wallet address \(signer\) is required/);
+    expect(execFile).not.toHaveBeenCalled();
   });
 
   it('handles status messages before JSON output', async () => {
@@ -440,11 +507,11 @@ describe('sendApprovalViaWalletConnect', () => {
 
 describe('sendSolanaTransactionViaWalletConnect', () => {
   it('sends correct payload and returns signedTransaction', async () => {
-    mockExecFile(JSON.stringify({ signedTransaction: '5K4Ld...' }));
+    mockExecFile(JSON.stringify({ signedTransaction: SIGNED_B58 }));
 
-    const result = await sendSolanaTransactionViaWalletConnect('3Bxs3z...');
+    const result = await sendSolanaTransactionViaWalletConnect(TX_B58);
 
-    expect(result).toEqual({ signedTransaction: '5K4Ld...' });
+    expect(result).toEqual({ signedTransaction: SIGNED_B58 });
 
     // Verify the command arguments
     expect(execFile).toHaveBeenCalledWith(
@@ -456,56 +523,70 @@ describe('sendSolanaTransactionViaWalletConnect', () => {
 
     // Verify the JSON payload
     const payload = JSON.parse(execFile.mock.calls[0][1][1]);
-    expect(payload.transaction).toBe('3Bxs3z...');
+    expect(payload.transaction).toBe(TX_B58);
     expect(payload.chainId).toBe('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp');
+  });
+
+  it('refuses a signed transaction whose message differs from the one sent', async () => {
+    const other = base58Encode(Buffer.from(signSolanaSlot(solanaTxBase64(9)), 'base64'));
+    mockExecFile(JSON.stringify({ signedTransaction: other }));
+
+    await expect(sendSolanaTransactionViaWalletConnect(TX_B58, undefined, { signer: TEST_SOL_ADDRESS, label: 'swap transaction' }))
+      .rejects.toMatchObject({ code: 'SIGNED_TX_MISMATCH', message: expect.stringMatching(/swap transaction.*message bytes differ/) });
+  });
+
+  it('refuses the sent transaction returned without a valid wallet signature', async () => {
+    mockExecFile(JSON.stringify({ transaction: TX_B58 }));
+
+    await expect(sendSolanaTransactionViaWalletConnect(TX_B58)).rejects.toMatchObject({ code: 'SIGNED_TX_MISMATCH', message: expect.stringMatching(/no valid signature/) });
   });
 
   it('returns signature when wallet returns signature only', async () => {
     mockExecFile(JSON.stringify({ signature: '4vJ9...' }));
 
-    const result = await sendSolanaTransactionViaWalletConnect('3Bxs3z...');
+    const result = await sendSolanaTransactionViaWalletConnect(TX_B58);
 
     expect(result).toEqual({ signature: '4vJ9...' });
   });
 
   it('returns signedTransaction when wallet returns transaction field', async () => {
-    mockExecFile(JSON.stringify({ transaction: '5abc...' }));
+    mockExecFile(JSON.stringify({ transaction: SIGNED_B58 }));
 
-    const result = await sendSolanaTransactionViaWalletConnect('3Bxs3z...');
+    const result = await sendSolanaTransactionViaWalletConnect(TX_B58);
 
-    expect(result).toEqual({ signedTransaction: '5abc...' });
+    expect(result).toEqual({ signedTransaction: SIGNED_B58 });
   });
 
   it('throws on timeout', async () => {
     mockExecFile('', new Error('Command timed out'));
 
-    await expect(sendSolanaTransactionViaWalletConnect('3Bxs3z...')).rejects.toThrow('Command timed out');
+    await expect(sendSolanaTransactionViaWalletConnect(TX_B58)).rejects.toThrow('Command timed out');
   });
 
   it('throws when no JSON output', async () => {
     mockExecFile('Some non-JSON output');
 
-    await expect(sendSolanaTransactionViaWalletConnect('3Bxs3z...')).rejects.toThrow('No JSON output');
+    await expect(sendSolanaTransactionViaWalletConnect(TX_B58)).rejects.toThrow('No JSON output');
   });
 
   it('parses multi-line JSON output from walletconnect', async () => {
-    const multiLineJson = 'Connecting to wallet...\n{\n  "signedTransaction": "5K4Ld..."\n}';
+    const multiLineJson = `Connecting to wallet...\n{\n  "signedTransaction": "${SIGNED_B58}"\n}`;
     mockExecFile(multiLineJson);
 
-    const result = await sendSolanaTransactionViaWalletConnect('3Bxs3z...');
-    expect(result).toEqual({ signedTransaction: '5K4Ld...' });
+    const result = await sendSolanaTransactionViaWalletConnect(TX_B58);
+    expect(result).toEqual({ signedTransaction: SIGNED_B58 });
   });
 
   it('throws when unexpected response', async () => {
     mockExecFile(JSON.stringify({ unexpected: true }));
 
-    await expect(sendSolanaTransactionViaWalletConnect('3Bxs3z...')).rejects.toThrow('Unexpected response');
+    await expect(sendSolanaTransactionViaWalletConnect(TX_B58)).rejects.toThrow('Unexpected response');
   });
 
   it('uses custom timeout', async () => {
-    mockExecFile(JSON.stringify({ signedTransaction: '5K4Ld...' }));
+    mockExecFile(JSON.stringify({ signedTransaction: SIGNED_B58 }));
 
-    await sendSolanaTransactionViaWalletConnect('3Bxs3z...', 60000);
+    await sendSolanaTransactionViaWalletConnect(TX_B58, 60000);
 
     expect(execFile).toHaveBeenCalledWith(
       'walletconnect',
@@ -527,7 +608,7 @@ describe('WalletConnect sends mark every failure as an ambiguous handoff', () =>
 
   const sends = [
     ['sendTransactionViaWalletConnect', () => sendTransactionViaWalletConnect({ to: '0xabc', data: '0x', value: '0', gas: '21000', chainId: 8453 })],
-    ['sendSolanaTransactionViaWalletConnect', () => sendSolanaTransactionViaWalletConnect('3Bxs3z...')],
+    ['sendSolanaTransactionViaWalletConnect', () => sendSolanaTransactionViaWalletConnect(TX_B58)],
     ['sendApprovalViaWalletConnect', () => sendApprovalViaWalletConnect('0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae', 8453, 1000n)],
   ];
 

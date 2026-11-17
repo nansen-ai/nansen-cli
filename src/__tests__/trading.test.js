@@ -1860,7 +1860,7 @@ describe('WalletConnect execute support', () => {
 
     await cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId });
 
-    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ gas: '31500' }));
+    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ gas: '31500' }), undefined, { from: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', label: 'swap transaction' });
     expect(logs.some(l => l.includes('Using estimated gas 31500 (quote had no gas)'))).toBe(true);
 
     vi.unstubAllGlobals();
@@ -2328,7 +2328,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
     await cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
 
     expect(approvalSpy).not.toHaveBeenCalled();
-    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ gas: '31500' }));
+    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ gas: '31500' }), undefined, { from: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', label: 'swap transaction' });
   });
 
   // The approval and allowance-revoke sends run BEFORE swapHandedOff is set, so
@@ -2523,7 +2523,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
     const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
     await cmds.execute([], screenApi, { 'no-verify-outcome': true }, { quote: quoteId });
 
-    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ gas: '210000' }));
+    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ gas: '210000' }), undefined, { from: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', label: 'swap transaction' });
   });
 
   it('falls back to 210000 when eth_estimateGas fails (local wallet)', async () => {
@@ -6165,7 +6165,7 @@ describe('ERC-20 excessive allowance handling', () => {
       8453,
       0n,
       undefined,
-      { allowZero: true },
+      { allowZero: true, from: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', label: 'allowance-revoke transaction' },
     );
     expect(sendSpy).not.toHaveBeenCalled();
     expect(executeBodies).toHaveLength(0);
