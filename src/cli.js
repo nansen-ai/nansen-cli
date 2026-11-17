@@ -19,7 +19,7 @@ import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
 import { buildPagination, parseSort, parseCsvOption, rejectBlankOption, parseFiltersOption } from './query-options.js';
-import { resolveResearchCommand, validateResearchInput, UNAVAILABLE_COMMANDS, SUBCOMMAND_ALIASES, validateOutputOptions, validateFieldSelection, unknownCommandError, normalizeFilterAddresses } from './input-validation.js';
+import { resolveResearchCommand, validateResearchInput, validateDeclaredOptions, UNAVAILABLE_COMMANDS, SUBCOMMAND_ALIASES, validateOutputOptions, validateFieldSelection, unknownCommandError, normalizeFilterAddresses } from './input-validation.js';
 import { enableAutoPagination, DEFAULT_MAX_PAGES, MAX_PAGES_LIMIT, locateRows } from './auto-paginate.js';
 export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
@@ -2406,6 +2406,7 @@ SUPPORTED ROUTES:
   // `nansen perp screener` and `nansen research perp screener` route through here.
   const perpCmds = buildPerpCommands(executionDeps);
   const PERP_ANALYTICS_SUBCOMMANDS = new Set(['screener', 'leaderboard']);
+  const PERP_TRADING_SUBCOMMANDS = new Set(['order', 'cancel', 'close', 'leverage', 'transfer', 'approve-builder-fee']);
   cmds['perp'] = async (args, apiInstance, flags, options) => {
     const sub = args[0];
     if (!sub || sub === 'help') {
@@ -2446,6 +2447,12 @@ BEFORE SUBMITTING (order, cancel, close, leverage, transfer, approve-builder-fee
         return perpAnalytics(args, apiInstance, flags, options);
       }
       throw unknownCommandError('perp subcommand', sub, ['order', 'cancel', 'close', 'leverage', 'transfer', 'approve-builder-fee', 'positions', 'orders', 'account', 'meta', 'screener', 'leaderboard']);
+    }
+    // A trading subcommand signs and submits, so a misspelled option
+    // (--dryrun) or a stray argument (—dry-run) must fail here rather than
+    // be ignored.
+    if (PERP_TRADING_SUBCOMMANDS.has(sub)) {
+      validateDeclaredOptions({ path: `nansen perp ${sub}`, leaf: SCHEMA.commands.perp.subcommands[sub], positional: args.slice(1) }, { flags, options });
     }
     return perpCmds[sub](args.slice(1), apiInstance, flags, options);
   };
