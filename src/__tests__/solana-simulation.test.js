@@ -76,11 +76,11 @@ function nativeAccountInfo(lamports) {
   return { lamports, owner: '11111111111111111111111111111111', data: ['', 'base64'], executable: false, rentEpoch: 0 };
 }
 
-function tokenAccountInfo({ mint, owner, amount }) {
+function tokenAccountInfo({ mint, owner, amount, ...extra }) {
   return {
     lamports: 2039280,
     owner: TOKEN_PROGRAM,
-    data: { program: 'spl-token', parsed: { type: 'account', info: { mint, owner, tokenAmount: { amount: String(amount), decimals: 6 } } } },
+    data: { program: 'spl-token', parsed: { type: 'account', info: { mint, owner, tokenAmount: { amount: String(amount), decimals: 6 }, ...extra } } },
     executable: false,
     rentEpoch: 0,
   };
@@ -457,5 +457,131 @@ describe('solana-simulation', () => {
 
     await expect(simulateSolanaAssetChanges('solana', txBase64, { walletAddress: wallet }))
       .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+  });
+
+  describe('account control changes (CPI Approve / SetAuthority / CloseAccount / Assign)', () => {
+    // A USDC -> output swap whose balances are clean in every case; only the
+    // post-state's authorities differ. Balance deltas alone pass all of these.
+    const MAX_U64 = '18446744073709551615';
+    let wallet, ataIn, ataOut, attacker, mintIn, mintOut;
+    beforeEach(() => {
+      wallet = generateSolanaWallet().address;
+      ataIn = generateSolanaWallet().address;
+      ataOut = generateSolanaWallet().address;
+      attacker = generateSolanaWallet().address;
+      mintIn = generateSolanaWallet().address;
+      mintOut = generateSolanaWallet().address;
+    });
+
+    function run({ pre, post, extraWritableKeys = [ataIn, ataOut] }) {
+      const txBase64 = buildLegacyTx({ wallet, extraWritableKeys });
+      vi.stubGlobal('fetch', mockSolanaRpc({
+        trackedAccounts: pre,
+        simValue: (params) => ({ value: { err: null, accounts: params[1].accounts.addresses.map((a) => (a in post ? post[a] : null)) } }),
+      }));
+      return simulateSolanaAssetChanges('solana', txBase64, { walletAddress: wallet });
+    }
+    const basePre = () => ({
+      [wallet]: nativeAccountInfo(1_000_000_000),
+      [ataIn]: tokenAccountInfo({ mint: mintIn, owner: wallet, amount: 1_000_000 }),
+      [ataOut]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0 }),
+    });
+    const basePost = (outExtra = {}) => ({
+      [wallet]: nativeAccountInfo(999_995_000),
+      [ataIn]: tokenAccountInfo({ mint: mintIn, owner: wallet, amount: 0 }),
+      [ataOut]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 1_000_000, ...outExtra }),
+    });
+
+    it('refuses a new delegate on the output token account', async () => {
+      await expect(run({ pre: basePre(), post: basePost({ delegate: attacker, delegatedAmount: { amount: MAX_U64, decimals: 6 } }) }))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`approves ${attacker}`) });
+    });
+
+    it('refuses a delegate replaced by a different one', async () => {
+      const other = generateSolanaWallet().address;
+      const pre = basePre();
+      pre[ataOut] = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: other, delegatedAmount: { amount: '5', decimals: 6 } });
+      await expect(run({ pre, post: basePost({ delegate: attacker, delegatedAmount: { amount: '5', decimals: 6 } }) }))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+    });
+
+    it('refuses a grown allowance for an existing delegate', async () => {
+      const pre = basePre();
+      pre[ataOut] = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: attacker, delegatedAmount: { amount: '5', decimals: 6 } });
+      await expect(run({ pre, post: basePost({ delegate: attacker, delegatedAmount: { amount: MAX_U64, decimals: 6 } }) }))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+    });
+
+    it('allows an existing delegate left unchanged, and a delegate revoked', async () => {
+      const existing = generateSolanaWallet().address;
+      const pre = basePre();
+      pre[ataOut] = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: existing, delegatedAmount: { amount: '5', decimals: 6 } });
+      const unchanged = await run({ pre, post: basePost({ delegate: existing, delegatedAmount: { amount: '5', decimals: 6 } }) });
+      expect(unchanged.deltas[mintOut]).toBe(1_000_000n);
+      const revoked = await run({ pre, post: basePost() });
+      expect(revoked.deltas[mintOut]).toBe(1_000_000n);
+    });
+
+    it('refuses an owner change on a wallet token account', async () => {
+      const post = basePost();
+      post[ataOut] = tokenAccountInfo({ mint: mintOut, owner: attacker, amount: 1_000_000 });
+      await expect(run({ pre: basePre(), post }))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`transfers ownership`) });
+    });
+
+    it('refuses a new close authority', async () => {
+      await expect(run({ pre: basePre(), post: basePost({ closeAuthority: attacker }) }))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('close authority') });
+    });
+
+    it('refuses closing an empty non-WSOL wallet token account', async () => {
+      const sibling = generateSolanaWallet().address;
+      const pre = { ...basePre(), [sibling]: tokenAccountInfo({ mint: generateSolanaWallet().address, owner: wallet, amount: 0 }) };
+      const post = { ...basePost(), [sibling]: null };
+      await expect(run({ pre, post, extraWritableKeys: [ataIn, ataOut, sibling] }))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('closes your empty token account') });
+    });
+
+    it('allows closing the wallet WSOL account (Jupiter wrap/unwrap cleanup)', async () => {
+      const wsolAta = generateSolanaWallet().address;
+      const pre = { ...basePre(), [wsolAta]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0 }) };
+      const post = { ...basePost(), [wsolAta]: null };
+      const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, wsolAta] });
+      expect(result.deltas[mintOut]).toBe(1_000_000n);
+    });
+
+    it('refuses reassigning the wallet account to another program (CPI Assign)', async () => {
+      const post = basePost();
+      post[wallet] = { ...nativeAccountInfo(999_995_000), owner: attacker };
+      await expect(run({ pre: basePre(), post }))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('reassigns your wallet account') });
+    });
+
+    it('fails closed on an unreadable post-state for a wallet token account', async () => {
+      const post = basePost();
+      post[ataOut] = { lamports: 2039280, owner: TOKEN_PROGRAM, data: ['AAAA', 'base64'], executable: false, rentEpoch: 0 };
+      await expect(run({ pre: basePre(), post })).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
+    it('refuses a wallet token account the tx creates with a delegate already set', async () => {
+      const pre = basePre();
+      delete pre[ataOut]; // first-time buy: the output ATA does not exist yet
+      await expect(run({ pre, post: basePost({ delegate: attacker, delegatedAmount: { amount: MAX_U64, decimals: 6 } }) }))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+    });
+
+    it('refuses a pre-funded address the tx initializes as a wallet token account with a delegate', async () => {
+      // Someone sent lamports to the wallet's future ATA address, so its
+      // pre-state is a System-Program-owned account, not null.
+      const pre = { ...basePre(), [ataOut]: nativeAccountInfo(1_000_000) };
+      await expect(run({ pre, post: basePost({ delegate: attacker, delegatedAmount: { amount: MAX_U64, decimals: 6 } }) }))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+    });
+
+    it('counts a pre-funded address the tx initializes cleanly as the wallet output account', async () => {
+      const pre = { ...basePre(), [ataOut]: nativeAccountInfo(1_000_000) };
+      const result = await run({ pre, post: basePost() });
+      expect(result.deltas[mintOut]).toBe(1_000_000n);
+    });
   });
 });
