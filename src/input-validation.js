@@ -379,6 +379,50 @@ function valueErrors(name, spec, value) {
   return errors;
 }
 
+/** Every option and set flag on the command line, as [name, value] pairs. */
+function suppliedOptions(flags, options) {
+  return [
+    ...Object.entries(options),
+    ...Object.entries(flags).filter(([name, value]) => value && !(name in options)),
+  ];
+}
+
+function unknownOptionError(path, raw, visible, hint = '') {
+  const field = raw.length === 1 ? `-${raw}` : `--${raw}`;
+  return fieldError(field, 'unknown_field',
+    `Option '${field}' is not recognized by ${path}.${hint} Command-specific options: ${visible.join(', ') || 'none'}. Common options also apply; see: nansen schema.`);
+}
+
+/**
+ * Reject every option the command does not declare, before it runs: a
+ * misspelled flag (--dryrun for --dry-run) must fail, not be dropped. Only
+ * names are checked; the command checks values itself. Accepts the leaf's
+ * options and aliases, the common options, and the pagination options (both
+ * are global options), and leaves the bags unchanged. A leaf with no
+ * positional option also rejects every positional argument: `—dry-run`
+ * (an em dash, as autocorrect writes it) or a bare `dry-run` is not an
+ * option either. Throws one NansenError listing every problem, in the
+ * research-command shape.
+ */
+export function validateDeclaredOptions({ path, leaf, positional = [] }, { flags = {}, options = {} } = {}) {
+  const names = optionNames(leaf);
+  const visible = [...new Set(names.values())].map(name => `--${name}`);
+  const errors = suppliedOptions(flags, options)
+    .map(([raw]) => raw)
+    .filter(raw => !names.has(raw) && !COMMON_OPTIONS.has(raw) && !PAGINATION_OPTIONS.has(raw))
+    .map(raw => unknownOptionError(path, raw, visible));
+  const takesPositional = Object.values(leaf.options || {}).some(spec => spec.positional);
+  if (!takesPositional) {
+    for (const arg of positional) {
+      const text = String(arg);
+      const hint = text === 'help' ? ` For help, run: ${path} --help.` : '';
+      errors.push(fieldError(text, 'unknown_field',
+        `Argument '${text}' is not recognized by ${path}: it takes no positional arguments, and options start with '--'.${hint} Command-specific options: ${visible.join(', ') || 'none'}. Common options also apply; see: nansen schema.`));
+    }
+  }
+  if (errors.length) throw validationError(errors);
+}
+
 /**
  * Check a research command's options before it runs. Throws one NansenError
  * listing every problem (see validationError). On success it renames aliases
@@ -395,10 +439,7 @@ export function validateResearchInput(resolved, { flags = {}, options = {}, endp
   const accepted = [...names.keys()].filter(name => names.get(name) === name);
   const visible = [...new Set([...accepted, ...(pagination ? PAGINATION_OPTIONS : [])])].map(name => `--${name}`);
 
-  const supplied = [
-    ...Object.entries(options).map(([name, value]) => [name, value]),
-    ...Object.entries(flags).filter(([name, value]) => value && !(name in options)).map(([name, value]) => [name, value]),
-  ];
+  const supplied = suppliedOptions(flags, options);
   const spelled = new Map(); // schema name -> the spelling that was given
   for (const [raw, value] of supplied) {
     const canonical = names.get(raw);
@@ -423,13 +464,11 @@ export function validateResearchInput(resolved, { flags = {}, options = {}, endp
       errors.push(fieldError(`--${raw}`, 'unknown_field', `Option '--${raw}' is not supported by ${path}: this endpoint does not paginate.`));
       continue;
     }
-    const field = raw.length === 1 ? `-${raw}` : `--${raw}`;
     // --days is the lookback flag elsewhere; here the window is text (24h, 7d).
     const hint = raw === 'days' && leaf.options?.timeframe && !names.has('days')
       ? ' Use --timeframe instead (for example --timeframe 7d); this command takes a time window, not a number of days.'
       : '';
-    errors.push(fieldError(field, 'unknown_field',
-      `Option '${field}' is not recognized by ${path}.${hint} Command-specific options: ${visible.join(', ') || 'none'}. Common options also apply; see: nansen schema.`));
+    errors.push(unknownOptionError(path, raw, visible, hint));
   }
 
   for (const [name, value] of given) {
