@@ -40,6 +40,17 @@ function intHeader(response, name) {
 }
 
 /**
+ * Read a header as a non-negative decimal number, or null when absent/unparseable.
+ * The remaining balance can hold a fraction of a credit ("9994.7126") after
+ * usage-priced requests such as inference.
+ */
+function decimalHeader(response, name) {
+  const raw = stringHeader(response, name);
+  if (raw === null || !/^\d+(\.\d+)?$/.test(raw)) return null;
+  return Number(raw);
+}
+
+/**
  * Read a header as a trimmed non-empty string, or null when absent.
  * Tolerates any header bag with a .get() — a real Headers, or a Map in tests.
  */
@@ -57,7 +68,7 @@ export function stringHeader(response, name) {
  */
 export function readResponseMeta(response) {
   const used = intHeader(response, CREDITS_USED);
-  const remaining = intHeader(response, CREDITS_REMAINING);
+  const remaining = decimalHeader(response, CREDITS_REMAINING);
   const cost = intHeader(response, CREDITS_COST);
   const limit = intHeader(response, RATE_LIMIT);
   const rateRemaining = intHeader(response, RATE_REMAINING);

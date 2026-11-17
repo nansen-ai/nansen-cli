@@ -126,6 +126,26 @@ describe('readResponseMeta', () => {
     expect(meta.credits).toEqual({ used: 0, remaining: 0, cost: 0 });
   });
 
+  it('reads a fractional remaining balance exactly', () => {
+    const meta = readResponseMeta({
+      headers: headers({
+        'x-nansen-credits-used': '1',
+        'x-nansen-credits-remaining': '9994.7126',
+        'x-nansen-credits-cost': '1',
+      }),
+    });
+    expect(meta.credits).toEqual({ used: 1, remaining: 9994.7126, cost: 1 });
+  });
+
+  it('treats a malformed remaining balance as unknown', () => {
+    for (const raw of ['-1', '1e3', 'abc', '9.', '.5']) {
+      const meta = readResponseMeta({
+        headers: headers({ 'x-nansen-credits-used': '1', 'x-nansen-credits-remaining': raw }),
+      });
+      expect(meta.credits.remaining).toBeNull();
+    }
+  });
+
   it('parses the authoritative cost header', () => {
     const meta = readResponseMeta({
       headers: headers({
