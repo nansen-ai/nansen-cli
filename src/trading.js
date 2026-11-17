@@ -16,7 +16,7 @@ import { buildMessageV0, fetchAddressLookupTables, fetchRecentBlockhash } from '
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendSolanaTransactionViaWalletConnect, sendApprovalViaWalletConnect } from './walletconnect-trading.js';
 import { retrievePassword } from './keychain.js';
-import { validateQuoteInput, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, checkSolanaFeeBalance, assertSolanaSwapOutcome, approvalAmountForSwap, needsAllowanceRevoke, OVERSIZED_ALLOWANCE_MULTIPLIER, EVM_BRIDGE_NATIVE_FEE_SLACK, isBridgeRequest, nativeValueMismatch } from './trade-validation.js';
+import { validateQuoteInput, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, checkSolanaFeeBalance, assertSolanaSwapOutcome, approvalAmountForSwap, needsAllowanceRevoke, OVERSIZED_ALLOWANCE_MULTIPLIER, EVM_BRIDGE_NATIVE_FEE_SLACK, isBridgeRequest, nativeValueMismatch, quoteInputAmountRaw } from './trade-validation.js';
 import { readCompactU16 } from './solana-tx.js';
 import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 export { readCompactU16 };
@@ -2707,7 +2707,7 @@ export function formatQuote(quote, index) {
   const lines = [];
   const label = index !== undefined ? `  Quote #${index + 1}` : '  Best Quote';
   lines.push(`${label} (${quote.aggregator || 'unknown'})`);
-  lines.push(`    Input:        ${quote.inAmount} → ${quote.inputMint?.slice(0, 12)}...`);
+  lines.push(`    Input:        ${quoteInputAmountRaw(quote) ?? '?'} → ${quote.inputMint?.slice(0, 12)}...`);
   lines.push(`    Output:       ${quote.outAmount} → ${quote.outputMint?.slice(0, 12)}...`);
   if (quote.inUsdValue)  lines.push(`    In USD:       $${quote.inUsdValue}`);
   if (quote.outUsdValue) lines.push(`    Out USD:      $${quote.outUsdValue}`);
@@ -2784,7 +2784,7 @@ export async function buildTradeExecutionPlan({
   let approvalPending = false;
   if (spender) {
     const approveAmt = approvalAmountForSwap({
-      inputAmount: quote.inputAmount || quote.inAmount || '0',
+      inputAmount: quoteInputAmountRaw(quote),
       swapMode: quoteData.swapMode,
       slippage: quoteData.slippage,
     });
@@ -2838,7 +2838,7 @@ export async function buildTradeExecutionPlan({
 
   return formatPlan(`Trade plan — ${route}`, [
     ['Quote', `${quoteId}${quote.aggregator ? ` via ${quote.aggregator}` : ''}${quoteCount > 1 ? ` (quote ${quoteIndex + 1} of ${quoteCount})` : ''}`],
-    ['Sell', `${quote.inAmount ?? quote.inputAmount ?? '?'} base units of ${request.fromToken || quote.inputMint}`],
+    ['Sell', `${quoteInputAmountRaw(quote) ?? '?'} base units of ${request.fromToken || quote.inputMint}`],
     ['Buy', `~${quote.outAmount ?? '?'} base units of ${request.toToken || quote.outputMint}`],
     ['Max spend', request.maxInputAmount ? `${request.maxInputAmount} base units` : null],
     ['Wallet', walletAddress || 'the wallet this quote was created for'],
@@ -2950,9 +2950,8 @@ async function preflightTradeExecutionCandidate({
   let approvalPending = false;
   if (quote.approvalAddress && quote.approvalAddress !== '' && !nativeInput) {
     assertUsableSpender(quote.approvalAddress);
-    const inputAmount = BigInt(quote.inputAmount || quote.inAmount || '0');
     const approveAmt = approvalAmountForSwap({
-      inputAmount,
+      inputAmount: quoteInputAmountRaw(quote),
       swapMode: quoteData.swapMode,
       slippage: quoteData.slippage,
     });
@@ -3459,7 +3458,7 @@ CROSS-CHAIN NOTES (when using --to-chain):
           const cap = BigInt(maxInputOverride);
           // Max sell-token base units that can leave the wallet for this quote.
           const spendFor = (q) => approvalAmountForSwap({
-            inputAmount: q.inputAmount ?? q.inAmount ?? '0',
+            inputAmount: quoteInputAmountRaw(q),
             swapMode,
             slippage: effectiveSlippage,
           });
@@ -4069,8 +4068,7 @@ EXAMPLES:
               // Empty-string approvalAddress is Relay's "no approval needed" sentinel — skip.
               if (currentQuote.approvalAddress && currentQuote.approvalAddress !== '' && !isNative) {
                 assertUsableSpender(currentQuote.approvalAddress);
-                const inputAmount = BigInt(currentQuote.inputAmount || currentQuote.inAmount || '0');
-                const approveAmt = approvalAmountForSwap({ inputAmount, swapMode: quoteData.swapMode, slippage: quoteData.slippage });
+                const approveAmt = approvalAmountForSwap({ inputAmount: quoteInputAmountRaw(currentQuote), swapMode: quoteData.swapMode, slippage: quoteData.slippage });
                 if (approveAmt <= 0n) {
                   // Malformed quote (no/invalid input amount): a zero-scoped approval
                   // would waste gas and the swap would revert on insufficient allowance.
@@ -4459,8 +4457,7 @@ EXAMPLES:
               // Empty-string approvalAddress is Relay's "no approval needed" sentinel — skip.
               if (currentQuote.approvalAddress && currentQuote.approvalAddress !== '' && !isNative) {
                 assertUsableSpender(currentQuote.approvalAddress);
-                const inputAmount = BigInt(currentQuote.inputAmount || currentQuote.inAmount || '0');
-                const approveAmt = approvalAmountForSwap({ inputAmount, swapMode: quoteData.swapMode, slippage: quoteData.slippage });
+                const approveAmt = approvalAmountForSwap({ inputAmount: quoteInputAmountRaw(currentQuote), swapMode: quoteData.swapMode, slippage: quoteData.slippage });
                 if (approveAmt <= 0n) {
                   // Malformed quote (no/invalid input amount): a zero-scoped approval
                   // would waste gas and the swap would revert on insufficient allowance.
@@ -4858,8 +4855,7 @@ EXAMPLES:
               if (currentQuote.approvalAddress && currentQuote.approvalAddress !== '' && !isNative) {
                 assertUsableSpender(currentQuote.approvalAddress);
                 // Check if sufficient allowance already exists
-                const inputAmount = BigInt(currentQuote.inputAmount || currentQuote.inAmount || '0');
-                const approveAmt = approvalAmountForSwap({ inputAmount, swapMode: quoteData.swapMode, slippage: quoteData.slippage });
+                const approveAmt = approvalAmountForSwap({ inputAmount: quoteInputAmountRaw(currentQuote), swapMode: quoteData.swapMode, slippage: quoteData.slippage });
                 if (approveAmt <= 0n) {
                   // Malformed quote (no/invalid input amount): a zero-scoped approval
                   // would waste gas and the swap would revert on insufficient allowance.
