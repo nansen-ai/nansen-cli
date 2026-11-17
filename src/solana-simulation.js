@@ -19,7 +19,7 @@
 
 import { SIMULATION_RPCS } from './rpc-urls.js';
 import { parseTransactionMessage } from './solana-tx.js';
-import { base58Encode } from './wallet.js';
+import { base58Decode, base58Encode } from './wallet.js';
 
 // Mirrors NATIVE_SOL_SYSTEM_MINT in trading.js / SOLANA_NATIVE_SOL_ALIASES in
 // trade-validation.js (duplicated, not imported, to avoid a circular import —
@@ -29,6 +29,17 @@ export const SOL_SENTINEL = '11111111111111111111111111111111';
 // Same base58 string as SOL_SENTINEL, but here it means the program that owns
 // ordinary wallet (keypair) accounts.
 const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+
+// SPL Token / Token-2022 program IDs and the instruction discriminators whose
+// authority is checked, shared with trade-validation.js's top-level check.
+export const SPL_TOKEN_PROGRAMS = new Set([
+  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+  'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
+]);
+export const SPL_APPROVE = 4;
+export const SPL_SET_AUTHORITY = 6;
+export const SPL_CLOSE_ACCOUNT = 9;
+export const SPL_APPROVE_CHECKED = 13;
 
 function isSolanaNativeMint(mint) {
   return mint === WSOL_MINT || mint === SOL_SENTINEL;
@@ -48,13 +59,17 @@ const MAX_ACCOUNTS_PER_CALL = 100;
  *                             a corrupt result — see the throw site below)
  *   SIM_REVERTED            - the transaction itself reverted in simulation
  *   SIM_RESULT_UNPARSEABLE  - the sim ran AND returned the accounts we asked
- *                             for, but a tracked balance or lookup table
- *                             couldn't be resolved/parsed
+ *                             for, but a tracked balance, lookup table or
+ *                             token-program inner instruction couldn't be
+ *                             resolved/parsed
  *   SIM_ACCOUNT_CONTROL_CHANGED - the simulated post-state hands control of one
  *                             of the wallet's own accounts to someone else (new
  *                             owner, delegate or close authority, a closed empty
- *                             token account, or the wallet reassigned to another
- *                             program), whatever the balances say
+ *                             token account, a CPI the wallet authorizes that
+ *                             approves a delegate, changes an authority or
+ *                             closes an account with its rent sent elsewhere,
+ *                             or the wallet reassigned to another program),
+ *                             whatever the balances say
  * NO_SIM_RPC and SIM_RPC_ERROR are degrade conditions (warn, proceed per
  * policy); the caller decides. SIM_REVERTED, SIM_RESULT_UNPARSEABLE and
  * SIM_ACCOUNT_CONTROL_CHANGED are outcome/parse problems and must not be
@@ -265,6 +280,116 @@ function assertTokenAccountControl(pubkey, pre, post, walletAddress) {
   }
 }
 
+const UNREADABLE_INNER = 'Simulation returned an unreadable token-program inner instruction; cannot verify the outcome.';
+const isPubkey = (v) => typeof v === 'string' && v.length > 0;
+
+/**
+ * Classify one inner instruction as a token-program Approve, SetAuthority or
+ * CloseAccount ({ kind, account, destination?, authorities }), or null for
+ * anything else. simulateTransaction returns inner instructions with addresses
+ * already resolved (lookup tables included): a parsed token instruction carries
+ * `parsed.type`/`parsed.info`; one the node couldn't parse carries `accounts`
+ * (pubkeys) and base58 `data`. Throws on a shape it can't read, so a malformed
+ * entry never reads as harmless.
+ */
+function classifyInnerTokenInstruction(ix) {
+  if (!ix || typeof ix !== 'object' || !isPubkey(ix.programId)) {
+    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned a malformed inner instruction; cannot verify the outcome.');
+  }
+  if (!SPL_TOKEN_PROGRAMS.has(ix.programId)) return null;
+
+  if (ix.parsed && typeof ix.parsed === 'object') {
+    const { type } = ix.parsed;
+    const info = ix.parsed.info;
+    if (!['approve', 'approveChecked', 'setAuthority', 'closeAccount'].includes(type)) return null;
+    if (!info || typeof info !== 'object') throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER);
+    const signers = Array.isArray(info.signers) ? info.signers : [];
+    let out;
+    if (type === 'closeAccount') {
+      out = { kind: 'close', account: info.account, destination: info.destination, authorities: [info.owner, info.multisigOwner, ...signers] };
+      if (!isPubkey(out.destination)) throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER);
+    } else if (type === 'setAuthority') {
+      // `account` is a token account or a mint, depending on the authority type.
+      out = { kind: 'setAuthority', account: info.account ?? info.mint, authorities: [info.authority, info.multisigAuthority, ...signers] };
+    } else {
+      out = { kind: 'approve', account: info.source, authorities: [info.owner, info.multisigOwner, ...signers] };
+    }
+    const authorities = out.authorities.filter((a) => a != null);
+    if (!isPubkey(out.account) || authorities.length === 0 || !authorities.every(isPubkey)) {
+      throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER);
+    }
+    return { ...out, authorities };
+  }
+
+  // Unparsed: raw account list + data, same layouts as the top-level check.
+  let data;
+  try {
+    if (!Array.isArray(ix.accounts) || !ix.accounts.every(isPubkey) || typeof ix.data !== 'string') throw new Error('shape');
+    data = base58Decode(ix.data);
+  } catch {
+    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER);
+  }
+  const layouts = {
+    [SPL_APPROVE]: { kind: 'approve', authorityPos: 2 },
+    [SPL_APPROVE_CHECKED]: { kind: 'approve', authorityPos: 3 },
+    [SPL_SET_AUTHORITY]: { kind: 'setAuthority', authorityPos: 1 },
+    [SPL_CLOSE_ACCOUNT]: { kind: 'close', authorityPos: 2 },
+  };
+  const layout = data.length ? layouts[data[0]] : undefined;
+  if (!layout) return null;
+  if (ix.accounts.length <= layout.authorityPos) throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER);
+  return {
+    kind: layout.kind,
+    account: ix.accounts[0],
+    destination: layout.kind === 'close' ? ix.accounts[1] : undefined,
+    authorities: ix.accounts.slice(layout.authorityPos),
+  };
+}
+
+/**
+ * The static instruction check (assertSolanaInstructionsSafe) only sees
+ * top-level instructions, and the post-state can't show a CPI that delegates
+ * or re-authorizes an account it then closes, or that closes an account and
+ * re-creates it at the same address. Apply the top-level rules to every CPI:
+ * refuse an Approve or SetAuthority the wallet authorizes, and a CloseAccount
+ * of one of the wallet's token accounts, or one the wallet authorizes, whose
+ * rent goes anywhere but the wallet.
+ */
+function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletTokenAccounts) {
+  for (const group of innerGroups) {
+    if (!Array.isArray(group?.instructions)) {
+      throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned malformed inner instructions; cannot verify the outcome.');
+    }
+    for (const ix of group.instructions) {
+      const op = classifyInnerTokenInstruction(ix);
+      if (!op) continue;
+      const walletAuthorizes = op.authorities.includes(walletAddress);
+      const label = walletTokenAccounts.has(op.account) ? `your token account ${op.account}` : `token account ${op.account}`;
+      if (op.kind === 'approve' && walletAuthorizes) {
+        throw controlChanged(`approves a delegate on ${label} with your wallet's signature, from inside another program.`);
+      }
+      if (op.kind === 'setAuthority' && walletAuthorizes) {
+        throw controlChanged(`changes an authority of ${label} with your wallet's signature, from inside another program.`);
+      }
+      if (op.kind === 'close' && (walletAuthorizes || walletTokenAccounts.has(op.account)) && op.destination !== walletAddress) {
+        throw controlChanged(`closes ${label} from inside another program and sends its rent to ${op.destination}.`);
+      }
+    }
+  }
+}
+
+/**
+ * Whether simulateTransaction returned inner instructions this module can
+ * read. A node that honors the param returns [] when there are none; a missing
+ * field or compiled entries (programIdIndex, no resolved programId) is an RPC
+ * capability gap. Anything else malformed is left to the classifier to reject.
+ */
+function innerInstructionsReadable(innerGroups) {
+  if (!Array.isArray(innerGroups)) return false;
+  return !innerGroups.some((g) => Array.isArray(g?.instructions)
+    && g.instructions.some((ix) => ix && typeof ix === 'object' && ix.programId === undefined && typeof ix.programIdIndex === 'number'));
+}
+
 /**
  * Simulate a Solana swap transaction and return the normalised asset changes
  * it causes to `walletAddress`'s wallet.
@@ -370,6 +495,7 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
         commitment: 'confirmed',
         encoding: 'base64',
         accounts: { addresses: tracked.map((t) => t.pubkey), encoding: 'jsonParsed' },
+        innerInstructions: true,
       },
     ],
     timeoutMs,
@@ -391,6 +517,7 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
   }
 
   const deltas = {};
+  const walletTokenAccounts = new Set();
   tracked.forEach((t, i) => {
     const postInfo = postAccountInfos[i];
     let { kind, mint } = t;
@@ -402,6 +529,7 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
       const fields = tokenAccountFields(postInfo);
       if (fields?.owner !== walletAddress) return;
       assertTokenAccountControl(t.pubkey, null, fields, walletAddress);
+      walletTokenAccounts.add(t.pubkey);
       kind = 'token';
       mint = fields.mint;
     } else if (kind === 'native') {
@@ -411,14 +539,17 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
         throw controlChanged(`reassigns your wallet account ${t.pubkey} to program ${postInfo.owner}.`);
       }
     } else if (!postInfo) {
+      walletTokenAccounts.add(t.pubkey);
       // Closing a token account needs a zero balance, so a non-zero pre-balance
-      // already shows up as an outflow. An empty one is a silent 0n delta and
-      // its rent can go anywhere. The WSOL account is the exception: Jupiter's
-      // wrap/unwrap cleanup closes it on every native-SOL swap. All of its
-      // lamports (rent + wrapped amount) go wherever the close sends them, so
-      // count the whole pre-balance as leaving under SOL_SENTINEL: a close back
-      // to the wallet nets out against the wallet's native inflow, and a close
-      // elsewhere shows as native outflow bounded by the fee/rent slack.
+      // already shows up as an outflow. An empty one is a silent 0n delta and,
+      // closed through a close authority other than the wallet, its rent can
+      // go anywhere the destination checks don't see, so refuse it. The WSOL
+      // account is the exception: Jupiter's wrap/unwrap cleanup closes it on
+      // every native-SOL swap. The close itself is checked (a top-level close
+      // in assertSolanaInstructionsSafe, a CPI close in
+      // assertInnerTokenInstructionsSafe); here count the whole pre-balance
+      // (rent + wrapped amount) as leaving under SOL_SENTINEL, so it nets out
+      // against the wallet's native inflow when the close returns it.
       if (isSolanaNativeMint(mint)) {
         let lamports;
         try {
@@ -441,6 +572,7 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
         );
       }
       assertTokenAccountControl(t.pubkey, tokenAccountFields(t.preInfo), fields, walletAddress);
+      walletTokenAccounts.add(t.pubkey);
     }
     const pre = extractBalance(kind, t.preInfo); // null preInfo (new account) → 0n
     const post = extractBalance(kind, postInfo);
@@ -453,5 +585,13 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
     if (deltas[k] === 0n) delete deltas[k];
   }
 
-  return { deltas, method: 'simulateTransaction' };
+  // Runs after the post-state checks above, so a node that can't return inner
+  // instructions only loses this check, not the whole verification.
+  const innerGroups = simResult.value.innerInstructions;
+  const innerChecked = innerInstructionsReadable(innerGroups);
+  if (innerChecked) {
+    assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletTokenAccounts);
+  }
+
+  return { deltas, method: 'simulateTransaction', innerInstructionsChecked: innerChecked };
 }

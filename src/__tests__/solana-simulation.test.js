@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SIMULATION_RPCS } from '../rpc-urls.js';
-import { generateSolanaWallet, base58Decode } from '../wallet.js';
+import { generateSolanaWallet, base58Decode, base58Encode } from '../wallet.js';
 import {
   simulateSolanaAssetChanges,
   SolanaSimulationError,
@@ -10,6 +10,7 @@ import {
 
 const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+const TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 
 // Same hand-rolled builder as solana-tx.test.js, kept independent of
 // solana-tx.js so these fixtures aren't verified against the code under test.
@@ -164,7 +165,7 @@ describe('solana-simulation', () => {
           [wsolAccount]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 5000 }), // unwrap left dust
           [usdcAccount]: tokenAccountInfo({ mint: usdcMint, owner: wallet, amount: 150_000_000 }),
         };
-        return { value: { err: null, accounts: addrs.map((a) => post[a]) } };
+        return { value: { err: null, innerInstructions: [], accounts: addrs.map((a) => post[a]) } };
       },
     }));
 
@@ -193,7 +194,7 @@ describe('solana-simulation', () => {
           [wallet]: nativeAccountInfo(2_002_000_000), // received native output + reclaimed rent, minus fee
           [usdtAccount]: tokenAccountInfo({ mint: usdtMint, owner: wallet, amount: 0 }), // fully spent
         };
-        return { value: { err: null, accounts: addrs.map((a) => post[a]) } };
+        return { value: { err: null, innerInstructions: [], accounts: addrs.map((a) => post[a]) } };
       },
     }));
 
@@ -236,7 +237,7 @@ describe('solana-simulation', () => {
           [wallet]: nativeAccountInfo(999_995_000),
           [altTokenAccount]: tokenAccountInfo({ mint, owner: wallet, amount: 700 }),
         };
-        return { value: { err: null, accounts: addrs.map((a) => post[a]) } };
+        return { value: { err: null, innerInstructions: [], accounts: addrs.map((a) => post[a]) } };
       },
     }));
 
@@ -280,7 +281,7 @@ describe('solana-simulation', () => {
           [wallet]: nativeAccountInfo(999_995_000),
           [tokenAccount]: tokenAccountInfo({ mint, owner: wallet, amount: 700 }),
         };
-        return { value: { err: null, accounts: addrs.map((a) => post[a]) } };
+        return { value: { err: null, innerInstructions: [], accounts: addrs.map((a) => post[a]) } };
       },
     }));
 
@@ -312,7 +313,7 @@ describe('solana-simulation', () => {
           [wallet]: nativeAccountInfo(8_997_960_720), // paid 1 SOL + fee + ATA rent
           [newOutputAta]: tokenAccountInfo({ mint: outputMint, owner: wallet, amount: 250_000_000 }),
         };
-        return { value: { err: null, accounts: addrs.map((a) => post[a] ?? null) } };
+        return { value: { err: null, innerInstructions: [], accounts: addrs.map((a) => post[a] ?? null) } };
       },
     }));
 
@@ -337,7 +338,7 @@ describe('solana-simulation', () => {
           [wallet]: nativeAccountInfo(999_995_000),
           [someoneElsesNewAta]: tokenAccountInfo({ mint: otherMint, owner: otherOwner, amount: 5_000_000 }),
         };
-        return { value: { err: null, accounts: addrs.map((a) => post[a] ?? null) } };
+        return { value: { err: null, innerInstructions: [], accounts: addrs.map((a) => post[a] ?? null) } };
       },
     }));
 
@@ -379,7 +380,7 @@ describe('solana-simulation', () => {
 
     vi.stubGlobal('fetch', mockSolanaRpc({
       trackedAccounts: { [wallet]: nativeAccountInfo(1_000_000_000) },
-      simValue: () => ({ value: { err: null, accounts: null } }),
+      simValue: () => ({ value: { err: null, innerInstructions: [], accounts: null } }),
     }));
 
     await expect(simulateSolanaAssetChanges('solana', txBase64, { walletAddress: wallet }))
@@ -436,7 +437,7 @@ describe('solana-simulation', () => {
       onRequest: (body) => { if (body.method === 'simulateTransaction') capturedOptions = body.params[1]; },
       simValue: (params) => {
         const addrs = params[1].accounts.addresses;
-        return { value: { err: null, accounts: addrs.map(() => nativeAccountInfo(1_000_000_000)) } };
+        return { value: { err: null, innerInstructions: [], accounts: addrs.map(() => nativeAccountInfo(1_000_000_000)) } };
       },
     }));
 
@@ -452,7 +453,7 @@ describe('solana-simulation', () => {
 
     vi.stubGlobal('fetch', mockSolanaRpc({
       trackedAccounts: { [someoneElse]: nativeAccountInfo(1_000_000_000) },
-      simValue: () => ({ value: { err: null, accounts: [] } }),
+      simValue: () => ({ value: { err: null, innerInstructions: [], accounts: [] } }),
     }));
 
     await expect(simulateSolanaAssetChanges('solana', txBase64, { walletAddress: wallet }))
@@ -473,11 +474,11 @@ describe('solana-simulation', () => {
       mintOut = generateSolanaWallet().address;
     });
 
-    function run({ pre, post, extraWritableKeys = [ataIn, ataOut] }) {
+    function run({ pre, post, extraWritableKeys = [ataIn, ataOut], inner = [] }) {
       const txBase64 = buildLegacyTx({ wallet, extraWritableKeys });
       vi.stubGlobal('fetch', mockSolanaRpc({
         trackedAccounts: pre,
-        simValue: (params) => ({ value: { err: null, accounts: params[1].accounts.addresses.map((a) => (a in post ? post[a] : null)) } }),
+        simValue: (params) => ({ value: { err: null, innerInstructions: inner, accounts: params[1].accounts.addresses.map((a) => (a in post ? post[a] : null)) } }),
       }));
       return simulateSolanaAssetChanges('solana', txBase64, { walletAddress: wallet });
     }
@@ -616,6 +617,193 @@ describe('solana-simulation', () => {
       const pre = { ...basePre(), [ataOut]: nativeAccountInfo(1_000_000) };
       await expect(run({ pre, post: basePost({ delegate: attacker, delegatedAmount: { amount: MAX_U64, decimals: 6 } }) }))
         .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+    });
+
+    describe('token accounts closed by a CPI', () => {
+      // simulateTransaction's inner instructions, as mainnet returns them: a
+      // parsed token instruction, or `accounts` + base58 `data` when unparsed.
+      const parsedClose = (info) => ({
+        program: 'spl-token', programId: TOKEN_PROGRAM, stackHeight: 2, parsed: { type: 'closeAccount', info },
+      });
+      const rawClose = (accounts) => ({ programId: TOKEN_PROGRAM, accounts, data: base58Encode(Buffer.from([9])), stackHeight: 2 });
+      const inGroup = (...instructions) => [{ index: 0, instructions }];
+      let wsolAta;
+      beforeEach(() => { wsolAta = generateSolanaWallet().address; });
+      const wsolPre = () => ({ ...basePre(), [wsolAta]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0 }) });
+      const withWsol = () => [ataIn, ataOut, wsolAta];
+
+      it('refuses a CPI close of the wallet WSOL account that sends its rent elsewhere', async () => {
+        const post = { ...basePost(), [wsolAta]: null };
+        const inner = inGroup(parsedClose({ account: wsolAta, destination: attacker, owner: wallet }));
+        await expect(run({ pre: wsolPre(), post, extraWritableKeys: withWsol(), inner }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`sends its rent to ${attacker}`) });
+      });
+
+      it('refuses a close-and-reinitialize of a wallet token account (post-state looks intact)', async () => {
+        const inner = inGroup(
+          parsedClose({ account: ataOut, destination: attacker, owner: wallet }),
+          { program: 'spl-token', programId: TOKEN_PROGRAM, stackHeight: 2, parsed: { type: 'initializeAccount3', info: { account: ataOut, mint: mintOut, owner: wallet } } },
+        );
+        await expect(run({ pre: basePre(), post: basePost(), inner }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it("refuses a CPI close of the wallet's token account by a third-party close authority", async () => {
+        // A close authority set before this tx (unchanged, so the post-state check passes it).
+        const pre = { ...wsolPre(), [wsolAta]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0, closeAuthority: attacker }) };
+        const post = { ...basePost(), [wsolAta]: null };
+        const inner = inGroup(parsedClose({ account: wsolAta, destination: attacker, owner: attacker }));
+        await expect(run({ pre, post, extraWritableKeys: withWsol(), inner }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`your token account ${wsolAta}`) });
+      });
+
+      it('refuses a wallet-authorized CPI close of an account it does not track (created in this tx)', async () => {
+        const temp = generateSolanaWallet().address;
+        const inner = inGroup(parsedClose({ account: temp, destination: attacker, owner: wallet }));
+        await expect(run({ pre: basePre(), post: basePost(), inner }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('refuses a CPI close whose multisig signers include the wallet', async () => {
+        const temp = generateSolanaWallet().address;
+        const multisig = generateSolanaWallet().address;
+        const inner = inGroup(parsedClose({ account: temp, destination: attacker, multisigOwner: multisig, signers: [wallet] }));
+        await expect(run({ pre: basePre(), post: basePost(), inner }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('refuses an unparsed (raw) CPI CloseAccount of a wallet token account', async () => {
+        const post = { ...basePost(), [wsolAta]: null };
+        const inner = inGroup(rawClose([wsolAta, attacker, wallet]));
+        await expect(run({ pre: wsolPre(), post, extraWritableKeys: withWsol(), inner }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('allows a CPI close of the wallet WSOL account back to the wallet', async () => {
+        const post = { ...basePost(), [wallet]: nativeAccountInfo(999_995_000 + 2_039_280), [wsolAta]: null };
+        const inner = inGroup(parsedClose({ account: wsolAta, destination: wallet, owner: wallet }));
+        const result = await run({ pre: wsolPre(), post, extraWritableKeys: withWsol(), inner });
+        expect(result.deltas[SOL_SENTINEL]).toBe(-5_000n);
+      });
+
+      it("ignores a CPI close of another party's account (an aggregator's own temp account)", async () => {
+        const router = generateSolanaWallet().address;
+        const routerTemp = generateSolanaWallet().address;
+        const inner = inGroup(
+          parsedClose({ account: routerTemp, destination: router, owner: router }),
+          rawClose([generateSolanaWallet().address, router, router]),
+        );
+        const result = await run({ pre: basePre(), post: basePost(), inner });
+        expect(result.deltas[mintOut]).toBe(1_000_000n);
+      });
+
+      it('without inner instructions, skips only this check and still refuses post-state violations', async () => {
+        const ok = await run({ pre: basePre(), post: basePost(), inner: null });
+        expect(ok.innerInstructionsChecked).toBe(false);
+        expect(ok.deltas[mintOut]).toBe(1_000_000n);
+        const post = basePost();
+        post[ataOut] = tokenAccountInfo({ mint: mintOut, owner: attacker, amount: 1_000_000 });
+        await expect(run({ pre: basePre(), post, inner: null }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('treats compiled inner instructions (programIdIndex) as unchecked, not as an outage', async () => {
+        const inner = inGroup({ programIdIndex: 3, accounts: [1, 2, 0], data: base58Encode(Buffer.from([9])) });
+        const result = await run({ pre: basePre(), post: basePost(), inner });
+        expect(result.innerInstructionsChecked).toBe(false);
+        expect(result.deltas[mintOut]).toBe(1_000_000n);
+      });
+
+      it('reports the check as run when inner instructions are returned', async () => {
+        const result = await run({ pre: basePre(), post: basePost(), inner: [] });
+        expect(result.innerInstructionsChecked).toBe(true);
+      });
+
+      it('fails closed on a null or programId-less inner instruction entry', async () => {
+        await expect(run({ pre: basePre(), post: basePost(), inner: inGroup(null) }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+        await expect(run({ pre: basePre(), post: basePost(), inner: inGroup({ accounts: [], data: '' }) }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      });
+
+      it('fails closed on a parsed closeAccount missing its fields', async () => {
+        await expect(run({ pre: basePre(), post: basePost(), inner: inGroup(parsedClose({})) }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+        await expect(run({ pre: basePre(), post: basePost(), inner: inGroup(parsedClose({ account: ataOut, owner: wallet })) }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      });
+
+      it('fails closed on a raw CloseAccount with too few accounts', async () => {
+        await expect(run({ pre: basePre(), post: basePost(), inner: inGroup(rawClose([ataOut, attacker])) }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      });
+
+      it('refuses a Token-2022 CPI close of a wallet token account', async () => {
+        const inner = inGroup({ ...parsedClose({ account: ataOut, destination: attacker, owner: wallet }), program: 'spl-token-2022', programId: TOKEN_2022_PROGRAM });
+        await expect(run({ pre: basePre(), post: basePost(), inner }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('allows a raw CPI close back to the wallet', async () => {
+        const post = { ...basePost(), [wallet]: nativeAccountInfo(999_995_000 + 2_039_280), [wsolAta]: null };
+        const result = await run({ pre: wsolPre(), post, extraWritableKeys: withWsol(), inner: inGroup(rawClose([wsolAta, wallet, wallet])) });
+        expect(result.deltas[SOL_SENTINEL]).toBe(-5_000n);
+      });
+
+      it('refuses a raw CPI close whose multisig signers include the wallet', async () => {
+        const multisig = generateSolanaWallet().address;
+        const inner = inGroup(rawClose([generateSolanaWallet().address, attacker, multisig, wallet]));
+        await expect(run({ pre: basePre(), post: basePost(), inner }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('refuses a wallet-authorized CPI Approve, parsed or raw, even if revoked later in the tx', async () => {
+        const parsedApprove = { program: 'spl-token', programId: TOKEN_PROGRAM, stackHeight: 2, parsed: { type: 'approve', info: { source: ataOut, delegate: attacker, owner: wallet, amount: '1' } } };
+        await expect(run({ pre: basePre(), post: basePost(), inner: inGroup(parsedApprove) }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('approves a delegate') });
+        const rawApproveChecked = { programId: TOKEN_PROGRAM, accounts: [ataOut, mintOut, attacker, wallet], data: base58Encode(Buffer.from([13, 1, 0, 0, 0, 0, 0, 0, 0, 6])), stackHeight: 2 };
+        await expect(run({ pre: basePre(), post: basePost(), inner: inGroup(rawApproveChecked) }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('refuses SetAuthority-then-close of an account the tx creates (authority moved off the wallet first)', async () => {
+        const temp = generateSolanaWallet().address;
+        const inner = inGroup(
+          { program: 'spl-token', programId: TOKEN_PROGRAM, stackHeight: 2, parsed: { type: 'initializeAccount3', info: { account: temp, mint: WSOL_MINT, owner: wallet } } },
+          { program: 'spl-token', programId: TOKEN_PROGRAM, stackHeight: 2, parsed: { type: 'setAuthority', info: { account: temp, authorityType: 'closeAccount', newAuthority: attacker, authority: wallet } } },
+          parsedClose({ account: temp, destination: attacker, owner: attacker }),
+        );
+        await expect(run({ pre: basePre(), post: basePost(), inner }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('changes an authority') });
+      });
+
+      it("ignores an Approve or SetAuthority another party authorizes on its own account", async () => {
+        const router = generateSolanaWallet().address;
+        const inner = inGroup(
+          { program: 'spl-token', programId: TOKEN_PROGRAM, stackHeight: 2, parsed: { type: 'approve', info: { source: generateSolanaWallet().address, delegate: attacker, owner: router, amount: '1' } } },
+          { program: 'spl-token', programId: TOKEN_PROGRAM, stackHeight: 2, parsed: { type: 'setAuthority', info: { mint: generateSolanaWallet().address, authorityType: 'mintTokens', newAuthority: null, authority: router } } },
+        );
+        const result = await run({ pre: basePre(), post: basePost(), inner });
+        expect(result.innerInstructionsChecked).toBe(true);
+      });
+
+      it('fails closed on a malformed unparsed token-program inner instruction', async () => {
+        const inner = inGroup({ programId: TOKEN_PROGRAM, accounts: [ataOut], data: 42 });
+        await expect(run({ pre: basePre(), post: basePost(), inner }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      });
+
+      it('asks the RPC for inner instructions', async () => {
+        let captured;
+        const txBase64 = buildLegacyTx({ wallet, extraWritableKeys: [ataIn, ataOut] });
+        vi.stubGlobal('fetch', mockSolanaRpc({
+          trackedAccounts: basePre(),
+          onRequest: (body) => { if (body.method === 'simulateTransaction') captured = body.params[1]; },
+          simValue: (params) => ({ value: { err: null, innerInstructions: [], accounts: params[1].accounts.addresses.map((a) => basePost()[a] ?? null) } }),
+        }));
+        await simulateSolanaAssetChanges('solana', txBase64, { walletAddress: wallet });
+        expect(captured.innerInstructions).toBe(true);
+      });
     });
 
     it('counts a pre-funded address the tx initializes cleanly as the wallet output account', async () => {

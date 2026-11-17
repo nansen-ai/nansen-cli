@@ -1934,6 +1934,9 @@ export async function verifySolanaSwapOutcome({ chain, walletAddress, txBase64, 
     if (outcome.outputAssertionSkipped) {
       log('  ℹ Bridge: input-outflow and sibling checks ran; output arrives on the destination chain and is not simulated here.');
     }
+    if (sim.innerInstructionsChecked === false) {
+      log('  ⚠ Partly verified: the simulation RPC returned no inner instructions, so token-program calls made from inside other programs were not checked.');
+    }
     log(`  ✓ Swap outcome verified (via ${sim.method}).`);
     return { proceed: true };
   } catch (e) {

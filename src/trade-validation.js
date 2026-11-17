@@ -9,25 +9,24 @@ import { validateAddress } from './api.js';
 import { CHAIN_RPCS } from './rpc-urls.js';
 import { base58Encode } from './wallet.js';
 import { parseTransactionMessage, resolveStaticAccount } from './solana-tx.js';
-import { SOL_SENTINEL } from './solana-simulation.js';
+import {
+  SOL_SENTINEL,
+  SPL_TOKEN_PROGRAMS,
+  SPL_APPROVE,
+  SPL_SET_AUTHORITY,
+  SPL_CLOSE_ACCOUNT,
+  SPL_APPROVE_CHECKED,
+} from './solana-simulation.js';
 import { EVM_NATIVE_SENTINEL } from './swap-simulation.js';
 
 const SUPPORTED_CHAINS = ['solana', 'base'];
 
-// SPL Token / Token-2022 instruction discriminators (first data byte) that can
-// move control of a user's token account without moving its balance — the
-// class of drain vector a balance-delta simulation can't see (see
-// assertSolanaInstructionsSafe).
-const SPL_TOKEN_PROGRAMS = new Set([
-  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
-  'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
-]);
+// SPL Token / Token-2022 instruction discriminators (first data byte). The ones
+// that can move control of a user's token account without moving its balance
+// (Approve, SetAuthority, CloseAccount) are shared with solana-simulation.js,
+// which applies the same rules to CPIs (see assertSolanaInstructionsSafe).
 const SPL_TRANSFER = 3;
-const SPL_APPROVE = 4;
-const SPL_SET_AUTHORITY = 6;
-const SPL_CLOSE_ACCOUNT = 9;
 const SPL_TRANSFER_CHECKED = 12;
-const SPL_APPROVE_CHECKED = 13;
 const SPL_INITIALIZE_ACCOUNT = 1;
 const SPL_INITIALIZE_ACCOUNT2 = 16;
 const SPL_INITIALIZE_ACCOUNT3 = 18;

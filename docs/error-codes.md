@@ -179,7 +179,7 @@ A connection failure is `NETWORK_ERROR` and never `UNAUTHORIZED`: the CLI could 
 | `SIM_REVERTED` | The transaction reverts in simulation. | No |
 | `SIM_RPC_ERROR` | The simulation RPC returned an error. | No |
 | `SIM_RESULT_UNPARSEABLE` | The simulation result could not be parsed. | No |
-| `SIM_ACCOUNT_CONTROL_CHANGED` | The simulated transaction would hand control of one of your wallet accounts (owner, delegate, close authority) to someone else. | No |
+| `SIM_ACCOUNT_CONTROL_CHANGED` | The simulated transaction would hand control of one of your wallet accounts (owner, delegate, close authority) to someone else, or a program it calls would close one with the rent sent elsewhere. | No |
 | `NO_SIM_RPC` | No simulation RPC is configured for the chain. | No |
 | `NOT_SIM_CAPABLE` | The RPC does not support simulation. | No |
 | `RPC_UNCONFIGURED` | No RPC URL is configured for the chain. | No |

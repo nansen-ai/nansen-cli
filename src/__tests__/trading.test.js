@@ -7922,7 +7922,7 @@ function solanaJsonRpcResponse(result) {
 }
 // pre/post are keyed by pubkey; `pre` classifies (and seeds) tracked accounts,
 // `post` supplies the simulated result in the order the caller requested.
-function mockSolanaSimRpc({ pre, post }) {
+function mockSolanaSimRpc({ pre, post, inner = [] }) {
   return vi.fn().mockImplementation(async (url, opts) => {
     const body = JSON.parse(opts.body);
     if (body.method === 'getMultipleAccounts') {
@@ -7931,7 +7931,7 @@ function mockSolanaSimRpc({ pre, post }) {
     }
     if (body.method === 'simulateTransaction') {
       const addrs = body.params[1].accounts.addresses;
-      return solanaJsonRpcResponse({ value: { err: null, accounts: addrs.map((a) => post[a] ?? null) } });
+      return solanaJsonRpcResponse({ value: { err: null, innerInstructions: inner, accounts: addrs.map((a) => post[a] ?? null) } });
     }
     throw new Error(`unhandled RPC method in test: ${body.method}`);
   });
@@ -7971,6 +7971,36 @@ describe('verifySolanaSwapOutcome (execute-path wiring)', () => {
     vi.stubGlobal('fetch', mockSolanaSimRpc({ pre, post }));
     const r = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64, quote, quoteData });
     expect(r.proceed).toBe(true);
+  });
+
+  it('proceeds with a partial-verification warning when the RPC returns no inner instructions', async () => {
+    const post = {
+      [wallet]: solanaNativeAccountInfo(999_995_000),
+      [tokenIn]: solanaTokenAccountInfo({ mint: mintIn, owner: wallet, amount: 0 }),
+      [tokenOut]: solanaTokenAccountInfo({ mint: mintOut, owner: wallet, amount: 1_000_000 }),
+    };
+    vi.stubGlobal('fetch', mockSolanaSimRpc({ pre, post, inner: null }));
+    const log = vi.fn();
+    const r = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64, quote, quoteData, log });
+    expect(r.proceed).toBe(true);
+    expect(log.mock.calls.flat().join('\n')).toMatch(/Partly verified: the simulation RPC returned no inner instructions/);
+  });
+
+  it('blocks (proceed=false) when a CPI closes the output token account with its rent sent elsewhere', async () => {
+    const attacker = generateSolanaWallet().address;
+    const post = {
+      [wallet]: solanaNativeAccountInfo(999_995_000),
+      [tokenIn]: solanaTokenAccountInfo({ mint: mintIn, owner: wallet, amount: 0 }),
+      [tokenOut]: solanaTokenAccountInfo({ mint: mintOut, owner: wallet, amount: 1_000_000 }),
+    };
+    const inner = [{ index: 0, instructions: [{
+      program: 'spl-token', programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', stackHeight: 2,
+      parsed: { type: 'closeAccount', info: { account: tokenOut, destination: attacker, owner: wallet } },
+    }] }];
+    vi.stubGlobal('fetch', mockSolanaSimRpc({ pre, post, inner }));
+    const r = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64, quote, quoteData });
+    expect(r.proceed).toBe(false);
+    expect(r.reason).toMatch(/sends its rent to/);
   });
 
   it('blocks (proceed=false) when the simulated post-state adds a delegate on the output token account', async () => {
