@@ -2707,7 +2707,7 @@ export function formatQuote(quote, index) {
   const lines = [];
   const label = index !== undefined ? `  Quote #${index + 1}` : '  Best Quote';
   lines.push(`${label} (${quote.aggregator || 'unknown'})`);
-  lines.push(`    Input:        ${quoteInputAmountRaw(quote)} → ${quote.inputMint?.slice(0, 12)}...`);
+  lines.push(`    Input:        ${quoteInputAmountRaw(quote) ?? '?'} → ${quote.inputMint?.slice(0, 12)}...`);
   lines.push(`    Output:       ${quote.outAmount} → ${quote.outputMint?.slice(0, 12)}...`);
   if (quote.inUsdValue)  lines.push(`    In USD:       $${quote.inUsdValue}`);
   if (quote.outUsdValue) lines.push(`    Out USD:      $${quote.outUsdValue}`);
@@ -3458,7 +3458,7 @@ CROSS-CHAIN NOTES (when using --to-chain):
           const cap = BigInt(maxInputOverride);
           // Max sell-token base units that can leave the wallet for this quote.
           const spendFor = (q) => approvalAmountForSwap({
-            inputAmount: q.inputAmount ?? q.inAmount ?? '0',
+            inputAmount: quoteInputAmountRaw(q),
             swapMode,
             slippage: effectiveSlippage,
           });

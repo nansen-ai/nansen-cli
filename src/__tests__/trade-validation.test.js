@@ -1233,6 +1233,11 @@ describe('assertQuoteMatchesRequest', () => {
     expect(assertQuoteMatchesRequest(request, okQuote, { chain: 'base' })).toEqual({ skipped: false });
   });
 
+  it('rejects an exactIn quote whose inputAmount is empty as missing the input', () => {
+    const empty = { ...okQuote, inputAmount: '', inAmount: '1000000' };
+    expect(() => assertQuoteMatchesRequest(request, empty, { chain: 'base' })).toThrow(/missing the input amount/i);
+  });
+
   it('skips (does not throw) when no request intent was persisted', () => {
     expect(assertQuoteMatchesRequest(undefined, okQuote, { chain: 'base' })).toEqual({ skipped: true });
   });
@@ -1390,6 +1395,23 @@ describe('assertQuoteMatchesRequest', () => {
   });
 });
 
+describe('quoteInputAmountRaw', () => {
+  it('reads inputAmount, falling back to inAmount only when inputAmount is absent', () => {
+    expect(quoteInputAmountRaw({ inputAmount: '900000' })).toBe('900000');
+    expect(quoteInputAmountRaw({ inputAmount: '900000', inAmount: '5' })).toBe('900000');
+    expect(quoteInputAmountRaw({ inAmount: '900000' })).toBe('900000');
+    expect(quoteInputAmountRaw({ inputAmount: null, inAmount: '900000' })).toBe('900000');
+    expect(quoteInputAmountRaw({})).toBeUndefined();
+    expect(quoteInputAmountRaw(undefined)).toBeUndefined();
+  });
+
+  it('treats an empty or blank inputAmount as missing, without falling through to inAmount', () => {
+    expect(quoteInputAmountRaw({ inputAmount: '' })).toBeUndefined();
+    expect(quoteInputAmountRaw({ inputAmount: '  ' })).toBeUndefined();
+    expect(quoteInputAmountRaw({ inputAmount: '', inAmount: '900000' })).toBeUndefined();
+  });
+});
+
 describe('nativeValueMismatch', () => {
   const ONE = 1000000000000000000n;
   const request = { swapMode: 'exactIn', amount: String(ONE), maxInputAmount: String(ONE) };
@@ -1430,6 +1452,11 @@ describe('assertInputWithinMax', () => {
   it('is a no-op for exactIn with no cap (request.amount already binds it)', () => {
     expect(() => assertInputWithinMax({ swapMode: 'exactIn' }, base)).not.toThrow();
     expect(() => assertInputWithinMax(undefined, base)).not.toThrow();
+  });
+
+  it('fails closed for exactOut when inputAmount is empty (not a zero input)', () => {
+    const req = { chain: 'base', swapMode: 'exactOut', amount: '990000', maxInputAmount: '1000000' };
+    expect(() => assertInputWithinMax(req, { inputAmount: '', inAmount: '5000000' }, 0.03)).toThrow(/missing the input amount/i);
   });
 
   it('fails closed for exactOut without a persisted cap', () => {

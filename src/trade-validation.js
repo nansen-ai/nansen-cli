@@ -686,9 +686,15 @@ function tokensEqual(a, b, chain) {
  * check that bounds the input (intent match, spend ceiling, native tx.value)
  * must read this same field, or a quote carrying both aliases with different
  * values satisfies each check with a different one.
+ *
+ * An empty or blank `inputAmount` returns undefined (missing), not `inAmount`:
+ * a present-but-empty field is malformed, and `BigInt('')` would otherwise read
+ * it as a zero input. Callers refuse a missing input.
  */
 export function quoteInputAmountRaw(quote) {
-  return quote?.inputAmount ?? quote?.inAmount;
+  const raw = quote?.inputAmount ?? quote?.inAmount;
+  if (typeof raw === 'string' && raw.trim() === '') return undefined;
+  return raw;
 }
 
 /**
@@ -709,7 +715,7 @@ export function quoteInputAmountRaw(quote) {
  */
 export function nativeValueMismatch(request, quote, txValue) {
   const inRaw = quoteInputAmountRaw(quote);
-  if (inRaw == null || inRaw === '') {
+  if (inRaw == null) {
     return `tx.value=${txValue}, but the quote has no input amount to bind it to`;
   }
   let expected;

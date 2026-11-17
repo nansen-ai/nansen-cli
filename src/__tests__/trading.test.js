@@ -4595,6 +4595,19 @@ describe('formatQuote input amount', () => {
     expect(output).toContain('Input:        1000000 →');
     expect(output).not.toContain('900000 →');
   });
+
+  it('shows ? when inputAmount is empty instead of falling back to inAmount', () => {
+    const output = formatQuote({
+      aggregator: 'lifi',
+      inputMint: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      outputMint: '0x4200000000000000000000000000000000000006',
+      inputAmount: '',
+      inAmount: '900000',
+      outAmount: '990000',
+    });
+    expect(output).toContain('Input:        ? →');
+    expect(output).not.toContain('900000 →');
+  });
 });
 
 describe('formatQuote cross-chain metadata', () => {
@@ -7175,7 +7188,10 @@ describe('exactOut max-input enforcement (adversarial)', () => {
   const noBroadcast = (calls) => expect(calls.some(c => c.url.includes('/execute'))).toBe(false);
   const noPrivySign = (calls) => expect(calls.some(c => c.url.includes('privy.io') && c.method === 'POST')).toBe(false);
 
-  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); delete process.env.NANSEN_WALLET_PASSWORD; });
+  afterEach(() => {
+    vi.unstubAllGlobals(); vi.restoreAllMocks();
+    delete process.env.NANSEN_WALLET_PASSWORD; delete process.env.PRIVY_APP_ID; delete process.env.PRIVY_APP_SECRET;
+  });
 
   for (const native of [false, true]) {
     const kind = native ? 'native' : 'ERC-20';
@@ -7237,10 +7253,10 @@ describe('exactOut max-input enforcement (adversarial)', () => {
     });
   }
 
-  // The max-input check reads the quote input as `inputAmount ?? inAmount`, so
-  // an empty inputAmount reads as 0. Approval sizing must read the same field:
-  // falling through to inAmount would approve an amount the max-input check
-  // never saw.
+  // The input checks read the quote input through quoteInputAmountRaw, which
+  // treats an empty inputAmount as missing. Approval sizing must read the same
+  // field: falling through to inAmount would approve an amount the max-input
+  // check never saw.
   function emptyInputAmountQuote() {
     return {
       aggregator: 'lifi',
@@ -7270,7 +7286,7 @@ describe('exactOut max-input enforcement (adversarial)', () => {
     await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(() => {});
     expect(approvalSpy).not.toHaveBeenCalled();
     expect(sendSpy).not.toHaveBeenCalled();
-    expect(logs.some(l => /zero input amount/.test(l))).toBe(true);
+    expect(logs.some(l => /missing the input amount/.test(l))).toBe(true);
     noBroadcast(calls);
   });
 
@@ -7288,7 +7304,7 @@ describe('exactOut max-input enforcement (adversarial)', () => {
 
     await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(() => {});
     expect(logs.some(l => /Approval required|Sending approval|Broadcasting/.test(l))).toBe(false);
-    expect(logs.some(l => /zero input amount/.test(l))).toBe(true);
+    expect(logs.some(l => /missing the input amount/.test(l))).toBe(true);
     noBroadcast(calls);
   });
 
@@ -7306,12 +7322,9 @@ describe('exactOut max-input enforcement (adversarial)', () => {
 
     await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(() => {});
     expect(logs.some(l => /Approval required|Sending approval/.test(l))).toBe(false);
-    expect(logs.some(l => /zero input amount/.test(l))).toBe(true);
+    expect(logs.some(l => /missing the input amount/.test(l))).toBe(true);
     noPrivySign(calls);
     noBroadcast(calls);
-
-    delete process.env.PRIVY_APP_ID;
-    delete process.env.PRIVY_APP_SECRET;
   });
 
   it('dry run: refuses to preview an approval sized from inAmount when inputAmount is empty', async () => {
@@ -7326,8 +7339,27 @@ describe('exactOut max-input enforcement (adversarial)', () => {
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
 
     await expect(cmds.execute([], screenApi, { 'dry-run': true }, { quote: quoteId }))
-      .rejects.toThrow(/zero input amount/i);
+      .rejects.toThrow(/missing the input amount/i);
     expect(logs.join('\n')).not.toMatch(/Approval:/);
+    noBroadcast(calls);
+  });
+
+  it('local wallet: refuses an empty-inputAmount exactOut ERC-20 quote with no approval step', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    const calls = [];
+    vi.stubGlobal('fetch', trackingFetch(calls));
+
+    const quote = emptyInputAmountQuote();
+    delete quote.approvalAddress;
+    const quoteId = saveQuote({ success: true, quotes: [quote] },
+      'base', 'local', null, null, exactOutRequestMeta(ERC20_IN, showWallet('default').evm));
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/missing the input amount/i);
+    expect(logs.some(l => /Approval required|Sending approval|Broadcasting|Signing/.test(l))).toBe(false);
     noBroadcast(calls);
   });
 
