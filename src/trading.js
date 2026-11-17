@@ -18,6 +18,7 @@ import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendSolanaTra
 import { retrievePassword } from './keychain.js';
 import { validateQuoteInput, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, checkSolanaFeeBalance, assertSolanaSwapOutcome, approvalAmountForSwap, needsAllowanceRevoke, OVERSIZED_ALLOWANCE_MULTIPLIER, EVM_BRIDGE_NATIVE_FEE_SLACK, isBridgeRequest, nativeValueMismatch, quoteInputAmountRaw } from './trade-validation.js';
 import { readCompactU16 } from './solana-tx.js';
+import { assertSolanaSignedMatches } from './signed-tx-binding.js';
 import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 export { readCompactU16 };
 import { CHAIN_RPCS } from './rpc-urls.js';
@@ -4348,7 +4349,7 @@ EXAMPLES:
                   throw new Error(`Failed to encode transaction for WalletConnect: ${err.message}`, { cause: err });
                 }
                 swapHandedOff = true;
-                const wcResult = await sendSolanaTransactionViaWalletConnect(txBase58);
+                const wcResult = await sendSolanaTransactionViaWalletConnect(txBase58, undefined, { signer: solanaWalletAddress, label: 'swap transaction' });
 
                 if (wcResult.signedTransaction) {
                   signedTransaction = base58Decode(wcResult.signedTransaction).toString('base64');
@@ -4375,6 +4376,9 @@ EXAMPLES:
                   // Inject into the first signature slot (feePayer)
                   sigBytes.copy(txBytes, sigCountSize);
                   signedTransaction = txBytes.toString('base64');
+                  // The message is ours by construction; the signature is the
+                  // wallet's claim. Refuse one that does not verify.
+                  assertSolanaSignedMatches(txBase64, signedTransaction, { signer: solanaWalletAddress, label: 'swap transaction' });
                 } else {
                   throw new Error('WalletConnect returned neither signedTransaction nor signature');
                 }
@@ -4491,7 +4495,7 @@ EXAMPLES:
                         chainConfig.chainId,
                         0n,
                         undefined,
-                        { allowZero: true },
+                        { allowZero: true, from: wcAddress, label: 'allowance-revoke transaction' },
                       );
                       revokeTxHash = revokeResult.txHash;
                       if (revokeTxHash) ancillaryHandedOff = true;
@@ -4559,6 +4563,7 @@ EXAMPLES:
                       chainConfig.chainId,
                       approveAmt,
                       approvalCapForQuote(quoteData),
+                      { from: wcAddress, label: 'approval transaction' },
                     );
                     approvalTxHash = approvalResult.txHash;
                     if (approvalTxHash) ancillaryHandedOff = true;
@@ -4679,8 +4684,12 @@ EXAMPLES:
                   value: txData.value || '0',
                   gas: String(finalGas),
                   chainId: chainConfig.chainId,
-                });
+                }, undefined, { from: wcAddress, label: 'swap transaction' });
               } catch (wcErr) {
+                // The wallet returned a transaction other than the one checked:
+                // keep that error (already terminal, and it says the wallet may
+                // have sent it) instead of the generic ambiguous one below.
+                if (wcErr?.code === 'SIGNED_TX_MISMATCH') throw wcErr;
                 // The wallet was already asked to send, and wcExec rejects with a
                 // bare Error(err.message) for EVERY failure — a user rejection, a
                 // 120s approval timeout and a spawn failure are indistinguishable
