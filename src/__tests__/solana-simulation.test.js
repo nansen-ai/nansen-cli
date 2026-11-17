@@ -697,26 +697,27 @@ describe('solana-simulation', () => {
         expect(result.deltas[mintOut]).toBe(1_000_000n);
       });
 
-      it('without inner instructions, skips only this check and still refuses post-state violations', async () => {
-        const ok = await run({ pre: basePre(), post: basePost(), inner: null });
-        expect(ok.innerInstructionsChecked).toBe(false);
-        expect(ok.deltas[mintOut]).toBe(1_000_000n);
+      it('refuses (does not degrade) when the RPC returns no inner instructions', async () => {
+        await expect(run({ pre: basePre(), post: basePost(), inner: null }))
+          .rejects.toMatchObject({ code: 'SIM_INNER_INSTRUCTIONS_UNAVAILABLE', message: expect.stringContaining('NANSEN_SOLANA_SIM_RPC') });
+      });
+
+      it('reports a post-state violation ahead of missing inner instructions', async () => {
         const post = basePost();
         post[ataOut] = tokenAccountInfo({ mint: mintOut, owner: attacker, amount: 1_000_000 });
         await expect(run({ pre: basePre(), post, inner: null }))
           .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
       });
 
-      it('treats compiled inner instructions (programIdIndex) as unchecked, not as an outage', async () => {
+      it('refuses compiled inner instructions (programIdIndex) it cannot resolve', async () => {
         const inner = inGroup({ programIdIndex: 3, accounts: [1, 2, 0], data: base58Encode(Buffer.from([9])) });
-        const result = await run({ pre: basePre(), post: basePost(), inner });
-        expect(result.innerInstructionsChecked).toBe(false);
-        expect(result.deltas[mintOut]).toBe(1_000_000n);
+        await expect(run({ pre: basePre(), post: basePost(), inner }))
+          .rejects.toMatchObject({ code: 'SIM_INNER_INSTRUCTIONS_UNAVAILABLE' });
       });
 
-      it('reports the check as run when inner instructions are returned', async () => {
+      it('passes a clean swap with an empty inner-instruction list', async () => {
         const result = await run({ pre: basePre(), post: basePost(), inner: [] });
-        expect(result.innerInstructionsChecked).toBe(true);
+        expect(result.deltas[mintOut]).toBe(1_000_000n);
       });
 
       it('fails closed on a null or programId-less inner instruction entry', async () => {
@@ -784,7 +785,7 @@ describe('solana-simulation', () => {
           { program: 'spl-token', programId: TOKEN_PROGRAM, stackHeight: 2, parsed: { type: 'setAuthority', info: { mint: generateSolanaWallet().address, authorityType: 'mintTokens', newAuthority: null, authority: router } } },
         );
         const result = await run({ pre: basePre(), post: basePost(), inner });
-        expect(result.innerInstructionsChecked).toBe(true);
+        expect(result.deltas[mintOut]).toBe(1_000_000n);
       });
 
       it('fails closed on a malformed unparsed token-program inner instruction', async () => {

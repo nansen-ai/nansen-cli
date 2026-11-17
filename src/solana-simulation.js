@@ -70,10 +70,13 @@ const MAX_ACCOUNTS_PER_CALL = 100;
  *                             closes an account with its rent sent elsewhere,
  *                             or the wallet reassigned to another program),
  *                             whatever the balances say
+ *   SIM_INNER_INSTRUCTIONS_UNAVAILABLE - the sim ran but the RPC returned no
+ *                             inner instructions with resolved addresses, so
+ *                             CPIs can't be checked; refuse rather than sign
+ *                             without that check
  * NO_SIM_RPC and SIM_RPC_ERROR are degrade conditions (warn, proceed per
- * policy); the caller decides. SIM_REVERTED, SIM_RESULT_UNPARSEABLE and
- * SIM_ACCOUNT_CONTROL_CHANGED are outcome/parse problems and must not be
- * silently ignored — fail closed.
+ * policy); the caller decides. Every other code is an outcome/parse problem
+ * and must not be silently ignored — fail closed.
  */
 export class SolanaSimulationError extends Error {
   constructor(code, message) {
@@ -381,8 +384,9 @@ function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletToke
 /**
  * Whether simulateTransaction returned inner instructions this module can
  * read. A node that honors the param returns [] when there are none; a missing
- * field or compiled entries (programIdIndex, no resolved programId) is an RPC
- * capability gap. Anything else malformed is left to the classifier to reject.
+ * field or compiled entries (programIdIndex, no resolved programId) means the
+ * node can't give us what the CPI check needs. Anything else malformed is left
+ * to the classifier to reject.
  */
 function innerInstructionsReadable(innerGroups) {
   if (!Array.isArray(innerGroups)) return false;
@@ -585,13 +589,19 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
     if (deltas[k] === 0n) delete deltas[k];
   }
 
-  // Runs after the post-state checks above, so a node that can't return inner
-  // instructions only loses this check, not the whole verification.
+  // Runs after the post-state checks above, so a transaction that fails one of
+  // those reports that reason first. Without readable inner instructions the
+  // CPIs can't be checked, and a CPI can delegate, re-authorize or close a
+  // wallet account in ways the post-state doesn't show: refuse, don't degrade.
+  // Every current Agave node returns them (verified on the default public RPC).
   const innerGroups = simResult.value.innerInstructions;
-  const innerChecked = innerInstructionsReadable(innerGroups);
-  if (innerChecked) {
-    assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletTokenAccounts);
+  if (!innerInstructionsReadable(innerGroups)) {
+    throw new SolanaSimulationError(
+      'SIM_INNER_INSTRUCTIONS_UNAVAILABLE',
+      'The Solana simulation RPC did not return inner instructions, so calls this transaction makes from inside other programs cannot be checked. Refusing to sign. Set NANSEN_SOLANA_SIM_RPC to an RPC that supports simulateTransaction with innerInstructions.',
+    );
   }
+  assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletTokenAccounts);
 
-  return { deltas, method: 'simulateTransaction', innerInstructionsChecked: innerChecked };
+  return { deltas, method: 'simulateTransaction' };
 }

@@ -7973,17 +7973,16 @@ describe('verifySolanaSwapOutcome (execute-path wiring)', () => {
     expect(r.proceed).toBe(true);
   });
 
-  it('proceeds with a partial-verification warning when the RPC returns no inner instructions', async () => {
+  it('blocks (proceed=false) when the simulation RPC returns no inner instructions', async () => {
     const post = {
       [wallet]: solanaNativeAccountInfo(999_995_000),
       [tokenIn]: solanaTokenAccountInfo({ mint: mintIn, owner: wallet, amount: 0 }),
       [tokenOut]: solanaTokenAccountInfo({ mint: mintOut, owner: wallet, amount: 1_000_000 }),
     };
     vi.stubGlobal('fetch', mockSolanaSimRpc({ pre, post, inner: null }));
-    const log = vi.fn();
-    const r = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64, quote, quoteData, log });
-    expect(r.proceed).toBe(true);
-    expect(log.mock.calls.flat().join('\n')).toMatch(/Partly verified: the simulation RPC returned no inner instructions/);
+    const r = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64, quote, quoteData });
+    expect(r.proceed).toBe(false);
+    expect(r.reason).toMatch(/did not return inner instructions/);
   });
 
   it('blocks (proceed=false) when a CPI closes the output token account with its rent sent elsewhere', async () => {

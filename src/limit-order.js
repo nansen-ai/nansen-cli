@@ -437,9 +437,6 @@ async function verifyLimitOrderOutcome({ kind, walletAddress, txBase64, inputMin
     } else {
       assertLimitOrderCancelOutcome(sim, { inputMint, amount });
     }
-    if (sim.innerInstructionsChecked === false) {
-      log('  ⚠ Partly verified: the simulation RPC returned no inner instructions, so token-program calls made from inside other programs were not checked.');
-    }
     log(`  ✓ ${kind === 'deposit' ? 'Deposit' : 'Cancellation'} outcome verified (via ${sim.method}).`);
     return { proceed: true };
   } catch (e) {
