@@ -131,12 +131,13 @@ export function stubNetwork({ privyAddress, privySign } = {}) {
   let allowance = 0n;
   vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
     const u = String(url);
+    const isPrivy = URL.canParse(u) && new URL(u).hostname === 'api.privy.io';
     let body = {};
     try { body = typeof opts?.body === 'string' ? JSON.parse(opts.body) : {}; } catch { /* not JSON */ }
-    if (u.includes('privy.io') && opts?.method === 'GET') {
+    if (isPrivy && opts?.method === 'GET') {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'w', address: privyAddress }) });
     }
-    if (u.includes('privy.io') && opts?.method === 'POST') {
+    if (isPrivy && opts?.method === 'POST') {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: privySign(body) } }) });
     }
     if (u.includes('trading-api')) {
