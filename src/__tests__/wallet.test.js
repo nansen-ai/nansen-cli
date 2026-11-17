@@ -556,7 +556,7 @@ describe('passwordless wallet CRUD', () => {
     const cmds = buildWalletCommands({ log: (m) => logs.push(m), promptFn, exit: () => {} });
     // Send will throw CommandError (no RPC mocks), but the point is promptFn was never called
     await cmds.wallet(['send'], null, { 'dry-run': true }, {
-      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
       amount: '0.01',
       chain: 'base',
       wallet: 'nopass-send',
@@ -1033,7 +1033,7 @@ describe('Path traversal vulnerability mitigation', () => {
     const spy = vi.spyOn(fs, 'readFileSync');
     const error = await cmds.wallet(['send'], null, { 'dry-run': true }, {
       wallet: '../malicious',
-      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
       amount: '0.01',
       chain: 'base',
     }).catch(e => e);
@@ -1098,5 +1098,43 @@ describe('wallet create/send help', () => {
     expect(resolution).toMatch(/3\. ~\/\.nansen\/wallets\/\.credentials/);
     expect(resolution).toMatch(/4\. Interactive prompt \(only with --human flag\)/);
     expect(help).toMatch(/--token <symbol\|address>/);
+  });
+});
+
+describe('wallet send --amount with --max', () => {
+  const TO = '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4';
+
+  it('refuses --amount <number> together with --max before touching the wallet', async () => {
+    const { buildWalletCommands } = await import('../wallet.js');
+    const promptFn = vi.fn();
+    const cmds = buildWalletCommands({ log: () => {}, promptFn, exit: () => {} });
+    const error = await cmds.wallet(['send'], null, { max: true, 'dry-run': true }, {
+      to: TO, amount: '1', chain: 'base',
+    }).catch(e => e);
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(error.message).toBe('Choose one of --amount <number> or --max, not both.');
+    expect(promptFn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['--max alone', { max: true }, {}],
+    ['--amount max', {}, { amount: 'max' }],
+    ['--amount max with --max', { max: true }, { amount: 'max' }],
+  ])('still accepts %s (fails later, on the missing wallet)', async (_name, flags, opts) => {
+    const { buildWalletCommands } = await import('../wallet.js');
+    const cmds = buildWalletCommands({ log: () => {}, exit: () => {} });
+    const error = await cmds.wallet(['send'], null, { ...flags, 'dry-run': true }, {
+      to: TO, chain: 'base', ...opts,
+    }).catch(e => e);
+    expect(error.code).not.toBe('INVALID_INPUT');
+    expect(error.message).not.toMatch(/not both/);
+  });
+});
+
+describe('generateEvmWallet checksum', () => {
+  it('returns an EIP-55 checksummed address', async () => {
+    const { toChecksumAddress } = await import('../crypto.js');
+    const { address } = generateEvmWallet();
+    expect(address).toBe(toChecksumAddress(address));
   });
 });

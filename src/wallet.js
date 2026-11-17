@@ -32,7 +32,7 @@ const SALT_LEN = 16;
 const IV_LEN = 12;
 const _AUTH_TAG_LEN = 16;
 
-import { keccak256 } from './crypto.js';
+import { keccak256, toChecksumAddress } from './crypto.js';
 
 // ============= Base58 Encoding (for Solana) =============
 
@@ -160,14 +160,7 @@ export function generateEvmWallet() {
   const addressBytes = hash.subarray(12);
   const addressHex = addressBytes.toString('hex');
 
-  // EIP-55 checksum
-  const addressHash = keccak256(Buffer.from(addressHex, 'utf8')).toString('hex');
-  let checksummed = '0x';
-  for (let i = 0; i < 40; i++) {
-    checksummed += parseInt(addressHash[i], 16) >= 8
-      ? addressHex[i].toUpperCase()
-      : addressHex[i];
-  }
+  const checksummed = toChecksumAddress(addressHex);
 
   const result = {
     privateKey: privateKey.toString('hex'),
@@ -1200,6 +1193,12 @@ export function buildWalletCommands(deps = {}) {
             throw new CommandError('--to <address> is required', 'MISSING_ARGS');
           }
 
+          // --amount <n> with --max used to send the whole balance and drop the
+          // amount silently. Refuse the combination instead (--amount max is
+          // the same as --max and stays allowed).
+          if (flags.max && options.amount != null && options.amount !== 'max') {
+            throw new CommandError('Choose one of --amount <number> or --max, not both.', 'INVALID_INPUT');
+          }
           const isMax = flags.max || options.amount === 'max';
           if (!options.amount && !isMax) {
             throw new CommandError('--amount <number> or --max is required', 'MISSING_ARGS');
@@ -1406,7 +1405,7 @@ OPTIONS:
   --token <symbol|address>   Token to send: USDC, USDT, or a token contract/mint address
                              (optional, sends native if omitted)
   --wallet <name>            Wallet to use (optional, uses default if omitted; use "walletconnect" or "wc" for WalletConnect, EVM only)
-  --max                      Send entire balance (deducts gas for native transfers)
+  --max                      Send entire balance (deducts gas for native transfers); not with --amount <number>
   --reveal                   Export: print private keys in plaintext to stdout (explicit acknowledgement)
   --file <path>              Export: write private keys to <path> (created 0600, refuses to overwrite)
   --unsafe-no-password       Skip encryption — private keys stored UNENCRYPTED on disk (local only)

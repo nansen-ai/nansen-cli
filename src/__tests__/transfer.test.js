@@ -19,7 +19,7 @@ import {
   getTokenInfo,
   resolveSendToken,
 } from '../transfer.js';
-import { signSecp256k1, rlpEncode } from '../crypto.js';
+import { signSecp256k1, rlpEncode, toChecksumAddress } from '../crypto.js';
 import { RLP } from '@ethereumjs/rlp';
 import { base58Encode } from '../wallet.js';
 import * as wallet from '../wallet.js';
@@ -142,7 +142,7 @@ describe('Amount Parsing', () => {
 
 describe('Address Validation', () => {
   test('validates correct EVM addresses', () => {
-    expect(validateEvmAddress('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4').valid).toBe(true);
+    expect(validateEvmAddress('0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4').valid).toBe(true);
     expect(validateEvmAddress('0x0000000000000000000000000000000000000000').valid).toBe(true);
   });
 
@@ -153,13 +153,45 @@ describe('Address Validation', () => {
     expect(validateEvmAddress(null).valid).toBe(false);
   });
 
+  // Vectors from the EIP-55 spec.
+  const EIP55_MIXED = [
+    '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed',
+    '0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359',
+    '0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB',
+    '0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb',
+  ];
+
+  test('toChecksumAddress matches the EIP-55 vectors', () => {
+    for (const a of EIP55_MIXED) {
+      expect(toChecksumAddress(a.toLowerCase())).toBe(a);
+      expect(toChecksumAddress(a.slice(2).toUpperCase())).toBe(a);
+    }
+  });
+
+  test('accepts valid checksums, all-lowercase and all-uppercase EVM addresses', () => {
+    for (const a of EIP55_MIXED) {
+      expect(validateEvmAddress(a).valid).toBe(true);
+      expect(validateEvmAddress(a.toLowerCase()).valid).toBe(true);
+      expect(validateEvmAddress('0x' + a.slice(2).toUpperCase()).valid).toBe(true);
+    }
+  });
+
+  test('rejects a mixed-case EVM address with a bad checksum', () => {
+    // One letter's case flipped, and one digit changed with the case kept.
+    for (const bad of ['0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD', '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02914']) {
+      const r = validateEvmAddress(bad);
+      expect(r.valid).toBe(false);
+      expect(r.error).toMatch(/invalid EIP-55 checksum/);
+    }
+  });
+
   test('validates correct Solana addresses', () => {
     expect(validateSolanaAddress('11111111111111111111111111111111').valid).toBe(true);
     expect(validateSolanaAddress('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM').valid).toBe(true);
   });
 
   test('rejects bad Solana addresses', () => {
-    expect(validateSolanaAddress('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4').valid).toBe(false);
+    expect(validateSolanaAddress('0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4').valid).toBe(false);
     expect(validateSolanaAddress('').valid).toBe(false);
   });
 });
@@ -339,12 +371,12 @@ describe('sendTokens integration', () => {
     vi.spyOn(wallet, 'showWallet').mockReturnValue({
       name: 'test',
       provider: 'local',
-      evm: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      evm: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
       solana: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
     });
     vi.spyOn(wallet, 'exportWallet').mockReturnValue({
       name: 'test',
-      evm: { address: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', privateKey: '0123456789abcdef'.repeat(4) },
+      evm: { address: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', privateKey: '0123456789abcdef'.repeat(4) },
       solana: { address: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', privateKey: '0123456789abcdef'.repeat(8) },
     });
   });
@@ -371,7 +403,7 @@ describe('sendTokens integration', () => {
 
     test('sends native ETH and returns tx hash', async () => {
       mockEvmRpcSmart();
-      const result = await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'evm', password: 'test' });
+      const result = await sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '0.01', chain: 'evm', password: 'test' });
       expect(result.success).toBe(true);
       expect(result.transactionHash).toBe('0xabc123');
       expect(result.chain).toBe('evm');
@@ -380,7 +412,7 @@ describe('sendTokens integration', () => {
 
     test('fetches nonce with both "pending" and "latest" for gap check', async () => {
       mockEvmRpcSmart();
-      await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'evm', password: 'test' });
+      await sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '0.01', chain: 'evm', password: 'test' });
       const nonceCalls = fetch.mock.calls
         .map(([, opts]) => JSON.parse(opts.body))
         .filter(b => b.method === 'eth_getTransactionCount');
@@ -399,19 +431,36 @@ describe('sendTokens integration', () => {
         return { json: () => Promise.resolve({ result: '0x0' }) };
       });
       await expect(
-        sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'evm', password: 'test' }),
+        sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '0.01', chain: 'evm', password: 'test' }),
       ).rejects.toThrow(
         /unmined transactions queued[\s\S]*Wait for them to clear[\s\S]*load-balanced public RPC/,
       );
       await expect(
-        sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'evm', password: 'test' }),
+        sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '0.01', chain: 'evm', password: 'test' }),
       ).rejects.not.toThrow(/Replace the stuck transaction|--nonce|--priority-fee/);
     });
 
     test('sends on Base chain', async () => {
       mockEvmRpcSmart();
-      const result = await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'base', password: 'test' });
+      const result = await sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '0.01', chain: 'base', password: 'test' });
       expect(result.chain).toBe('base');
+    });
+
+    test('refuses a bad-checksum recipient before any RPC call', async () => {
+      await expect(sendTokens({ to: '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD', amount: '1', chain: 'base', password: 'test' }))
+        .rejects.toThrow(/Invalid recipient: .*invalid EIP-55 checksum/);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    test('refuses an ERC-20 sent to its own contract, whatever the case, before any RPC call', async () => {
+      const token = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+      for (const to of [token, token.toLowerCase()]) {
+        await expect(sendTokens({ to, amount: '1', chain: 'base', token, password: 'test' }))
+          .rejects.toThrow(/is the token contract itself/);
+        await expect(sendTokens({ to, amount: '1', chain: 'base', token: 'USDC', password: 'test', dryRun: true }))
+          .rejects.toThrow(/is the token contract itself/);
+      }
+      expect(fetch).not.toHaveBeenCalled();
     });
 
     test('sends ERC-20 with correct decimals fetch', async () => {
@@ -437,7 +486,7 @@ describe('sendTokens integration', () => {
       });
 
       const result = await sendTokens({
-        to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '100', chain: 'evm',
+        to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '100', chain: 'evm',
         token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', password: 'test',
       });
       expect(result.success).toBe(true);
@@ -446,7 +495,7 @@ describe('sendTokens integration', () => {
 
     test('builds valid EIP-1559 type 2 transaction', async () => {
       mockEvmRpcSmart();
-      await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'evm', password: 'test' });
+      await sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '0.01', chain: 'evm', password: 'test' });
 
       // Find the sendRawTransaction call
       const sendRawCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_sendRawTransaction');
@@ -459,7 +508,7 @@ describe('sendTokens integration', () => {
     // `to` shorter than 20 bytes, and an all-zero one became contract creation.
     test.each([
       ['native send to an address with leading zero bytes', { to: '0x00000000219ab540356cBB839Cbe05303d7705Fa', amount: '0.01' }, '0x00000000219ab540356cbb839cbe05303d7705fa'],
-      ['token send to a contract with leading zero bytes', { to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', token: '0x0000000000085d4780B73119b644AE5ecd22b376' }, '0x0000000000085d4780b73119b644ae5ecd22b376'],
+      ['token send to a contract with leading zero bytes', { to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '1', token: '0x0000000000085d4780B73119b644AE5ecd22b376' }, '0x0000000000085d4780b73119b644ae5ecd22b376'],
     ])('keeps the full 20-byte to field: %s', async (_name, args, expectedTo) => {
       mockEvmRpcSmart();
       const smart = fetch.getMockImplementation();
@@ -481,7 +530,7 @@ describe('sendTokens integration', () => {
 
     test('uses eth_estimateGas instead of hardcoded gas limit', async () => {
       mockEvmRpcSmart();
-      await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'evm', password: 'test' });
+      await sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '0.01', chain: 'evm', password: 'test' });
 
       const estimateCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_estimateGas');
       expect(estimateCall).toBeDefined();
@@ -509,7 +558,7 @@ describe('sendTokens integration', () => {
         return { json: () => Promise.resolve({ result: responses[body.method] ?? '0x0' }) };
       });
 
-      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', chain: 'base', max: true, password: 'test' }))
+      await expect(sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', chain: 'base', max: true, password: 'test' }))
         .rejects.toThrow(/Insufficient native balance/);
       const sendCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_sendRawTransaction');
       expect(sendCall).toBeUndefined();
@@ -525,7 +574,7 @@ describe('sendTokens integration', () => {
         return { json: () => Promise.resolve({ result: '0x0' }) };
       });
 
-      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1.0', chain: 'evm', password: 'test' }))
+      await expect(sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '1.0', chain: 'evm', password: 'test' }))
         .rejects.toThrow('Insufficient ETH balance');
     });
 
@@ -547,7 +596,7 @@ describe('sendTokens integration', () => {
       });
 
       await expect(sendTokens({
-        to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '100', chain: 'evm',
+        to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '100', chain: 'evm',
         token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', password: 'test',
       })).rejects.toThrow('Insufficient token balance');
     });
@@ -562,6 +611,7 @@ describe('sendTokens integration', () => {
           'getBalance': { value: 1000000000 }, // 1 SOL
           'sendTransaction': 'sol_sig_123',
           'getSignatureStatuses': { value: [{ confirmationStatus: 'confirmed', slot: 12345, err: null }] },
+          'getAccountInfo': { context: { slot: 1 }, value: null }, // recipient: no account yet
         };
         return { json: () => Promise.resolve({ result: responses[body.method] || null }) };
       });
@@ -584,11 +634,96 @@ describe('sendTokens integration', () => {
       expect(() => Buffer.from(body.params[0], 'base64')).not.toThrow();
     });
 
+    describe('recipient must be a wallet', () => {
+      const TO = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+      const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+      function mockRecipient(value) {
+        fetch.mockImplementation(async (url, opts) => {
+          const body = JSON.parse(opts.body);
+          if (body.method === 'getAccountInfo' && body.params[0] === TO) {
+            return { json: () => Promise.resolve({ result: { context: { slot: 1 }, value } }) };
+          }
+          if (body.method === 'getAccountInfo' && body.params[0] === USDC) {
+            const mint = { owner: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', data: { parsed: { info: { decimals: 6 } } } };
+            return { json: () => Promise.resolve({ result: { value: mint } }) };
+          }
+          if (body.method === 'getTokenAccountBalance') {
+            return { json: () => Promise.resolve({ result: { value: { amount: '100000000', uiAmountString: '100' } } }) };
+          }
+          const responses = {
+            'getLatestBlockhash': { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } },
+            'getBalance': { value: 1000000000 },
+            'sendTransaction': 'sol_sig_123',
+            'getSignatureStatuses': { value: [{ confirmationStatus: 'confirmed', slot: 12345, err: null }] },
+          };
+          return { json: () => Promise.resolve({ result: responses[body.method] || null }) };
+        });
+      }
+      const sent = () => fetch.mock.calls.some(([, o]) => JSON.parse(o.body).method === 'sendTransaction');
+      const account = (owner, executable = false) => ({ owner, executable, lamports: 2039280, data: ['', 'base64'] });
+
+      test.each([
+        ['a token account (Token program)', account('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')],
+        ['a Token-2022 account', account('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')],
+        ['a program', account('BPFLoaderUpgradeab1e11111111111111111111111', true)],
+        ['another program\'s data account', account('JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4')],
+      ])('refuses %s for SPL and native sends, and in dry run', async (_name, value) => {
+        mockRecipient(value);
+        await expect(sendTokens({ to: TO, amount: '1', chain: 'solana', token: USDC, password: 'test' }))
+          .rejects.toThrow(/is not a wallet address \(it is an account owned by program/);
+        expect(sent()).toBe(false);
+        await expect(sendTokens({ to: TO, amount: '0.5', chain: 'solana', password: 'test' }))
+          .rejects.toThrow(/is not a wallet address/);
+        await expect(sendTokens({ to: TO, amount: '0.5', chain: 'solana', password: 'test', dryRun: true }))
+          .rejects.toThrow(/is not a wallet address/);
+        expect(sent()).toBe(false);
+      });
+
+      test('refuses a System-owned account holding data (a nonce account) for SPL and native sends, and in dry run', async () => {
+        mockRecipient({ owner: '11111111111111111111111111111111', executable: false, lamports: 1447680, data: [Buffer.alloc(80, 1).toString('base64'), 'base64'], space: 80 });
+        await expect(sendTokens({ to: TO, amount: '1', chain: 'solana', token: USDC, password: 'test' }))
+          .rejects.toThrow(/is not a wallet address \(it is a System account holding data/);
+        await expect(sendTokens({ to: TO, amount: '0.5', chain: 'solana', password: 'test' }))
+          .rejects.toThrow(/is not a wallet address/);
+        await expect(sendTokens({ to: TO, amount: '0.5', chain: 'solana', password: 'test', dryRun: true }))
+          .rejects.toThrow(/is not a wallet address/);
+        expect(sent()).toBe(false);
+      });
+
+      test.each([
+        ['a System-owned wallet', account('11111111111111111111111111111111')],
+        ['an address with no account yet (new wallet)', null],
+      ])('sends SOL and SPL to %s', async (_name, value) => {
+        mockRecipient(value);
+        expect((await sendTokens({ to: TO, amount: '0.5', chain: 'solana', password: 'test' })).success).toBe(true);
+        expect((await sendTokens({ to: TO, amount: '1', chain: 'solana', token: USDC, password: 'test' })).success).toBe(true);
+        expect(sent()).toBe(true);
+      });
+
+      test('does not send when the recipient lookup returns no result', async () => {
+        fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ result: null }) }));
+        await expect(sendTokens({ to: TO, amount: '0.5', chain: 'solana', password: 'test' }))
+          .rejects.toThrow(/Could not check recipient/);
+        expect(sent()).toBe(false);
+      });
+
+      test('does not send when the recipient lookup fails', async () => {
+        fetch.mockImplementation(async (url, opts) => {
+          const body = JSON.parse(opts.body);
+          if (body.method === 'getAccountInfo') return { json: () => Promise.resolve({ error: { code: -32005, message: 'node is behind' } }) };
+          return { json: () => Promise.resolve({ result: null }) };
+        });
+        await expect(sendTokens({ to: TO, amount: '0.5', chain: 'solana', password: 'test' })).rejects.toThrow(/node is behind/);
+        expect(sent()).toBe(false);
+      });
+    });
+
     test('rejects when SOL balance is insufficient', async () => {
       fetch.mockImplementation(async (url, opts) => {
         const body = JSON.parse(opts.body);
         if (body.method === 'getLatestBlockhash') return { json: () => Promise.resolve({ result: { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } } }) };
         if (body.method === 'getBalance') return { json: () => Promise.resolve({ result: { value: 100 } }) };
+        if (body.method === 'getAccountInfo') return { json: () => Promise.resolve({ result: { context: { slot: 1 }, value: null } }) };
         return { json: () => Promise.resolve({ result: null }) };
       });
 
@@ -636,7 +771,7 @@ describe('sendTokens integration', () => {
   describe('Error handling', () => {
     test('rejects a zero amount before touching the RPC', async () => {
       fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ result: '0x0' }) }));
-      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0', chain: 'base', password: 'test' }))
+      await expect(sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '0', chain: 'base', password: 'test' }))
         .rejects.toThrow('Amount must be greater than zero');
       const sendCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_sendRawTransaction');
       expect(sendCall).toBeUndefined();
@@ -652,17 +787,17 @@ describe('sendTokens integration', () => {
 
     test('rejects wrong password', async () => {
       vi.spyOn(wallet, 'verifyPassword').mockReturnValue(false);
-      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'evm', password: 'wrong' })).rejects.toThrow('Incorrect password');
+      await expect(sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '1', chain: 'evm', password: 'wrong' })).rejects.toThrow('Incorrect password');
     });
 
     test('rejects when no default wallet', async () => {
       vi.spyOn(wallet, 'getWalletConfig').mockReturnValue({ defaultWallet: null, passwordHash: {} });
-      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('No wallet');
+      await expect(sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('No wallet');
     });
 
     test('propagates RPC errors', async () => {
       fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ error: { message: 'nonce too low' } }) }));
-      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('RPC error: nonce too low');
+      await expect(sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('RPC error: nonce too low');
     });
 
     // geth/op-geth reject an underfunded send with "insufficient funds for gas
@@ -684,7 +819,7 @@ describe('sendTokens integration', () => {
         return { json: () => Promise.resolve({ result: responses[body.method] ?? '0x0' }) };
       });
 
-      const err = await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'base', password: 'test' }).catch(e => e);
+      const err = await sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '0.01', chain: 'base', password: 'test' }).catch(e => e);
       expect(err).toBeInstanceOf(Error);
       expect(err.message).toMatch(/Insufficient native balance.*native gas token.*ETH/);
       expect(err.message).toContain('insufficient funds for gas * price + value');
@@ -719,7 +854,7 @@ describe('sendTokens integration', () => {
       });
 
       await expect(sendTokens({
-        to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'base',
+        to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '1', chain: 'base',
         token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', password: 'test',
       })).rejects.toThrow(/execution reverted/);
 
@@ -764,7 +899,7 @@ describe('sendTokens integration', () => {
         return { json: () => Promise.resolve({ result: responses[body.method] ?? '0x0' }) };
       });
 
-      const result = await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'base', password: 'test' });
+      const result = await sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '0.01', chain: 'base', password: 'test' });
       expect(result.success).toBe(true);
       expect(result.transactionHash).toBe('0xfallbacktx');
     });
@@ -778,6 +913,7 @@ describe('sendTokens integration', () => {
         const responses = {
           'getLatestBlockhash': { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } },
           'getBalance': { value: 10000000000 },
+          'getAccountInfo': { context: { slot: 1 }, value: null },
         };
         return { json: () => Promise.resolve({ result: responses[body.method] ?? null }) };
       });
@@ -797,6 +933,7 @@ describe('sendTokens integration', () => {
         const responses = {
           'getLatestBlockhash': { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } },
           'getBalance': { value: 10000000000 },
+          'getAccountInfo': { context: { slot: 1 }, value: null },
         };
         return { json: () => Promise.resolve({ result: responses[body.method] ?? null }) };
       });
@@ -835,7 +972,7 @@ describe('sendTokens integration', () => {
 
     test('propagates network errors', async () => {
       fetch.mockRejectedValue(new Error('ECONNREFUSED'));
-      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('ECONNREFUSED');
+      await expect(sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('ECONNREFUSED');
     });
 
     test('uses specified wallet name', async () => {
@@ -851,7 +988,7 @@ describe('sendTokens integration', () => {
         return { json: () => Promise.resolve({ result: r[body.method] || '0x0' }) };
       });
 
-      await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.001', chain: 'evm', wallet: 'my-wallet', password: 'test' });
+      await sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '0.001', chain: 'evm', wallet: 'my-wallet', password: 'test' });
       expect(wallet.exportWallet).toHaveBeenCalledWith('my-wallet', 'test');
     });
   });
@@ -877,7 +1014,7 @@ describe('sendTokens via WalletConnect', () => {
     vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue(null);
 
     await expect(sendTokens({
-      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
       amount: '0.1',
       chain: 'evm',
       walletconnect: true,
@@ -887,7 +1024,7 @@ describe('sendTokens via WalletConnect', () => {
   });
 
   test('scopes the WalletConnect address lookup to the target chain, not just any EVM account', async () => {
-    const addrSpy = vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    const addrSpy = vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4');
     vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmocktx123' });
     fetch.mockImplementation(async (url, opts) => {
       const body = JSON.parse(opts.body);
@@ -896,7 +1033,7 @@ describe('sendTokens via WalletConnect', () => {
     });
 
     await sendTokens({
-      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
       amount: '0.1',
       chain: 'base',
       walletconnect: true,
@@ -914,11 +1051,11 @@ describe('sendTokens via WalletConnect', () => {
     // downstream could have caught the mismatch.
     vi.spyOn(wcTrading, 'getWalletConnectAddress').mockImplementation(async (chainType, chainId) => {
       // Session is connected, but only approved for Ethereum mainnet (1), not Base (8453).
-      return chainId === 1 ? '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4' : null;
+      return chainId === 1 ? '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4' : null;
     });
 
     await expect(sendTokens({
-      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
       amount: '0.1',
       chain: 'base',
       walletconnect: true,
@@ -929,7 +1066,7 @@ describe('sendTokens via WalletConnect', () => {
 
   test('skips password verification for walletconnect', async () => {
     const exportSpy = vi.spyOn(wallet, 'exportWallet');
-    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4');
     vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmocktx123' });
 
     // Mock RPC calls for native transfer
@@ -942,7 +1079,7 @@ describe('sendTokens via WalletConnect', () => {
     });
 
     const result = await sendTokens({
-      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
       amount: '0.1',
       chain: 'evm',
       walletconnect: true,
@@ -951,7 +1088,7 @@ describe('sendTokens via WalletConnect', () => {
 
     expect(result.success).toBe(true);
     expect(result.transactionHash).toBe('0xmocktx123');
-    expect(result.from).toBe('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    expect(result.from).toBe('0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4');
     // Should NOT have called exportWallet
     expect(exportSpy).not.toHaveBeenCalled();
 
@@ -959,7 +1096,7 @@ describe('sendTokens via WalletConnect', () => {
   });
 
   test('dry run with walletconnect returns tx data', async () => {
-    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4');
 
     const result = await sendTokens({
       to: '0x1234567890123456789012345678901234567890',
@@ -970,7 +1107,7 @@ describe('sendTokens via WalletConnect', () => {
     });
 
     expect(result.dryRun).toBe(true);
-    expect(result.from).toBe('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    expect(result.from).toBe('0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4');
     expect(result.to).toBe('0x1234567890123456789012345678901234567890');
     expect(result.amount).toBe('0.5');
 
@@ -978,7 +1115,7 @@ describe('sendTokens via WalletConnect', () => {
   });
 
   test('sends native ETH via walletconnect', async () => {
-    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4');
     vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xnativetx' });
 
     fetch.mockImplementation(async (url, opts) => {
@@ -1009,7 +1146,7 @@ describe('sendTokens via WalletConnect', () => {
   });
 
   test('sends ERC-20 via walletconnect', async () => {
-    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4');
     vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xerc20tx' });
 
     const tokenAddress = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
@@ -1050,7 +1187,7 @@ describe('sendTokens via WalletConnect', () => {
   });
 
   test('sends max native ETH via walletconnect', async () => {
-    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4');
     vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmaxtx' });
 
     fetch.mockImplementation(async (url, opts) => {
@@ -1092,7 +1229,7 @@ describe('sendTokens via WalletConnect', () => {
   // fall back to 21000 gas, so a recipient the node says will revert still
   // went on to the reserve calculation and a doomed broadcast.
   test('max native send aborts when the dummy estimate says the transfer would revert', async () => {
-    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4');
     const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xshouldnotsend' });
 
     fetch.mockImplementation(async (url, opts) => {
@@ -1126,7 +1263,7 @@ describe('sendTokens via WalletConnect', () => {
   });
 
   test('sends max ERC-20 via walletconnect', async () => {
-    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4');
     vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xmaxerc20' });
 
     const tokenAddress = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
@@ -1239,7 +1376,7 @@ describe('sendTokens via Privy', () => {
     vi.spyOn(wallet, 'showWallet').mockReturnValue({
       name: 'pv',
       provider: 'privy',
-      evm: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      evm: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
       solana: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
       privyWalletIds: { evm: 'wl_evm_1', solana: 'wl_sol_1' },
     });
@@ -1247,7 +1384,7 @@ describe('sendTokens via Privy', () => {
       id: walletId,
       address: walletId === 'wl_sol_1'
         ? '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM'
-        : '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+        : '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
     }));
   });
 
@@ -1264,7 +1401,7 @@ describe('sendTokens via Privy', () => {
     const sendSpy = vi.spyOn(PrivyClient.prototype, 'sendTransaction');
 
     await expect(sendTokens({
-      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
       amount: '0.01',
       chain: 'base',
       wallet: 'pv',
@@ -1277,6 +1414,7 @@ describe('sendTokens via Privy', () => {
 
   test('refuses a mismatched Solana Privy wallet before preview or signing', async () => {
     getWalletSpy.mockResolvedValue({ id: 'wl_sol_1', address: '11111111111111111111111111111111' });
+    fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ result: { context: { slot: 1 }, value: null } }) }));
     const signSpy = vi.spyOn(PrivyClient.prototype, 'signSolanaTransaction');
 
     await expect(sendTokens({
@@ -1293,7 +1431,7 @@ describe('sendTokens via Privy', () => {
 
   test('rejects an unsupported EVM chain before looking up the Privy wallet', async () => {
     await expect(sendTokens({
-      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
       amount: '0.01', chain: 'unknown', wallet: 'pv', dryRun: true,
     })).rejects.toThrow(/Unsupported chain/);
 
@@ -1318,7 +1456,7 @@ describe('sendTokens via Privy', () => {
     });
 
     const result = await sendTokens({
-      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
       amount: '0.01',
       chain: 'base',
       wallet: 'pv',
@@ -1331,7 +1469,7 @@ describe('sendTokens via Privy', () => {
 
   test('sends native ETH via Privy dry run', async () => {
     const result = await sendTokens({
-      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
       amount: '0.01',
       chain: 'base',
       wallet: 'pv',
@@ -1339,7 +1477,7 @@ describe('sendTokens via Privy', () => {
     });
 
     expect(result.dryRun).toBe(true);
-    expect(result.from).toBe('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    expect(result.from).toBe('0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4');
     expect(result.chain).toBe('base');
   });
 
@@ -1396,7 +1534,7 @@ describe('sendTokens via Privy', () => {
     });
 
     await expect(sendTokens({
-      to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4',
+      to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
       amount: '0.01',
       chain: 'base',
       wallet: 'pv',
@@ -1440,6 +1578,10 @@ describe('sendTokens via Privy', () => {
             result: { value: [{ confirmationStatus: 'confirmed', err: null }], context: { slot: 1 } },
           }),
         };
+      }
+      // Recipient check: no account yet (a real node's shape).
+      if (body?.method === 'getAccountInfo') {
+        return { json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: { context: { slot: 1 }, value: null } }) };
       }
       return { json: () => Promise.resolve({ jsonrpc: '2.0', id: body?.id, result: null }) };
     });
@@ -1521,6 +1663,10 @@ describe('sendTokens via Privy', () => {
           }),
         };
       }
+      // Recipient check: no account yet (a real node's shape).
+      if (body?.method === 'getAccountInfo') {
+        return { json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result: { context: { slot: 1 }, value: null } }) };
+      }
       return { json: () => Promise.resolve({ jsonrpc: '2.0', id: body?.id, result: null }) };
     });
 
@@ -1539,9 +1685,13 @@ describe('sendTokens via Privy', () => {
     expect(result.amount).toBe('5.0');
   });
 
-  test('sends SOL via Privy dry run without making RPC calls', async () => {
-    fetch.mockImplementation(async () => {
-      throw new Error('No RPC calls should be made during Solana Privy dry run');
+  test('sends SOL via Privy dry run with no RPC call but the recipient check', async () => {
+    fetch.mockImplementation(async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      if (body.method === 'getAccountInfo' && body.params[0] === '11111111111111111111111111111112') {
+        return { json: () => Promise.resolve({ result: { value: null } }) };
+      }
+      throw new Error(`No other RPC call should be made during Solana Privy dry run (got ${body.method})`);
     });
 
     const result = await sendTokens({
@@ -1555,7 +1705,7 @@ describe('sendTokens via Privy', () => {
     expect(result.dryRun).toBe(true);
     expect(result.from).toBe('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
     expect(result.chain).toBe('solana');
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   describe('SPL token dry run validates the amount at the mint precision', () => {
@@ -1572,6 +1722,7 @@ describe('sendTokens via Privy', () => {
         if (body?.method === 'getTokenAccountBalance') {
           return reply({ value: { amount: '0', uiAmountString }, context: { slot: 1 } });
         }
+        if (body?.method === 'getAccountInfo') return reply({ value: null, context: { slot: 1 } });
         return reply(null);
       });
     }
@@ -1619,7 +1770,7 @@ describe('sendTokens via Privy', () => {
 // `wallet send --token USDC` used to pass the literal string "USDC" to the RPC
 // as a contract address, and the node answered with a bare "Invalid params".
 describe('sendTokens --token symbols', () => {
-  const TO_EVM = '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4';
+  const TO_EVM = '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4';
   const TO_SOL = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
   const ETH_USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
   const ETH_USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
@@ -1689,7 +1840,7 @@ describe('sendTokens --token symbols', () => {
     });
     await expect(sendTokens({ to: TO_SOL, amount: '1', chain: 'solana', token: 'USDC', password: 'test', dryRun: true }))
       .rejects.toThrow('not found');
-    expect(calledWith('getAccountInfo')[0].params[0]).toBe(SOL_USDC);
+    expect(calledWith('getAccountInfo').map(b => b.params[0])).toEqual([TO_SOL, SOL_USDC]);
   });
 
   test('resolves a symbol for WalletConnect sends too', async () => {
@@ -1704,6 +1855,13 @@ describe('sendTokens --token symbols', () => {
     mockStrictEvmRpc();
     const result = await sendTokens({ to: TO_EVM, amount: '25', chain: 'evm', token: ETH_USDC.toLowerCase(), password: 'test', dryRun: true });
     expect(result.token).toBe(ETH_USDC.toLowerCase());
+  });
+
+  test('refuses a bad-checksum --token with the checksum error, not "Unknown token"', () => {
+    expect(() => resolveSendToken('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02914', 'base'))
+      .toThrow(/^Invalid --token: EVM address .* invalid EIP-55 checksum/);
+    expect(resolveSendToken('0x833589fcd6edb6e08f4c7c32d4f71b54bda02914', 'base'))
+      .toBe('0x833589fcd6edb6e08f4c7c32d4f71b54bda02914');
   });
 
   test('rejects an unknown symbol with the accepted ones, before any RPC call', async () => {

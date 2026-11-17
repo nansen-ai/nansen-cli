@@ -3977,7 +3977,7 @@
             "to": {
               "type": "string",
               "required": true,
-              "description": "Recipient address"
+              "description": "Recipient wallet address. A mixed-case EVM address must have a valid EIP-55 checksum. Refused: the token's own contract, and on Solana any account that is not a wallet (token account, mint, program)"
             },
             "chain": {
               "type": "string",
@@ -3991,7 +3991,7 @@
             },
             "max": {
               "type": "boolean",
-              "description": "Send the entire spendable balance instead of --amount"
+              "description": "Send the entire spendable balance instead of --amount. Cannot be combined with a numeric --amount"
             },
             "token": {
               "type": "string",

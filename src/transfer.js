@@ -5,7 +5,7 @@
 
 import crypto from 'crypto';
 import { base58Encode, base58Decode, base58DecodePubkey, exportWallet, getWalletConfig, verifyPassword, showWallet } from './wallet.js';
-import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
+import { keccak256, signSecp256k1, rlpEncode, toChecksumAddress } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect } from './walletconnect-trading.js';
 import { EVM_CHAIN_IDS } from './chain-ids.js';
 import { CHAIN_RPCS } from './rpc-urls.js';
@@ -35,6 +35,17 @@ function deriveEvmAddress(privateKeyHex) {
 
 function validateEvmAddress(address) {
   if (!/^0x[0-9a-fA-F]{40}$/.test(address)) return { valid: false, error: 'Invalid EVM address' };
+  // EIP-55: a mixed-case address carries a checksum, and one that doesn't
+  // match is a typo (one changed character still has the right shape). An
+  // all-lowercase or all-uppercase address has no checksum to check.
+  const hex = address.slice(2);
+  if (/[a-f]/.test(hex) && /[A-F]/.test(hex) && toChecksumAddress(hex) !== address) {
+    return {
+      valid: false,
+      checksum: true,
+      error: `EVM address ${address} has an invalid EIP-55 checksum (its mixed case does not match). It likely has a typo: copy the address again from its source.`,
+    };
+  }
   return { valid: true };
 }
 
@@ -83,6 +94,7 @@ function resolveSendToken(token, chain) {
   if (known) return known;
   const check = chain === 'solana' ? validateSolanaAddress(token) : validateEvmAddress(token);
   if (check.valid) return token;
+  if (check.checksum) throw new Error(`Invalid --token: ${check.error}`);
   const kind = chain === 'solana' ? 'mint address' : 'contract address';
   const names = Object.keys(symbols);
   const choices = names.length ? `, or one of: ${names.join(', ')}` : '';
@@ -720,6 +732,40 @@ async function broadcastTransaction(signedTx, chain, token = null) {
 export { parseAmount, formatAmount, signEd25519, encodeCompactU16, base58Decode, base58DecodePubkey, deriveATA, isOnEd25519Curve, validateEvmAddress, validateSolanaAddress, bigIntToHex, resolveSendToken };
 
 /**
+ * Refuse a Solana recipient that is not a wallet. An SPL send derives the
+ * recipient's associated token account, and the ATA program accepts any owner,
+ * so tokens sent to a token account, mint, program or program-owned data
+ * account land where nobody can sign to move them. Only a System-owned account
+ * with no data (a wallet) or one that doesn't exist yet (a new, unfunded wallet)
+ * passes. A System-owned account holding data, such as a durable nonce account,
+ * is not a wallet either.
+ * Fails closed: if the lookup fails, the send doesn't happen.
+ */
+async function assertSolanaRecipientIsWallet(to) {
+  const info = await rpcCall(CHAIN_RPCS.solana, 'getAccountInfo', [to, { encoding: 'base64', commitment: 'confirmed' }]);
+  // A real node answers { context, value }, with value null for no account.
+  // Anything else is not an answer, so don't read it as "new wallet".
+  if (!info || typeof info !== 'object' || !('value' in info)) {
+    throw new Error(`Could not check recipient ${to}: the Solana RPC returned no account info. Nothing was sent; try again.`);
+  }
+  const owner = info.value?.owner;
+  if (info.value && owner !== SYSTEM_PROGRAM) {
+    throw new Error(
+      `Recipient ${to} is not a wallet address (it is an account owned by program ${owner}, such as a token account, mint or program). ` +
+      `Tokens sent there can't be moved out. Pass the recipient's wallet address.`,
+    );
+  }
+  const data = info.value?.data;
+  const dataLength = Array.isArray(data) && typeof data[0] === 'string' ? Buffer.from(data[0], 'base64').length : 0;
+  if (info.value && (dataLength > 0 || (typeof info.value.space === 'number' && info.value.space > 0))) {
+    throw new Error(
+      `Recipient ${to} is not a wallet address (it is a System account holding data, such as a nonce account). ` +
+      `Tokens sent there can't be moved out. Pass the recipient's wallet address.`,
+    );
+  }
+}
+
+/**
  * Send tokens via Privy server wallet. EVM uses Privy's sendTransaction (handles gas/nonce).
  * Solana builds unsigned tx, signs via Privy, then broadcasts.
  */
@@ -846,6 +892,10 @@ export async function sendTokens({ to, amount, chain, token = null, wallet = nul
   const v = validate(to);
   if (!v.valid) throw new Error(`Invalid recipient: ${v.error}`);
   token = resolveSendToken(token, chain);
+  // An ERC-20 sent to its own contract lands in a balance nobody controls.
+  if (chain !== 'solana' && token && to.toLowerCase() === token.toLowerCase()) {
+    throw new Error(`Recipient ${to} is the token contract itself; tokens sent there are lost. Pass the recipient's wallet address.`);
+  }
 
   if (walletconnect) {
     if (chain === 'solana') {
@@ -853,6 +903,8 @@ export async function sendTokens({ to, amount, chain, token = null, wallet = nul
     }
     return sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRun });
   }
+
+  if (chain === 'solana') await assertSolanaRecipientIsWallet(to);
 
   // Resolve wallet and check provider
   const config = getWalletConfig();
