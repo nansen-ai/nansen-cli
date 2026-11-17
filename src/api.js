@@ -2466,10 +2466,10 @@ export class NansenAPI {
 
   // ============= Smart Alert Endpoints =============
 
-  async alertsList(params = {}) {
+  async alertsList(params = {}, options = {}) {
     const defined = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined));
     const qs = Object.keys(defined).length > 0 ? '?' + new URLSearchParams(defined).toString() : '';
-    return this.request(`/api/v1/smart-alert/list${qs}`, {}, { method: 'GET' });
+    return this.request(`/api/v1/smart-alert/list${qs}`, {}, { ...options, method: 'GET' });
   }
 
   async alertsCreate(params = {}) {
@@ -2492,7 +2492,9 @@ export class NansenAPI {
   async alertsGet(id) {
     // TODO: replace with GET /api/v1/smart-alert/{id} once a get-by-id endpoint exists.
     // Fetching the full list does not scale for users with many alerts.
-    const result = await this.alertsList();
+    // Never from the cache: alerts update merges into this alert and PATCHes
+    // the result, so a stale copy would revert changes made since it was cached.
+    const result = await this.alertsList({}, { cache: false });
     const alerts = Array.isArray(result) ? result : result?.alerts ?? result?.data ?? [];
     return alerts.find(a => a.id === id) ?? null;
   }

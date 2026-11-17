@@ -4504,7 +4504,7 @@
     "disableWith": ["--no-cache", "NANSEN_NO_CACHE=1"],
     "ttlOption": "--cache-ttl <seconds>",
     "defaultTtlSeconds": 300,
-    "cachedCommands": "All research commands (including top-level perp screener and perp leaderboard), plus alerts list and alerts get.",
+    "cachedCommands": "All research commands (including top-level perp screener and perp leaderboard), plus alerts list.",
     "neverCached": [
       "account",
       "web search",

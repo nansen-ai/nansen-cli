@@ -1265,7 +1265,7 @@ WHAT CACHES:
   Caching is off by default and opt-in per invocation with --cache. With it on,
   every read the CLI makes through the Nansen API client is served from and
   written to the response cache — that is all of "nansen research ...", plus
-  "alerts list" and "alerts get".
+  "alerts list".
   Never cached: account, web search, alerts create/update/toggle/delete,
   agent (streamed), feedback, every trade, bridge, wallet and mcp command, and perp trading.
   The analytics commands "perp screener" and "perp leaderboard" are cached.
