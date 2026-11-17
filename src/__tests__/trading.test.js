@@ -4582,6 +4582,21 @@ describe('simulateEvmCall — insufficient funds error formatting', () => {
 
 // ============= Cross-Chain Support =============
 
+describe('formatQuote input amount', () => {
+  it('shows the input field the intent checks bind (inputAmount before inAmount)', () => {
+    const output = formatQuote({
+      aggregator: 'lifi',
+      inputMint: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      outputMint: '0x4200000000000000000000000000000000000006',
+      inputAmount: '1000000',
+      inAmount: '900000',
+      outAmount: '990000',
+    });
+    expect(output).toContain('Input:        1000000 →');
+    expect(output).not.toContain('900000 →');
+  });
+});
+
 describe('formatQuote cross-chain metadata', () => {
   it('should display bridge info when isCrossChain is true', () => {
     const output = formatQuote({
@@ -7221,6 +7236,100 @@ describe('exactOut max-input enforcement (adversarial)', () => {
       noBroadcast(calls);
     });
   }
+
+  // The max-input check reads the quote input as `inputAmount ?? inAmount`, so
+  // an empty inputAmount reads as 0. Approval sizing must read the same field:
+  // falling through to inAmount would approve an amount the max-input check
+  // never saw.
+  function emptyInputAmountQuote() {
+    return {
+      aggregator: 'lifi',
+      inputMint: ERC20_IN,
+      outputMint: OUT_TOKEN,
+      inputAmount: '',
+      inAmount: '900000',
+      outAmount: '990000',
+      approvalAddress: ROUTER,
+      transaction: { to: ROUTER, data: '0xdeadbeef', value: '0', gas: '210000', gasPrice: '1000000000' },
+    };
+  }
+
+  it('WalletConnect: does not size an approval from inAmount when inputAmount is empty', async () => {
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    const approvalSpy = vi.spyOn(wcTrading, 'sendApprovalViaWalletConnect').mockRejectedValue(new Error('approval must not be sent'));
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xshouldnothappen' });
+    const calls = [];
+    vi.stubGlobal('fetch', trackingFetch(calls));
+
+    const quoteId = saveQuote({ success: true, quotes: [emptyInputAmountQuote()] },
+      'base', 'walletconnect', null, null, exactOutRequestMeta(ERC20_IN, '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4'));
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(() => {});
+    expect(approvalSpy).not.toHaveBeenCalled();
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(logs.some(l => /zero input amount/.test(l))).toBe(true);
+    noBroadcast(calls);
+  });
+
+  it('local wallet: does not size an approval from inAmount when inputAmount is empty', async () => {
+    createWallet('default', 'testpass');
+    process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+    const calls = [];
+    vi.stubGlobal('fetch', trackingFetch(calls));
+
+    const quoteId = saveQuote({ success: true, quotes: [emptyInputAmountQuote()] },
+      'base', 'local', null, null, exactOutRequestMeta(ERC20_IN, showWallet('default').evm));
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(() => {});
+    expect(logs.some(l => /Approval required|Sending approval|Broadcasting/.test(l))).toBe(false);
+    expect(logs.some(l => /zero input amount/.test(l))).toBe(true);
+    noBroadcast(calls);
+  });
+
+  it('Privy: does not size an approval from inAmount when inputAmount is empty', async () => {
+    process.env.PRIVY_APP_ID = 'test-app-id';
+    process.env.PRIVY_APP_SECRET = 'test-secret';
+    const calls = [];
+    vi.stubGlobal('fetch', trackingFetch(calls));
+
+    const quoteId = saveQuote({ success: true, quotes: [emptyInputAmountQuote()] },
+      'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, exactOutRequestMeta(ERC20_IN, '0xPrivyAddr'));
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await cmds.execute([], screenApi, {}, { quote: quoteId }).catch(() => {});
+    expect(logs.some(l => /Approval required|Sending approval/.test(l))).toBe(false);
+    expect(logs.some(l => /zero input amount/.test(l))).toBe(true);
+    noPrivySign(calls);
+    noBroadcast(calls);
+
+    delete process.env.PRIVY_APP_ID;
+    delete process.env.PRIVY_APP_SECRET;
+  });
+
+  it('dry run: refuses to preview an approval sized from inAmount when inputAmount is empty', async () => {
+    createWallet('default', 'testpass');
+    const calls = [];
+    vi.stubGlobal('fetch', trackingFetch(calls));
+
+    const quoteId = saveQuote({ success: true, quotes: [emptyInputAmountQuote()] },
+      'base', 'local', null, null, exactOutRequestMeta(ERC20_IN, showWallet('default').evm));
+
+    const logs = [];
+    const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+
+    await expect(cmds.execute([], screenApi, { 'dry-run': true }, { quote: quoteId }))
+      .rejects.toThrow(/zero input amount/i);
+    expect(logs.join('\n')).not.toMatch(/Approval:/);
+    noBroadcast(calls);
+  });
 
   it('local wallet: refuses to sign a quote built for a different wallet (signer binding)', async () => {
     createWallet('default', 'testpass');
