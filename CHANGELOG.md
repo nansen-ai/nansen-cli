@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.6.1
+
+### Patch Changes
+
+- [#834](https://github.com/nansen-ai/nansen-cli/pull/834) [`c2e511e`](https://github.com/nansen-ai/nansen-cli/commit/c2e511efbbfc32174083dc9b3f00eda8e0fef519) Thanks [@kome12](https://github.com/kome12)! - `nansen schema` and shell completion now list the type-specific filter options of `alerts create` and `alerts update` (flow thresholds, token, sector, market cap, FDV, event, value and subject filters), with the alert types each one applies to.
+
+- [#841](https://github.com/nansen-ai/nansen-cli/pull/841) [`9888c7a`](https://github.com/nansen-ai/nansen-cli/commit/9888c7a3ed3a624fc465965104434d91aa9db221) Thanks [@kome12](https://github.com/kome12)! - `bridge execute` now refuses a Hyperliquid withdrawal quote that has more than one withdrawal leg, or whose withdrawal is not sent to Relay's deposit address, before signing anything.
+
+- [#843](https://github.com/nansen-ai/nansen-cli/pull/843) [`16413a9`](https://github.com/nansen-ai/nansen-cli/commit/16413a9f6685d78997b41ec7020d80fd79ef7cf0) Thanks [@kome12](https://github.com/kome12)! - `trade execute` now refuses a native-token EVM swap whose transaction value does not match the quote's input amount (the same field the request check reads) or exceeds the maximum spend saved with the quote, even when swap-outcome verification is off.
+
+- [#839](https://github.com/nansen-ai/nansen-cli/pull/839) [`f621b35`](https://github.com/nansen-ai/nansen-cli/commit/f621b35c67ab27194925d3e2bbec8f330d10e764) Thanks [@kome12](https://github.com/kome12)! - `nansen perp transfer` and `nansen perp approve-builder-fee` now honour `--dry-run` and `--yes` like the other perp commands that change state: `--dry-run` prints the plan and signs nothing, an interactive terminal asks before signing, and `NANSEN_REQUIRE_CONFIRM=1` applies off a terminal. Previously both signed and submitted even with `--dry-run`.
+
+  `perp transfer` also refuses an `--amount` it cannot sign exactly (more than 8 decimal places, or too large to hold exactly) instead of rounding it.
+
+- [#842](https://github.com/nansen-ai/nansen-cli/pull/842) [`020c455`](https://github.com/nansen-ai/nansen-cli/commit/020c455a1a151bdefb04891d42d4aa2f703b627e) Thanks [@kome12](https://github.com/kome12)! - Pin the runtime dependencies (`@noble/curves`, `@noble/hashes`, `@scure/base`, `@ethereumjs/rlp`) to exact versions, so a global install no longer picks up a newly published release of a signing library before it has been reviewed.
+
+- [#835](https://github.com/nansen-ai/nansen-cli/pull/835) [`197996b`](https://github.com/nansen-ai/nansen-cli/commit/197996b565823ca4e4239dc3dd2376ca510c3eff) Thanks [@kome12](https://github.com/kome12)! - `wallet send --dry-run` from a Privy wallet now rejects a malformed, zero or too-small SPL token amount on Solana, as the real send does, instead of previewing it as a success.
+
+- [#837](https://github.com/nansen-ai/nansen-cli/pull/837) [`478eab1`](https://github.com/nansen-ai/nansen-cli/commit/478eab1d4630db3f6b28eccb07b10845864bba42) Thanks [@kome12](https://github.com/kome12)! - `nansen alerts create` and `update` no longer offer the `smart-contract-call` alert type, which the Nansen API retired and now rejects. Passing `--type smart-contract-call`, or one of the flags only that type used (`--signature-hash`, `--caller`, `--contract`, `--exclude-caller`, `--exclude-contract`), now fails with an `INVALID_PARAMS` error that says the type was retired, before any request is sent. An unknown `--type` value is rejected the same way, with the valid types listed. `nansen schema` now lists the valid `--type` values as an enum.
+
+- [#838](https://github.com/nansen-ai/nansen-cli/pull/838) [`ead3a57`](https://github.com/nansen-ai/nansen-cli/commit/ead3a570d8c4c22f53471221f8dab90dddc96480) Thanks [@kome12](https://github.com/kome12)! - `wallet send` now refuses sends that would lose funds: a mixed-case EVM `--to` or `--token` address with an invalid EIP-55 checksum (all-lowercase and all-uppercase addresses still work), an ERC-20 sent to its own contract, and on Solana a recipient that is not a wallet (a token account, mint, program or other program-owned account). `--amount <number>` together with `--max` is now rejected with `INVALID_INPUT` instead of sending the whole balance.
+
 ## 2.6.0
 
 ### Minor Changes
