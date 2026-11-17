@@ -149,6 +149,7 @@ export const ERROR_CODES = {
   BROADCAST_FAILED: { group: 'trade', description: 'The transaction could not be broadcast.' },
   TX_REVERTED: { group: 'trade', description: 'The transaction reverted or failed on chain.' },
   TXHASH_MISMATCH: { group: 'trade', description: 'The RPC returned a different transaction hash than the one signed.' },
+  SIGNED_TX_MISMATCH: { group: 'trade', description: 'The remote signer (Privy or WalletConnect) returned a transaction that differs from the one checked; the CLI did not broadcast it.' },
   RECEIPT_TIMEOUT: { group: 'trade', description: 'The transaction was not confirmed in time and may still land. Check the transaction before retrying.' },
   OUTCOME_VERIFICATION_FAILED: { group: 'trade', description: 'The CLI could not verify the trade outcome.' },
   SWAP_OUTCOME_MISMATCH: { group: 'trade', description: 'The simulated swap outcome does not match the quote; nothing was signed.' },

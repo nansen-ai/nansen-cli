@@ -168,6 +168,7 @@ A connection failure is `NETWORK_ERROR` and never `UNAUTHORIZED`: the CLI could 
 | `BROADCAST_FAILED` | The transaction could not be broadcast. | No |
 | `TX_REVERTED` | The transaction reverted or failed on chain. | No |
 | `TXHASH_MISMATCH` | The RPC returned a different transaction hash than the one signed. | No |
+| `SIGNED_TX_MISMATCH` | The remote signer (Privy or WalletConnect) returned a transaction that differs from the one checked; the CLI did not broadcast it. | No |
 | `RECEIPT_TIMEOUT` | The transaction was not confirmed in time and may still land. Check the transaction before retrying. | No |
 | `OUTCOME_VERIFICATION_FAILED` | The CLI could not verify the trade outcome. | No |
 | `SWAP_OUTCOME_MISMATCH` | The simulated swap outcome does not match the quote; nothing was signed. | No |

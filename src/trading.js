@@ -1635,6 +1635,9 @@ function isFatalBroadcastError(err) {
   return err?.broadcastAmbiguous === true
     || err?.code === 'TXHASH_MISMATCH'
     || err?.code === 'INVALID_SIGNED_TX'
+    // A remote signer returned a transaction other than the one checked. The
+    // next quote would go to the same signer, so stop here.
+    || err?.code === 'SIGNED_TX_MISMATCH'
     || err?.code === 'RECEIPT_TIMEOUT'
     || err?.code === 'BROADCAST_FAILED'
     // A confirmed revert is terminal too. Although its outcome is definitive
