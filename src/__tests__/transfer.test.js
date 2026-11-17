@@ -25,6 +25,7 @@ import { base58Encode } from '../wallet.js';
 import * as wallet from '../wallet.js';
 import * as wcTrading from '../walletconnect-trading.js';
 import { PrivyClient } from '../privy.js';
+import { TEST_SOL_ADDRESS, privySignedSolana } from './fixtures/remote-signers.js';
 
 
 // ============= Unit Tests =============
@@ -1377,13 +1378,13 @@ describe('sendTokens via Privy', () => {
       name: 'pv',
       provider: 'privy',
       evm: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
-      solana: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+      solana: TEST_SOL_ADDRESS,
       privyWalletIds: { evm: 'wl_evm_1', solana: 'wl_sol_1' },
     });
     getWalletSpy = vi.spyOn(PrivyClient.prototype, 'getWallet').mockImplementation(async (walletId) => ({
       id: walletId,
       address: walletId === 'wl_sol_1'
-        ? '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM'
+        ? TEST_SOL_ADDRESS
         : '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
     }));
   });
@@ -1529,7 +1530,7 @@ describe('sendTokens via Privy', () => {
       name: 'pv',
       provider: 'privy',
       evm: null,
-      solana: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+      solana: TEST_SOL_ADDRESS,
       privyWalletIds: { evm: undefined, solana: 'wl_sol_1' },
     });
 
@@ -1563,7 +1564,7 @@ describe('sendTokens via Privy', () => {
         signCallBody = JSON.parse(opts.body);
         return {
           ok: true,
-          json: () => Promise.resolve({ data: { signed_transaction: 'c2lnbmVkdHg=' } }),
+          json: () => Promise.resolve({ data: { signed_transaction: privySignedSolana(JSON.parse(opts.body)) } }),
         };
       }
       // Solana RPC: sendTransaction
@@ -1647,7 +1648,7 @@ describe('sendTokens via Privy', () => {
       if (url?.includes('privy.io')) {
         return {
           ok: true,
-          json: () => Promise.resolve({ data: { signed_transaction: 'c2lnbmVkdHg=' } }),
+          json: () => Promise.resolve({ data: { signed_transaction: privySignedSolana(JSON.parse(opts.body)) } }),
         };
       }
       // sendTransaction
@@ -1703,7 +1704,7 @@ describe('sendTokens via Privy', () => {
     });
 
     expect(result.dryRun).toBe(true);
-    expect(result.from).toBe('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
+    expect(result.from).toBe(TEST_SOL_ADDRESS);
     expect(result.chain).toBe('solana');
     expect(fetch).toHaveBeenCalledTimes(1);
   });

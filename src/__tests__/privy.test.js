@@ -8,6 +8,7 @@ import os from "os";
 import path from "path";
 import { PrivyClient, assertPrivyWalletAddress, createPrivyPaymentSignatures, createPrivyWalletPair } from "../privy.js";
 import { resetSessionSpendForTests } from "../x402-policy.js";
+import { TEST_EVM_ADDRESS, TEST_SOL_ADDRESS, TEST_SOL_PUBKEY_BYTES, privySignedEvm, privySignedSolana } from "./fixtures/remote-signers.js";
 
 // Prevent evaluatePaymentRequirement → resolveMaxAmountUsd → getWalletConfig
 // from reading the real ~/.nansen/wallets/config.json. Without this mock the
@@ -140,55 +141,113 @@ describe("PrivyClient", () => {
     vi.unstubAllGlobals();
   });
 
+  const EVM_TX = {
+    to: "0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae",
+    value: "0x0",
+    data: "0x12345678",
+    chain_id: 8453,
+    nonce: "0x5",
+    gas_limit: "0x33450",
+    max_fee_per_gas: "0x64b540",
+    max_priority_fee_per_gas: "0x10c8e0",
+  };
+
   it("signEvmTransaction sends correct RPC request", async () => {
     const client = new PrivyClient("app-id", "app-secret");
-    const mockFetch = vi.fn().mockResolvedValue({
+    const mockFetch = vi.fn().mockImplementation(async (_url, opts) => ({
       ok: true,
-      json: () => Promise.resolve({ data: { signed_transaction: "0xsigned" } }),
-    });
+      json: async () => ({ data: { signed_transaction: privySignedEvm(JSON.parse(opts.body)) } }),
+    }));
     vi.stubGlobal("fetch", mockFetch);
 
-    const result = await client.signEvmTransaction("wl_123", {
-      to: "0xRecipient",
-      value: "0x0",
-      data: "0xCalldata",
-      chain_id: 8453,
-      nonce: 5,
-      gas_limit: "210000",
-    });
+    const result = await client.signEvmTransaction("wl_123", EVM_TX, { from: TEST_EVM_ADDRESS });
 
     const [url, opts] = mockFetch.mock.calls[0];
     expect(url).toBe("https://api.privy.io/v1/wallets/wl_123/rpc");
     const body = JSON.parse(opts.body);
     expect(body.method).toBe("eth_signTransaction");
-    expect(body.params.transaction.to).toBe("0xRecipient");
-    expect(body.params.transaction.chain_id).toBe(8453);
-    expect(body.params.transaction.nonce).toBe(5);
-    expect(body.params.transaction.gas_limit).toBe("210000");
-    expect(result.data.signed_transaction).toBe("0xsigned");
+    expect(body.params.transaction).toEqual(EVM_TX);
+    expect(result.data.signed_transaction).toBe(privySignedEvm(body));
 
     vi.unstubAllGlobals();
   });
 
+  // One instruction; fee payer is the test wallet.
+  const SOL_TX = Buffer.concat([
+    Buffer.from([1]), Buffer.alloc(64),
+    Buffer.from([1, 0, 1, 2]), TEST_SOL_PUBKEY_BYTES, Buffer.alloc(32, 2), Buffer.alloc(32, 3), Buffer.from([1, 1, 1, 0, 1, 0]),
+  ]).toString("base64");
+
   it("signSolanaTransaction sends correct RPC request with chain_type", async () => {
     const client = new PrivyClient("app-id", "app-secret");
-    const mockFetch = vi.fn().mockResolvedValue({
+    const mockFetch = vi.fn().mockImplementation(async (_url, opts) => ({
       ok: true,
-      json: () => Promise.resolve({ data: { signed_transaction: "c2lnbmVk" } }),
-    });
+      json: async () => ({ data: { signed_transaction: privySignedSolana(JSON.parse(opts.body)) } }),
+    }));
     vi.stubGlobal("fetch", mockFetch);
 
-    const result = await client.signSolanaTransaction("wl_456", "dW5zaWduZWQ=");
+    const result = await client.signSolanaTransaction("wl_456", SOL_TX, { signer: TEST_SOL_ADDRESS });
 
     const [url, opts] = mockFetch.mock.calls[0];
     expect(url).toBe("https://api.privy.io/v1/wallets/wl_456/rpc");
     const body = JSON.parse(opts.body);
     expect(body.method).toBe("signTransaction");
     expect(body.chain_type).toBe("solana");
-    expect(body.params.transaction).toBe("dW5zaWduZWQ=");
+    expect(body.params.transaction).toBe(SOL_TX);
     expect(body.params.encoding).toBe("base64");
-    expect(result.data.signed_transaction).toBe("c2lnbmVk");
+    expect(result.data.signed_transaction).toBe(privySignedSolana(body));
 
+    vi.unstubAllGlobals();
+  });
+
+  // Privy signs remotely: whatever comes back is checked against what was sent
+  // before any caller can broadcast it.
+  it.each([
+    ["a different recipient", (body) => privySignedEvm({ params: { transaction: { ...body.params.transaction, to: "0x000000000000000000000000000000000000dead" } } }), /to is 0x0+dead/],
+    ["a raised fee", (body) => privySignedEvm({ params: { transaction: { ...body.params.transaction, max_fee_per_gas: "0x64b541" } } }), /maxFeePerGas is 6600001/],
+    ["bytes that are not a transaction", () => "0xsigned", /do not decode/],
+  ])("signEvmTransaction refuses %s", async (_name, sign, message) => {
+    const client = new PrivyClient("app-id", "app-secret");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async (_url, opts) => ({
+      ok: true,
+      json: async () => ({ data: { signed_transaction: sign(JSON.parse(opts.body)) } }),
+    })));
+    await expect(client.signEvmTransaction("wl_123", EVM_TX, { from: TEST_EVM_ADDRESS, label: "swap transaction" }))
+      .rejects.toMatchObject({ code: "SIGNED_TX_MISMATCH", message: expect.stringMatching(message) });
+    vi.unstubAllGlobals();
+  });
+
+  it("signEvmTransaction refuses the right transaction signed by another wallet", async () => {
+    const client = new PrivyClient("app-id", "app-secret");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async (_url, opts) => ({
+      ok: true,
+      json: async () => ({ data: { signed_transaction: privySignedEvm(JSON.parse(opts.body), "22".repeat(32)) } }),
+    })));
+    await expect(client.signEvmTransaction("wl_123", EVM_TX, { from: TEST_EVM_ADDRESS }))
+      .rejects.toMatchObject({ code: "SIGNED_TX_MISMATCH", message: expect.stringMatching(/signed by 0x/) });
+    vi.unstubAllGlobals();
+  });
+
+  it("signSolanaTransaction refuses a different message", async () => {
+    const client = new PrivyClient("app-id", "app-secret");
+    const other = Buffer.from(SOL_TX, "base64");
+    other[other.length - 7] ^= 1; // flip a byte of the recent blockhash
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { signed_transaction: privySignedSolana({ params: { transaction: other.toString("base64") } }) } }),
+    }));
+    await expect(client.signSolanaTransaction("wl_456", SOL_TX, { signer: TEST_SOL_ADDRESS }))
+      .rejects.toMatchObject({ code: "SIGNED_TX_MISMATCH", message: expect.stringMatching(/message bytes differ/) });
+    vi.unstubAllGlobals();
+  });
+
+  it("signing requires the wallet address it is checked against", async () => {
+    const client = new PrivyClient("app-id", "app-secret");
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+    await expect(client.signEvmTransaction("wl_123", EVM_TX)).rejects.toThrow(/wallet address \(from\) is required/);
+    await expect(client.signSolanaTransaction("wl_456", SOL_TX)).rejects.toThrow(/wallet address \(signer\) is required/);
+    expect(mockFetch).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 
@@ -328,6 +387,7 @@ describe("createPrivyPaymentSignatures", () => {
       extra: { feePayer: "11111111111111111111111111111111" },
     };
 
+    let lastSigned;
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url, options) => {
       // Solana RPC (fetchRecentBlockhash). Match on the JSON-RPC method, not
       // the hostname, so the stub still applies when NANSEN_SOLANA_RPC points
@@ -346,15 +406,15 @@ describe("createPrivyPaymentSignatures", () => {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({
-            data: [{ id: "wl_sol_1", address: "7UX2i7SucgLMQcfZ75s3VXmZZY4YRUyJN9X1RgfMoDUi", chain_type: "solana" }],
+            data: [{ id: "wl_sol_1", address: TEST_SOL_ADDRESS, chain_type: "solana" }],
           }),
         });
       }
-      // Privy: signSolanaTransaction
+      // Privy: signSolanaTransaction (signs what it was sent with the test key)
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({
-          data: { signed_transaction: "c2lnbmVkdHhiYXNlNjQ=" },
+          data: { signed_transaction: (lastSigned = privySignedSolana(JSON.parse(options.body))) },
         }),
       });
     }));
@@ -372,7 +432,7 @@ describe("createPrivyPaymentSignatures", () => {
     });
     const decoded = JSON.parse(atob(results[0].signature));
     expect(decoded.x402Version).toBe(2);
-    expect(decoded.payload.transaction).toBe("c2lnbmVkdHhiYXNlNjQ=");
+    expect(decoded.payload.transaction).toBe(lastSigned);
     expect(decoded.resource.url).toBe("https://api.nansen.ai/test");
   });
 
@@ -559,14 +619,17 @@ describe("createPrivyPaymentSignatures", () => {
             json: async () => ({
               data: [
                 { id: "w-1", address: "0x1234567890abcdef1234567890abcdef12345678", chain_type: "ethereum" },
-                { id: "wl_sol_1", address: "7UX2i7SucgLMQcfZ75s3VXmZZY4YRUyJN9X1RgfMoDUi", chain_type: "solana" },
+                { id: "wl_sol_1", address: TEST_SOL_ADDRESS, chain_type: "solana" },
               ],
             }),
           };
         }
         if (body.method === "eth_signTypedData_v4") signed.push(body.params.typed_data.message.value);
-        if (body.method === "signTransaction") signed.push("solana");
-        return { ok: true, json: async () => ({ data: { signature: "0xfakesignature", signed_transaction: "c2lnbmVkdHhiYXNlNjQ=" } }) };
+        if (body.method === "signTransaction") {
+          signed.push("solana");
+          return { ok: true, json: async () => ({ data: { signed_transaction: privySignedSolana(body) } }) };
+        }
+        return { ok: true, json: async () => ({ data: { signature: "0xfakesignature" } }) };
       }));
       return signed;
     }
@@ -659,7 +722,7 @@ describe("createPrivyPaymentSignatures", () => {
     ["a short balance", "49999", 0],
     ["an exact balance", "50000", 1],
   ])("checks the Privy Solana balance before signing (%s)", async (_label, balance, expected) => {
-    const owner = "7UX2i7SucgLMQcfZ75s3VXmZZY4YRUyJN9X1RgfMoDUi";
+    const owner = TEST_SOL_ADDRESS;
     const mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
     const { deriveATA } = await import("../x402-svm.js");
     const solRequirement = {
@@ -686,7 +749,7 @@ describe("createPrivyPaymentSignatures", () => {
       if (url.includes("/wallets") && !url.includes("/rpc")) {
         return { ok: true, json: async () => ({ data: [{ id: "wl_sol_1", address: owner, chain_type: "solana" }] }) };
       }
-      return { ok: true, json: async () => ({ data: { signed_transaction: "signed-tx" } }) };
+      return { ok: true, json: async () => ({ data: { signed_transaction: privySignedSolana(body) } }) };
     });
     vi.stubGlobal("fetch", fetchMock);
     const results = [];
@@ -723,12 +786,16 @@ describe("createPrivyPaymentSignatures", () => {
             json: async () => ({
               data: [
                 { id: "w-1", address: "0x1234567890abcdef1234567890abcdef12345678", chain_type: "ethereum" },
-                { id: "wl_sol_1", address: solRequirement.payTo, chain_type: "solana" },
+                { id: "wl_sol_1", address: TEST_SOL_ADDRESS, chain_type: "solana" },
               ],
             }),
           };
         }
-        return { ok: true, json: async () => ({ data: { signature: "0xfakesignature", signed_transaction: "c2lnbmVkdHhiYXNlNjQ=" } }) };
+        const parsed = body ? JSON.parse(body) : {};
+        if (parsed.method === "signTransaction") {
+          return { ok: true, json: async () => ({ data: { signed_transaction: privySignedSolana(parsed) } }) };
+        }
+        return { ok: true, json: async () => ({ data: { signature: "0xfakesignature" } }) };
       });
       vi.stubGlobal("fetch", fetchMock);
       const signingCalls = (method) => fetchMock.mock.calls.filter(([, options]) =>

@@ -23,6 +23,7 @@ import {
   buildPaymentSignatureHeader,
 } from "./walletconnect-x402.js";
 import { trace } from "./debug.js";
+import { assertEvmSignedMatches, assertSolanaSignedMatches } from "./signed-tx-binding.js";
 
 // ============= Constants =============
 
@@ -123,19 +124,67 @@ export class PrivyClient {
     });
   }
 
-  async signEvmTransaction(walletId, transaction) {
-    return this._request("POST", `/wallets/${walletId}/rpc`, {
+  /**
+   * Sign (never send) an EVM transaction. The returned bytes are checked to
+   * encode exactly `transaction`, signed by `from`, before they are handed
+   * back: every pre-sign check the caller ran applies to `transaction`, so a
+   * different transaction must never reach a broadcast. Throws
+   * SIGNED_TX_MISMATCH otherwise. A response without signed bytes is returned
+   * as is; callers already treat that as a failed signature.
+   *
+   * @param {string} walletId
+   * @param {object} transaction - snake_case fields sent to Privy
+   * @param {object} opts
+   * @param {string} opts.from - the wallet's address
+   * @param {string} [opts.label] - what the transaction is, for errors
+   */
+  async signEvmTransaction(walletId, transaction, { from, label } = {}) {
+    if (!from) throw new Error("signEvmTransaction: the wallet address (from) is required to check the signed transaction");
+    const result = await this._request("POST", `/wallets/${walletId}/rpc`, {
       method: "eth_signTransaction",
       params: { transaction },
     });
+    const signed = result?.data?.signed_transaction || result?.signed_transaction;
+    if (signed) {
+      // Privy signs exactly what it is given (an EIP-1559 transaction with no
+      // access list), so every field must come back unchanged.
+      assertEvmSignedMatches(signed, {
+        chainId: transaction.chain_id,
+        nonce: transaction.nonce,
+        gasLimit: transaction.gas_limit,
+        maxFeePerGas: transaction.max_fee_per_gas,
+        maxPriorityFeePerGas: transaction.max_priority_fee_per_gas,
+        to: transaction.to,
+        value: transaction.value,
+        data: transaction.data,
+        type: 2,
+        accessList: [],
+      }, { from, label });
+    }
+    return result;
   }
 
-  async signSolanaTransaction(walletId, transactionBase64) {
-    return this._request("POST", `/wallets/${walletId}/rpc`, {
+  /**
+   * Sign (never send) a Solana transaction. The returned bytes are checked to
+   * carry the same message, signed by `signer`; throws SIGNED_TX_MISMATCH
+   * otherwise. A response without signed bytes is returned as is.
+   *
+   * @param {string} walletId
+   * @param {string} transactionBase64
+   * @param {object} opts
+   * @param {string} opts.signer - the wallet's base58 address
+   * @param {string} [opts.label] - what the transaction is, for errors
+   */
+  async signSolanaTransaction(walletId, transactionBase64, { signer, label } = {}) {
+    if (!signer) throw new Error("signSolanaTransaction: the wallet address (signer) is required to check the signed transaction");
+    const result = await this._request("POST", `/wallets/${walletId}/rpc`, {
       method: "signTransaction",
       chain_type: "solana",
       params: { transaction: transactionBase64, encoding: "base64" },
     });
+    const signed = result?.data?.signed_transaction || result?.signed_transaction;
+    if (signed) assertSolanaSignedMatches(transactionBase64, signed, { signer, label });
+    return result;
   }
 
   async signSolanaMessage(walletId, messageBuffer) {
@@ -496,7 +545,7 @@ async function signPrivySolanaRequirement(client, solWallet, requirement, url, o
     );
 
     const signed = await signWithSessionCharge(svmDecision, async () => {
-      const signResult = await client.signSolanaTransaction(solWallet.id, txBase64);
+      const signResult = await client.signSolanaTransaction(solWallet.id, txBase64, { signer: solWallet.address, label: 'x402 payment transaction' });
       const signedTx = signResult.data?.signed_transaction || signResult.signed_transaction;
       if (!signedTx) throw new Error('Privy returned no signed transaction');
 

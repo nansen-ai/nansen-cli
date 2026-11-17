@@ -117,6 +117,14 @@ import {
 } from '../wallet.js';
 import * as wcTrading from '../walletconnect-trading.js';
 import { parseTransactionMessage } from '../solana-tx.js';
+import {
+  TEST_EVM_ADDRESS,
+  TEST_SOL_ADDRESS,
+  TEST_SOL_KEY,
+  TEST_SOL_PUBKEY_BYTES,
+  privySignedEvm,
+  privySignedSolana,
+} from './fixtures/remote-signers.js';
 
 let originalHome;
 let tempDir;
@@ -133,15 +141,23 @@ const FIXTURE_SOL_SIG = base58Encode(Buffer.alloc(64, 7));
 const FIXTURE_EVM_HASH = '0x' + 'a7'.repeat(32);
 
 // A Solana transaction id is its first signature, and the CLI confirms the one
-// it reads from the bytes it signed. solanaSignedTxWithSig builds signed bytes
-// carrying `sig`, for signer stubs (Privy); solanaSigOf reads it back, for
-// execute stubs answering a transaction the local key signed.
-function solanaSignedTxWithSig(sig) {
-  return Buffer.concat([Buffer.from([0x01]), base58Decode(sig)]).toString('base64');
-}
+// it reads from the bytes it signed. solanaSigOf reads it back, for execute
+// stubs answering a transaction a signer produced.
 function solanaSigOf(signedTxBase64) {
   return base58Encode(Buffer.from(signedTxBase64, 'base64').subarray(1, 65));
 }
+
+// A one-instruction Solana transaction whose fee payer is the Privy test
+// wallet, and the signature the Privy stub (privySignedSolana) gives it.
+function privySolanaTx() {
+  const messageBytes = Buffer.from([
+    0x01, 0x00, 0x01, 0x02,
+    ...TEST_SOL_PUBKEY_BYTES, ...Buffer.alloc(32), ...Buffer.alloc(32),
+    0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00,
+  ]);
+  return Buffer.concat([Buffer.from([0x01]), Buffer.alloc(64), messageBytes]).toString('base64');
+}
+const PRIVY_SOL_SIG = solanaSigOf(signSolanaTransaction(privySolanaTx(), TEST_SOL_KEY));
 
 // A Solana swap is only reported successful once getSignatureStatuses says the
 // signature is confirmed. Tests about something else call this after stubbing
@@ -2098,14 +2114,14 @@ describe('EVM swap gas zero fallback (execute)', () => {
       if (urlStr.includes('privy.io') && opts?.method === 'GET') {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ id: 'wl_evm_1', address: '0xPrivyAddr', chain_type: 'ethereum' }),
+          json: () => Promise.resolve({ id: 'wl_evm_1', address: TEST_EVM_ADDRESS, chain_type: 'ethereum' }),
         });
       }
       if (urlStr.includes('privy.io') && opts?.method === 'POST') {
         if (body.params?.transaction) privyTransactions.push(body.params.transaction);
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ data: { signed_transaction: '0xdeadbeef01' } }),
+          json: () => Promise.resolve({ data: { signed_transaction: privySignedEvm(JSON.parse(opts.body)) } }),
         });
       }
       if (urlStr.includes('trading-api') && isExecutePath(urlStr)) {
@@ -2628,7 +2644,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
     }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
       swapMode: 'exactIn',
       request: evmIntent({
-        walletAddress: '0xPrivyAddr',
+        walletAddress: TEST_EVM_ADDRESS,
         fromToken: BASE_ETH,
         toToken: BASE_USDC,
         amount: '1000000000000000000',
@@ -2677,7 +2693,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
     const quoteId = saveQuote({ success: true, quotes: [divergentNativeQuote()] }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
       swapMode: 'exactIn',
       request: evmIntent({
-        walletAddress: '0xPrivyAddr',
+        walletAddress: TEST_EVM_ADDRESS,
         fromToken: BASE_ETH,
         toToken: BASE_USDC,
         amount: '1000000000000000000',
@@ -2772,7 +2788,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
     }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
       swapMode: 'exactIn',
       request: evmIntent({
-        walletAddress: '0xPrivyAddr',
+        walletAddress: TEST_EVM_ADDRESS,
         fromToken: BASE_ETH,
         toToken: BASE_USDC,
         amount: '1000000000000000000',
@@ -2885,7 +2901,7 @@ describe('EVM swap gas zero fallback (execute)', () => {
     process.env.PRIVY_APP_SECRET = 'test-secret';
     __setAllowanceTimingForTests({ verifyDelayMs: 0, propagationDelayMs: 0 });
     const { executeBodies, privyTransactions } = stubGasFallbackFetch({ allowance: 0n });
-    const quoteId = highFeeErc20Quote('0xPrivyAddr', 'privy', [{ evm: 'wl_evm_1', solana: 'wl_sol_1' }]);
+    const quoteId = highFeeErc20Quote(TEST_EVM_ADDRESS, 'privy', [{ evm: 'wl_evm_1', solana: 'wl_sol_1' }]);
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (msg) => logs.push(msg), exit: () => {} });
@@ -2968,7 +2984,7 @@ describe('Privy execute support', () => {
     }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
       swapMode: 'exactIn',
       request: evmIntent({
-        walletAddress: '0xPrivyAddr',
+        walletAddress: TEST_EVM_ADDRESS,
         fromToken: BASE_ETH,
         toToken: BASE_USDC,
         amount: '1000000000000000000',
@@ -2982,14 +2998,14 @@ describe('Privy execute support', () => {
       if (urlStr.includes('privy.io') && opts?.method === 'GET') {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ id: 'wl_evm_1', address: '0xPrivyAddr', chain_type: 'ethereum' }),
+          json: () => Promise.resolve({ id: 'wl_evm_1', address: TEST_EVM_ADDRESS, chain_type: 'ethereum' }),
         });
       }
       // Privy signEvmTransaction
       if (urlStr.includes('privy.io') && opts?.method === 'POST') {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ data: { signed_transaction: '0xdeadbeef01' } }),
+          json: () => Promise.resolve({ data: { signed_transaction: privySignedEvm(JSON.parse(opts.body)) } }),
         });
       }
       // RPC call (nonce, simulation, waitForReceipt)
@@ -3053,7 +3069,7 @@ describe('Privy execute support', () => {
     }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
       swapMode: 'exactIn',
       request: evmIntent({
-        walletAddress: '0xPrivyAddr',
+        walletAddress: TEST_EVM_ADDRESS,
         fromToken: BASE_ETH,
         toToken: BASE_USDC,
         amount: '1000000000000000000',
@@ -3067,14 +3083,14 @@ describe('Privy execute support', () => {
       if (urlStr.includes('privy.io') && opts?.method === 'GET') {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ id: 'wl_evm_1', address: '0xPrivyAddr', chain_type: 'ethereum' }),
+          json: () => Promise.resolve({ id: 'wl_evm_1', address: TEST_EVM_ADDRESS, chain_type: 'ethereum' }),
         });
       }
       if (urlStr.includes('privy.io') && opts?.method === 'POST') {
         privySignCalls.push(JSON.parse(opts.body));
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ data: { signed_transaction: '0xdeadbeef01' } }),
+          json: () => Promise.resolve({ data: { signed_transaction: privySignedEvm(JSON.parse(opts.body)) } }),
         });
       }
       if (urlStr.includes('base') || urlStr.includes('mainnet')) {
@@ -3110,11 +3126,10 @@ describe('Privy execute support', () => {
     expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
   });
 
-  it('aborts (does not try the next quote) when the signed tx cannot be hashed after a successful broadcast', async () => {
-    // The wallet (here Privy) hands back malformed signed bytes; /execute reports
-    // Success, but we then cannot derive a local hash for what we just broadcast.
-    // That is INVALID_SIGNED_TX, and post-broadcast it must be fatal — trying the
-    // next quote would broadcast a SECOND swap while the first's fate is unknown.
+  it('refuses malformed signed bytes from Privy before broadcasting, and tries no other quote', async () => {
+    // Privy hands back bytes that are not a transaction. They are checked
+    // against the transaction sent for signing before anything is broadcast, so
+    // nothing reaches /execute, and the next quote (same signer) is not tried.
     const quoteId = saveQuote({
       success: true,
       quotes: [
@@ -3132,7 +3147,7 @@ describe('Privy execute support', () => {
     }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
       swapMode: 'exactIn',
       request: evmIntent({
-        walletAddress: '0xPrivyAddr', fromToken: BASE_ETH, toToken: BASE_USDC,
+        walletAddress: TEST_EVM_ADDRESS, fromToken: BASE_ETH, toToken: BASE_USDC,
         amount: '1000000000000000000', maxInputAmount: '1000000000000000000',
       }),
     });
@@ -3141,7 +3156,7 @@ describe('Privy execute support', () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
       if (urlStr.includes('privy.io') && opts?.method === 'GET') {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_evm_1', address: '0xPrivyAddr', chain_type: 'ethereum' }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_evm_1', address: TEST_EVM_ADDRESS, chain_type: 'ethereum' }) });
       }
       // Privy returns bytes that are NOT valid hex.
       if (urlStr.includes('privy.io') && opts?.method === 'POST') {
@@ -3167,11 +3182,9 @@ describe('Privy execute support', () => {
     delete process.env.NANSEN_WALLET_PASSWORD;
 
     await expect(cmds.execute([], screenApi, {}, { quote: quoteId }))
-      .rejects.toMatchObject({ code: 'INVALID_SIGNED_TX' });
+      .rejects.toMatchObject({ code: 'SIGNED_TX_MISMATCH', message: expect.stringMatching(/swap transaction.*do not decode.*Nothing was broadcast/) });
 
-    // Exactly one broadcast, and the derivation failure reached the user rather
-    // than being swallowed into ALL_QUOTES_FAILED after a second broadcast.
-    expect(executeBodies).toHaveLength(1);
+    expect(executeBodies).toHaveLength(0);
     expect(logs.some(l => l.includes('Trying next quote'))).toBe(false);
     expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
   });
@@ -3186,13 +3199,13 @@ describe('Privy execute support', () => {
         inAmount: '1000000000',
         outAmount: '50000000',
         // A valid, parseable benign transaction (one non-SPL instruction) — the
-        // pre-signing safety check now parses this before Privy signs it.
-        transaction: 'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAECAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAQEBAAEA',
+        // pre-signing safety check parses this before Privy signs it.
+        transaction: privySolanaTx(),
         metadata: { requestId: 'req-123' },
       }],
     }, 'solana', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
       swapMode: 'exactIn',
-      request: solanaIntent({ walletAddress: 'SolPrivyAddr1111111111111111111111111111' }),
+      request: solanaIntent({ walletAddress: TEST_SOL_ADDRESS }),
     });
 
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
@@ -3202,21 +3215,21 @@ describe('Privy execute support', () => {
       if (urlStr.includes('privy.io') && opts?.method === 'GET') {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ id: 'wl_sol_1', address: 'SolPrivyAddr1111111111111111111111111111', chain_type: 'solana' }),
+          json: () => Promise.resolve({ id: 'wl_sol_1', address: TEST_SOL_ADDRESS, chain_type: 'solana' }),
         });
       }
       // Privy signSolanaTransaction (POST)
       if (urlStr.includes('privy.io')) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ data: { signed_transaction: solanaSignedTxWithSig(FIXTURE_SOL_SIG) } }),
+          json: () => Promise.resolve({ data: { signed_transaction: privySignedSolana(JSON.parse(opts.body)) } }),
         });
       }
       // Trading API executeTransaction
       if (urlStr.includes('trading-api')) {
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: FIXTURE_SOL_SIG, chainType: 'solana', broadcaster: 'test' })),
+          text: () => Promise.resolve(JSON.stringify({ status: 'Success', signature: PRIVY_SOL_SIG, chainType: 'solana', broadcaster: 'test' })),
         });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
@@ -3258,7 +3271,7 @@ describe('Privy execute support', () => {
       }],
     }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
       swapMode: 'exactIn',
-      request: evmIntent({ walletAddress: '0xPrivyAddr', fromToken: BASE_USDC, toToken: OUT_TOKEN }),
+      request: evmIntent({ walletAddress: TEST_EVM_ADDRESS, fromToken: BASE_USDC, toToken: OUT_TOKEN }),
     });
 
     const rpcCalls = [];
@@ -3271,14 +3284,14 @@ describe('Privy execute support', () => {
       if (urlStr.includes('privy.io') && opts?.method === 'GET') {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ id: 'wl_evm_1', address: '0xPrivyAddr', chain_type: 'ethereum' }),
+          json: () => Promise.resolve({ id: 'wl_evm_1', address: TEST_EVM_ADDRESS, chain_type: 'ethereum' }),
         });
       }
       // Privy signEvmTransaction
       if (urlStr.includes('privy.io') && opts?.method === 'POST') {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ data: { signed_transaction: '0xdeadbeef02' } }),
+          json: () => Promise.resolve({ data: { signed_transaction: privySignedEvm(JSON.parse(opts.body)) } }),
         });
       }
       // RPC calls
@@ -3351,7 +3364,7 @@ describe('Privy execute support', () => {
     }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
       swapMode: 'exactIn',
       request: evmIntent({
-        walletAddress: '0xPrivyAddr',
+        walletAddress: TEST_EVM_ADDRESS,
         fromToken: BASE_USDC,
         toToken: OUT_TOKEN,
         amount: '100000',
@@ -3372,7 +3385,7 @@ describe('Privy execute support', () => {
       if (urlStr.includes('privy.io') && opts?.method === 'GET') {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ id: 'wl_evm_1', address: '0xPrivyAddr', chain_type: 'ethereum' }),
+          json: () => Promise.resolve({ id: 'wl_evm_1', address: TEST_EVM_ADDRESS, chain_type: 'ethereum' }),
         });
       }
       if (urlStr.includes('privy.io') && opts?.method === 'POST') {
@@ -3430,7 +3443,7 @@ describe('Privy execute support', () => {
     }, 'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
       swapMode: 'exactIn',
       request: evmIntent({
-        walletAddress: '0xPrivyAddr',
+        walletAddress: TEST_EVM_ADDRESS,
         fromToken: BASE_USDC,
         toToken: OUT_TOKEN,
         amount: '100000',
@@ -3459,12 +3472,12 @@ describe('Privy execute support', () => {
       if (urlStr.includes('privy.io') && opts?.method === 'GET') {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ id: 'wl_evm_1', address: '0xPrivyAddr', chain_type: 'ethereum' }),
+          json: () => Promise.resolve({ id: 'wl_evm_1', address: TEST_EVM_ADDRESS, chain_type: 'ethereum' }),
         });
       }
       if (urlStr.includes('privy.io') && opts?.method === 'POST') {
         privyPostCount++;
-        const data = privyPostCount === 1 ? { signed_transaction: '0xdeadbeef03' } : {};
+        const data = privyPostCount === 1 ? { signed_transaction: privySignedEvm(JSON.parse(opts.body)) } : {};
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ data }) });
       }
       if (urlStr.includes('base') || urlStr.includes('mainnet')) {
@@ -7176,7 +7189,7 @@ describe('exactOut max-input enforcement (adversarial)', () => {
       let body = {};
       try { body = opts?.body ? JSON.parse(opts.body) : {}; } catch { /* non-JSON */ }
       if (urlStr.includes('privy.io') && opts?.method === 'GET') {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_evm_1', address: '0xPrivyAddr', chain_type: 'ethereum' }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_evm_1', address: TEST_EVM_ADDRESS, chain_type: 'ethereum' }) });
       }
       if (body.method === 'eth_getCode') {
         return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x6080604052' })) });
@@ -7222,7 +7235,7 @@ describe('exactOut max-input enforcement (adversarial)', () => {
       vi.stubGlobal('fetch', trackingFetch(calls));
 
       const quoteId = saveQuote({ success: true, quotes: [overpayingExactOutQuote(inputMint, native)] },
-        'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, exactOutRequestMeta(inputMint, '0xPrivyAddr'));
+        'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, exactOutRequestMeta(inputMint, TEST_EVM_ADDRESS));
 
       const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
 
@@ -7315,7 +7328,7 @@ describe('exactOut max-input enforcement (adversarial)', () => {
     vi.stubGlobal('fetch', trackingFetch(calls));
 
     const quoteId = saveQuote({ success: true, quotes: [emptyInputAmountQuote()] },
-      'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, exactOutRequestMeta(ERC20_IN, '0xPrivyAddr'));
+      'base', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, exactOutRequestMeta(ERC20_IN, TEST_EVM_ADDRESS));
 
     const logs = [];
     const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
@@ -7729,7 +7742,7 @@ describe('Solana intent binding (adversarial)', () => {
       const urlStr = typeof url === 'string' ? url : url.toString();
       calls.push({ url: urlStr, method: opts?.method });
       if (urlStr.includes('privy.io') && opts?.method === 'GET') {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: 'SolPrivyAddr1111111111111111111111111111', chain_type: 'solana' }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: TEST_SOL_ADDRESS, chain_type: 'solana' }) });
       }
       return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null })), json: () => Promise.resolve({}) });
     }));
@@ -7746,7 +7759,7 @@ describe('Solana intent binding (adversarial)', () => {
     }, 'solana', 'privy', { evm: 'wl_evm_1', solana: 'wl_sol_1' }, null, {
       swapMode: 'exactIn',
       request: solanaIntent({
-        walletAddress: 'SolPrivyAddr1111111111111111111111111111',
+        walletAddress: TEST_SOL_ADDRESS,
         amount: '1000000000',
         maxInputAmount: '1000000000',
       }),
@@ -9997,14 +10010,7 @@ describe('standard execution route — swap command flow', () => {
   it('prints a Signature line (not Tx Hash) for a Solana standard-route success', async () => {
     // Solana via Privy keeps the local wallet out of the picture, isolating the
     // output label on the normalised response.
-    const sigCount = Buffer.from([0x01]);
-    const emptySig = Buffer.alloc(64);
-    const messageBytes = Buffer.from([
-      0x01, 0x00, 0x01, 0x02,
-      ...Buffer.alloc(32), ...Buffer.alloc(32), ...Buffer.alloc(32),
-      0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00,
-    ]);
-    const txBase64 = Buffer.concat([sigCount, emptySig, messageBytes]).toString('base64');
+    const txBase64 = privySolanaTx();
 
     const quoteId = saveQuote(
       { success: true, metadata: { quoteId: 'backend-quote-id' }, quotes: [{ aggregator: 'jupiter', inputMint: SOL_MINT, outputMint: SOL_USDC, inAmount: '1000000000', outAmount: '50000000', transaction: txBase64, metadata: { requestId: 'req-1' } }] },
@@ -10012,19 +10018,19 @@ describe('standard execution route — swap command flow', () => {
       'privy',
       { evm: 'wl_evm_1', solana: 'wl_sol_1' },
       null,
-      { swapMode: 'exactIn', request: solanaIntent({ walletAddress: 'SolPrivyAddr1111111111111111111111111111' }) },
+      { swapMode: 'exactIn', request: solanaIntent({ walletAddress: TEST_SOL_ADDRESS }) },
     );
 
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
       if (urlStr.startsWith('https://api.privy.io/') && opts?.method === 'GET') {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: 'SolPrivyAddr1111111111111111111111111111', chain_type: 'solana' }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: TEST_SOL_ADDRESS, chain_type: 'solana' }) });
       }
       if (urlStr.startsWith('https://api.privy.io/')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: solanaSignedTxWithSig('4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj') } }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: privySignedSolana(JSON.parse(opts.body)) } }) });
       }
       if (urlStr.includes('trading-api') && urlStr.endsWith('/execution/standard')) {
-        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ success: true, txHash: '4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj' })) });
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ success: true, txHash: PRIVY_SOL_SIG })) });
       }
       return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({})) });
     }));
@@ -10037,7 +10043,7 @@ describe('standard execution route — swap command flow', () => {
     confirmSolanaSignatures();
     await cmds.execute([], screenApi, {}, { quote: quoteId });
 
-    expect(logs.some(l => l.includes('Signature:') && l.includes('4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj'))).toBe(true);
+    expect(logs.some(l => l.includes('Signature:') && l.includes(PRIVY_SOL_SIG))).toBe(true);
     expect(logs.some(l => l.includes('Tx Hash:'))).toBe(false);
   });
 
@@ -10045,14 +10051,7 @@ describe('standard execution route — swap command flow', () => {
   // closed before its signature poll: a node-rejected broadcast must never print
   // the success banner and exit 0 for a transaction that may not have propagated.
   it('fails closed on a Solana node-rejected broadcast instead of reporting success', async () => {
-    const sigCount = Buffer.from([0x01]);
-    const emptySig = Buffer.alloc(64);
-    const messageBytes = Buffer.from([
-      0x01, 0x00, 0x01, 0x02,
-      ...Buffer.alloc(32), ...Buffer.alloc(32), ...Buffer.alloc(32),
-      0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00,
-    ]);
-    const txBase64 = Buffer.concat([sigCount, emptySig, messageBytes]).toString('base64');
+    const txBase64 = privySolanaTx();
 
     const quoteId = saveQuote(
       { success: true, metadata: { quoteId: 'backend-quote-id' }, quotes: [{ aggregator: 'jupiter', inputMint: SOL_MINT, outputMint: SOL_USDC, inAmount: '1000000000', outAmount: '50000000', transaction: txBase64, metadata: { requestId: 'req-1' } }] },
@@ -10060,19 +10059,19 @@ describe('standard execution route — swap command flow', () => {
       'privy',
       { evm: 'wl_evm_1', solana: 'wl_sol_1' },
       null,
-      { swapMode: 'exactIn', request: solanaIntent({ walletAddress: 'SolPrivyAddr1111111111111111111111111111' }) },
+      { swapMode: 'exactIn', request: solanaIntent({ walletAddress: TEST_SOL_ADDRESS }) },
     );
 
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
       if (urlStr.startsWith('https://api.privy.io/') && opts?.method === 'GET') {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: 'SolPrivyAddr1111111111111111111111111111', chain_type: 'solana' }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: TEST_SOL_ADDRESS, chain_type: 'solana' }) });
       }
       if (urlStr.startsWith('https://api.privy.io/')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: 'c2lnbmVkVHg=' } }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: privySignedSolana(JSON.parse(opts.body)) } }) });
       }
       if (urlStr.includes('trading-api') && urlStr.endsWith('/execution/standard')) {
-        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ success: true, txHash: '4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj', broadcastSucceeded: false, broadcastError: 'node rejected' })) });
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ success: true, txHash: PRIVY_SOL_SIG, broadcastSucceeded: false, broadcastError: 'node rejected' })) });
       }
       return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({})) });
     }));
@@ -10090,7 +10089,7 @@ describe('standard execution route — swap command flow', () => {
     // user can check the explorer.
     expect(logs.some(l => l.includes('Transaction successful'))).toBe(false);
     expect(logs.some(l => l.includes('may still propagate'))).toBe(true);
-    expect(logs.some(l => l.includes('4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj'))).toBe(true);
+    expect(logs.some(l => l.includes(PRIVY_SOL_SIG))).toBe(true);
     // The quote stays spent — this path must never invite a re-execute.
     expect(() => loadQuote(quoteId)).toThrow();
   });
@@ -10474,17 +10473,19 @@ describe('standard execution route — swap command flow', () => {
 // lands can still fail, so the CLI must read the signature status before it
 // prints the success banner. Same three outcomes as the EVM receipt poll.
 describe('Solana swap: on-chain confirmation after broadcast', () => {
-  const SIG = '4WtRY1XgSpkCoEzqWeFhLFmseb4dqGeaSWDj46pcp5mA7zGBukhW7kXHNquUaLoWX52pWEtRRn5en4JfZXYkbTj';
-  const PRIVY_SOL_ADDR = 'SolPrivyAddr1111111111111111111111111111';
+  // The Privy stub signs with the test key, so the signature is the real
+  // (deterministic) ed25519 signature of solanaTx() by the test wallet.
+  const PRIVY_SOL_ADDR = TEST_SOL_ADDRESS;
 
   function solanaTx() {
     const messageBytes = Buffer.from([
       0x01, 0x00, 0x01, 0x02,
-      ...Buffer.alloc(32), ...Buffer.alloc(32), ...Buffer.alloc(32),
+      ...TEST_SOL_PUBKEY_BYTES, ...Buffer.alloc(32), ...Buffer.alloc(32),
       0x01, 0x01, 0x01, 0x00, 0x04, 0x02, 0x00, 0x00, 0x00,
     ]);
     return Buffer.concat([Buffer.from([0x01]), Buffer.alloc(64), messageBytes]).toString('base64');
   }
+  const SIG = solanaSigOf(signSolanaTransaction(solanaTx(), TEST_SOL_KEY));
 
   // Two candidates, so a test can prove the loop never signs the second one.
   function saveTwoCandidateQuote() {
@@ -10501,9 +10502,9 @@ describe('Solana swap: on-chain confirmation after broadcast', () => {
 
   // `statuses` is the sequence getSignatureStatuses returns (the last entry
   // repeats). An Error entry makes that poll fail at the transport.
-  // `signedSig` is the signature in the bytes Privy signs; the execute API
-  // always reports SIG.
-  function stubFetch({ route, statuses, signedSig = SIG }) {
+  // `reportedSig` is the signature the execute API reports; Privy always
+  // signs, so the signed bytes carry SIG.
+  function stubFetch({ route, statuses, reportedSig = SIG }) {
     const executeCalls = [];
     const statusCalls = [];
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
@@ -10512,13 +10513,13 @@ describe('Solana swap: on-chain confirmation after broadcast', () => {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'wl_sol_1', address: PRIVY_SOL_ADDR, chain_type: 'solana' }) });
       }
       if (urlStr.startsWith('https://api.privy.io/')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: solanaSignedTxWithSig(signedSig) } }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { signed_transaction: privySignedSolana(JSON.parse(opts.body)) } }) });
       }
       if (urlStr.includes('trading-api') && (urlStr.endsWith('/execution/standard') || urlStr.endsWith('/execute'))) {
         executeCalls.push(urlStr);
         const body = route === 'standard'
-          ? { success: true, txHash: SIG }
-          : { status: 'Success', signature: SIG, chainType: 'solana', broadcaster: 'jupiter' };
+          ? { success: true, txHash: reportedSig }
+          : { status: 'Success', signature: reportedSig, chainType: 'solana', broadcaster: 'jupiter' };
         return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) });
       }
       const body = opts?.body ? JSON.parse(opts.body) : {};
@@ -10621,9 +10622,9 @@ describe('Solana swap: on-chain confirmation after broadcast', () => {
     });
 
     it('refuses a reported signature that is not the one this CLI signed, without polling it', async () => {
-      // The API reports SIG, which may well be confirmed, but the transaction
-      // Privy signed carries a different signature.
-      const { executeCalls, statusCalls } = stubFetch({ route, statuses: [CONFIRMED_SOL_STATUS], signedSig: FIXTURE_SOL_SIG });
+      // The API reports FIXTURE_SOL_SIG, which may well be confirmed, but the
+      // transaction Privy signed carries SIG.
+      const { executeCalls, statusCalls } = stubFetch({ route, statuses: [CONFIRMED_SOL_STATUS], reportedSig: FIXTURE_SOL_SIG });
       const quoteId = saveTwoCandidateQuote();
       const logs = [];
       const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });

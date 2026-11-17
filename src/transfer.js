@@ -810,7 +810,7 @@ async function sendTokensViaPrivy({ to, amount, chain, token, max, dryRun, walle
       to, amount: amountRaw, amountStr: amount, token, fromAddress,
     });
 
-    const signResult = await client.signSolanaTransaction(walletId, unsignedTransaction);
+    const signResult = await client.signSolanaTransaction(walletId, unsignedTransaction, { signer: fromAddress, label: 'transfer transaction' });
     const signedTx = signResult.data?.signed_transaction || signResult.signed_transaction;
     const txHash = await broadcastTransaction(signedTx, chain, token);
     const confirmation = await waitForSolanaConfirmation(CHAIN_RPCS.solana, txHash);

@@ -30,10 +30,12 @@ import {
   updateOrder,
   cancelOrderRequest,
   confirmCancelOrder,
+  signTransaction,
 } from '../limit-order.js';
 import { createWallet, base58Decode, base58Encode, generateSolanaWallet } from '../wallet.js';
 import { SIMULATION_RPCS } from '../rpc-urls.js';
 import { PrivyClient } from '../privy.js';
+import { TEST_SOL_ADDRESS, TEST_SOL_PUBKEY_BYTES, privySignedSolana } from './fixtures/remote-signers.js';
 
 const TEST_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const TEST_WSOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -442,6 +444,38 @@ describe('signSolanaMessage', () => {
   it('throws for unsupported wallet type', async () => {
     await expect(signSolanaMessage(Buffer.from('test'), 'unknown', {}))
       .rejects.toThrow('Unsupported wallet type');
+  });
+});
+
+// ============= Transaction signing (remote signers) =============
+
+describe('signTransaction via Privy', () => {
+  // One instruction; fee payer is the test wallet.
+  const tx = (blockhashByte = 3) => Buffer.concat([
+    Buffer.from([1]), Buffer.alloc(64),
+    Buffer.from([1, 0, 1, 2]), TEST_SOL_PUBKEY_BYTES, Buffer.alloc(32, 2), Buffer.alloc(32, blockhashByte), Buffer.from([1, 1, 1, 0, 1, 0]),
+  ]).toString('base64');
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  function privyReturning(sign) {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (_url, opts) => ({
+      ok: true,
+      json: async () => ({ data: { signed_transaction: sign(JSON.parse(opts.body)) } }),
+    })));
+    return { privyClient: new PrivyClient('app-id', 'app-secret'), walletId: 'wl_sol_1' };
+  }
+
+  it('returns the signed deposit when Privy signed what it was sent', async () => {
+    const walletInfo = privyReturning(privySignedSolana);
+    const signed = await signTransaction(tx(), 'privy', walletInfo, { signer: TEST_SOL_ADDRESS });
+    expect(signed).toBe(privySignedSolana({ params: { transaction: tx() } }));
+  });
+
+  it('refuses a different transaction from Privy', async () => {
+    const walletInfo = privyReturning(() => privySignedSolana({ params: { transaction: tx(9) } }));
+    await expect(signTransaction(tx(), 'privy', walletInfo, { signer: TEST_SOL_ADDRESS, label: 'limit-order deposit transaction' }))
+      .rejects.toMatchObject({ code: 'SIGNED_TX_MISMATCH', message: expect.stringMatching(/limit-order deposit transaction.*message bytes differ/) });
   });
 });
 

@@ -387,7 +387,7 @@ function getLocalWalletPrivateKey(walletName) {
  * Sign a Solana transaction (base64) using the appropriate wallet type.
  * Returns base64-encoded signed transaction.
  */
-export async function signTransaction(txBase64, walletType, walletInfo) {
+export async function signTransaction(txBase64, walletType, walletInfo, { signer, label = 'limit-order transaction' } = {}) {
   if (walletType === 'local') {
     return signSolanaTransaction(txBase64, walletInfo.privateKeyHex);
   }
@@ -396,6 +396,7 @@ export async function signTransaction(txBase64, walletType, walletInfo) {
     const result = await walletInfo.privyClient.signSolanaTransaction(
       walletInfo.walletId,
       txBase64,
+      { signer, label },
     );
     return result.data?.signed_transaction || result.signed_transaction;
   }
@@ -909,7 +910,7 @@ EXAMPLES:
         });
         if (!depositOutcome.proceed) throw new Error(`Refusing to sign deposit — ${depositOutcome.reason}`);
         log('  Signing deposit transaction...');
-        const signedDepositTx = await signTransaction(deposit.transaction, walletType, walletInfo);
+        const signedDepositTx = await signTransaction(deposit.transaction, walletType, walletInfo, { signer: pubkey, label: 'limit-order deposit transaction' });
 
         // 6. Create order
         log('  Submitting order...');
@@ -1151,7 +1152,7 @@ EXAMPLES:
         });
         if (!cancelOutcome.proceed) throw new Error(`Refusing to sign withdrawal — ${cancelOutcome.reason}`);
         log('  Signing withdrawal transaction...');
-        const signedTx = await signTransaction(cancelResult.transaction, walletType, walletInfo);
+        const signedTx = await signTransaction(cancelResult.transaction, walletType, walletInfo, { signer: pubkey, label: 'limit-order cancel transaction' });
 
         // 5. Confirm cancellation
         log('  Confirming cancellation...');

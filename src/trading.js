@@ -4002,7 +4002,7 @@ EXAMPLES:
               }
 
               log('  Signing Solana transaction via Privy...');
-              const signResult = await privyClient.signSolanaTransaction(solWalletId, txBase64);
+              const signResult = await privyClient.signSolanaTransaction(solWalletId, txBase64, { signer: walletAddress, label: 'swap transaction' });
               signedTransaction = signResult.data?.signed_transaction || signResult.signed_transaction;
               requestId = currentQuote.metadata?.requestId;
 
@@ -4110,7 +4110,7 @@ EXAMPLES:
                       gas_limit: toHex(APPROVAL_GAS_LIMIT),
                       max_fee_per_gas: toHex(approvalMaxFee),
                       max_priority_fee_per_gas: toHex(approvalPriorityFee),
-                    });
+                    }, { from: walletAddress, label: 'allowance-revoke transaction' });
                     const signedRevoke = revokeSignResult.data?.signed_transaction || revokeSignResult.signed_transaction;
                     if (!signedRevoke) {
                       log(`  ❌ Allowance revoke failed for ${quoteName}: Privy returned no signed transaction`);
@@ -4166,7 +4166,7 @@ EXAMPLES:
                     gas_limit: toHex(APPROVAL_GAS_LIMIT),
                     max_fee_per_gas: toHex(approvalMaxFee),
                     max_priority_fee_per_gas: toHex(approvalPriorityFee),
-                  });
+                  }, { from: walletAddress, label: 'approval transaction' });
                   const signedApproval = approvalSignResult.data?.signed_transaction || approvalSignResult.signed_transaction;
                   if (!signedApproval) {
                     const revokedMsg = shouldRevoke
@@ -4265,7 +4265,7 @@ EXAMPLES:
                 gas_limit: toHex(finalGas),
                 max_fee_per_gas: toHex(maxFee),
                 max_priority_fee_per_gas: toHex(priorityFee),
-              });
+              }, { from: walletAddress, label: 'swap transaction' });
               signedTransaction = signResult.data?.signed_transaction || signResult.signed_transaction;
 
             } else if (chainType === 'solana') {
