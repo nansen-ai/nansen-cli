@@ -206,11 +206,24 @@ function extractBalance(kind, info) {
   }
 }
 
-/** The parsed SPL token-account fields of a jsonParsed account, or null. */
+/**
+ * The parsed SPL token-account fields of a jsonParsed account, or null if it
+ * isn't one. A token-account snapshot missing its mint, owner or amount throws:
+ * read as an empty account, its real balance would count as swap output, or it
+ * would drop out of tracking.
+ */
 function tokenAccountFields(info) {
   const parsed = info?.data?.parsed;
-  if (parsed?.type !== 'account' || !parsed.info || typeof parsed.info !== 'object') return null;
-  return parsed.info;
+  if (parsed?.type !== 'account') return null;
+  const fields = parsed.info;
+  if (
+    !fields || typeof fields !== 'object'
+    || typeof fields.mint !== 'string' || typeof fields.owner !== 'string'
+    || typeof fields.tokenAmount?.amount !== 'string' || !/^\d+$/.test(fields.tokenAmount.amount)
+  ) {
+    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned an incomplete SPL token account; cannot verify the outcome.');
+  }
+  return fields;
 }
 
 function controlChanged(detail) {

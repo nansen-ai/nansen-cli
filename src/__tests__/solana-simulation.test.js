@@ -583,6 +583,26 @@ describe('solana-simulation', () => {
       await expect(run({ pre: basePre(), post })).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
     });
 
+    it('fails closed when the output token account pre-state has no tokenAmount', async () => {
+      // Read as 0, the 1,000,000 it already holds would count as swap output.
+      const pre = basePre();
+      pre[ataOut] = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 1_000_000 });
+      delete pre[ataOut].data.parsed.info.tokenAmount;
+      await expect(run({ pre, post: basePost() })).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
+    it('fails closed when a wallet token account post-state has no tokenAmount', async () => {
+      const post = basePost();
+      delete post[ataOut].data.parsed.info.tokenAmount;
+      await expect(run({ pre: basePre(), post })).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
+    it('fails closed when a writable token account pre-state has no owner', async () => {
+      const pre = basePre();
+      delete pre[ataOut].data.parsed.info.owner;
+      await expect(run({ pre, post: basePost() })).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
     it('refuses a wallet token account the tx creates with a delegate already set', async () => {
       const pre = basePre();
       delete pre[ataOut]; // first-time buy: the output ATA does not exist yet
