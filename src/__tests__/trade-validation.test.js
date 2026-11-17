@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { validateQuoteInput, fetchNativeBalance, fetchTokenBalance, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertInputWithinMax, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, checkSolanaFeeBalance, assertSolanaSwapOutcome, assertLimitOrderDepositOutcome, assertLimitOrderCancelOutcome, assertLimitOrderDepositDestination, MAX_UINT256, needsAllowanceRevoke } from '../trade-validation.js';
+import { validateQuoteInput, fetchNativeBalance, fetchTokenBalance, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertInputWithinMax, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, checkSolanaFeeBalance, assertSolanaSwapOutcome, assertLimitOrderDepositOutcome, assertLimitOrderCancelOutcome, assertLimitOrderDepositDestination, MAX_UINT256, needsAllowanceRevoke, nativeValueMismatch, quoteInputAmountRaw } from '../trade-validation.js';
 import { SOL_SENTINEL } from '../solana-simulation.js';
 import crypto from 'crypto';
 import { base58Decode, base58Encode, generateSolanaWallet } from '../wallet.js';
@@ -1387,6 +1387,40 @@ describe('assertQuoteMatchesRequest', () => {
     // A genuinely different Solana token is still rejected.
     const qBad = { ...q, outputMint: USDC_SOL };
     expect(() => assertQuoteMatchesRequest(xchain, qBad, { chain: 'base' })).toThrow(/buy token .* does not match/i);
+  });
+});
+
+describe('nativeValueMismatch', () => {
+  const ONE = 1000000000000000000n;
+  const request = { swapMode: 'exactIn', amount: String(ONE), maxInputAmount: String(ONE) };
+
+  it('accepts a value equal to the input when both aliases agree', () => {
+    expect(nativeValueMismatch(request, { inputAmount: String(ONE), inAmount: String(ONE) }, ONE)).toBeNull();
+  });
+
+  it('accepts a legacy quote that carries only inAmount', () => {
+    expect(nativeValueMismatch(request, { inAmount: String(ONE) }, ONE)).toBeNull();
+  });
+
+  it('binds to inputAmount, the field the intent check reads, when the aliases diverge', () => {
+    const quote = { inputAmount: String(ONE), inAmount: String(5n * ONE) };
+    expect(quoteInputAmountRaw(quote)).toBe(String(ONE));
+    expect(nativeValueMismatch(request, quote, 5n * ONE)).toMatch(/expected=1000000000000000000/);
+  });
+
+  it('refuses a value above maxInputAmount even when it matches the quote input', () => {
+    const quote = { inputAmount: String(2n * ONE), inAmount: String(2n * ONE) };
+    expect(nativeValueMismatch(request, quote, 2n * ONE)).toMatch(/exceeds the maximum input/);
+  });
+
+  it('refuses when the quote has no input amount', () => {
+    expect(nativeValueMismatch(request, {}, ONE)).toMatch(/no input amount/);
+    expect(nativeValueMismatch(request, { inputAmount: '' }, 0n)).toMatch(/no input amount/);
+  });
+
+  it('refuses a non-integer input or cap', () => {
+    expect(nativeValueMismatch(request, { inputAmount: '1.5' }, ONE)).toMatch(/not an integer/);
+    expect(nativeValueMismatch({ ...request, maxInputAmount: 'abc' }, { inputAmount: String(ONE) }, ONE)).toMatch(/not an integer/);
   });
 });
 

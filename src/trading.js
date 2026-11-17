@@ -16,7 +16,7 @@ import { buildMessageV0, fetchAddressLookupTables, fetchRecentBlockhash } from '
 import { keccak256, signSecp256k1, rlpEncode } from './crypto.js';
 import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendSolanaTransactionViaWalletConnect, sendApprovalViaWalletConnect } from './walletconnect-trading.js';
 import { retrievePassword } from './keychain.js';
-import { validateQuoteInput, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, checkSolanaFeeBalance, assertSolanaSwapOutcome, approvalAmountForSwap, needsAllowanceRevoke, OVERSIZED_ALLOWANCE_MULTIPLIER, EVM_BRIDGE_NATIVE_FEE_SLACK, isBridgeRequest } from './trade-validation.js';
+import { validateQuoteInput, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, checkSolanaFeeBalance, assertSolanaSwapOutcome, approvalAmountForSwap, needsAllowanceRevoke, OVERSIZED_ALLOWANCE_MULTIPLIER, EVM_BRIDGE_NATIVE_FEE_SLACK, isBridgeRequest, nativeValueMismatch } from './trade-validation.js';
 import { readCompactU16 } from './solana-tx.js';
 import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 export { readCompactU16 };
@@ -2928,10 +2928,10 @@ async function preflightTradeExecutionCandidate({
   const nativeInput = isNativeToken(quote.inputMint);
   const txValue = BigInt(quote.transaction.value || '0');
   if (nativeInput) {
-    const expectedValue = BigInt(quote.inAmount || quote.inputAmount || '0');
-    if (txValue !== expectedValue) {
+    const valueMismatch = nativeValueMismatch(quoteData.request, quote, txValue);
+    if (valueMismatch) {
       throw new CommandError(
-        `Transaction value mismatch: tx.value=${txValue}, expected=${expectedValue}`,
+        `Transaction value mismatch: ${valueMismatch}`,
         'AMOUNT_MISMATCH',
       );
     }
@@ -4037,9 +4037,9 @@ EXAMPLES:
               const isNative = isNativeToken(currentQuote.inputMint);
               const txValue = BigInt(currentQuote.transaction.value || '0');
               if (isNative) {
-                const expectedValue = BigInt(currentQuote.inAmount || currentQuote.inputAmount || '0');
-                if (txValue !== expectedValue) {
-                  log(`  ❌ Transaction value mismatch for ${quoteName}: tx.value=${txValue}, expected=${expectedValue}`);
+                const valueMismatch = nativeValueMismatch(quoteData.request, currentQuote, txValue);
+                if (valueMismatch) {
+                  log(`  ❌ Transaction value mismatch for ${quoteName}: ${valueMismatch}`);
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   lastQuoteError = `${quoteName} transaction value mismatch`;
                   continue;
@@ -4430,9 +4430,9 @@ EXAMPLES:
               // Validate transaction.value (same checks as local wallet)
               const txValue = BigInt(currentQuote.transaction.value || '0');
               if (isNative) {
-                const expectedValue = BigInt(currentQuote.inAmount || currentQuote.inputAmount || '0');
-                if (txValue !== expectedValue) {
-                  log(`  ❌ Transaction value mismatch for ${quoteName}: tx.value=${txValue}, expected=${expectedValue}`);
+                const valueMismatch = nativeValueMismatch(quoteData.request, currentQuote, txValue);
+                if (valueMismatch) {
+                  log(`  ❌ Transaction value mismatch for ${quoteName}: ${valueMismatch}`);
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   lastQuoteError = `${quoteName} transaction value mismatch`;
                   continue;
@@ -4822,13 +4822,13 @@ EXAMPLES:
 
               // Validate transaction.value matches the swap type.
               // ERC-20 swaps transfer tokens via calldata, so value must be 0.
-              // Native ETH swaps must have value matching the quoted inAmount.
+              // Native ETH swaps must have value matching the bound quote input (and within maxInputAmount).
               // A compromised API could attach a large value to drain ETH silently.
               const txValue = BigInt(currentQuote.transaction.value || '0');
               if (isNative) {
-                const expectedValue = BigInt(currentQuote.inAmount || currentQuote.inputAmount || '0');
-                if (txValue !== expectedValue) {
-                  log(`  ❌ Transaction value mismatch for ${quoteName}: tx.value=${txValue}, expected=${expectedValue}`);
+                const valueMismatch = nativeValueMismatch(quoteData.request, currentQuote, txValue);
+                if (valueMismatch) {
+                  log(`  ❌ Transaction value mismatch for ${quoteName}: ${valueMismatch}`);
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   lastQuoteError = `${quoteName} transaction value mismatch`;
                   continue;
