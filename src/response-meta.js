@@ -41,15 +41,18 @@ function intHeader(response, name) {
 
 /**
  * Read a header as a non-negative decimal number, or null when absent, unparseable
- * or too large to hold exactly (including values that overflow to Infinity).
- * The remaining balance can hold a fraction of a credit ("9994.7126") after
- * usage-priced requests such as inference.
+ * or not exactly representable. The remaining balance can hold a fraction of a
+ * credit, up to 6 decimal places ("9994.7126"), after usage-priced requests such
+ * as inference. Below 2^32 a JavaScript number keeps 6 decimal places exactly;
+ * a whole value is exact up to Number.MAX_SAFE_INTEGER.
  */
 function decimalHeader(response, name) {
   const raw = stringHeader(response, name);
-  if (raw === null || !/^\d+(\.\d+)?$/.test(raw)) return null;
+  const match = raw === null ? null : /^(\d+)(\.\d{1,6})?$/.exec(raw);
+  if (match === null) return null;
   const value = Number(raw);
-  return value <= Number.MAX_SAFE_INTEGER ? value : null;
+  const limit = match[2] === undefined ? Number.MAX_SAFE_INTEGER : 2 ** 32 - 1;
+  return Number(match[1]) <= limit ? value : null;
 }
 
 /**
