@@ -427,7 +427,9 @@ function unknownOptionError(path, raw, visible, accepted, hint = '') {
 export function validateDeclaredOptions({ path, leaf, positional = [] }, { flags = {}, options = {} } = {}) {
   const names = optionNames(leaf);
   const visible = [...new Set(names.values())].map(name => `--${name}`);
-  const accepted = acceptedOptionNames(names, true);
+  // Pagination options pass here but these commands ignore them, so a typo
+  // is never pointed at one.
+  const accepted = acceptedOptionNames(names, false);
   const errors = suppliedOptions(flags, options)
     .map(([raw]) => raw)
     .filter(raw => !names.has(raw) && !COMMON_OPTIONS.has(raw) && !PAGINATION_OPTIONS.has(raw))

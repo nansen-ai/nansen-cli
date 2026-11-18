@@ -163,6 +163,16 @@ describe('validateDeclaredOptions', () => {
     expect(check({ dryrun: false }, {})).not.toThrow();
   });
 
+  it('suggests declared and common options, but not pagination options the command ignores', () => {
+    const message = flags => {
+      try { check(flags, {})(); } catch (e) { return e.details.errors[0].message; }
+      return null;
+    };
+    expect(message({ coinn: true })).toContain("Did you mean '--symbol'?");
+    expect(message({ prety: true })).toContain("Did you mean '--pretty'?");
+    expect(message({ limt: true })).not.toContain('Did you mean');
+  });
+
   it('names a one-letter unknown option with a single dash', () => {
     let err;
     try { check({ z: true }, {})(); } catch (e) { err = e; }
