@@ -4,7 +4,7 @@
  */
 
 import crypto from 'crypto';
-import { NansenError, ErrorCode, statusToErrorCode, browserSessionError, browserSessionResponseMeta, telemetryHeaders, packageVersion } from '../api.js';
+import { NansenError, ErrorCode, statusToErrorCode, browserSessionError, browserSessionResponseMeta, telemetryHeaders, packageVersion, transportFailure } from '../api.js';
 import { getCostForEndpoint, formatCost } from '../cost-cache.js';
 import { readResponseMeta } from '../response-meta.js';
 
@@ -287,11 +287,12 @@ EXAMPLES:
             { detail: `${modeName} mode timeout (${timeoutMs / 1000}s)` },
           );
         }
+        const reason = transportFailure(err);
         throw new NansenError(
-          sessionAuth ? 'Agent network request failed. Retry after checking connectivity.' : `Network error: ${err.message}`,
+          sessionAuth ? 'Agent network request failed. Retry after checking connectivity.' : `Network error: ${reason}`,
           ErrorCode.NETWORK_ERROR,
           null,
-          sessionAuth ? {} : { originalError: err.message },
+          sessionAuth ? {} : { originalError: reason },
         );
       }
 

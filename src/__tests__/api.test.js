@@ -2928,7 +2928,8 @@ describe('NansenAPI', () => {
       await promise;
       
       expect(thrownError).toBeDefined();
-      expect(thrownError.message).toContain('Network error');
+      expect(thrownError.code).toBe('NETWORK_ERROR');
+      expect(thrownError.message).toContain('Could not reach the Nansen API');
       vi.useRealTimers();
     });
 
@@ -2999,10 +3000,7 @@ describe('NansenAPI', () => {
       
       // Mock multiple timeout errors for retry attempts
       mockFetch
-        .mockRejectedValueOnce(new Error('Request timeout'))
-        .mockRejectedValueOnce(new Error('Request timeout'))
-        .mockRejectedValueOnce(new Error('Request timeout'))
-        .mockRejectedValueOnce(new Error('Request timeout'));
+        .mockRejectedValue(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
 
       let thrownError;
       const promise = api.tokenScreener({ chains: ['solana'] }).catch(e => { thrownError = e; });
@@ -3010,7 +3008,7 @@ describe('NansenAPI', () => {
       await promise;
 
       expect(thrownError).toBeDefined();
-      expect(thrownError.message).toContain('timeout');
+      expect(thrownError.message).toContain('(timed out)');
       vi.useRealTimers();
     });
 
@@ -4427,7 +4425,7 @@ describe('NansenAPI', () => {
       await vi.runAllTimersAsync();
       await promise;
 
-      expect(thrownError?.message).toContain('response lost after create');
+      expect(thrownError?.code).toBe('NETWORK_ERROR');
       expect(createdAlerts).toBe(1);
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
@@ -4454,7 +4452,7 @@ describe('NansenAPI', () => {
       await vi.runAllTimersAsync();
       await promise;
 
-      expect(thrownError?.message).toContain('response lost after update');
+      expect(thrownError?.code).toBe('NETWORK_ERROR');
       expect(patches).toBe(1);
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });

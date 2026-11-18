@@ -21,6 +21,9 @@ const FAKE_API_KEY = 'test-key-00000000000000000000000000000000';
 const FAKE_PAYMENT_SIGNATURE = 'ZmFrZS14NDAyLXBheW1lbnQtc2lnbmF0dXJlLWZvci10ZXN0cy1vbmx5LW5vdC1yZWFs';
 const BASE_URL = 'https://api.example.test';
 const FAST_RETRY = { retry: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 2 } };
+// undici's message for a rejected header value quotes the whole value.
+const MALFORMED_KEY = 'test-key-SECRET\nSECRET';
+const headerError = () => new TypeError(`Headers.append: "${MALFORMED_KEY}" is an invalid header value.`);
 
 let stderrSpy;
 let prevNansenDebug;
@@ -112,7 +115,8 @@ describe('request() tracing', () => {
   });
 
   it('traces a transport failure with its duration', async () => {
-    const fetchMock = vi.fn(async () => { throw new Error('connect ECONNREFUSED'); });
+    const cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), { code: 'ECONNREFUSED' });
+    const fetchMock = vi.fn(async () => { throw new TypeError('fetch failed', { cause }); });
     vi.stubGlobal('fetch', fetchMock);
     const api = new NansenAPI(FAKE_API_KEY, BASE_URL, FAST_RETRY);
 
@@ -123,9 +127,24 @@ describe('request() tracing', () => {
     expect(output).toContain('attempt=1/1');
     expect(output).not.toMatch(/attempt=[2-9]\d*\/1/);
     expect(output).toContain('http.error');
-    expect(output).toContain('connect ECONNREFUSED');
+    expect(output).toContain('error=ECONNREFUSED');
     expect(output).toMatch(/duration_ms=\d+/);
     expect(output).not.toContain(FAKE_API_KEY);
+  });
+
+  it('never prints a malformed API key that undici quotes in its header error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw headerError(); }));
+    const api = new NansenAPI(MALFORMED_KEY, BASE_URL, FAST_RETRY);
+
+    const error = await api.request('/api/v1/demo', {}, { retry: false }).catch(e => e);
+
+    expect(error.code).toBe('NETWORK_ERROR');
+    expect(error.message).toContain('(TypeError)');
+    expect(error.details.originalError).toBe('TypeError');
+    for (const text of [error.message, JSON.stringify(error.details), traced()]) {
+      expect(text).not.toContain('SECRET');
+      expect(text).not.toContain('Headers.append');
+    }
   });
 
   it('does not trace anything when debug is off', async () => {
@@ -152,6 +171,20 @@ describe('x402 paid-retry tracing', () => {
     expect(output).toContain('status=200');
     expect(output).toContain('request_id=6f1c0f2a-0000-4000-8000-0000000000ab');
     expect(output).not.toContain(FAKE_PAYMENT_SIGNATURE);
+  });
+
+  it('never prints a header value undici quotes when the paid retry fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw headerError(); }));
+    const api = new NansenAPI(null, BASE_URL, FAST_RETRY);
+
+    const error = await api._x402Retry(FAKE_PAYMENT_SIGNATURE, null, null, `${BASE_URL}/api/v1/demo`, { chain: 'solana' }, {}).catch(e => e);
+
+    expect(error.code).toBe('PAYMENT_AMBIGUOUS');
+    expect(error.message).toContain('(TypeError)');
+    for (const text of [error.message, traced()]) {
+      expect(text).not.toContain('SECRET');
+      expect(text).not.toContain('Headers.append');
+    }
   });
 });
 
