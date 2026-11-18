@@ -297,12 +297,24 @@ export function apiErrorDetails(data, message, status) {
  * The API error a paid x402 retry ended with on a non-402 4xx, built as
  * request() builds an API error and marked as a final payment outcome. A body
  * the normal builders can't handle still yields a marked error, so no failure
- * here lets the caller fall back to another payment option.
+ * here lets the caller fall back to another payment option. With a browser
+ * session, `sessionSecrets` (the signature and any credential sent) are never
+ * echoed and the request id stays out of details, as in request().
  */
-function paidRequestError(data, status, requestId) {
+function paidRequestError(data, status, requestId, sessionSecrets = null) {
   let error;
   try {
     const body = data !== null && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    if (sessionSecrets) {
+      // A browser session gets request()'s redaction: a validation failure
+      // keeps only its field-level parts, anything else drops the body.
+      const validation = SESSION_VALIDATION_STATUSES.has(status) ? sessionValidationDetails(body, sessionSecrets) : null;
+      error = validation
+        ? new NansenError(validation.message, statusToErrorCode(status, validation.details), status, validation.details)
+        : new NansenError(`API request failed (${status}).`, statusToErrorCode(status), status, null);
+      error[X402_REQUEST_FAILED] = true;
+      return error;
+    }
     const extracted = apiErrorMessage(body, status);
     const message = typeof extracted === 'string' ? extracted : `API error: ${status}`;
     error = new NansenError(message, statusToErrorCode(status, body), status, {
@@ -310,7 +322,7 @@ function paidRequestError(data, status, requestId) {
       ...(requestId && { requestId }),
     });
   } catch {
-    error = new NansenError(`API error: ${status}`, statusToErrorCode(status, {}), status, requestId ? { requestId } : null);
+    error = new NansenError(`API error: ${status}`, statusToErrorCode(status, {}), status, requestId && !sessionSecrets ? { requestId } : null);
   }
   error[X402_REQUEST_FAILED] = true;
   return error;
@@ -1156,7 +1168,10 @@ export class NansenAPI {
       // payment can't be proven unsettled, so it is recorded as ambiguous.
       if (paidResponse.status !== 402) {
         audit('ambiguous', { ...outcome, reason: 'request_error' });
-        throw paidRequestError(rejection, paidResponse.status, outcome.requestId);
+        const sessionSecrets = this.selection.kind === 'session'
+          ? [signature, ...credentialSecrets({ ...this.defaultHeaders, ...options.headers })]
+          : null;
+        throw paidRequestError(rejection, paidResponse.status, outcome.requestId, sessionSecrets);
       }
       const reason = rejectionReasonCode(rejection);
       if (reason === 'insufficient_balance') {

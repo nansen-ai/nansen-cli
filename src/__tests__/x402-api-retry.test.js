@@ -119,6 +119,44 @@ describe('NansenAPI._x402Retry', () => {
     expect(err.details).toMatchObject({ requestId: 'req-9' });
   });
 
+  describe('with a browser session', () => {
+    const sessionApi = () => {
+      const api = makeApi();
+      api.selection = { ...api.selection, kind: 'session' };
+      return api;
+    };
+
+    it('drops the body of a non-validation 4xx and uses a fixed message', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false, status: 404, json: async () => ({ message: 'boom', echoed: 'Payment-Signature: sig-SECRET' }), headers: { get: () => 'req-9' },
+      });
+
+      const err = await sessionApi()._x402Retry('sig-SECRET', null, null, 'https://api.nansen.ai/test', {}).catch(e => e);
+
+      expect(err).toBeInstanceOf(NansenError);
+      expect(err).toMatchObject({ code: ErrorCode.NOT_FOUND, status: 404, message: 'API request failed (404).' });
+      expect(JSON.stringify(err.details ?? {})).not.toContain('SECRET');
+      expect(err.details ?? {}).not.toHaveProperty('echoed');
+      // Still marked as a final payment outcome, so no other option is signed.
+      expect(Object.getOwnPropertySymbols(err).map(sym => sym.description)).toContain('x402RequestFailed');
+    });
+
+    it('keeps only the field-level parts of a validation error that do not echo the signature', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ message: 'bad sig-SECRET', code: 'invalid_field_value', errors: [{ field: 'chains', message: 'unsupported value' }], extra: 'x' }),
+        headers: { get: () => null },
+      });
+
+      const err = await sessionApi()._x402Retry('sig-SECRET', null, null, 'https://api.nansen.ai/test', {}).catch(e => e);
+
+      expect(err).toBeInstanceOf(NansenError);
+      expect(err).toMatchObject({ code: ErrorCode.INVALID_PARAMS, status: 400, message: 'unsupported value' });
+      expect(err.details).toEqual({ code: 'invalid_field_value', errors: [{ field: 'chains', message: 'unsupported value' }] });
+    });
+  });
+
   it('still throws a 400 error when the body has a shape the error builders reject', async () => {
     mockFetch.mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: { message: 'nested' } }) });
 
