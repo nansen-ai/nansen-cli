@@ -222,20 +222,39 @@ describe('resolveResearchCommand', () => {
 // ============= Option validation =============
 
 describe('validateResearchInput', () => {
-  it('rejects an unknown option with the valid option list', () => {
+  it('rejects an unknown option, suggests the closest one and lists the valid options', () => {
     const error = check('research token info', { token: SOL_MINT, timefrme: '30d' });
     expect(error).toEqual({
-      message: "Option '--timefrme' is not recognized by nansen research token info. Command-specific options: --chain, --token, --timeframe. Common options also apply; see: nansen schema.",
+      message: "Option '--timefrme' is not recognized by nansen research token info. Did you mean '--timeframe'? Command-specific options: --chain, --token, --timeframe. Common options also apply; see: nansen schema.",
       code: 'INVALID_PARAMS',
       details: {
         param: '--timefrme',
         errors: [{
           field: '--timefrme',
-          message: "Option '--timefrme' is not recognized by nansen research token info. Command-specific options: --chain, --token, --timeframe. Common options also apply; see: nansen schema.",
+          message: "Option '--timefrme' is not recognized by nansen research token info. Did you mean '--timeframe'? Command-specific options: --chain, --token, --timeframe. Common options also apply; see: nansen schema.",
           code: 'unknown_field',
         }],
       },
     });
+  });
+
+  it.each([
+    ['an alias, as its schema name', 'research token info', { token: SOL_MINT, 'token-adress': SOL_MINT }, 'token-adress', '--token'],
+    ['a common option', 'research token info', { token: SOL_MINT, prety: '1' }, 'prety', '--pretty'],
+    ['a pagination option on a paginated command', 'research profiler balance', { address: EVM, limt: '5' }, 'limt', '--limit'],
+  ])('suggests %s', (_, path, options, raw, suggestion) => {
+    const error = check(path, options);
+    expect(error.details.errors[0].message).toContain(`Option '--${raw}' is not recognized by nansen ${path}. Did you mean '${suggestion}'? Command-specific options:`);
+  });
+
+  it('does not suggest a pagination option the command rejects', () => {
+    expect(check('research token info', { token: SOL_MINT, limt: '5' }).message).not.toContain('Did you mean');
+  });
+
+  it('keeps the --days hint instead of a suggestion', () => {
+    const { message } = check('research token info', { token: SOL_MINT, days: '7' });
+    expect(message).toContain('Use --timeframe instead');
+    expect(message).not.toContain('Did you mean');
   });
 
   it('lists the valid options for an invented name (--turbo)', () => {

@@ -90,7 +90,7 @@ describe('perp trading commands reject undeclared options', () => {
       expect(err.details.errors).toEqual([{
         field: '--dryrun',
         code: 'unknown_field',
-        message: expect.stringMatching(new RegExp(`^Option '--dryrun' is not recognized by nansen perp ${sub}\\. Command-specific options: .*--dry-run`)),
+        message: expect.stringMatching(new RegExp(`^Option '--dryrun' is not recognized by nansen perp ${sub}\\. Did you mean '--dry-run'\\? Command-specific options: .*--dry-run`)),
       }]);
       expect(api.request).not.toHaveBeenCalled();
       expect(showWallet).not.toHaveBeenCalled();
