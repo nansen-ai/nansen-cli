@@ -585,6 +585,27 @@ export function formatTable(data) {
   return lines.join('\n');
 }
 
+// Spreadsheet apps evaluate a cell that starts with one of these as a formula
+// (CSV injection). Token names, symbols and labels are set by whoever deploys
+// the token, so string cells are never trusted.
+const CSV_FORMULA_TRIGGER = /^[=+\-@\t\r]/;
+// A plain number literal is read as a number, never as a formula. The API sends
+// some signed amounts as strings (perp sizes, PnL), and those stay numeric.
+const CSV_NUMBER_LITERAL = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/;
+
+function escapeCsvCell(val) {
+  if (val === null || val === undefined) return '';
+  let s = typeof val === 'object' ? JSON.stringify(val) : String(val);
+  const formula = typeof val === 'string'
+    && CSV_FORMULA_TRIGGER.test(s)
+    && !CSV_NUMBER_LITERAL.test(s);
+  if (formula) s = `'${s}`;
+  if (formula || /[",\n\r]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
 /**
  * Format data as CSV with header row
  */
@@ -595,18 +616,9 @@ export function formatCsv(data) {
 
   const columns = [...new Set(records.flatMap(r => Object.keys(r)))];
 
-  const escape = (val) => {
-    if (val === null || val === undefined) return '';
-    const s = typeof val === 'object' ? JSON.stringify(val) : String(val);
-    if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-      return '"' + s.replace(/"/g, '""') + '"';
-    }
-    return s;
-  };
-
-  const lines = [columns.join(',')];
+  const lines = [columns.map(escapeCsvCell).join(',')];
   for (const record of records) {
-    lines.push(columns.map(col => escape(record[col])).join(','));
+    lines.push(columns.map(col => escapeCsvCell(record[col])).join(','));
   }
   return lines.join('\n');
 }

@@ -5963,6 +5963,37 @@ describe('formatCsv', () => {
   it('should return empty string for empty data', () => {
     expect(formatCsv([])).toBe('');
   });
+
+  describe('formula neutralization', () => {
+    it.each([
+      ['=', '=HYPERLINK("http://x","y")', '"\'=HYPERLINK(""http://x"",""y"")"'],
+      ['+', "+cmd|' /C calc'!A0", "\"'+cmd|' /C calc'!A0\""],
+      ['-', '-2+3', "\"'-2+3\""],
+      ['@', '@SUM(1,1)', '"\'@SUM(1,1)"'],
+      ['tab', '\t=1', '"\'\t=1"'],
+      ['carriage return', '\r=1', '"\'\r=1"'],
+    ])('should prefix a string cell starting with %s', (_name, value, expected) => {
+      expect(formatCsv([{ token_name: value }]).split('\n')[1]).toBe(expected);
+    });
+
+    it('should leave numbers and numeric strings unchanged', () => {
+      const row = { pnl: -12.5, szi: '-0.5', ntl: '+1e3', bal: 42n, ok: true, name: 'SOL' };
+      expect(formatCsv([row]).split('\n')[1]).toBe('-12.5,-0.5,+1e3,42,true,SOL');
+    });
+
+    it('should neutralize header names too', () => {
+      expect(formatCsv({ '=1+1': 'x' }).split('\n')[0]).toBe('"\'=1+1"');
+    });
+
+    it('should neutralize the error envelope', () => {
+      const { text } = formatOutput({ success: false, error: '=1+1', code: 'X' }, { csv: true });
+      expect(text.split('\n')[1]).toBe('false,"\'=1+1",X');
+    });
+
+    it('should quote a carriage return anywhere in a cell', () => {
+      expect(formatCsv([{ a: 'x\ry' }]).split('\n')[1]).toBe('"x\ry"');
+    });
+  });
 });
 
 describe('--format csv integration', () => {
