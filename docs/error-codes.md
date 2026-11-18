@@ -179,7 +179,7 @@ A connection failure is `NETWORK_ERROR` and never `UNAUTHORIZED`: the CLI could 
 | `SIM_REVERTED` | The transaction reverts in simulation. | No |
 | `SIM_RPC_ERROR` | The simulation RPC returned an error. | No |
 | `SIM_RESULT_UNPARSEABLE` | The simulation result could not be parsed. | No |
-| `SIM_ACCOUNT_CONTROL_CHANGED` | The simulated transaction would hand control of one of your wallet accounts (owner, delegate, close authority) to someone else, or a program it calls would close one with the rent sent elsewhere. | No |
+| `SIM_ACCOUNT_CONTROL_CHANGED` | The simulated transaction would hand control of one of your wallet accounts (owner, delegate, close authority) to someone else, or would close one of your token accounts without sending its rent back to your wallet. | No |
 | `SIM_INNER_INSTRUCTIONS_UNAVAILABLE` | The Solana simulation RPC did not return inner instructions, so calls made from inside other programs could not be checked. Set NANSEN_SOLANA_SIM_RPC to an RPC that supports them. | No |
 | `NO_SIM_RPC` | No simulation RPC is configured for the chain. | No |
 | `NOT_SIM_CAPABLE` | The RPC does not support simulation. | No |

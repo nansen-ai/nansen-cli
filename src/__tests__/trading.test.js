@@ -8031,7 +8031,7 @@ describe('verifySolanaSwapOutcome (execute-path wiring)', () => {
     expect(r.reason).toMatch(/SWAP_OUTCOME_MISMATCH/i);
   });
 
-  it('counts a closed empty WSOL account rent against the native slack (no stacking on a full-slack outflow)', async () => {
+  it('blocks a closed empty WSOL account with no close back to the wallet, even when the outflow fits the native slack', async () => {
     const wsolAta = generateSolanaWallet().address;
     const txWithWsol = buildSolanaSwapTx({ wallet, tokenAccountIn: tokenIn, tokenAccountOut: tokenOut, extraWritable: [wsolAta] });
     const wsolPre = { ...pre, [wsolAta]: solanaTokenAccountInfo({ mint: 'So11111111111111111111111111111111111111112', owner: wallet, amount: 0 }) };
@@ -8047,11 +8047,12 @@ describe('verifySolanaSwapOutcome (execute-path wiring)', () => {
     const ok = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64: txWithWsol, quote, quoteData });
     expect(ok.proceed).toBe(true);
 
-    // Same outflow, plus the empty WSOL account closed with its rent sent to an attacker.
+    // Same outflow, plus the empty WSOL account closed with no close instruction
+    // showing its rent went back to the wallet.
     vi.stubGlobal('fetch', mockSolanaSimRpc({ pre: wsolPre, post: basePost }));
     const r = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64: txWithWsol, quote, quoteData });
     expect(r.proceed).toBe(false);
-    expect(r.reason).toMatch(/SWAP_OUTCOME_MISMATCH/i);
+    expect(r.reason).toMatch(new RegExp(`closes your token account ${wsolAta}, but no close instruction`));
   });
 
   it('blocks when the output falls short', async () => {

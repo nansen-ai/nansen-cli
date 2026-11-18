@@ -68,7 +68,9 @@ const MAX_ACCOUNTS_PER_CALL = 100;
  *                             token account, a CPI the wallet authorizes that
  *                             approves a delegate, changes an authority or
  *                             closes an account with its rent sent elsewhere,
- *                             or the wallet reassigned to another program),
+ *                             any close of a wallet token account whose rent
+ *                             does not provably go to the wallet, or the
+ *                             wallet reassigned to another program),
  *                             whatever the balances say
  *   SIM_INNER_INSTRUCTIONS_UNAVAILABLE - the sim ran but the RPC returned no
  *                             inner instructions with resolved addresses, so
@@ -355,10 +357,11 @@ function classifyInnerTokenInstruction(ix) {
  * or re-authorizes an account it then closes, or that closes an account and
  * re-creates it at the same address. Apply the top-level rules to every CPI:
  * refuse an Approve or SetAuthority the wallet authorizes, and a CloseAccount
- * of one of the wallet's token accounts, or one the wallet authorizes, whose
- * rent goes anywhere but the wallet.
+ * the wallet authorizes whose rent goes anywhere but the wallet. Returns every
+ * CPI CloseAccount, for assertWalletAccountClosesReturnRent.
  */
 function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletTokenAccounts) {
+  const closes = [];
   for (const group of innerGroups) {
     if (!Array.isArray(group?.instructions)) {
       throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned malformed inner instructions; cannot verify the outcome.');
@@ -374,9 +377,65 @@ function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletToke
       if (op.kind === 'setAuthority' && walletAuthorizes) {
         throw controlChanged(`changes an authority of ${label} with your wallet's signature, from inside another program.`);
       }
-      if (op.kind === 'close' && (walletAuthorizes || walletTokenAccounts.has(op.account)) && op.destination !== walletAddress) {
-        throw controlChanged(`closes ${label} from inside another program and sends its rent to ${op.destination}.`);
+      if (op.kind === 'close') {
+        if (walletAuthorizes && op.destination !== walletAddress) {
+          throw controlChanged(`closes ${label} from inside another program and sends its rent to ${op.destination}.`);
+        }
+        closes.push({ account: op.account, destination: op.destination, where: 'from inside another program' });
       }
+    }
+  }
+  return closes;
+}
+
+/**
+ * Every top-level token-program CloseAccount, with its account and rent
+ * destination resolved through the message's static keys and the writable
+ * lookup-table entries (both accounts of a close must be writable). An address
+ * that resolves to neither (a readonly lookup-table entry, or an index past the
+ * end) comes back null, and assertWalletAccountClosesReturnRent refuses it.
+ */
+function topLevelTokenCloses(parsed, altWritable) {
+  const numStatic = parsed.staticAccountKeys.length;
+  const accountAt = (index) => {
+    if (typeof index !== 'number') return null;
+    if (index < numStatic) return parsed.staticAccountKeys[index];
+    return altWritable[index - numStatic] ?? null;
+  };
+  const closes = [];
+  for (const ix of parsed.instructions) {
+    const programId = accountAt(ix.programIdIndex);
+    if (!programId) {
+      throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Transaction invokes a program this check cannot resolve; cannot verify the outcome.');
+    }
+    if (!SPL_TOKEN_PROGRAMS.has(programId) || ix.data.length === 0 || ix.data[0] !== SPL_CLOSE_ACCOUNT) continue;
+    closes.push({ account: accountAt(ix.accountIndexes[0]), destination: accountAt(ix.accountIndexes[1]), where: 'in a top-level instruction' });
+  }
+  return closes;
+}
+
+/**
+ * A close of one of the wallet's token accounts must send its rent to the
+ * wallet, whoever authorizes it: an account can carry a close authority set
+ * before this transaction, and a close it signs needs no wallet signature, so
+ * the authority checks above don't see it. `closes` is every CloseAccount the
+ * transaction runs, top-level and CPI. Each wallet token account the
+ * simulation shows closed must match at least one of them; one that doesn't
+ * has no destination this check can verify, so refuse it rather than trust
+ * the balance slack to absorb the lost rent.
+ */
+function assertWalletAccountClosesReturnRent(closes, walletAddress, walletTokenAccounts, closedWalletAccounts) {
+  for (const c of closes) {
+    if (!c.account || !c.destination) {
+      throw controlChanged(`closes a token account ${c.where} at an address this check cannot resolve, so where its rent goes cannot be verified.`);
+    }
+    if (walletTokenAccounts.has(c.account) && c.destination !== walletAddress) {
+      throw controlChanged(`closes your token account ${c.account} ${c.where} and sends its rent to ${c.destination}.`);
+    }
+  }
+  for (const pubkey of closedWalletAccounts) {
+    if (!closes.some((c) => c.account === pubkey)) {
+      throw controlChanged(`closes your token account ${pubkey}, but no close instruction in it can be checked to send the rent to your wallet.`);
     }
   }
 }
@@ -434,7 +493,8 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
   for (let i = 0; i < parsed.staticAccountKeys.length; i++) {
     if (isStaticWritable(parsed, i)) pushWritable(parsed.staticAccountKeys[i]);
   }
-  for (const key of await resolveAltWritableAccounts(rpcUrl, parsed, timeoutMs)) {
+  const altWritable = await resolveAltWritableAccounts(rpcUrl, parsed, timeoutMs);
+  for (const key of altWritable) {
     pushWritable(key);
   }
 
@@ -522,6 +582,7 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
 
   const deltas = {};
   const walletTokenAccounts = new Set();
+  const closedWalletAccounts = new Set();
   tracked.forEach((t, i) => {
     const postInfo = postAccountInfos[i];
     let { kind, mint } = t;
@@ -544,16 +605,14 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
       }
     } else if (!postInfo) {
       walletTokenAccounts.add(t.pubkey);
+      closedWalletAccounts.add(t.pubkey);
       // Closing a token account needs a zero balance, so a non-zero pre-balance
-      // already shows up as an outflow. An empty one is a silent 0n delta and,
-      // closed through a close authority other than the wallet, its rent can
-      // go anywhere the destination checks don't see, so refuse it. The WSOL
-      // account is the exception: Jupiter's wrap/unwrap cleanup closes it on
-      // every native-SOL swap. The close itself is checked (a top-level close
-      // in assertSolanaInstructionsSafe, a CPI close in
-      // assertInnerTokenInstructionsSafe); here count the whole pre-balance
-      // (rent + wrapped amount) as leaving under SOL_SENTINEL, so it nets out
-      // against the wallet's native inflow when the close returns it.
+      // already shows up as an outflow. An empty one is a silent 0n delta, so
+      // refuse it. The WSOL account is the exception: Jupiter's wrap/unwrap
+      // cleanup closes it on every native-SOL swap. Its close must send the
+      // rent to the wallet (assertWalletAccountClosesReturnRent, below); here
+      // count the whole pre-balance (rent + wrapped amount) as leaving under
+      // SOL_SENTINEL, so it nets out against the wallet's native inflow.
       if (isSolanaNativeMint(mint)) {
         let lamports;
         try {
@@ -601,7 +660,13 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
       'The Solana simulation RPC did not return inner instructions, so calls this transaction makes from inside other programs cannot be checked. Refusing to sign. Set NANSEN_SOLANA_SIM_RPC to an RPC that supports simulateTransaction with innerInstructions.',
     );
   }
-  assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletTokenAccounts);
+  const innerCloses = assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletTokenAccounts);
+  assertWalletAccountClosesReturnRent(
+    [...topLevelTokenCloses(parsed, altWritable), ...innerCloses],
+    walletAddress,
+    walletTokenAccounts,
+    closedWalletAccounts,
+  );
 
   return { deltas, method: 'simulateTransaction' };
 }

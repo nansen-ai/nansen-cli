@@ -52,23 +52,39 @@ function wrapTransaction(messageBytes, numSignatures = 1) {
   return Buffer.concat([encodeCompactU16(numSignatures), Buffer.alloc(numSignatures * 64), messageBytes]).toString('base64');
 }
 
-// A minimal single-instruction legacy tx: [wallet (signer, writable), tokenAccount
-// (writable), programId (readonly)]. The instruction contents don't matter —
-// simulation only cares about the accounts snapshot, not what the tx does.
-function buildLegacyTx({ wallet, extraWritableKeys = [], readonlyKeys = [] }) {
+// A minimal legacy tx: [wallet (signer, writable), tokenAccount (writable),
+// programId (readonly)]. The first instruction's contents don't matter —
+// simulation only reads the accounts snapshot, plus any top-level token
+// CloseAccount, which `tokenCloses` ({ account, destination, authority,
+// program? }) appends (account + destination writable, authority readonly).
+function buildLegacyTx({ wallet, extraWritableKeys = [], readonlyKeys = [], tokenCloses = [] }) {
   const programId = generateSolanaWallet().address;
   const recentBlockhash = generateSolanaWallet().address;
-  const accountKeys = [wallet, ...extraWritableKeys, ...readonlyKeys, programId];
+  const writable = [wallet, ...extraWritableKeys];
+  const readonly = [...readonlyKeys];
+  for (const c of tokenCloses) {
+    for (const k of [c.account, c.destination]) if (!writable.includes(k)) writable.push(k);
+    for (const k of [c.authority, c.program ?? TOKEN_PROGRAM]) if (!writable.includes(k) && !readonly.includes(k)) readonly.push(k);
+  }
+  const accountKeys = [...writable, ...readonly, programId];
+  const at = (k) => accountKeys.indexOf(k);
   const messageBytes = buildMessageBytes({
     versioned: false,
     accountKeys,
     header: {
       numRequiredSignatures: 1,
       numReadonlySignedAccounts: 0,
-      numReadonlyUnsignedAccounts: readonlyKeys.length + 1, // + programId
+      numReadonlyUnsignedAccounts: readonly.length + 1, // + programId
     },
     recentBlockhash,
-    instructions: [{ programIdIndex: accountKeys.length - 1, accountIndexes: [0], data: Buffer.from([0x01]) }],
+    instructions: [
+      { programIdIndex: accountKeys.length - 1, accountIndexes: [0], data: Buffer.from([0x01]) },
+      ...tokenCloses.map((c) => ({
+        programIdIndex: at(c.program ?? TOKEN_PROGRAM),
+        accountIndexes: [at(c.account), at(c.destination), at(c.authority)],
+        data: Buffer.from([9]),
+      })),
+    ],
   });
   return wrapTransaction(messageBytes);
 }
@@ -243,6 +259,110 @@ describe('solana-simulation', () => {
 
     const result = await simulateSolanaAssetChanges('solana', txBase64, { walletAddress: wallet });
     expect(result.deltas[mint]).toBe(200n);
+  });
+
+  describe('top-level close whose accounts come from an address-lookup table (v0 tx)', () => {
+    // Static keys: [wallet, wsolAta, token program, filler program]. The ALT
+    // contributes one writable entry (index 4) and one readonly entry (index 5).
+    function runV0({ destinationIndex }) {
+      const wallet = generateSolanaWallet().address;
+      const wsolAta = generateSolanaWallet().address;
+      const programId = generateSolanaWallet().address;
+      const altAddress = generateSolanaWallet().address;
+      const altWritable = generateSolanaWallet().address;
+      const altReadonly = generateSolanaWallet().address;
+      const altTableData = Buffer.concat([Buffer.alloc(56), base58Decode(altWritable), base58Decode(altReadonly)]).toString('base64');
+      const messageBytes = buildMessageBytes({
+        versioned: true,
+        accountKeys: [wallet, wsolAta, TOKEN_PROGRAM, programId],
+        header: { numRequiredSignatures: 1, numReadonlySignedAccounts: 0, numReadonlyUnsignedAccounts: 2 },
+        recentBlockhash: generateSolanaWallet().address,
+        instructions: [
+          { programIdIndex: 3, accountIndexes: [0], data: Buffer.from([0x01]) },
+          { programIdIndex: 2, accountIndexes: [1, destinationIndex, 0], data: Buffer.from([9]) },
+        ],
+        addressTableLookups: [{ lookupTableAddress: altAddress, writableIndexes: [0], readonlyIndexes: [1] }],
+      });
+      vi.stubGlobal('fetch', mockSolanaRpc({
+        altAccounts: { [altAddress]: { data: [altTableData, 'base64'], owner: 'AddressLookupTab1e1111111111111111111111', lamports: 1 } },
+        trackedAccounts: {
+          [wallet]: nativeAccountInfo(1_000_000_000),
+          [wsolAta]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0, closeAuthority: altWritable }),
+        },
+        simValue: (params) => {
+          const post = { [wallet]: nativeAccountInfo(999_995_000) };
+          return { value: { err: null, innerInstructions: [], accounts: params[1].accounts.addresses.map((a) => post[a] ?? null) } };
+        },
+      }));
+      return { wsolAta, altWritable, result: simulateSolanaAssetChanges('solana', wrapTransaction(messageBytes), { walletAddress: wallet }) };
+    }
+
+    // Static keys: [wallet, token program, filler program]; writable lookup
+    // entries follow in table order. `tables` lists each table's writable entries.
+    function runV0Tables({ tables, close, preTracked, postTracked }) {
+      const wallet = preTracked.wallet;
+      const accountKeys = [wallet, TOKEN_PROGRAM, generateSolanaWallet().address];
+      const altAccounts = {};
+      const lookups = tables.map((entries) => {
+        const lookupTableAddress = generateSolanaWallet().address;
+        const data = Buffer.concat([Buffer.alloc(56), ...entries.map((a) => base58Decode(a))]).toString('base64');
+        altAccounts[lookupTableAddress] = { data: [data, 'base64'], owner: 'AddressLookupTab1e1111111111111111111111', lamports: 1 };
+        return { lookupTableAddress, writableIndexes: entries.map((_, i) => i), readonlyIndexes: [] };
+      });
+      const messageBytes = buildMessageBytes({
+        versioned: true,
+        accountKeys,
+        header: { numRequiredSignatures: 1, numReadonlySignedAccounts: 0, numReadonlyUnsignedAccounts: 2 },
+        recentBlockhash: generateSolanaWallet().address,
+        instructions: [
+          { programIdIndex: 2, accountIndexes: [0], data: Buffer.from([0x01]) },
+          { programIdIndex: 1, accountIndexes: close, data: Buffer.from([9]) },
+        ],
+        addressTableLookups: lookups,
+      });
+      vi.stubGlobal('fetch', mockSolanaRpc({
+        altAccounts,
+        trackedAccounts: preTracked.accounts,
+        simValue: (params) => ({ value: { err: null, innerInstructions: [], accounts: params[1].accounts.addresses.map((a) => postTracked[a] ?? null) } }),
+      }));
+      return simulateSolanaAssetChanges('solana', wrapTransaction(messageBytes), { walletAddress: wallet });
+    }
+
+    it('allows a WSOL account that lives in a lookup table closed back to the wallet', async () => {
+      const wallet = generateSolanaWallet().address;
+      const wsolAta = generateSolanaWallet().address;
+      const result = await runV0Tables({
+        tables: [[wsolAta]],
+        close: [3, 0, 0], // account = first writable table entry, destination = wallet
+        preTracked: { wallet, accounts: { [wallet]: nativeAccountInfo(1_000_000_000), [wsolAta]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0 }) } },
+        postTracked: { [wallet]: nativeAccountInfo(1_000_000_000 - 5_000 + 2_039_280) },
+      });
+      expect(result.deltas[SOL_SENTINEL]).toBe(-5_000n);
+    });
+
+    it('reads writable entries across two lookup tables in table order', async () => {
+      // Index 4 is the second table's entry (the attacker), not the first's.
+      const wallet = generateSolanaWallet().address;
+      const wsolAta = generateSolanaWallet().address;
+      const attacker = generateSolanaWallet().address;
+      const result = runV0Tables({
+        tables: [[wsolAta], [attacker]],
+        close: [3, 4, 0],
+        preTracked: { wallet, accounts: { [wallet]: nativeAccountInfo(1_000_000_000), [wsolAta]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0, closeAuthority: attacker }) } },
+        postTracked: { [wallet]: nativeAccountInfo(999_995_000) },
+      });
+      await expect(result).rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`closes your token account ${wsolAta} in a top-level instruction and sends its rent to ${attacker}`) });
+    });
+
+    it('refuses when the rent destination resolves through the table to another address', async () => {
+      const { result, altWritable } = runV0({ destinationIndex: 4 });
+      await expect(result).rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`sends its rent to ${altWritable}`) });
+    });
+
+    it('refuses when the rent destination is a readonly table entry it cannot resolve', async () => {
+      const { result } = runV0({ destinationIndex: 5 });
+      await expect(result).rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('cannot resolve') });
+    });
   });
 
   it('does not double-count a writable account referenced both as a static key and via an ALT (regression: no dedup summed its delta twice)', async () => {
@@ -474,8 +594,8 @@ describe('solana-simulation', () => {
       mintOut = generateSolanaWallet().address;
     });
 
-    function run({ pre, post, extraWritableKeys = [ataIn, ataOut], inner = [] }) {
-      const txBase64 = buildLegacyTx({ wallet, extraWritableKeys });
+    function run({ pre, post, extraWritableKeys = [ataIn, ataOut], inner = [], tokenCloses = [] }) {
+      const txBase64 = buildLegacyTx({ wallet, extraWritableKeys, tokenCloses });
       vi.stubGlobal('fetch', mockSolanaRpc({
         trackedAccounts: pre,
         simValue: (params) => ({ value: { err: null, innerInstructions: inner, accounts: params[1].accounts.addresses.map((a) => (a in post ? post[a] : null)) } }),
@@ -546,29 +666,86 @@ describe('solana-simulation', () => {
     it('allows closing the wallet WSOL account (Jupiter wrap/unwrap cleanup)', async () => {
       const wsolAta = generateSolanaWallet().address;
       const pre = { ...basePre(), [wsolAta]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0 }) };
-      // The close returns the account's rent to the wallet.
+      // The route's top-level CloseAccount returns the account's rent to the wallet.
       const post = { ...basePost(), [wallet]: nativeAccountInfo(999_995_000 + 2_039_280), [wsolAta]: null };
-      const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, wsolAta] });
+      const tokenCloses = [{ account: wsolAta, destination: wallet, authority: wallet }];
+      const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, wsolAta], tokenCloses });
       expect(result.deltas[mintOut]).toBe(1_000_000n);
       expect(result.deltas[SOL_SENTINEL]).toBe(-5_000n);
     });
 
-    it('counts a closed empty WSOL account rent sent elsewhere as a native outflow', async () => {
-      const wsolAta = generateSolanaWallet().address;
-      const pre = { ...basePre(), [wsolAta]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0 }) };
-      const post = { ...basePost(), [wsolAta]: null }; // rent went to another account
-      const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, wsolAta] });
-      expect(result.deltas[SOL_SENTINEL]).toBe(-(5_000n + 2_039_280n));
-    });
+    describe('top-level close of a wallet token account', () => {
+      let wsolAta;
+      beforeEach(() => { wsolAta = generateSolanaWallet().address; });
+      const wsolPre = (extra = {}) => ({ ...basePre(), [wsolAta]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0, ...extra }) });
+      const withWsol = () => [ataIn, ataOut, wsolAta];
+      // Rent went to another account: the wallet's native balance only paid the fee.
+      const rentLostPost = () => ({ ...basePost(), [wsolAta]: null });
 
-    it('fails closed when a closed WSOL account has no readable pre-state lamports', async () => {
-      const wsolAta = generateSolanaWallet().address;
-      const wsolPre = tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0 });
-      delete wsolPre.lamports;
-      const pre = { ...basePre(), [wsolAta]: wsolPre };
-      const post = { ...basePost(), [wsolAta]: null };
-      await expect(run({ pre, post, extraWritableKeys: [ataIn, ataOut, wsolAta] }))
-        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      it('refuses a close of the empty wallet WSOL account by a third-party close authority that sends the rent elsewhere', async () => {
+        // The close authority was set before this tx, so the post-state check
+        // sees no change, the wallet signs nothing for the close, and the lost
+        // rent fits inside the native fee slack.
+        const tokenCloses = [{ account: wsolAta, destination: attacker, authority: attacker }];
+        await expect(run({ pre: wsolPre({ closeAuthority: attacker }), post: rentLostPost(), extraWritableKeys: withWsol(), tokenCloses }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`closes your token account ${wsolAta} in a top-level instruction and sends its rent to ${attacker}`) });
+      });
+
+      it('refuses a Token-2022 close of a wallet token account that sends the rent elsewhere', async () => {
+        const tokenCloses = [{ account: wsolAta, destination: attacker, authority: attacker, program: TOKEN_2022_PROGRAM }];
+        await expect(run({ pre: wsolPre({ closeAuthority: attacker }), post: rentLostPost(), extraWritableKeys: withWsol(), tokenCloses }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('refuses a close-and-reinitialize of a wallet token account whose rent goes elsewhere (post-state looks intact)', async () => {
+        const tokenCloses = [{ account: ataOut, destination: attacker, authority: attacker }];
+        await expect(run({ pre: basePre(), post: basePost(), tokenCloses }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`sends its rent to ${attacker}`) });
+      });
+
+      it('refuses a closed wallet WSOL account when no close instruction shows where its rent went', async () => {
+        await expect(run({ pre: wsolPre(), post: rentLostPost(), extraWritableKeys: withWsol() }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`closes your token account ${wsolAta}, but no close instruction`) });
+      });
+
+      it('refuses when one close returns the rent and another close of the same account sends it elsewhere', async () => {
+        const tokenCloses = [
+          { account: wsolAta, destination: wallet, authority: wallet },
+          { account: wsolAta, destination: attacker, authority: attacker },
+        ];
+        await expect(run({ pre: wsolPre({ closeAuthority: attacker }), post: rentLostPost(), extraWritableKeys: withWsol(), tokenCloses }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it("allows a top-level close of another party's account to that party", async () => {
+        const router = generateSolanaWallet().address;
+        const routerTemp = generateSolanaWallet().address;
+        const tokenCloses = [{ account: routerTemp, destination: router, authority: router }];
+        const result = await run({ pre: basePre(), post: basePost(), tokenCloses });
+        expect(result.deltas[mintOut]).toBe(1_000_000n);
+      });
+
+      it('allows a WSOL account the tx creates and closes back to the wallet (no pre-state)', async () => {
+        const tokenCloses = [{ account: wsolAta, destination: wallet, authority: wallet }];
+        const result = await run({ pre: basePre(), post: { ...basePost(), [wsolAta]: null }, extraWritableKeys: withWsol(), tokenCloses });
+        expect(result.deltas[mintOut]).toBe(1_000_000n);
+      });
+
+      it('allows selling a whole token balance with the input account closed back to the wallet', async () => {
+        const post = { ...basePost(), [ataIn]: null, [wallet]: nativeAccountInfo(999_995_000 + 2_039_280) };
+        const tokenCloses = [{ account: ataIn, destination: wallet, authority: wallet }];
+        const result = await run({ pre: basePre(), post, tokenCloses });
+        expect(result.deltas[mintIn]).toBe(-1_000_000n);
+        expect(result.deltas[mintOut]).toBe(1_000_000n);
+      });
+
+      it('fails closed when a closed WSOL account has no readable pre-state lamports', async () => {
+        const pre = wsolPre();
+        delete pre[wsolAta].lamports;
+        const tokenCloses = [{ account: wsolAta, destination: wallet, authority: wallet }];
+        await expect(run({ pre, post: rentLostPost(), extraWritableKeys: withWsol(), tokenCloses }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      });
     });
 
     it('refuses reassigning the wallet account to another program (CPI Assign)', async () => {
