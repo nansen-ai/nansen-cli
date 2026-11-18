@@ -140,6 +140,11 @@ describe('connection failure vs rejected key', () => {
     expect(networkErrorMessage('https://api.nansen.ai', new TypeError('fetch failed', { cause }))).toContain('(ECONNREFUSED)');
   });
 
+  it('names a code set on the error itself', () => {
+    const error = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), { code: 'ECONNREFUSED' });
+    expect(networkErrorMessage('https://api.nansen.ai', error)).toContain('(ECONNREFUSED)');
+  });
+
   it('reduces an error without a code to its name, never its message', () => {
     const key = 'nsk_SECRET\nSECRET';
     const message = networkErrorMessage('https://api.nansen.ai', new TypeError(`Headers.append: "${key}" is an invalid header value.`));

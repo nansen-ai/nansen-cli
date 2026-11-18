@@ -273,7 +273,7 @@ const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
  */
 export function transportFailure(error) {
   const cause = error?.cause;
-  const code = [cause?.code, cause?.errors?.[0]?.code].find(value => typeof value === 'string' && ERROR_CODE_PATTERN.test(value));
+  const code = [cause?.code, cause?.errors?.[0]?.code, error?.code].find(value => typeof value === 'string' && ERROR_CODE_PATTERN.test(value));
   return code ?? error?.name ?? 'Error';
 }
 

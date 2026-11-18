@@ -120,7 +120,8 @@ export async function mcpRequest(url, method, params, {
   } catch (error) {
     if (error?.name === 'AbortError') throw error;
     // Keep only the error code or name: undici quotes a rejected header value
-    // (the API key) in its message.
+    // (the API key) in its message, so the caught error is not attached.
+    // eslint-disable-next-line preserve-caught-error
     throw new Error(transportFailure(error));
   } finally {
     clearTimeout(timer);
