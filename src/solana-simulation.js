@@ -359,14 +359,42 @@ function classifyInnerTokenInstruction(ix) {
  * refuse an Approve or SetAuthority the wallet authorizes, and a CloseAccount
  * the wallet authorizes whose rent goes anywhere but the wallet. Returns every
  * CPI CloseAccount, for assertWalletAccountClosesReturnRent.
+ *
+ * One exception: a CPI close of a temporary account the transaction itself
+ * creates may send its rent anywhere. Some routers open a WSOL account for the
+ * wallet, close it into their own account and pay the SOL on to the wallet.
+ * Whatever the wallet put into that account left its native balance in this
+ * same transaction, so the balance check against the quote counts it (within
+ * the fee/rent slack, the same bound a plain System transfer gets). The
+ * account must have no pre-state in the snapshot taken before simulation
+ * (`newAccounts`) AND a System Program create or allocate of it must run
+ * earlier in the transaction (`topCreations` for top-level instructions,
+ * inner ones tracked here). The second condition holds at execution too: the
+ * create fails on chain if the address already holds an account, so a stale
+ * snapshot can't pass off an existing account as new. An account that existed
+ * before keeps the rule, even when the transaction closes and re-creates it.
  */
-function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletTokenAccounts) {
+function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletTokenAccounts, newAccounts, topCreations) {
   const closes = [];
+  const innerCreated = new Set();
+  // Inner groups must arrive in instruction order for "created earlier" to
+  // mean anything; if they don't, no close gets the exception.
+  let lastGroupIndex = -1;
+  let ordered = true;
   for (const group of innerGroups) {
     if (!Array.isArray(group?.instructions)) {
       throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned malformed inner instructions; cannot verify the outcome.');
     }
+    if (!Number.isInteger(group.index) || group.index <= lastGroupIndex) ordered = false;
+    else lastGroupIndex = group.index;
+    const createdBefore = (account) => ordered && newAccounts.has(account)
+      && (innerCreated.has(account) || (topCreations.has(account) && topCreations.get(account) < group.index));
     for (const ix of group.instructions) {
+      const created = ix && typeof ix === 'object' ? innerSystemCreatedAccount(ix) : null;
+      if (created) {
+        innerCreated.add(created);
+        continue;
+      }
       const op = classifyInnerTokenInstruction(ix);
       if (!op) continue;
       const walletAuthorizes = op.authorities.includes(walletAddress);
@@ -378,7 +406,7 @@ function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletToke
         throw controlChanged(`changes an authority of ${label} with your wallet's signature, from inside another program.`);
       }
       if (op.kind === 'close') {
-        if (walletAuthorizes && op.destination !== walletAddress) {
+        if (walletAuthorizes && op.destination !== walletAddress && !createdBefore(op.account)) {
           throw controlChanged(`closes ${label} from inside another program and sends its rent to ${op.destination}.`);
         }
         closes.push({ account: op.account, destination: op.destination, where: 'from inside another program' });
@@ -395,7 +423,7 @@ function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletToke
  * that resolves to neither (a readonly lookup-table entry, or an index past the
  * end) comes back null, and assertWalletAccountClosesReturnRent refuses it.
  */
-function topLevelTokenCloses(parsed, altWritable) {
+function scanTopLevelInstructions(parsed, altWritable) {
   const numStatic = parsed.staticAccountKeys.length;
   const accountAt = (index) => {
     if (typeof index !== 'number') return null;
@@ -403,15 +431,61 @@ function topLevelTokenCloses(parsed, altWritable) {
     return altWritable[index - numStatic] ?? null;
   };
   const closes = [];
-  for (const ix of parsed.instructions) {
+  const creations = new Map(); // account -> index of the first top-level instruction that creates it
+  parsed.instructions.forEach((ix, i) => {
     const programId = accountAt(ix.programIdIndex);
     if (!programId) {
       throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Transaction invokes a program this check cannot resolve; cannot verify the outcome.');
     }
-    if (!SPL_TOKEN_PROGRAMS.has(programId) || ix.data.length === 0 || ix.data[0] !== SPL_CLOSE_ACCOUNT) continue;
+    if (programId === SYSTEM_PROGRAM) {
+      const created = systemCreatedAccount(ix.data, (pos) => accountAt(ix.accountIndexes[pos]));
+      if (created && !creations.has(created)) creations.set(created, i);
+      return;
+    }
+    if (!SPL_TOKEN_PROGRAMS.has(programId) || ix.data.length === 0 || ix.data[0] !== SPL_CLOSE_ACCOUNT) return;
     closes.push({ account: accountAt(ix.accountIndexes[0]), destination: accountAt(ix.accountIndexes[1]), where: 'in a top-level instruction' });
+  });
+  return { closes, creations };
+}
+
+// System Program instructions that give an address its account data. Each
+// fails on chain when the address already holds data or isn't System-owned,
+// so one that runs before a close proves the closed account is new at
+// execution, not just in the pre-simulation snapshot. Values: the position of
+// the created account in the instruction's account list.
+const SYSTEM_CREATE_ACCOUNT_POS = new Map([
+  [0, 1], // CreateAccount: [funder, new account]
+  [3, 1], // CreateAccountWithSeed: [funder, new account, base?]
+  [8, 0], // Allocate: [account]
+  [9, 0], // AllocateWithSeed: [account, base]
+]);
+const SYSTEM_CREATE_PARSED = { createAccount: 'newAccount', createAccountWithSeed: 'newAccount', allocate: 'account', allocateWithSeed: 'account' };
+
+/** The account a System Program instruction creates (raw data + account lookup), or null. */
+function systemCreatedAccount(data, accountAtPos) {
+  if (!data || data.length < 4) return null;
+  const pos = SYSTEM_CREATE_ACCOUNT_POS.get(data.readUInt32LE(0));
+  if (pos === undefined) return null;
+  const account = accountAtPos(pos);
+  return isPubkey(account) ? account : null;
+}
+
+/** Same as systemCreatedAccount, for an inner instruction (parsed or raw). */
+function innerSystemCreatedAccount(ix) {
+  if (ix?.programId !== SYSTEM_PROGRAM) return null;
+  if (ix.parsed && typeof ix.parsed === 'object') {
+    const field = SYSTEM_CREATE_PARSED[ix.parsed.type];
+    const account = field ? ix.parsed.info?.[field] : null;
+    return isPubkey(account) ? account : null;
   }
-  return closes;
+  if (!Array.isArray(ix.accounts) || typeof ix.data !== 'string') return null;
+  let data;
+  try {
+    data = Buffer.from(base58Decode(ix.data));
+  } catch {
+    return null;
+  }
+  return systemCreatedAccount(data, (pos) => ix.accounts[pos]);
 }
 
 /**
@@ -660,9 +734,11 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
       'The Solana simulation RPC did not return inner instructions, so calls this transaction makes from inside other programs cannot be checked. Refusing to sign. Set NANSEN_SOLANA_SIM_RPC to an RPC that supports simulateTransaction with innerInstructions.',
     );
   }
-  const innerCloses = assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletTokenAccounts);
+  const newAccounts = new Set(writableKeys.filter((_, i) => !preAccountInfos[i]));
+  const topLevel = scanTopLevelInstructions(parsed, altWritable);
+  const innerCloses = assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletTokenAccounts, newAccounts, topLevel.creations);
   assertWalletAccountClosesReturnRent(
-    [...topLevelTokenCloses(parsed, altWritable), ...innerCloses],
+    [...topLevel.closes, ...innerCloses],
     walletAddress,
     walletTokenAccounts,
     closedWalletAccounts,

@@ -11,6 +11,7 @@ import {
 const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 const TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+const SYSTEM_PROGRAM_ID = '11111111111111111111111111111111';
 
 // Same hand-rolled builder as solana-tx.test.js, kept independent of
 // solana-tx.js so these fixtures aren't verified against the code under test.
@@ -57,11 +58,13 @@ function wrapTransaction(messageBytes, numSignatures = 1) {
 // simulation only reads the accounts snapshot, plus any top-level token
 // CloseAccount, which `tokenCloses` ({ account, destination, authority,
 // program? }) appends (account + destination writable, authority readonly).
-function buildLegacyTx({ wallet, extraWritableKeys = [], readonlyKeys = [], tokenCloses = [] }) {
+function buildLegacyTx({ wallet, extraWritableKeys = [], readonlyKeys = [], tokenCloses = [], systemCreates = [] }) {
   const programId = generateSolanaWallet().address;
   const recentBlockhash = generateSolanaWallet().address;
   const writable = [wallet, ...extraWritableKeys];
   const readonly = [...readonlyKeys];
+  for (const k of systemCreates) if (!writable.includes(k)) writable.push(k);
+  if (systemCreates.length) readonly.push(SYSTEM_PROGRAM_ID);
   for (const c of tokenCloses) {
     for (const k of [c.account, c.destination]) if (!writable.includes(k)) writable.push(k);
     for (const k of [c.authority, c.program ?? TOKEN_PROGRAM]) if (!writable.includes(k) && !readonly.includes(k)) readonly.push(k);
@@ -79,6 +82,12 @@ function buildLegacyTx({ wallet, extraWritableKeys = [], readonlyKeys = [], toke
     recentBlockhash,
     instructions: [
       { programIdIndex: accountKeys.length - 1, accountIndexes: [0], data: Buffer.from([0x01]) },
+      // System CreateAccount: u32 0, lamports, space, owner (wallet funds it).
+      ...systemCreates.map((k) => ({
+        programIdIndex: at(SYSTEM_PROGRAM_ID),
+        accountIndexes: [0, at(k)],
+        data: Buffer.concat([Buffer.alloc(4), Buffer.alloc(8), Buffer.alloc(8), base58Decode(TOKEN_PROGRAM)]),
+      })),
       ...tokenCloses.map((c) => ({
         programIdIndex: at(c.program ?? TOKEN_PROGRAM),
         accountIndexes: [at(c.account), at(c.destination), at(c.authority)],
@@ -594,8 +603,8 @@ describe('solana-simulation', () => {
       mintOut = generateSolanaWallet().address;
     });
 
-    function run({ pre, post, extraWritableKeys = [ataIn, ataOut], inner = [], tokenCloses = [] }) {
-      const txBase64 = buildLegacyTx({ wallet, extraWritableKeys, tokenCloses });
+    function run({ pre, post, extraWritableKeys = [ataIn, ataOut], inner = [], tokenCloses = [], systemCreates = [] }) {
+      const txBase64 = buildLegacyTx({ wallet, extraWritableKeys, tokenCloses, systemCreates });
       vi.stubGlobal('fetch', mockSolanaRpc({
         trackedAccounts: pre,
         simValue: (params) => ({ value: { err: null, innerInstructions: inner, accounts: params[1].accounts.addresses.map((a) => (a in post ? post[a] : null)) } }),
@@ -834,11 +843,135 @@ describe('solana-simulation', () => {
           .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`your token account ${wsolAta}`) });
       });
 
-      it('refuses a wallet-authorized CPI close of an account it does not track (created in this tx)', async () => {
+      it("refuses a wallet-authorized CPI close of an account outside the transaction's writable accounts", async () => {
+        // No pre-state was ever read for it, so it can't count as created in this tx.
         const temp = generateSolanaWallet().address;
         const inner = inGroup(parsedClose({ account: temp, destination: attacker, owner: wallet }));
         await expect(run({ pre: basePre(), post: basePost(), inner }))
           .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      describe('temporary account created and closed within the transaction', () => {
+        // A router opens a WSOL account for the wallet (System allocate from
+        // inside the router), swaps into it, closes it into its own account and
+        // pays the SOL on to the wallet.
+        const initWsol = (account) => ({
+          program: 'spl-token', programId: TOKEN_PROGRAM, stackHeight: 2, parsed: { type: 'initializeAccount3', info: { account, mint: WSOL_MINT, owner: wallet } },
+        });
+        const allocate = (account) => ({
+          program: 'system', programId: SYSTEM_PROGRAM_ID, stackHeight: 2, parsed: { type: 'allocate', info: { account, space: 165 } },
+        });
+        // Raw System Allocate: u32 8 + u64 space.
+        const rawAllocate = (account) => ({
+          programId: SYSTEM_PROGRAM_ID, accounts: [account], data: base58Encode(Buffer.concat([Buffer.from([8, 0, 0, 0]), Buffer.from([165, 0, 0, 0, 0, 0, 0, 0])])), stackHeight: 2,
+        });
+        let temp, router;
+        beforeEach(() => { temp = generateSolanaWallet().address; router = generateSolanaWallet().address; });
+        const tempPost = () => ({ ...basePost(), [temp]: null });
+        const withTemp = () => [ataIn, ataOut, temp];
+
+        it('allows a CPI close of a wallet WSOL account the transaction opened, with the rent sent to the router', async () => {
+          const inner = inGroup(allocate(temp), initWsol(temp), parsedClose({ account: temp, destination: router, owner: wallet }));
+          const result = await run({ pre: basePre(), post: tempPost(), extraWritableKeys: withTemp(), inner });
+          expect(result.deltas[mintOut]).toBe(1_000_000n);
+        });
+
+        it('allows the same close when the node returns both instructions unparsed', async () => {
+          const inner = inGroup(rawAllocate(temp), initWsol(temp), rawClose([temp, router, wallet]));
+          const result = await run({ pre: basePre(), post: tempPost(), extraWritableKeys: withTemp(), inner });
+          expect(result.deltas[mintOut]).toBe(1_000_000n);
+        });
+
+        it('allows it when a top-level CreateAccount opens the account before the router runs', async () => {
+          // Top-level instruction 1 creates it; the router's inner group is instruction 2.
+          const inner = [{ index: 2, instructions: [initWsol(temp), parsedClose({ account: temp, destination: router, owner: wallet })] }];
+          const result = await run({ pre: basePre(), post: tempPost(), extraWritableKeys: withTemp(), systemCreates: [temp], inner });
+          expect(result.deltas[mintOut]).toBe(1_000_000n);
+        });
+
+        it('counts the seed variants and a raw inner CreateAccount as creating the account', async () => {
+          const funder = wallet;
+          const creates = [
+            { program: 'system', programId: SYSTEM_PROGRAM_ID, stackHeight: 2, parsed: { type: 'createAccountWithSeed', info: { source: funder, newAccount: temp, base: funder, seed: 'x', lamports: 2_039_280, space: 165, owner: TOKEN_PROGRAM } } },
+            { program: 'system', programId: SYSTEM_PROGRAM_ID, stackHeight: 2, parsed: { type: 'allocateWithSeed', info: { account: temp, base: funder, seed: 'x', space: 165, owner: TOKEN_PROGRAM } } },
+            // Raw CreateAccount: u32 0, lamports, space, owner; accounts [funder, new account].
+            { programId: SYSTEM_PROGRAM_ID, accounts: [funder, temp], data: base58Encode(Buffer.concat([Buffer.alloc(20), base58Decode(TOKEN_PROGRAM)])), stackHeight: 2 },
+          ];
+          for (const create of creates) {
+            const inner = inGroup(create, initWsol(temp), parsedClose({ account: temp, destination: router, owner: wallet }));
+            const result = await run({ pre: basePre(), post: tempPost(), extraWritableKeys: withTemp(), inner });
+            expect(result.deltas[mintOut]).toBe(1_000_000n);
+          }
+        });
+
+        it('does not count a System transfer or assign as creating the account', async () => {
+          // OKX funds its temporary account with a transfer; that alone proves nothing.
+          const transfer = { program: 'system', programId: SYSTEM_PROGRAM_ID, stackHeight: 2, parsed: { type: 'transfer', info: { source: wallet, destination: temp, lamports: 2_039_280 } } };
+          const rawTransfer = { programId: SYSTEM_PROGRAM_ID, accounts: [wallet, temp], data: base58Encode(Buffer.concat([Buffer.from([2, 0, 0, 0]), Buffer.alloc(8)])), stackHeight: 2 };
+          const assign = { program: 'system', programId: SYSTEM_PROGRAM_ID, stackHeight: 2, parsed: { type: 'assign', info: { account: temp, owner: TOKEN_PROGRAM } } };
+          const inner = inGroup(transfer, rawTransfer, assign, initWsol(temp), parsedClose({ account: temp, destination: router, owner: wallet }));
+          await expect(run({ pre: basePre(), post: tempPost(), extraWritableKeys: withTemp(), inner }))
+            .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+        });
+
+        it('refuses when no instruction in the transaction creates the account (an empty snapshot alone is not proof)', async () => {
+          // e.g. a lagging node returned no pre-state for an existing account and
+          // the route's create-if-missing was a no-op.
+          const inner = inGroup(initWsol(temp), parsedClose({ account: temp, destination: router, owner: wallet }));
+          await expect(run({ pre: basePre(), post: tempPost(), extraWritableKeys: withTemp(), inner }))
+            .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`closes token account ${temp} from inside another program and sends its rent to ${router}`) });
+        });
+
+        it('refuses when the account is only created after the close', async () => {
+          const inner = inGroup(parsedClose({ account: temp, destination: router, owner: wallet }), allocate(temp), initWsol(temp));
+          await expect(run({ pre: basePre(), post: tempPost(), extraWritableKeys: withTemp(), inner }))
+            .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+        });
+
+        it('refuses a top-level create that runs after the router closes the account', async () => {
+          // The inner group belongs to instruction 0, before the create at 1.
+          const inner = [{ index: 0, instructions: [initWsol(temp), parsedClose({ account: temp, destination: router, owner: wallet })] }];
+          await expect(run({ pre: basePre(), post: tempPost(), extraWritableKeys: withTemp(), systemCreates: [temp], inner }))
+            .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+        });
+
+        it('refuses when inner instruction groups are out of order', async () => {
+          const inner = [
+            { index: 3, instructions: [allocate(temp)] },
+            { index: 2, instructions: [parsedClose({ account: temp, destination: router, owner: wallet })] },
+          ];
+          await expect(run({ pre: basePre(), post: tempPost(), extraWritableKeys: withTemp(), inner }))
+            .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+        });
+
+        it('refuses a pre-existing wallet WSOL account closed, re-created and closed again to another address', async () => {
+          // The second close follows a create, but the account existed before the transaction.
+          const inner = inGroup(
+            parsedClose({ account: wsolAta, destination: wallet, owner: wallet }),
+            allocate(wsolAta),
+            initWsol(wsolAta),
+            parsedClose({ account: wsolAta, destination: router, owner: wallet }),
+          );
+          await expect(run({ pre: wsolPre(), post: { ...basePost(), [wsolAta]: null }, extraWritableKeys: withWsol(), inner }))
+            .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`sends its rent to ${router}`) });
+        });
+
+        it('refuses a pre-funded address allocated as a wallet WSOL account and closed to another address', async () => {
+          // The address held lamports before the transaction, so it existed;
+          // only its pre-state stops the exception here.
+          const inner = inGroup(allocate(temp), initWsol(temp), parsedClose({ account: temp, destination: router, owner: wallet }));
+          const pre = { ...basePre(), [temp]: nativeAccountInfo(2_039_280) };
+          await expect(run({ pre, post: tempPost(), extraWritableKeys: withTemp(), inner }))
+            .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`closes token account ${temp} from inside another program`) });
+        });
+
+        it("refuses a temporary account re-created as the wallet's and left open after its rent went elsewhere", async () => {
+          // Still open after the tx, so it is one of the wallet's token accounts.
+          const inner = inGroup(allocate(temp), initWsol(temp), parsedClose({ account: temp, destination: router, owner: wallet }), allocate(temp), initWsol(temp));
+          const post = { ...basePost(), [temp]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0 }) };
+          await expect(run({ pre: basePre(), post, extraWritableKeys: withTemp(), inner }))
+            .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`closes your token account ${temp}`) });
+        });
       });
 
       it('refuses a CPI close whose multisig signers include the wallet', async () => {
