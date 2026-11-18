@@ -479,3 +479,18 @@ describe('telemetry', () => {
     });
   });
 });
+
+describe('isTelemetryDisabled', () => {
+  it('accepts 1 and true in either variable', async () => {
+    const { isTelemetryDisabled } = await freshImport();
+    for (const name of ['DO_NOT_TRACK', 'NANSEN_NO_TELEMETRY']) {
+      for (const value of ['1', 'true', 'TRUE', ' True ']) {
+        expect(isTelemetryDisabled({ [name]: value })).toBe(true);
+      }
+      for (const value of ['0', 'false', '', 'yes', undefined]) {
+        expect(isTelemetryDisabled({ [name]: value })).toBe(false);
+      }
+    }
+  });
+});
+

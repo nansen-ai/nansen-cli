@@ -11,7 +11,8 @@
  * identifier. Raw wallet addresses, prices, sizes and exchange error text are
  * never sent. The standard anonymous_id lets BI resolve a Nansen user when
  * one is available.
- * All telemetry is opt-out via DO_NOT_TRACK=1 or NANSEN_NO_TELEMETRY=1.
+ * All telemetry is opt-out via DO_NOT_TRACK=1 or NANSEN_NO_TELEMETRY=1
+ * (`true` also works).
  */
 
 import fs from 'fs';
@@ -43,12 +44,19 @@ const FILE_MODE = 0o600;
 
 // ─── opt-out ──────────────────────────────────────────────
 
+function isOptOutValue(value) {
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true';
+}
+
 /**
- * The single source of truth for the opt-out predicate — only the literal '1'
- * disables telemetry. Also used by `nansen doctor` to report telemetry state.
+ * The single source of truth for the opt-out predicate: `1` or `true` (any
+ * case) in DO_NOT_TRACK or NANSEN_NO_TELEMETRY disables telemetry. Also used
+ * by `nansen doctor` to report telemetry state.
  */
 export function isTelemetryDisabled(env = process.env) {
-  return env.DO_NOT_TRACK === '1' || env.NANSEN_NO_TELEMETRY === '1';
+  return isOptOutValue(env.DO_NOT_TRACK) || isOptOutValue(env.NANSEN_NO_TELEMETRY);
 }
 
 export const TELEMETRY_DISABLED = isTelemetryDisabled();

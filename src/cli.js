@@ -32,7 +32,7 @@ import { collectCacheStats, clearCaches, formatCacheStats, formatCacheClear } fr
 import { creditWarning, noticeWarnings } from './response-meta.js';
 import { trackCommandSucceeded, trackCommandFailed, trackAuthCommand } from './telemetry.js';
 import { setDebugEnabled } from './debug.js';
-import { telemetryFlagNames } from './telemetry-flags.js';
+import { telemetryFlagNames, telemetryChain, telemetryErrorCode } from './telemetry-flags.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
 
@@ -1243,7 +1243,7 @@ Bridge routes: ${formatBridgeRoutes()}`,
   deprecated: `DEPRECATED ALIASES (still work, will be removed in a future version):
   smart-money, profiler, token, search, portfolio → use "nansen research <command>"
   quote, execute → use "nansen trade <command>"`,
-  telemetry: `Telemetry: anonymous usage stats (commands, timing, errors). Perp order/close additionally send each leg's side, outcome, order id, shared submission id, and a SHA-256 wallet identifier. Raw wallet, price, size, and exchange error text are not sent. Disable: DO_NOT_TRACK=1`,
+  telemetry: `Telemetry: anonymous usage stats (commands, flag names, timing, error codes, chain name). Flag values and error messages are not sent; an unrecognized chain is sent as UNKNOWN_CHAIN. Perp order/close additionally send each leg's side, outcome, order id, shared submission id, and a SHA-256 wallet identifier. Raw wallet, price, size, and exchange error text are not sent. Disable: DO_NOT_TRACK=1 or NANSEN_NO_TELEMETRY=1`,
 };
 
 // Usage text for the `cache` command group. Also the answer to "which commands
@@ -2949,7 +2949,7 @@ export async function runCLI(rawArgs, deps = {}) {
   const usedFlags = isAuthMutation
     ? [...flagNames, ...optionNames]
     : telemetryFlagNames({ schema: SCHEMA, command, subArgs, switches: VALUELESS_FLAGS }, [...flagNames, ...optionNames]);
-  const chain = options.chain || null;
+  const chain = telemetryChain(SCHEMA, options.chain);
 
   if (!commands[command]) {
     // A command token containing whitespace almost always means a multi-word
@@ -3137,7 +3137,7 @@ export async function runCLI(rawArgs, deps = {}) {
     await trackFailed({
       command: telemetryCommand,
       duration_ms: Date.now() - startTime,
-      error_code: error.code || 'UNKNOWN',
+      error_code: telemetryErrorCode(error.code),
       status: error.status || null,
       flags: usedFlags,
       chain,
