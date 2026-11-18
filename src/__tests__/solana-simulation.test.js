@@ -67,7 +67,7 @@ function buildLegacyTx({ wallet, extraWritableKeys = [], readonlyKeys = [], toke
   if (systemCreates.length) readonly.push(SYSTEM_PROGRAM_ID);
   for (const c of tokenCloses) {
     for (const k of [c.account, c.destination]) if (!writable.includes(k)) writable.push(k);
-    for (const k of [c.authority, c.program ?? TOKEN_PROGRAM]) if (!writable.includes(k) && !readonly.includes(k)) readonly.push(k);
+    for (const k of [c.authority, ...(c.signers ?? []), c.program ?? TOKEN_PROGRAM]) if (!writable.includes(k) && !readonly.includes(k)) readonly.push(k);
   }
   const accountKeys = [...writable, ...readonly, programId];
   const at = (k) => accountKeys.indexOf(k);
@@ -90,7 +90,7 @@ function buildLegacyTx({ wallet, extraWritableKeys = [], readonlyKeys = [], toke
       })),
       ...tokenCloses.map((c) => ({
         programIdIndex: at(c.program ?? TOKEN_PROGRAM),
-        accountIndexes: [at(c.account), at(c.destination), at(c.authority)],
+        accountIndexes: [at(c.account), at(c.destination), at(c.authority), ...(c.signers ?? []).map(at)],
         data: Buffer.from([9]),
       })),
     ],
@@ -659,6 +659,28 @@ describe('solana-simulation', () => {
         .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`transfers ownership`) });
     });
 
+    it('fails closed when a delegate is set but the post-state has no delegated amount', async () => {
+      // Read as 0, a grown allowance for an existing delegate would go unnoticed.
+      const pre = basePre();
+      pre[ataOut] = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: attacker, delegatedAmount: { amount: '5', decimals: 6 } });
+      await expect(run({ pre, post: basePost({ delegate: attacker }) }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
+    it('fails closed when a delegated amount is not a whole number', async () => {
+      const pre = basePre();
+      pre[ataOut] = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: attacker, delegatedAmount: { amount: '5', decimals: 6 } });
+      await expect(run({ pre, post: basePost({ delegate: attacker, delegatedAmount: { amount: '', decimals: 6 } }) }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
+    it('fails closed when an existing delegate has no delegated amount in the pre-state', async () => {
+      const pre = basePre();
+      pre[ataOut] = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: attacker });
+      await expect(run({ pre, post: basePost({ delegate: attacker, delegatedAmount: { amount: '5', decimals: 6 } }) }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
     it('refuses a new close authority', async () => {
       await expect(run({ pre: basePre(), post: basePost({ closeAuthority: attacker }) }))
         .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('close authority') });
@@ -963,6 +985,30 @@ describe('solana-simulation', () => {
           const pre = { ...basePre(), [temp]: nativeAccountInfo(2_039_280) };
           await expect(run({ pre, post: tempPost(), extraWritableKeys: withTemp(), inner }))
             .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`closes token account ${temp} from inside another program`) });
+        });
+
+        it('refuses a top-level close the wallet signs of a pre-funded address it opened as a wallet token account, without relying on the static check', async () => {
+          // The address held lamports before (System-owned pre-state) and is gone
+          // after, so the post-state never shows it as one of the wallet's
+          // accounts. The simulation check must still refuse the close itself.
+          const inner = inGroup(allocate(temp), initWsol(temp));
+          const pre = { ...basePre(), [temp]: nativeAccountInfo(2_039_280) };
+          const tokenCloses = [{ account: temp, destination: router, authority: wallet }];
+          await expect(run({ pre, post: tempPost(), extraWritableKeys: withTemp(), inner, tokenCloses }))
+            .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`closes token account ${temp} in a top-level instruction with your wallet's signature and sends its rent to ${router}`) });
+        });
+
+        it('refuses a top-level close whose multisig signers include the wallet', async () => {
+          const multisig = generateSolanaWallet().address;
+          const tokenCloses = [{ account: temp, destination: router, authority: multisig, signers: [wallet] }];
+          await expect(run({ pre: basePre(), post: tempPost(), extraWritableKeys: withTemp(), tokenCloses }))
+            .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining("with your wallet's signature") });
+        });
+
+        it('refuses the same top-level close of an account the transaction creates (no exception at the top level)', async () => {
+          const tokenCloses = [{ account: temp, destination: router, authority: wallet }];
+          await expect(run({ pre: basePre(), post: tempPost(), extraWritableKeys: withTemp(), systemCreates: [temp], tokenCloses }))
+            .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
         });
 
         it("refuses a temporary account re-created as the wallet's and left open after its rent went elsewhere", async () => {

@@ -253,12 +253,19 @@ function controlChanged(detail) {
   );
 }
 
-function tokenAmountOf(uiAmount) {
-  try {
-    return BigInt(uiAmount?.amount ?? 0);
-  } catch {
-    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Could not parse a simulated token delegation amount.');
+/**
+ * The delegated amount of a parsed token account, 0n when it has no delegate.
+ * The RPC's parsed form always carries `delegatedAmount` next to a delegate;
+ * one without it (or with a non-numeric amount) throws, since reading it as 0
+ * would hide a grown allowance.
+ */
+function delegatedAmountOf(fields) {
+  if (!fields?.delegate) return 0n;
+  const amount = fields.delegatedAmount?.amount;
+  if (typeof amount !== 'string' || !/^\d+$/.test(amount)) {
+    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned a token delegate without a readable delegated amount; cannot verify the outcome.');
   }
+  return BigInt(amount);
 }
 
 /**
@@ -275,7 +282,7 @@ function assertTokenAccountControl(pubkey, pre, post, walletAddress) {
   }
   if (post.delegate) {
     const preDelegate = pre?.delegate || null;
-    const grew = tokenAmountOf(post.delegatedAmount) > tokenAmountOf(pre?.delegatedAmount);
+    const grew = delegatedAmountOf(post) > delegatedAmountOf(pre);
     if (post.delegate !== preDelegate || grew) {
       throw controlChanged(`approves ${post.delegate} to spend ${post.delegatedAmount?.amount ?? 'an unknown amount'} from your ${label}.`);
     }
@@ -423,7 +430,7 @@ function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletToke
  * that resolves to neither (a readonly lookup-table entry, or an index past the
  * end) comes back null, and assertWalletAccountClosesReturnRent refuses it.
  */
-function scanTopLevelInstructions(parsed, altWritable) {
+function scanTopLevelInstructions(parsed, altWritable, walletAddress) {
   const numStatic = parsed.staticAccountKeys.length;
   const accountAt = (index) => {
     if (typeof index !== 'number') return null;
@@ -443,7 +450,11 @@ function scanTopLevelInstructions(parsed, altWritable) {
       return;
     }
     if (!SPL_TOKEN_PROGRAMS.has(programId) || ix.data.length === 0 || ix.data[0] !== SPL_CLOSE_ACCOUNT) return;
-    closes.push({ account: accountAt(ix.accountIndexes[0]), destination: accountAt(ix.accountIndexes[1]), where: 'in a top-level instruction' });
+    // The authority (position 2) must sign, so it is a static key; a multisig's
+    // signers follow it. Unresolvable reads as the wallet's, to fail closed.
+    const authorities = ix.accountIndexes.slice(2).map(accountAt);
+    const walletAuthorizes = authorities.length === 0 || authorities[0] === null || authorities.includes(walletAddress);
+    closes.push({ account: accountAt(ix.accountIndexes[0]), destination: accountAt(ix.accountIndexes[1]), where: 'in a top-level instruction', walletAuthorizes });
   });
   return { closes, creations };
 }
@@ -493,7 +504,12 @@ function innerSystemCreatedAccount(ix) {
  * wallet, whoever authorizes it: an account can carry a close authority set
  * before this transaction, and a close it signs needs no wallet signature, so
  * the authority checks above don't see it. `closes` is every CloseAccount the
- * transaction runs, top-level and CPI. Each wallet token account the
+ * transaction runs, top-level and CPI. A top-level close the wallet signs must
+ * also send its rent to the wallet, whatever the account: one the transaction
+ * opens for the wallet and closes again (a pre-funded address, say) never
+ * shows up as a wallet account in the post-state. This mirrors the static
+ * check, so the simulation doesn't depend on it; CPI closes the wallet signs
+ * are held to the same rule in assertInnerTokenInstructionsSafe. Each wallet token account the
  * simulation shows closed must match at least one of them; one that doesn't
  * has no destination this check can verify, so refuse it rather than trust
  * the balance slack to absorb the lost rent.
@@ -505,6 +521,9 @@ function assertWalletAccountClosesReturnRent(closes, walletAddress, walletTokenA
     }
     if (walletTokenAccounts.has(c.account) && c.destination !== walletAddress) {
       throw controlChanged(`closes your token account ${c.account} ${c.where} and sends its rent to ${c.destination}.`);
+    }
+    if (c.walletAuthorizes && c.destination !== walletAddress) {
+      throw controlChanged(`closes token account ${c.account} ${c.where} with your wallet's signature and sends its rent to ${c.destination}.`);
     }
   }
   for (const pubkey of closedWalletAccounts) {
@@ -735,7 +754,7 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
     );
   }
   const newAccounts = new Set(writableKeys.filter((_, i) => !preAccountInfos[i]));
-  const topLevel = scanTopLevelInstructions(parsed, altWritable);
+  const topLevel = scanTopLevelInstructions(parsed, altWritable, walletAddress);
   const innerCloses = assertInnerTokenInstructionsSafe(innerGroups, walletAddress, walletTokenAccounts, newAccounts, topLevel.creations);
   assertWalletAccountClosesReturnRent(
     [...topLevel.closes, ...innerCloses],
