@@ -4321,7 +4321,7 @@ describe('NansenAPI', () => {
         const successData = { netflows: [] };
         mockFetch
           .mockResolvedValueOnce(paymentRequired())
-          .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: 'invalid_payment' }), headers: { get: () => null } })
+          .mockResolvedValueOnce({ ok: false, status: 402, json: async () => ({ error: 'invalid_payment' }), headers: { get: () => null } })
           .mockResolvedValueOnce({ ok: true, status: 200, json: async () => successData, text: async () => JSON.stringify(successData), headers: { get: () => null } });
         const releaseRejected = vi.fn();
         const releaseAccepted = vi.fn();
@@ -4366,7 +4366,7 @@ describe('NansenAPI', () => {
         if (LIVE_TEST) return;
         mockFetch
           .mockResolvedValueOnce(paymentRequired())
-          .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: 'invalid_payment' }), headers: { get: () => null } });
+          .mockResolvedValueOnce({ ok: false, status: 402, json: async () => ({ error: 'invalid_payment' }), headers: { get: () => null } });
         vi.resetModules();
         vi.doMock('../x402.js', () => ({
           createPaymentSignatures: async function* (_response, _url, options) {
@@ -4383,6 +4383,114 @@ describe('NansenAPI', () => {
         const err = await requestError(new FreshAPI(null, 'https://api.nansen.ai'));
 
         expect(err.message).not.toContain('session cap');
+      });
+    });
+
+    describe('request error on the paid retry', () => {
+      const paymentHeader = btoa(JSON.stringify({
+        accepts: [{ scheme: 'exact', asset: '0xUSDC', payTo: '0xR', amount: '10000', network: 'base', extra: { name: 'X', version: '1', chainId: 1 } }],
+      }));
+      const paymentRequired = () => ({
+        ok: false,
+        status: 402,
+        json: async () => ({ message: 'Payment required' }),
+        headers: { get: (h) => h === 'payment-required' ? paymentHeader : null },
+      });
+      const badRequest = (body = { code: 'invalid_field_value', message: 'chains: unsupported value' }) => ({
+        ok: false, status: 400, json: async () => body, headers: { get: () => null },
+      });
+      const paidCalls = () => mockFetch.mock.calls.filter(([, init]) => init?.headers?.['Payment-Signature']);
+      const twoOptions = (releases) => async function* () {
+        yield { signature: 'sig-1', network: 'eip155:8453', asset: '0xUSDC', releaseCharge: releases[0] };
+        yield { signature: 'sig-2', network: 'eip155:196', asset: '0xUSDT0', releaseCharge: releases[1] };
+      };
+
+      afterEach(() => {
+        vi.doUnmock('../x402.js');
+        vi.doUnmock('../walletconnect-x402.js');
+        vi.doUnmock('../wallet.js');
+        vi.doUnmock('../privy.js');
+      });
+
+      async function requestError(api) {
+        try {
+          await api.smartMoneyNetflow({});
+        } catch (err) {
+          return err;
+        }
+        throw new Error('expected the request to fail');
+      }
+
+      it('stops after a 400 from the local wallet and reports the API error', async () => {
+        if (LIVE_TEST) return;
+        mockFetch.mockResolvedValueOnce(paymentRequired()).mockResolvedValue(badRequest());
+        const releases = [vi.fn(), vi.fn()];
+        const wcSignatures = vi.fn();
+        vi.resetModules();
+        vi.doMock('../x402.js', () => ({ createPaymentSignatures: twoOptions(releases), checkX402Balance: vi.fn() }));
+        vi.doMock('../walletconnect-x402.js', () => ({ createWalletConnectPaymentSignatures: wcSignatures }));
+        const { NansenAPI: FreshAPI, ErrorCode: FreshErrorCode } = await import('../api.js');
+
+        const err = await requestError(new FreshAPI(null, 'https://api.nansen.ai'));
+
+        expect(err).toMatchObject({ code: FreshErrorCode.INVALID_PARAMS, status: 400, message: 'chains: unsupported value' });
+        expect(paidCalls().map(([, init]) => init.headers['Payment-Signature'])).toEqual(['sig-1']);
+        expect(wcSignatures).not.toHaveBeenCalled();
+        expect(releases[0]).not.toHaveBeenCalled();
+      });
+
+      it('stops after a 400 whose body the error builders reject', async () => {
+        if (LIVE_TEST) return;
+        mockFetch.mockResolvedValueOnce(paymentRequired()).mockResolvedValue(badRequest({ error: { message: 'nested' } }));
+        const wcSignatures = vi.fn();
+        vi.resetModules();
+        vi.doMock('../x402.js', () => ({ createPaymentSignatures: twoOptions([vi.fn(), vi.fn()]), checkX402Balance: vi.fn() }));
+        vi.doMock('../walletconnect-x402.js', () => ({ createWalletConnectPaymentSignatures: wcSignatures }));
+        const { NansenAPI: FreshAPI } = await import('../api.js');
+
+        const err = await requestError(new FreshAPI(null, 'https://api.nansen.ai'));
+
+        expect(err).toMatchObject({ status: 400 });
+        expect(paidCalls()).toHaveLength(1);
+        expect(wcSignatures).not.toHaveBeenCalled();
+      });
+
+      it('stops after a 400 from WalletConnect and reports the API error', async () => {
+        if (LIVE_TEST) return;
+        mockFetch.mockResolvedValueOnce(paymentRequired()).mockResolvedValue(badRequest());
+        const releases = [vi.fn(), vi.fn()];
+        vi.resetModules();
+        vi.doMock('../x402.js', () => ({
+          createPaymentSignatures: async function* () { yield* []; throw new Error('No local wallet'); },
+          checkX402Balance: vi.fn(),
+        }));
+        vi.doMock('../walletconnect-x402.js', () => ({ createWalletConnectPaymentSignatures: twoOptions(releases) }));
+        const { NansenAPI: FreshAPI, ErrorCode: FreshErrorCode } = await import('../api.js');
+
+        const err = await requestError(new FreshAPI(null, 'https://api.nansen.ai'));
+
+        expect(err).toMatchObject({ code: FreshErrorCode.INVALID_PARAMS, status: 400, message: 'chains: unsupported value' });
+        expect(paidCalls()).toHaveLength(1);
+        expect(releases[0]).not.toHaveBeenCalled();
+      });
+
+      it('stops after a 400 from a Privy wallet and reports the API error', async () => {
+        if (LIVE_TEST) return;
+        mockFetch.mockResolvedValueOnce(paymentRequired()).mockResolvedValue(badRequest());
+        const releases = [vi.fn(), vi.fn()];
+        vi.resetModules();
+        vi.doMock('../wallet.js', () => ({
+          getWalletConfig: () => ({ defaultWallet: 'agent' }),
+          showWallet: () => ({ provider: 'privy' }),
+        }));
+        vi.doMock('../privy.js', () => ({ createPrivyPaymentSignatures: twoOptions(releases) }));
+        const { NansenAPI: FreshAPI, ErrorCode: FreshErrorCode } = await import('../api.js');
+
+        const err = await requestError(new FreshAPI(null, 'https://api.nansen.ai'));
+
+        expect(err).toMatchObject({ code: FreshErrorCode.INVALID_PARAMS, status: 400, message: 'chains: unsupported value' });
+        expect(paidCalls()).toHaveLength(1);
+        expect(releases[0]).not.toHaveBeenCalled();
       });
     });
   });

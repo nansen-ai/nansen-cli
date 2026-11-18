@@ -14,10 +14,11 @@
  *
  * Issue #583 — after a signed payment was transmitted, a non-ok response no
  * longer collapses everything (5xx, transport failures, unreadable bodies,
- * clean rejections) into a single `null`. Only a readable, legible rejection
- * body on a non-5xx status returns the X402_PAYMENT_REJECTED sentinel (safe
- * to try another payment option); anything else throws NansenError with code
- * PAYMENT_AMBIGUOUS, because the server may have already settled the payment
+ * clean rejections) into a single `null`. Only a readable 402 rejection body
+ * returns the X402_PAYMENT_REJECTED sentinel (safe to try another payment
+ * option). Another 4xx means the request failed, so it throws the API's own
+ * error and no other option is signed; anything else throws NansenError with
+ * code PAYMENT_AMBIGUOUS, because the server may have already settled the payment
  * and trying another option would risk paying twice. The sentinel is also
  * distinct from a genuine successful response whose JSON body is `null`.
  *
@@ -49,8 +50,8 @@ describe('NansenAPI._x402Retry', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns the X402_PAYMENT_REJECTED sentinel for a readable, non-5xx rejection', async () => {
-    // Core contract: a rejection the server can prove (a legible, non-5xx
+  it('returns the X402_PAYMENT_REJECTED sentinel for a readable 402 rejection', async () => {
+    // Core contract: a payment refusal the server can prove (a legible 402
     // body) is safe to treat as "try the next payment option".
     mockFetch.mockResolvedValue({
       ok: false,
@@ -99,6 +100,32 @@ describe('NansenAPI._x402Retry', () => {
 
     await makeApi()._x402Retry('test-sig', null, 'eip155:8453', 'https://api.nansen.ai/test', {});
     expect(stderr).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [400, { code: 'invalid_field_value', message: 'chains: unsupported value' }, ErrorCode.INVALID_PARAMS, 'chains: unsupported value'],
+    [404, { detail: 'Not found' }, ErrorCode.NOT_FOUND, 'Not found'],
+    [409, { code: 'conflict', message: 'Already exists' }, ErrorCode.CONFLICT, 'Already exists'],
+    [422, { message: 'Invalid date range' }, ErrorCode.INVALID_PARAMS, 'Invalid date range'],
+  ])('throws the API error for a %i on the paid retry instead of returning the sentinel', async (status, body, code, message) => {
+    // A non-402 4xx means the request failed, not the payment: another
+    // payment option would fail the same way.
+    mockFetch.mockResolvedValue({ ok: false, status, json: async () => body, headers: { get: () => 'req-9' } });
+
+    const err = await makeApi()._x402Retry('test-sig', null, null, 'https://api.nansen.ai/test', {}).catch(e => e);
+
+    expect(err).toBeInstanceOf(NansenError);
+    expect(err).toMatchObject({ code, status, message });
+    expect(err.details).toMatchObject({ requestId: 'req-9' });
+  });
+
+  it('still throws a 400 error when the body has a shape the error builders reject', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: { message: 'nested' } }) });
+
+    const err = await makeApi()._x402Retry('test-sig', null, null, 'https://api.nansen.ai/test', {}).catch(e => e);
+
+    expect(err).toBeInstanceOf(NansenError);
+    expect(err).toMatchObject({ status: 400, message: 'API error: 400' });
   });
 
   it('throws PAYMENT_AMBIGUOUS on a 5xx after the payment was transmitted (issue #583)', async () => {
@@ -417,16 +444,13 @@ describe('NansenAPI._x402Retry — payment audit log', () => {
     expect(fs.readFileSync(x402AuditLogPath(), 'utf8')).not.toContain(value);
   });
 
-  it('marks a non-402 rejection without a code as an unexpected status', async () => {
-    mockFetch
-      .mockResolvedValueOnce(response(404, { detail: 'Not found' }))
-      .mockResolvedValueOnce(response(400, { error: 'invalid_payload' }));
+  it('records a request error on the paid retry as ambiguous, not as a rejection', async () => {
+    mockFetch.mockResolvedValue(response(404, { detail: 'Not found' }));
 
-    expect(await pay()).toBe(X402_PAYMENT_REJECTED);
-    await pay();
+    await expect(pay()).rejects.toMatchObject({ status: 404 });
 
-    const rejected = readRecords().filter(r => r.event === 'rejected');
-    expect(rejected.map(r => [r.httpStatus, r.reason])).toEqual([[404, 'unexpected_status'], [400, 'invalid_payload']]);
+    expect(readRecords().map(r => r.event)).toEqual(['signed', 'ambiguous']);
+    expect(readRecords()[1]).toMatchObject({ reason: 'request_error', httpStatus: 404, requestId: 'req-1' });
   });
 
   it.each([
