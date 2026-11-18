@@ -95,6 +95,13 @@ describe('agent command', () => {
       await expect(cmd(['test question'], api, {}, {})).rejects.toMatchObject({ code: 'INVALID_API_KEY' });
       expect(fetch).not.toHaveBeenCalled();
     });
+
+    it('rejects a payment signature that cannot be sent as a header before any network', async () => {
+      const api = new NansenAPI('test-key', 'https://api.nansen.ai', { defaultHeaders: { 'Payment-Signature': 'sig\nvalue' } });
+      const fetch = vi.spyOn(globalThis, 'fetch');
+      await expect(cmd(['test question'], api, {}, {})).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+      expect(fetch).not.toHaveBeenCalled();
+    });
   });
 
   // ── Flag handling ──

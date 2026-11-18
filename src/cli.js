@@ -1,4 +1,4 @@
-import { authConfigView, ENV_API_KEY_GUIDANCE } from './auth-credentials.js';
+import { authConfigView, ENV_API_KEY_GUIDANCE, AuthError } from './auth-credentials.js';
 import { browserLogin, defaultAuthState, cleanupMessage } from './auth-login.js';
 import { readApiKeyInput } from './auth-key-input.js';
 /**
@@ -1623,6 +1623,15 @@ export function buildCommands(deps = {}) {
               error: 'INVALID_API_KEY',
               message: 'The API key is not valid.',
               resolution: ['Check or rotate your key at https://app.nansen.ai/api?tab=api'],
+            });
+          }
+          // Rejected locally before any request (for example a line break in
+          // the key). The message is the CLI's own and never holds the key.
+          if (error instanceof AuthError && error.code === 'INVALID_API_KEY') {
+            throw new CommandError(error.message, 'INVALID_API_KEY', {
+              error: 'INVALID_API_KEY',
+              message: error.message,
+              resolution: ['Copy the key again, then run: nansen login --human'],
             });
           }
           // Restore signal from the STRUCTURED error code only — never from

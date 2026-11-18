@@ -132,9 +132,11 @@ describe('request() tracing', () => {
     expect(output).not.toContain(FAKE_API_KEY);
   });
 
-  it('never prints a malformed API key that undici quotes in its header error', async () => {
+  it('never prints a header value that undici quotes in its fetch error', async () => {
+    // A malformed API key is now rejected before fetch; this guards any other
+    // header error that still reaches fetch with the value in its message.
     vi.stubGlobal('fetch', vi.fn(async () => { throw headerError(); }));
-    const api = new NansenAPI(MALFORMED_KEY, BASE_URL, FAST_RETRY);
+    const api = new NansenAPI(FAKE_API_KEY, BASE_URL, FAST_RETRY);
 
     const error = await api.request('/api/v1/demo', {}, { retry: false }).catch(e => e);
 

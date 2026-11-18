@@ -2314,6 +2314,20 @@ describe('buildCommands', () => {
       expect(mockDeps.authState.install).not.toHaveBeenCalled();
     });
 
+    it('rejects a key that cannot be sent as a header without calling it a network problem', async () => {
+      mockDeps.NansenAPIClass.mockImplementation(function(...args) { return new NansenAPI(...args); });
+      const fetch = vi.spyOn(globalThis, 'fetch');
+
+      const err = await commands.login([], null, {}, { 'api-key': 'SECRETabc\nSECRETdef' }).catch(e => e);
+
+      expect(err.code).toBe('INVALID_API_KEY');
+      expect(err.message).toContain('line break');
+      expect(JSON.stringify(err)).not.toContain('internet');
+      expect(err.message + JSON.stringify(err.details ?? err.data ?? {})).not.toContain('SECRET');
+      expect(fetch).not.toHaveBeenCalled();
+      expect(mockDeps.authState.install).not.toHaveBeenCalled();
+    });
+
     it('should handle network errors during verification', async () => {
       const mockApi = { getAccount: vi.fn().mockRejectedValue({ code: 'NETWORK_ERROR', message: 'Network error' }) };
       mockDeps.NansenAPIClass.mockImplementation(function() { return mockApi; });

@@ -60,7 +60,7 @@ A connection failure is `NETWORK_ERROR` and never `UNAUTHORIZED`: the CLI could 
 | Code | Meaning | Retry |
 | --- | --- | --- |
 | `UNAUTHORIZED` | The API rejected the credential (HTTP 401): the API key is missing, invalid or revoked. Not a connection problem. | No |
-| `INVALID_API_KEY` | login could not verify the API key because the API rejected it. | No |
+| `INVALID_API_KEY` | The API key is unusable. Either login could not verify it because the API rejected it, or the selected key is empty or contains a character that cannot be sent in a request header (a line break, NUL or curly quote), in which case nothing was sent. | No |
 | `API_KEY_REQUIRED` | No API key was provided where one is required. | No |
 | `VERIFICATION_FAILED` | login could not verify the API key for a reason other than a rejected key (network, rate limit, outage). The key may be valid. | No |
 | `FORBIDDEN` | The credential is valid but has no permission for this endpoint (HTTP 403). | No |
