@@ -28,7 +28,7 @@ API keys and browser sessions use the same automatic x402 payment behavior: a su
 
 All commands: `nansen research profiler <sub> [options]`
 
-`--address` and `--chain` required for most commands.
+`--address` is required for single-wallet commands (`balance` also takes `--entity`); `--chain` defaults to `all`, pass `--chain <chain>` to narrow it.
 
 ## Balance & Identity
 
@@ -97,7 +97,7 @@ nansen research profiler compare --addresses "0xabc,0xdef" --chain ethereum
 | Flag | Purpose |
 |------|---------|
 | `--address` | Wallet address (required) |
-| `--chain` | Required except for perps and search |
+| `--chain` | Optional, defaults to `all`; not used by perps, first-funder and search |
 | `--days` | Lookback period (default 30) |
 | `--limit` | Number of results |
 | `--addresses` | Comma-separated wallets for `batch`, `compare`, `counterparties-batch` |

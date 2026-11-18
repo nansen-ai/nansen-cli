@@ -843,8 +843,26 @@ WEBHOOK SIGNING SECRET (minimum 16 characters, webhook only):
 USAGE:
   nansen alerts update <id> [--name <name>] [--chains <chains>] [--enabled|--disabled] [type-specific flags...]
 
-All create options are accepted, including --reveal. Only provided fields are updated.
-See: nansen alerts create --help for type-specific flags.
+Only the fields you pass are changed.
+
+OPTIONS:
+  --name <name>                New alert name
+  --chains <chains>            Comma-separated chains (e.g. ethereum,solana)
+  --description '<text>'       New alert description
+  --enabled | --disabled       Turn the alert on or off
+  --telegram <chatId> | --slack <url> | --discord <url> | --webhook <url>
+                               Set the alert's channels to the ones given (pass every channel to keep)
+  --webhook-secret-stdin       Read the webhook signing secret from a pipe or file (with --webhook)
+  --webhook-secret <secret>    Signing secret on the command line (visible in shell history and
+                               the process list; prefer --webhook-secret-stdin or NANSEN_WEBHOOK_SECRET)
+  --token <address:chain>      Include token (repeatable)
+  --exclude-token <addr:chain> Exclude token (repeatable)
+  --data '<json>'              Raw JSON deep-merged into the alert's current data, after the named flags
+  --type <type>                Optional; must match the alert's current type
+  --reveal                     Show full channel URLs and secrets in the response (redacted by default)
+
+Type-specific thresholds and filters (--inflow-1h-min, --usd-min, --subject, ...):
+see nansen alerts create --help.
 
 NOTE: --type cannot change an existing alert's type (use delete + create instead).
       Use single quotes for names with $ or special chars: --name 'SM >$1M'

@@ -479,6 +479,17 @@ describe('command-specific help', () => {
     expect(log.mock.calls.join('\n')).toMatch(/^ {2}--reveal +Show full channel URLs/m);
   });
 
+  it('lists the general options in alerts update help and points to create help for thresholds', async () => {
+    const log = vi.fn();
+    await runCLI(['alerts', 'update', '--help'], { output: vi.fn(), log, exit: vi.fn() });
+    const help = log.mock.calls.join('\n');
+    expect(help).toMatch(/^OPTIONS:$/m);
+    for (const flag of ['--name <name>', '--description', '--enabled \\| --disabled', '--webhook-secret-stdin', '--data', '--reveal']) {
+      expect(help).toMatch(new RegExp(`^ {2}${flag}.* {2,}\\S`, 'm'));
+    }
+    expect(help).toContain('nansen alerts create --help');
+  });
+
   it('lists every alerts list filter from its help in the schema', async () => {
     const log = vi.fn();
     await runCLI(['alerts', 'list', '--help'], { output: vi.fn(), log, exit: vi.fn() });
