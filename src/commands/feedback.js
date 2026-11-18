@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { authDirectory } from '../auth-credentials.js';
 import { feedbackExpiry, withFeedbackJournal } from '../feedback-journal.js';
-import { NansenError, ErrorCode, packageVersion, telemetryHeaders, sleep, statusToErrorCode } from '../api.js';
+import { NansenError, ErrorCode, packageVersion, telemetryHeaders, sleep, statusToErrorCode, transportFailure } from '../api.js';
 import { traceError, traceRequest, traceResponse, traceRetry } from '../debug.js';
 
 const PATH = '/api/v1/feedback';
@@ -70,12 +70,6 @@ function redactor(credentials) {
     return value;
   };
   return redact;
-}
-
-// Undici quotes a rejected header value in its message, so a malformed key would reach the trace.
-function transportFailure(error) {
-  const code = error?.cause?.code;
-  return typeof code === 'string' && /^[A-Z][A-Z0-9_]*$/.test(code) ? code : error?.name ?? 'Error';
 }
 
 // Feedback keeps the file bytes and uses selected account credentials. It never

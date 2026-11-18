@@ -404,6 +404,15 @@ describe('API client', () => {
     expect(err.message).toMatch(/Limit order API request failed/);
     expect(err.message).not.toBe('fetch failed'); // not the undecorated TypeError
   });
+
+  it('never carries a credential that undici quotes in its header error', async () => {
+    global.fetch.mockRejectedValueOnce(new TypeError('Headers.append: "Bearer SECRET\nSECRET" is an invalid header value.'));
+
+    const err = await getVault('jwt', 'pub1').catch((e) => e);
+    expect(err.code).toBe('LIMIT_ORDER_NETWORK_ERROR');
+    expect(err.message).toBe('Limit order API request failed (GET /limit-order/v2/vault): TypeError');
+    expect(err.cause).toBeUndefined();
+  });
 });
 
 // ============= Message Signing =============

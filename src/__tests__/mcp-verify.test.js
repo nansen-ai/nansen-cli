@@ -200,6 +200,18 @@ describe('mcp verify', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
+  it('never prints a malformed API key that undici quotes in its header error', async () => {
+    const key = 'nsk_SECRET\nSECRET';
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(listResponse())
+      .mockRejectedValueOnce(new TypeError(`Headers.append: "${key}" is an invalid header value.`));
+
+    const check = findCheck(await runChecks(fetchFn, { apiKey: key }), 'mcp-auth');
+
+    expect(check).toMatchObject({ status: 'error', message: 'MCP authenticated data call failed: TypeError' });
+    expect(JSON.stringify(check)).not.toContain('SECRET');
+  });
+
   it('turns a hung request into a timeout check via the abort signal', async () => {
     const fetchFn = vi.fn((_url, { signal }) => new Promise((_, reject) => {
       signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));

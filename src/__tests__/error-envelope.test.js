@@ -135,6 +135,27 @@ describe('connection failure vs rejected key', () => {
     expect(error.message).toBe('Could not reach the Nansen API at https://api.nansen.ai (ENOTFOUND). Check your internet connection, VPN, proxy or firewall, then retry. Your credentials were not checked, so this is not an API key problem.');
   });
 
+  it('names the first code of an aggregated connection failure', () => {
+    const cause = Object.assign(new AggregateError([Object.assign(new Error('connect ECONNREFUSED ::1:443'), { code: 'ECONNREFUSED' })]), {});
+    expect(networkErrorMessage('https://api.nansen.ai', new TypeError('fetch failed', { cause }))).toContain('(ECONNREFUSED)');
+  });
+
+  it('names a code set on the error itself', () => {
+    const error = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), { code: 'ECONNREFUSED' });
+    expect(networkErrorMessage('https://api.nansen.ai', error)).toContain('(ECONNREFUSED)');
+  });
+
+  it('reduces an error without a code to its name, never its message', () => {
+    const key = 'nsk_SECRET\nSECRET';
+    const message = networkErrorMessage('https://api.nansen.ai', new TypeError(`Headers.append: "${key}" is an invalid header value.`));
+    expect(message).toContain('(TypeError)');
+    expect(message).not.toContain('SECRET');
+    expect(message).not.toContain('Headers.append');
+    const causeOnly = networkErrorMessage('https://api.nansen.ai', new TypeError('fetch failed', { cause: new Error(`bad "${key}"`) }));
+    expect(causeOnly).toContain('(TypeError)');
+    expect(causeOnly).not.toContain('SECRET');
+  });
+
   it('omits the cause for a browser session', () => {
     expect(networkErrorMessage('https://api.nansen.ai/x', new Error('boom'), { redact: true })).toBe('Could not reach the Nansen API at https://api.nansen.ai. Check your internet connection, VPN, proxy or firewall, then retry. Your credentials were not checked, so this is not an API key problem.');
   });

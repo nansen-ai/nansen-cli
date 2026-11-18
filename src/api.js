@@ -264,14 +264,23 @@ export function apiErrorDetails(data, message, status) {
   return details;
 }
 
+const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+
+/**
+ * A fetch failure reduced to its error code or name. Never the message: undici
+ * quotes a rejected header value in it, so a malformed API key or payment
+ * signature would be printed.
+ */
+export function transportFailure(error) {
+  const cause = error?.cause;
+  const code = [cause?.code, cause?.errors?.[0]?.code, error?.code].find(value => typeof value === 'string' && ERROR_CODE_PATTERN.test(value));
+  return code ?? error?.name ?? 'Error';
+}
+
 /** Why the connection failed, from the fetch error's cause (ENOTFOUND, ECONNREFUSED, ...). */
 function networkFailureReason(err) {
-  const cause = err?.cause;
-  const code = [cause?.code, cause?.errors?.[0]?.code].find(value => typeof value === 'string' && value);
-  if (code) return code;
-  if (err?.name === 'AbortError' || err?.name === 'TimeoutError') return 'timed out';
-  if (typeof cause?.message === 'string' && cause.message) return cause.message;
-  return typeof err?.message === 'string' && err.message ? err.message : 'connection failed';
+  const reason = transportFailure(err);
+  return reason === 'AbortError' || reason === 'TimeoutError' ? 'timed out' : reason;
 }
 
 /**
@@ -1025,14 +1034,15 @@ export class NansenAPI {
         ...(!isGet && method !== 'DELETE' && { body: JSON.stringify(NansenAPI.cleanBody(body)) }),
       });
     } catch (err) {
-      traceError({ method, url, durationMs: Date.now() - startedAt, attempt: 1, error: err.message });
+      const reason = networkFailureReason(err);
+      traceError({ method, url, durationMs: Date.now() - startedAt, attempt: 1, error: reason });
       audit('ambiguous', { reason: 'transport_error' });
       // The signature was already on the wire when the connection failed —
       // the server may have received and settled it before we lost the
       // response. Fail closed rather than let the caller sign and send a
       // second payment for the same logical request.
       throw new NansenError(
-        `x402 payment outcome unknown: request failed after the signed payment was transmitted (${err.message}). Not attempting another payment for the same request.`,
+        `x402 payment outcome unknown: request failed after the signed payment was transmitted (${reason}). Not attempting another payment for the same request.`,
         ErrorCode.PAYMENT_AMBIGUOUS,
       );
     }
@@ -1206,12 +1216,13 @@ export class NansenAPI {
         });
       } catch (err) {
         // Network-level errors - retry these too
-        traceError({ method, url, durationMs: Date.now() - startedAt, attempt: attempt + 1, error: this.redactAuthDiagnostics ? 'API request failed' : err.message });
+        const reason = networkFailureReason(err);
+        traceError({ method, url, durationMs: Date.now() - startedAt, attempt: attempt + 1, error: this.redactAuthDiagnostics ? 'API request failed' : reason });
         lastError = new NansenError(
           networkErrorMessage(this.baseUrl, err, { redact: this.selection.kind === 'session' }),
           ErrorCode.NETWORK_ERROR,
           null,
-          { ...(this.selection.kind !== 'session' && { originalError: err.message }), attempt: attempt + 1 }
+          { ...(this.selection.kind !== 'session' && { originalError: reason }), attempt: attempt + 1 }
         );
 
         if (shouldRetry && attempt < maxRetries) {

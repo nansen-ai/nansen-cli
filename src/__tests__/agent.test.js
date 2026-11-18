@@ -299,7 +299,8 @@ describe('agent command', () => {
 
   describe('network error', () => {
     it('throws NETWORK_ERROR when fetch rejects', async () => {
-      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+      const cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), { code: 'ECONNREFUSED' });
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed', { cause }));
 
       try {
         await cmd(['test'], mockApi(), {}, {});
@@ -309,6 +310,15 @@ describe('agent command', () => {
         expect(err.code).toBe(ErrorCode.NETWORK_ERROR);
         expect(err.message).toContain('ECONNREFUSED');
       }
+    });
+
+    it('never prints a malformed API key that undici quotes in its header error', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Headers.append: "nsk_SECRET\nSECRET" is an invalid header value.'));
+
+      const err = await cmd(['test'], mockApi(), {}, {}).catch(e => e);
+      expect(err.code).toBe(ErrorCode.NETWORK_ERROR);
+      expect(err.message).toBe('Network error: TypeError');
+      expect(err.details).toEqual({ originalError: 'TypeError' });
     });
   });
 

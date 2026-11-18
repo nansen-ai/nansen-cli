@@ -24,7 +24,7 @@ import {
   SolanaSimulationError,
   hasSolanaSimulationRpc,
 } from './solana-simulation.js';
-import { validateTokenAddress, telemetryHeaders, packageVersion } from './api.js';
+import { validateTokenAddress, telemetryHeaders, packageVersion, transportFailure } from './api.js';
 import { getWalletConnectAddress, sendSolanaTransactionViaWalletConnect, signSolanaMessageViaWalletConnect } from './walletconnect-trading.js';
 import { retrievePassword } from './keychain.js';
 import { CHAIN_RPCS } from './rpc-urls.js';
@@ -130,9 +130,11 @@ async function loFetch(method, endpoint, { token, body, query } = {}) {
   } catch (err) {
     // redirect: 'error' rejects with a bare TypeError on any server redirect;
     // convert it (and genuine network failures) into a coded, actionable error
-    // rather than letting an undecorated crash reach the CLI.
+    // rather than letting an undecorated crash reach the CLI. Only the error code
+    // or name is kept: undici quotes a rejected header value (the API key or
+    // JWT) in its message, and the create handler prints err.cause.
     throw Object.assign(
-      new Error(`Limit order API request failed (${method} ${url.pathname}): ${err.message}`, { cause: err }),
+      new Error(`Limit order API request failed (${method} ${url.pathname}): ${transportFailure(err)}`),
       { code: 'LIMIT_ORDER_NETWORK_ERROR' }
     );
   }

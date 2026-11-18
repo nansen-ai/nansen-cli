@@ -1,3 +1,4 @@
+import { transportFailure } from './api.js';
 import { check, formatChecks, maskKey, resolveAuthConfig } from './doctor.js';
 import { MCP_CLIENT_CONFIG } from './mcp-client-config.js';
 
@@ -116,6 +117,12 @@ export async function mcpRequest(url, method, params, {
       body: JSON.stringify({ jsonrpc: '2.0', id: requestId, method, params }),
     });
     body = await response.text();
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
+    // Keep only the error code or name: undici quotes a rejected header value
+    // (the API key) in its message, so the caught error is not attached.
+    // eslint-disable-next-line preserve-caught-error
+    throw new Error(transportFailure(error));
   } finally {
     clearTimeout(timer);
   }
