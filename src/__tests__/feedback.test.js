@@ -277,13 +277,14 @@ it('traces feedback requests to stderr with --debug, without credentials or repo
   expect((await h.run([...h.submit, '--json'])).stderr).toBe('');
 });
 
-it('traces a rejected credential header without the credential', async () => {
+it('rejects an API key that cannot be sent as a header before any request, without printing it', async () => {
   const key = 'synthetic-header-key';
   const h = await harness([examples.accepted]);
-  for (const [args, method] of [[['preferences'], 'GET'], [h.submit, 'POST'], [['submit', '--file', h.file], 'GET']]) {
-    const r = await h.run([...args, '--json', '--debug', '--no-retry'], { NANSEN_API_KEY: `${key}\ncopied text` });
+  for (const args of [['preferences'], h.submit, ['submit', '--file', h.file]]) {
+    const r = await h.run([...args, '--json', '--debug'], { NANSEN_API_KEY: `${key}\ncopied text` });
     expect(r.code).toBe(1);
-    expect(r.stderr).toMatch(new RegExp(`http\\.error method=${method} url=\\S+ duration_ms=\\d+ attempt=1 error=TypeError`));
+    expect(JSON.parse(r.stdout).code).toBe('INVALID_API_KEY');
+    expect(r.stderr).not.toContain('http.request');
     expect(r.stdout + r.stderr).not.toContain(key);
   }
   expect(h.requests).toHaveLength(0);

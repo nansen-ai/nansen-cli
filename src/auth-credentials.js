@@ -68,9 +68,30 @@ export function resolveCredential({ env = process.env, explicitKey, snapshot = r
   if (config.auth?.active?.kind === 'api-key') return { kind: 'invalid', source: 'config' };
   return { kind: 'anonymous', source: null };
 }
+/**
+ * Whether fetch() can send this value as a header. Asks the runtime's own
+ * Headers class, so it rejects exactly what fetch would: a line break or NUL
+ * inside the value, or a character above U+00FF such as a curly quote. fetch
+ * strips leading and trailing whitespace, so a trailing newline is fine.
+ */
+export function isSendableHeaderValue(value) {
+  try { new Headers([['x', value]]); return true; } catch { return false; }
+}
+const UNSENDABLE_KEY_SOURCES = {
+  env: 'NANSEN_API_KEY contains',
+  config: 'The API key saved in the config file contains',
+  'dev-config': 'The API key saved in the config file contains',
+};
 export function assertUsableSelection(selection) {
   if (selection.kind === 'invalid') throw new AuthError('AUTH_STATE_INVALID', 'Saved authentication is unreadable. Restore config.json or run nansen logout after repairing its permissions.');
   if (selection.kind === 'api-key' && (typeof selection.apiKey !== 'string' || !selection.apiKey.trim())) throw new AuthError('INVALID_API_KEY', 'The selected API key is empty or invalid. Correct it or unset NANSEN_API_KEY.');
+  // fetch() would reject the header locally and the CLI would report a network
+  // failure. Never echo the key.
+  if (selection.kind === 'api-key' && !isSendableHeaderValue(selection.apiKey)) {
+    const subject = UNSENDABLE_KEY_SOURCES[selection.source] || 'The API key contains';
+    const fix = selection.source === 'env' ? 'Copy the key again and set it with plain quotes.' : selection.source === 'explicit' ? 'Copy the key again.' : 'Copy the key again, then run: nansen login --human';
+    throw new AuthError('INVALID_API_KEY', `${subject} a line break, a NUL or another character that cannot be sent in a request header (for example a curly quote). ${fix}`);
+  }
 }
 export function authConfigView(env = process.env, devConfigPath) {
   const snapshot = readAuthConfig(env, devConfigPath);

@@ -56,7 +56,7 @@ export const ERROR_CODES = {
 
   // ── Authentication and access ──
   UNAUTHORIZED: { group: 'auth', description: 'The API rejected the credential (HTTP 401): the API key is missing, invalid or revoked. Not a connection problem.' },
-  INVALID_API_KEY: { group: 'auth', description: 'login could not verify the API key because the API rejected it.' },
+  INVALID_API_KEY: { group: 'auth', description: 'The API key is unusable. Either login could not verify it because the API rejected it, or the selected key is empty or contains a character that cannot be sent in a request header (a line break, NUL or curly quote), in which case nothing was sent.' },
   API_KEY_REQUIRED: { group: 'auth', description: 'No API key was provided where one is required.' },
   VERIFICATION_FAILED: { group: 'auth', description: 'login could not verify the API key for a reason other than a rejected key (network, rate limit, outage). The key may be valid.' },
   FORBIDDEN: { group: 'auth', description: 'The credential is valid but has no permission for this endpoint (HTTP 403).' },

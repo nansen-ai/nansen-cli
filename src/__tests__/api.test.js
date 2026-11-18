@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import {
   NansenAPI,
   ErrorCode,
@@ -17,6 +17,8 @@ import {
   COUNTERPARTIES_BATCH_MAX_DAYS,
   COUNTERPARTIES_BATCH_CHAINS
 } from '../api.js';
+import { isSendableHeaderValue } from '../auth-credentials.js';
+import { sessionFixture } from './fixtures/auth-fixture.js';
 
 const LIVE_TEST = process.env.NANSEN_LIVE_TEST === '1';
 
@@ -4513,5 +4515,99 @@ describe('NansenAPI', () => {
         expect(result).toBeDefined();
       }
     });
+  });
+});
+
+// fetch() rejects a header it cannot send before any network I/O. These
+// credentials must fail locally with an error that names them, not as a
+// retried NETWORK_ERROR that says the key is fine.
+const credentialOrigin = 'https://api.nansen.ai';
+const credentialEndpoint = '/api/v1/tgm/token-information';
+
+// Real fetch rejects an unsendable header with a TypeError before any I/O; the
+// mock does the same so a regression shows the real symptom (a retried
+// NETWORK_ERROR), not a crash on an undefined response.
+function headerCheckingFetch() {
+  return vi.fn(async (_url, init) => { new Headers(init.headers); throw new Error('test must not reach the network'); });
+}
+
+function apiWith(credential, options = {}) {
+  return new NansenAPI(null, credentialOrigin, { credential, retry: { maxRetries: 3, baseDelayMs: 1, maxDelayMs: 1 }, ...options });
+}
+
+describe('isSendableHeaderValue', () => {
+  it.each([
+    ['line feed', 'abc\ndef', false],
+    ['carriage return', 'abc\rdef', false],
+    ['NUL', 'abc\0def', false],
+    ['curly quotes', '‘abcdef’', false],
+    ['trailing newline', 'abcdef\n', true],
+    ['tab', 'abc\tdef', true],
+    ['plain key', 'abcdef', true],
+  ])('%s', (_, value, expected) => {
+    expect(isSendableHeaderValue(value)).toBe(expected);
+  });
+});
+
+describe('malformed credential headers fail before any request', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it.each([
+    ['line feed', 'SECRETabc\nSECRETdef'],
+    ['carriage return', 'SECRETabc\rSECRETdef'],
+    ['NUL', 'SECRETabc\0SECRETdef'],
+    ['curly quote', '‘SECRETabc’'],
+  ])('API key from NANSEN_API_KEY with a %s', async (_, apiKey) => {
+    const fetch = headerCheckingFetch();
+    vi.stubGlobal('fetch', fetch);
+    const err = await apiWith({ kind: 'api-key', source: 'env', apiKey }).request(credentialEndpoint, {}).catch(e => e);
+    expect(err).toMatchObject({ code: 'INVALID_API_KEY' });
+    expect(err.message).toContain('NANSEN_API_KEY contains a line break');
+    expect(err.message).not.toContain('SECRET');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('names the config file for a saved key', async () => {
+    const fetch = headerCheckingFetch();
+    vi.stubGlobal('fetch', fetch);
+    const err = await apiWith({ kind: 'api-key', source: 'config', apiKey: 'SECRET\nkey' }).request(credentialEndpoint, {}).catch(e => e);
+    expect(err).toMatchObject({ code: 'INVALID_API_KEY' });
+    expect(err.message).toContain('The API key saved in the config file');
+    expect(err.message).toContain('nansen login --human');
+    expect(err.message).not.toContain('SECRET');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('still sends a key with a trailing newline, which fetch strips', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetch);
+    await expect(apiWith({ kind: 'api-key', source: 'env', apiKey: 'good-key\n' }).request(credentialEndpoint, {})).resolves.toEqual({ ok: true });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a --x402-payment-signature value with a line break', async () => {
+    const fetch = headerCheckingFetch();
+    vi.stubGlobal('fetch', fetch);
+    const api = apiWith({ kind: 'anonymous' }, { defaultHeaders: { 'Payment-Signature': 'SECRETsig\nSECRET' } });
+    const err = await api.request(credentialEndpoint, {}).catch(e => e);
+    expect(err).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(err.message).toContain('--x402-payment-signature');
+    expect(err.message).not.toContain('SECRET');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('a saved browser session token with a line break', async () => {
+    const fetch = headerCheckingFetch();
+    vi.stubGlobal('fetch', fetch);
+    const bundle = sessionFixture();
+    const [head, payload, signature] = bundle.accessToken.split('.');
+    const broken = { ...bundle, accessToken: `${head}.${payload}.${signature.slice(0, 4)}\n${signature.slice(4)}` };
+    const credential = { kind: 'session', issuer: bundle.issuer, accountId: bundle.accountId, audience: credentialOrigin, generation: 'synthetic-generation', expiresAt: bundle.expiresAt };
+    const api = apiWith(credential, { authState: { acquireSession: vi.fn().mockResolvedValue(broken) } });
+    const err = await api.request(credentialEndpoint, {}).catch(e => e);
+    expect(err).toMatchObject({ code: 'AUTH_STATE_INVALID' });
+    expect(err.message).toContain('nansen login');
+    expect(err.message).not.toContain(signature.slice(0, 4));
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

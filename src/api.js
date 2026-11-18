@@ -4,7 +4,7 @@
  */
 
 import fs from 'fs';
-import { authConfigView, resolveCredential, assertUsableSelection, AuthError } from './auth-credentials.js';
+import { authConfigView, resolveCredential, assertUsableSelection, isSendableHeaderValue, AuthError } from './auth-credentials.js';
 import { createAuthState } from './auth-state.js';
 import { validateSession } from './auth-device.js';
 import path from 'path';
@@ -934,11 +934,19 @@ export class NansenAPI {
 
   async requestCredentials(extraHeaders = this.defaultHeaders) {
     assertUsableSelection(this.selection);
+    // Every credentialed fetch calls this first. A header fetch() cannot send
+    // would fail locally and be reported (and retried) as a network failure.
+    for (const [name, value] of Object.entries(extraHeaders || {})) {
+      if (isSendableHeaderValue(value)) continue;
+      const subject = name.toLowerCase() === 'payment-signature' ? 'The --x402-payment-signature value' : `The ${name} header value`;
+      throw new NansenError(`${subject} contains a line break, a NUL or another character that cannot be sent in a request header. Copy it again.`, ErrorCode.INVALID_INPUT);
+    }
     if (this.selection.kind === 'session') {
       if (Object.keys(extraHeaders || {}).some(k => ['apikey', 'authorization', 'payment-signature'].includes(k.toLowerCase()))) throw new AuthError('MIXED_CREDENTIALS', 'Send the selected browser session alone.');
       const bundle = await (this.authState || (this.authState = createAuthState())).acquireSession(this.selection, { audience: this.baseUrl });
       validateSession(bundle);
       if (bundle.audience !== this.baseUrl || bundle.accountId !== this.selection.accountId || bundle.issuer !== this.selection.issuer) throw new AuthError('AUTH_ORIGIN_MISMATCH', 'The saved session does not match the selected API origin/account. Check NANSEN_BASE_URL or run nansen login.');
+      if (!isSendableHeaderValue(`Bearer ${bundle.accessToken}`)) throw new AuthError('AUTH_STATE_INVALID', 'The saved browser session token cannot be sent in a request header. Run: nansen login');
       this.selection = { ...this.selection, generation: bundle.generation, expiresAt: bundle.expiresAt };
       return { Authorization: `Bearer ${bundle.accessToken}` };
     }
