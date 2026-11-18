@@ -155,6 +155,7 @@ A connection failure is `NETWORK_ERROR` and never `UNAUTHORIZED`: the CLI could 
 | `ALL_QUOTES_FAILED` | Every quote failed to execute. | No |
 | `QUOTE_ERROR` | The quote service returned an error. | No |
 | `EXECUTE_ERROR` | Trade execution failed. | No |
+| `LIMIT_ORDER_ERROR` | The limit-order service rejected the request and gave no code of its own. The message has its reason. | No |
 | `MISSING_QUOTE_ID` | trade execute needs a --quote id. | No |
 | `AGGREGATOR_NOT_AVAILABLE` | The requested aggregator has no quote in the saved quote. | No |
 | `MAX_INPUT_EXCEEDED` | The quote would spend more than the allowed maximum input. | No |

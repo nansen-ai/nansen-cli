@@ -136,6 +136,7 @@ export const ERROR_CODES = {
   ALL_QUOTES_FAILED: { group: 'trade', description: 'Every quote failed to execute.' },
   QUOTE_ERROR: { group: 'trade', description: 'The quote service returned an error.' },
   EXECUTE_ERROR: { group: 'trade', description: 'Trade execution failed.' },
+  LIMIT_ORDER_ERROR: { group: 'trade', description: 'The limit-order service rejected the request and gave no code of its own. The message has its reason.' },
   MISSING_QUOTE_ID: { group: 'trade', description: 'trade execute needs a --quote id.' },
   AGGREGATOR_NOT_AVAILABLE: { group: 'trade', description: 'The requested aggregator has no quote in the saved quote.' },
   MAX_INPUT_EXCEEDED: { group: 'trade', description: 'The quote would spend more than the allowed maximum input.' },

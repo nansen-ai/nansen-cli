@@ -518,6 +518,22 @@ For `http.response`, `duration_ms` is the elapsed time from starting the attempt
 
 **What the trace never contains.** No API keys, wallet keys, mnemonics or payment signatures; no `Authorization`, `apikey` or `Payment-Signature` header values (header values are not traced at all); no request or response bodies. Query-string values are blanked whenever the parameter name mentions a key, token, secret, signature, password or auth, and any remaining credential-shaped value is blanked too. This intentionally includes public identifiers under names such as `token` and `token_address`, so use the original command—not the trace alone—to confirm which token was queried. Redaction deliberately fails closed: bare 64-character hex URL segments and long opaque/base58 identifiers are hidden even when they are public transaction, block, or Solana signature identifiers, because they are indistinguishable from key material without endpoint-specific assumptions. Long values are truncated. Paste a trace into a bug report as-is — but a quick read before you share is always wise.
 
+## Telemetry
+
+The CLI sends anonymous usage events so we can see which commands are used, how long they take and where they fail. Telemetry is on by default. To turn it off, set either variable to `1` (or `true`):
+
+```bash
+export DO_NOT_TRACK=1          # or NANSEN_NO_TELEMETRY=1
+```
+
+`nansen doctor` shows whether telemetry is on. `nansen help telemetry` prints a short summary.
+
+**What an event contains:** the command path (`/research/token/screener`), the names of the flags you used (never their values), the `--chain` name when it is one the CLI knows (anything else is sent as `UNKNOWN_CHAIN`), the duration, whether the result came from the cache, the error code and HTTP status on failure (a code from [docs/error-codes.md](docs/error-codes.md) or a fixed list of API codes for `nansen feedback`; any other code is sent as `UNKNOWN`), the CLI, Node and OS versions, a random anonymous id stored in `~/.nansen/telemetry-id`, and a session id that rotates after 30 minutes of inactivity. `nansen perp order` and `perp close` also send each order leg's side, outcome and order id with a SHA-256 hash of the wallet address.
+
+**What it never contains:** flag values, addresses, token amounts, API keys, wallet keys, request or response bodies, or error messages.
+
+Separately, the CLI checks the npm registry once a day for a newer version and prints a notice after an upgrade. Set `NO_UPDATE_NOTIFIER=1` to turn both off (they are also off when `CI` is set).
+
 ## Supported Chains
 
 `algorand` `aptos` `arbitrum` `arc` `avalanche` `base` `bitcoin` `bitlayer` `bnb` `chiliz` `citrea` `ethereum` `gravity` `hyperevm` `hyperliquid` `injective` `iotaevm` `linea` `mantle` `mantra` `monad` `near` `optimism` `plasma` `polygon` `robinhood` `sei` `solana` `sonic` `stacks` `starknet` `stellar` `sui` `ton` `tron` `viction`
