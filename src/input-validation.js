@@ -391,11 +391,11 @@ function suppliedOptions(flags, options) {
  * Every option name the command accepts, mapped to the name to suggest: an
  * alias suggests its schema name. One-letter common options are left out.
  */
-function acceptedOptionNames(names, pagination) {
-  const accepted = new Map(names);
+function suggestionCandidates(names, pagination) {
+  const candidates = new Map(names);
   const global = [...COMMON_OPTIONS, ...(pagination ? PAGINATION_OPTIONS : [])];
-  for (const name of global) if (name.length > 1 && !accepted.has(name)) accepted.set(name, name);
-  return accepted;
+  for (const name of global) if (name.length > 1 && !candidates.has(name)) candidates.set(name, name);
+  return candidates;
 }
 
 /**
@@ -403,11 +403,11 @@ function acceptedOptionNames(names, pagination) {
  * The suggestion is the closest accepted name, as for unknown subcommands;
  * a specific `hint` replaces it.
  */
-function unknownOptionError(path, raw, visible, accepted, hint = '') {
+function unknownOptionError(path, raw, visible, candidates, hint = '') {
   const field = raw.length === 1 ? `-${raw}` : `--${raw}`;
   if (!hint && raw.length > 1) {
-    const match = closestMatch(raw, accepted.keys());
-    if (match) hint = ` Did you mean '--${accepted.get(match)}'?`;
+    const match = closestMatch(raw, candidates.keys());
+    if (match) hint = ` Did you mean '--${candidates.get(match)}'?`;
   }
   return fieldError(field, 'unknown_field',
     `Option '${field}' is not recognized by ${path}.${hint} Command-specific options: ${visible.join(', ') || 'none'}. Common options also apply; see: nansen schema.`);
@@ -429,11 +429,11 @@ export function validateDeclaredOptions({ path, leaf, positional = [] }, { flags
   const visible = [...new Set(names.values())].map(name => `--${name}`);
   // Pagination options pass here but these commands ignore them, so a typo
   // is never pointed at one.
-  const accepted = acceptedOptionNames(names, false);
+  const candidates = suggestionCandidates(names, false);
   const errors = suppliedOptions(flags, options)
     .map(([raw]) => raw)
     .filter(raw => !names.has(raw) && !COMMON_OPTIONS.has(raw) && !PAGINATION_OPTIONS.has(raw))
-    .map(raw => unknownOptionError(path, raw, visible, accepted));
+    .map(raw => unknownOptionError(path, raw, visible, candidates));
   const takesPositional = Object.values(leaf.options || {}).some(spec => spec.positional);
   if (!takesPositional) {
     for (const arg of positional) {
@@ -491,7 +491,7 @@ export function validateResearchInput(resolved, { flags = {}, options = {}, endp
     const hint = raw === 'days' && leaf.options?.timeframe && !names.has('days')
       ? ' Use --timeframe instead (for example --timeframe 7d); this command takes a time window, not a number of days.'
       : '';
-    errors.push(unknownOptionError(path, raw, visible, acceptedOptionNames(names, pagination), hint));
+    errors.push(unknownOptionError(path, raw, visible, suggestionCandidates(names, pagination), hint));
   }
 
   for (const [name, value] of given) {
