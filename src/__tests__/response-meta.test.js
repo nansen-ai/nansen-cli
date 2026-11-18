@@ -138,7 +138,7 @@ describe('readResponseMeta', () => {
   });
 
   it('treats a malformed remaining balance as unknown', () => {
-    for (const raw of ['-1', '1e3', 'abc', '9.', '.5']) {
+    for (const raw of ['-1', '1e3', 'abc', '9.', '.5', '9'.repeat(400), '9007199254740993.5']) {
       const meta = readResponseMeta({
         headers: headers({ 'x-nansen-credits-used': '1', 'x-nansen-credits-remaining': raw }),
       });

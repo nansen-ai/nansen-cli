@@ -40,14 +40,16 @@ function intHeader(response, name) {
 }
 
 /**
- * Read a header as a non-negative decimal number, or null when absent/unparseable.
+ * Read a header as a non-negative decimal number, or null when absent, unparseable
+ * or too large to hold exactly (including values that overflow to Infinity).
  * The remaining balance can hold a fraction of a credit ("9994.7126") after
  * usage-priced requests such as inference.
  */
 function decimalHeader(response, name) {
   const raw = stringHeader(response, name);
   if (raw === null || !/^\d+(\.\d+)?$/.test(raw)) return null;
-  return Number(raw);
+  const value = Number(raw);
+  return value <= Number.MAX_SAFE_INTEGER ? value : null;
 }
 
 /**
