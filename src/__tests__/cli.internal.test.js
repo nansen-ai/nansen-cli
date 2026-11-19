@@ -5970,8 +5970,8 @@ describe('formatCsv', () => {
       ['+', "+cmd|' /C calc'!A0", "\"'+cmd|' /C calc'!A0\""],
       ['-', '-2+3', "\"'-2+3\""],
       ['@', '@SUM(1,1)', '"\'@SUM(1,1)"'],
-      ['tab', '\t=1', '"\'\t=1"'],
-      ['carriage return', '\r=1', '"\'\r=1"'],
+      ['tab', '\t=1', '"\'\t\'=1"'],
+      ['carriage return', '\r=1', '"\'\r\'=1"'],
     ])('should prefix a string cell starting with %s', (_name, value, expected) => {
       expect(formatCsv([{ token_name: value }]).split('\n')[1]).toBe(expected);
     });
@@ -5992,6 +5992,74 @@ describe('formatCsv', () => {
 
     it('should quote a carriage return anywhere in a cell', () => {
       expect(formatCsv([{ a: 'x\ry' }]).split('\n')[1]).toBe('"x\ry"');
+    });
+
+    describe('after a mid-cell ; or tab', () => {
+      it.each([
+        ['=', 'x;=1+1', '"x;\'=1+1"'],
+        ['= with a second ;', 'x;=1+1;y', '"x;\'=1+1;y"'],
+        ['HYPERLINK', 'x;=HYPERLINK("http://example.com","c")', '"x;\'=HYPERLINK(""http://example.com"",""c"")"'],
+        ['+', 'x;+1+1', '"x;\'+1+1"'],
+        ['-', "x;-2+3+cmd|' /C calc'!A0", "\"x;'-2+3+cmd|' /C calc'!A0\""],
+        ['@', 'x;@SUM(1,1)', '"x;\'@SUM(1,1)"'],
+        ['tab', 'x\t=1+1', '"x\t\'=1+1"'],
+        ['each piece', 'x;=1;=2\t@3', '"x;\'=1;\'=2\t\'@3"'],
+        ['newline', 'x\n=1+1;', '"x\n\'=1+1;"'],
+        ['CR', 'x;\r=1+1;y', '"x;\r\'=1+1;y"'],
+        ['CRLF', 'x\r\n=1', '"x\r\n\'=1"'],
+        ['a quote', 'x;"=1+1;y', '"x;\'""=1+1;y"'],
+      ])('should prefix a piece starting with %s', (_name, value, expected) => {
+        const out = formatCsv([{ token_name: value }]);
+        expect(out.slice(out.indexOf('\n') + 1)).toBe(expected);
+      });
+
+      it('should quote but not change other pieces', () => {
+        const row = { a: 'a;b', b: 'a;-5', c: 'a;-0.5;+1e3', d: 'a\tb' };
+        expect(formatCsv([row]).split('\n')[1]).toBe('"a;b","a;-5","a;-0.5;+1e3","a\tb"');
+      });
+
+      it('should not change a number followed by a closing JSON quote', () => {
+        const row = { a: { n: 'x;-5' }, b: ['a;-0.5', 1] };
+        expect(formatCsv([row]).split('\n')[1]).toBe('"{""n"":""x;-5""}","[""a;-0.5"",1]"');
+      });
+
+      it('should prefix a number followed by an operator', () => {
+        const row = { a: { n: 'x;-5&1' }, b: 'x;-5&"y"' };
+        expect(formatCsv([row]).split('\n')[1]).toBe('"{""n"":""x;\'-5&1""}","x;\'-5&""y"""');
+      });
+
+      it('should not change a number behind leading quotes', () => {
+        const row = { a: 'x;"-5', b: 'x;"+1e3;y' };
+        expect(formatCsv([row]).split('\n')[1]).toBe('"x;""-5","x;""+1e3;y"');
+      });
+
+      it('should prefix a non-number behind leading quotes', () => {
+        const row = { a: 'x;"-5&1', b: 'x;""=1' };
+        expect(formatCsv([row]).split('\n')[1]).toBe('"x;\'""-5&1","x;\'""""=1"');
+      });
+
+      it('should neutralize JSON object cells and headers', () => {
+        const out = formatCsv([{ 'h;=1': { n: 'x;=1+1;y' } }]).split('\n');
+        expect(out[0]).toBe('"h;\'=1"');
+        expect(out[1]).toBe('"{""n"":""x;\'=1+1;y""}"');
+      });
+
+      it('should leave no piece of the ;-, tab- or newline-split output starting with a trigger', () => {
+        const numberLiteral = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/;
+        const numberThenQuote = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"/;
+        const hostile = [
+          'x;=1+1', 'x;=1+1;y', 'x;=1&', '&1;z', 'x\t=1+1', ';@a', '=a;=b', '\t=1',
+          'x;=HYPERLINK("http://example.com","c")', 'x;-1+1', 'x;+A1', 'x\n=1+1;',
+          'x;\r=1;y', 'x;"=1+1;y', 'x;""+1', 'x;""+1+1', 'x\r\n@1', '\n-1+1',
+        ];
+        const out = formatCsv([Object.fromEntries(hostile.map((v, i) => [`c${i}`, v]))]);
+        for (const piece of out.split(/[;\t\r\n]/)) {
+          // Leading quotes read as an empty string, so a number behind them is harmless.
+          const rest = piece.replace(/^"*/, '');
+          if (numberLiteral.test(rest) || numberThenQuote.test(rest)) continue;
+          expect(piece).not.toMatch(/^"*[=+\-@]/);
+        }
+      });
     });
   });
 });
