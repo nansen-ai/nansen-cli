@@ -136,10 +136,20 @@ const NATIVE_DECIMALS = { solana: 9, base: 18 };
  * Fetch the native token balance (ETH or SOL) for a wallet.
  * Returns balance in human-readable token units (e.g. 1.5 ETH), or null on RPC failure.
  *
- * Uses Number (not BigInt) for the result — acceptable precision loss for a
- * best-effort pre-check with 2% tolerance. Transaction amounts use BigInt elsewhere.
+ * Uses Number (not BigInt) for the result — acceptable precision loss for the
+ * best-effort gas pre-check. Sell amounts are derived from the base-unit
+ * balance (fetchNativeBalanceRaw) instead.
  */
 export async function fetchNativeBalance(chain, walletAddress) {
+  const raw = await fetchNativeBalanceRaw(chain, walletAddress);
+  return raw === null ? null : Number(raw) / 10 ** NATIVE_DECIMALS[chain];
+}
+
+/**
+ * Fetch the native token balance (ETH or SOL) for a wallet in base units (wei, lamports).
+ * Returns a BigInt, or null on RPC failure.
+ */
+async function fetchNativeBalanceRaw(chain, walletAddress) {
   try {
     const rpcUrl = CHAIN_RPCS[chain];
     if (!rpcUrl) return null;
@@ -154,8 +164,7 @@ export async function fetchNativeBalance(chain, walletAddress) {
       });
       const body = await res.json();
       if (body.error || body.result === undefined) return null;
-      const wei = BigInt(body.result);
-      return Number(wei) / 10 ** NATIVE_DECIMALS[chain];
+      return BigInt(body.result);
     }
 
     // Solana — getBalance returns { value: <lamports> }
@@ -166,7 +175,7 @@ export async function fetchNativeBalance(chain, walletAddress) {
     });
     const body = await res.json();
     if (body.error || body.result?.value === undefined) return null;
-    return body.result.value / 10 ** NATIVE_DECIMALS[chain];
+    return BigInt(body.result.value);
   } catch {
     return null;
   }
@@ -268,11 +277,79 @@ function isNativeAddress(address, chain) {
 }
 
 /**
+ * Format a base-unit amount as a plain decimal string in token units
+ * (e.g. 1500000n with 6 decimals => "1.5"). Never uses exponent notation, so
+ * the result is always accepted by convertToBaseUnits().
+ */
+function formatBaseUnits(raw, decimals) {
+  if (decimals === 0) return raw.toString();
+  const digits = raw.toString().padStart(decimals + 1, '0');
+  const whole = digits.slice(0, -decimals);
+  const frac = digits.slice(-decimals).replace(/0+$/, '');
+  return frac ? `${whole}.${frac}` : whole;
+}
+
+/**
+ * Parse a plain decimal token-unit amount into base units, dropping digits
+ * past `decimals`. Returns null for anything convertToBaseUnits() would not
+ * accept as a number (exponent notation, signs, empty strings).
+ */
+function parseBaseUnits(amount, decimals) {
+  const str = String(amount);
+  if (!/^\d+(\.\d+)?$/.test(str)) return null;
+  const [whole, frac = ''] = str.split('.');
+  return BigInt(whole + frac.slice(0, decimals).padEnd(decimals, '0'));
+}
+
+/**
+ * `percentage` % of a base-unit balance, rounded down to a base unit.
+ * The percentage is taken as the decimal it prints as (e.g. 33.3, 1e-7), so
+ * the result is exact for the value the user typed: 100 => the whole balance.
+ */
+function percentOfBalance(balance, percentage) {
+  const [mantissa, exponent = '0'] = String(percentage).split('e');
+  const [whole, frac = ''] = mantissa.split('.');
+  const digits = BigInt(whole + frac);
+  // percentage === digits * 10^-scale
+  const scale = frac.length - Number(exponent);
+  return scale >= 0
+    ? balance * digits / (100n * 10n ** BigInt(scale))
+    : balance * digits * 10n ** BigInt(-scale) / 100n;
+}
+
+/**
+ * Fetch the sell-token balance in base units, plus the decimals it is counted in.
+ */
+async function fetchSellBalanceRaw({ chain, from, walletAddress, decimals, isNative }) {
+  if (isNative) {
+    return { balance: await fetchNativeBalanceRaw(chain, walletAddress), unitDecimals: NATIVE_DECIMALS[chain] };
+  }
+  return { balance: await fetchTokenBalanceRaw(chain, from, walletAddress), unitDecimals: decimals };
+}
+
+/**
+ * Highest native amount (base units) that can be sold while keeping FEE_BUFFER
+ * for gas. Throws if the balance does not cover the buffer.
+ */
+function maxSellableNative(chain, balance, symbol) {
+  const reserve = BigInt(Math.round((FEE_BUFFER[chain] || 0) * 10 ** NATIVE_DECIMALS[chain]));
+  const maxSellable = balance - reserve;
+  if (maxSellable <= 0n) {
+    throw new Error(`Insufficient ${symbol} balance after reserving gas fees.`);
+  }
+  return maxSellable;
+}
+
+/**
  * Validate that the wallet has sufficient balance of the sell token.
  * Only applies when amountUnit is 'token' (human-readable amounts).
  *
  * Returns { adjustedAmount } — may differ from input if auto-adjusted
  * to 100% of balance (when amount exceeds balance by ≤2%).
+ *
+ * Balances are compared in base units (BigInt), so an amount equal to the
+ * wallet balance is never reported as exceeding it, and an adjusted amount is
+ * exactly the balance, never a rounded value above or below it.
  *
  * Throws on validation failure. Returns without action if RPC fails (best-effort).
  */
@@ -286,38 +363,40 @@ export async function validateBalance({ chain, from, amount, amountUnit, walletA
     || (isNative ? NATIVE_SYMBOLS[normalizedChain] : null)
     || from;
 
-  let balance;
-  if (isNative) {
-    balance = await fetchNativeBalance(normalizedChain, walletAddress);
-  } else {
-    if (decimals === undefined) return { adjustedAmount: amount };
-    balance = await fetchTokenBalance(normalizedChain, from, walletAddress, decimals);
-  }
+  if (!isNative && decimals === undefined) return { adjustedAmount: amount };
+  const { balance, unitDecimals } = await fetchSellBalanceRaw({
+    chain: normalizedChain, from, walletAddress, decimals, isNative,
+  });
 
   // Best-effort: if RPC failed, proceed without validation.
   if (balance === null) return { adjustedAmount: amount };
 
   // Check 1: wallet must hold the token
-  if (balance === 0) {
+  if (balance === 0n) {
     throw new Error(
       `No ${symbol} balance in wallet. You cannot trade a token you don't own.`
     );
   }
 
+  // Not a plain decimal amount — leave it to convertToBaseUnits to reject.
+  let sellRaw = parseBaseUnits(amount, unitDecimals);
+  if (sellRaw === null) return { adjustedAmount: amount };
+  let adjustedAmount = amount;
+
   // Check 2: amount vs balance
-  let numAmount = Number(amount);
-  if (numAmount > balance) {
-    const excessPercent = ((numAmount - balance) / balance) * 100;
-    if (excessPercent > AUTO_ADJUST_THRESHOLD_PERCENT) {
+  if (sellRaw > balance) {
+    const balanceStr = formatBaseUnits(balance, unitDecimals);
+    // excess > AUTO_ADJUST_THRESHOLD_PERCENT % of balance
+    if ((sellRaw - balance) * 100n > balance * BigInt(AUTO_ADJUST_THRESHOLD_PERCENT)) {
       throw new Error(
-        `Insufficient balance. You have ${balance} ${symbol} but the trade requires ${amount} ${symbol}.`
+        `Insufficient balance. You have ${balanceStr} ${symbol} but the trade requires ${amount} ${symbol}.`
       );
     }
     // Auto-adjust to 100% of balance
-    const adjustedAmount = String(balance);
-    numAmount = balance;
+    sellRaw = balance;
+    adjustedAmount = balanceStr;
     process.stderr.write(
-      `Warning: Amount ${amount} exceeds balance ${balance}. Auto-adjusting to ${adjustedAmount} ${symbol}.\n`
+      `Warning: Amount ${amount} exceeds balance ${balanceStr}. Auto-adjusting to ${adjustedAmount} ${symbol}.\n`
     );
     if (!isNative) return { adjustedAmount };
     // Native tokens fall through to the fee buffer check below — selling 100%
@@ -325,33 +404,26 @@ export async function validateBalance({ chain, from, amount, amountUnit, walletA
   }
 
   // Check 3: native token fee buffer when selling ≥95% of balance
-  if (isNative) {
-    const percentOfBalance = (numAmount / balance) * 100;
-    if (percentOfBalance >= HIGH_PERCENTAGE_THRESHOLD) {
-      const reserve = FEE_BUFFER[normalizedChain] || 0;
-      const maxSellable = parseFloat((balance - reserve).toFixed(NATIVE_DECIMALS[normalizedChain]));
-      if (maxSellable <= 0) {
-        throw new Error(
-          `Insufficient ${symbol} balance after reserving gas fees.`
-        );
-      }
-      if (numAmount > maxSellable) {
-        const adjustedAmount = String(maxSellable);
-        process.stderr.write(
-          `Warning: Reserving ${reserve} ${symbol} for gas. Adjusted sell amount to ${adjustedAmount} ${symbol}.\n`
-        );
-        return { adjustedAmount };
-      }
+  if (isNative && sellRaw * 100n >= balance * BigInt(HIGH_PERCENTAGE_THRESHOLD)) {
+    const maxSellable = maxSellableNative(normalizedChain, balance, symbol);
+    if (sellRaw > maxSellable) {
+      adjustedAmount = formatBaseUnits(maxSellable, unitDecimals);
+      process.stderr.write(
+        `Warning: Reserving ${FEE_BUFFER[normalizedChain] || 0} ${symbol} for gas. Adjusted sell amount to ${adjustedAmount} ${symbol}.\n`
+      );
     }
   }
 
-  return { adjustedAmount: amount };
+  return { adjustedAmount };
 }
 
 /**
  * Resolve a percentage amount to a token-unit amount string.
  * Fetches the wallet's balance of the sell token, calculates the percentage,
  * and applies a native-token fee buffer when selling >=95%.
+ *
+ * The amount is computed from the base-unit balance with BigInt math: 100%
+ * is exactly the balance, and other percentages round down to a base unit.
  *
  * Returns the amount in human-readable token units (e.g. "1.5"),
  * ready for convertToBaseUnits().
@@ -367,44 +439,34 @@ export async function resolvePercentAmount({ chain, from, walletAddress, percent
 
   const normalizedChain = chain.toLowerCase();
   const isNative = isNativeAddress(from, normalizedChain);
+  const symbol = isNative ? (NATIVE_SYMBOLS[normalizedChain] || from) : from;
 
-  let balance;
-  if (isNative) {
-    balance = await fetchNativeBalance(normalizedChain, walletAddress);
-  } else {
-    balance = await fetchTokenBalance(normalizedChain, from, walletAddress, decimals);
-  }
+  const { balance, unitDecimals } = await fetchSellBalanceRaw({
+    chain: normalizedChain, from, walletAddress, decimals, isNative,
+  });
 
   if (balance === null) {
     throw new Error(`Could not fetch balance for ${from} on ${normalizedChain}. Check your RPC connection.`);
   }
-  if (balance === 0) {
-    const symbol = isNative ? (NATIVE_SYMBOLS[normalizedChain] || from) : from;
+  if (balance === 0n) {
     throw new Error(`No ${symbol} balance in wallet. You cannot trade a token you don't own.`);
   }
 
-  // Calculate token amount from percentage.
-  // Use exact balance for 100% to avoid floating-point precision loss.
-  let tokenAmount = percentage === 100 ? balance : balance * (percentage / 100);
+  // Calculate token amount from percentage (100% => the exact balance).
+  let amountRaw = percentOfBalance(balance, percentage);
 
   // Native token fee buffer: when selling >=95%, cap at balance - reserve.
   if (isNative && percentage >= HIGH_PERCENTAGE_THRESHOLD) {
-    const reserve = FEE_BUFFER[normalizedChain] || 0;
-    const maxSellable = parseFloat((balance - reserve).toFixed(NATIVE_DECIMALS[normalizedChain]));
-    if (maxSellable <= 0) {
-      const symbol = NATIVE_SYMBOLS[normalizedChain] || from;
-      throw new Error(`Insufficient ${symbol} balance after reserving gas fees.`);
-    }
-    if (tokenAmount > maxSellable) {
-      const symbol = NATIVE_SYMBOLS[normalizedChain] || from;
+    const maxSellable = maxSellableNative(normalizedChain, balance, symbol);
+    if (amountRaw > maxSellable) {
       process.stderr.write(
-        `Warning: Reserving ${reserve} ${symbol} for gas. Adjusted sell amount to ${maxSellable} ${symbol}.\n`
+        `Warning: Reserving ${FEE_BUFFER[normalizedChain] || 0} ${symbol} for gas. Adjusted sell amount to ${formatBaseUnits(maxSellable, unitDecimals)} ${symbol}.\n`
       );
-      tokenAmount = maxSellable;
+      amountRaw = maxSellable;
     }
   }
 
-  return String(parseFloat(tokenAmount.toFixed(decimals)));
+  return formatBaseUnits(amountRaw, unitDecimals);
 }
 
 /**
@@ -444,8 +506,18 @@ export async function validateGasBalance({ chain, walletAddress }) {
  * Requires `decimals` to convert from base units.
  *
  * Uses Number (not BigInt) for the result — see fetchNativeBalance note on precision.
+ * Sell amounts are derived from the base-unit balance (fetchTokenBalanceRaw) instead.
  */
 export async function fetchTokenBalance(chain, tokenAddress, walletAddress, decimals) {
+  const raw = await fetchTokenBalanceRaw(chain, tokenAddress, walletAddress);
+  return raw === null ? null : Number(raw) / 10 ** decimals;
+}
+
+/**
+ * Fetch an ERC-20 or SPL token balance for a wallet in base units.
+ * Returns a BigInt, or null on RPC failure.
+ */
+async function fetchTokenBalanceRaw(chain, tokenAddress, walletAddress) {
   try {
     const rpcUrl = CHAIN_RPCS[chain];
     if (!rpcUrl) return null;
@@ -463,8 +535,7 @@ export async function fetchTokenBalance(chain, tokenAddress, walletAddress, deci
       });
       const body = await res.json();
       if (body.error || !body.result) return null;
-      const raw = BigInt(body.result);
-      return Number(raw) / 10 ** decimals;
+      return BigInt(body.result);
     }
 
     // Solana — getTokenAccountsByOwner with the mint filter
@@ -484,14 +555,14 @@ export async function fetchTokenBalance(chain, tokenAddress, walletAddress, deci
     const body = await res.json();
     if (body.error) return null;
     const accounts = body.result?.value || [];
-    if (accounts.length === 0) return 0;
+    if (accounts.length === 0) return 0n;
     // Sum across all token accounts for this mint (rare but possible)
     let total = 0n;
     for (const acct of accounts) {
       const amount = acct.account?.data?.parsed?.info?.tokenAmount?.amount;
       if (amount) total += BigInt(amount);
     }
-    return Number(total) / 10 ** decimals;
+    return total;
   } catch {
     return null;
   }
