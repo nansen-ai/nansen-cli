@@ -26,6 +26,10 @@ import * as wallet from '../wallet.js';
 import * as wcTrading from '../walletconnect-trading.js';
 import { PrivyClient } from '../privy.js';
 
+// The Solana address of the fixture private key ('0123456789abcdef' x 8), so
+// wallet info and signing key agree. Tests send to a different address (9WzD...):
+// a send to the wallet's own address is refused before signing.
+const FIXTURE_SOL_SENDER = '5SbtwbUjjoALCAfF6gPAnHgbqb3qmmGwJiPh6YTj4Cv';
 
 // ============= Unit Tests =============
 
@@ -372,12 +376,12 @@ describe('sendTokens integration', () => {
       name: 'test',
       provider: 'local',
       evm: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4',
-      solana: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+      solana: FIXTURE_SOL_SENDER,
     });
     vi.spyOn(wallet, 'exportWallet').mockReturnValue({
       name: 'test',
       evm: { address: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', privateKey: '0123456789abcdef'.repeat(4) },
-      solana: { address: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', privateKey: '0123456789abcdef'.repeat(8) },
+      solana: { address: FIXTURE_SOL_SENDER, privateKey: '0123456789abcdef'.repeat(8) },
     });
   });
 
@@ -632,6 +636,40 @@ describe('sendTokens integration', () => {
       const body = JSON.parse(sendCall[1].body);
       expect(body.params[1].encoding).toBe('base64');
       expect(() => Buffer.from(body.params[0], 'base64')).not.toThrow();
+    });
+
+    // Solana rejects a transfer that lists the same account as sender and
+    // recipient (AccountLoadedTwice), so a send to the wallet's own address is
+    // refused before anything is built, signed or sent.
+    describe('self-send', () => {
+      const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+      const rpcMethods = () => fetch.mock.calls.map(c => JSON.parse(c[1].body).method);
+
+      test.each([
+        ['SOL', {}],
+        ['SPL', { token: USDC }],
+        ['SOL dry run', { dryRun: true }],
+      ])('refuses a %s self-send before signing', async (_label, extra) => {
+        mockSolRpcSmart();
+        // Serve the mint and the source token balance too, so that without the
+        // guard the SPL send would get as far as broadcasting.
+        const base = fetch.getMockImplementation();
+        fetch.mockImplementation(async (url, opts) => {
+          const body = JSON.parse(opts.body);
+          if (body.method === 'getAccountInfo' && body.params[0] === USDC) {
+            return { json: () => Promise.resolve({ result: { context: { slot: 1 }, value: { owner: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', data: { parsed: { info: { decimals: 6 } } } } } }) };
+          }
+          if (body.method === 'getTokenAccountBalance') {
+            return { json: () => Promise.resolve({ result: { context: { slot: 1 }, value: { amount: '100000000', decimals: 6, uiAmountString: '100' } } }) };
+          }
+          return base(url, opts);
+        });
+        await expect(sendTokens({ to: FIXTURE_SOL_SENDER, amount: '0.5', chain: 'solana', password: 'test', ...extra }))
+          .rejects.toThrow(`Recipient ${FIXTURE_SOL_SENDER} is this wallet's own Solana address`);
+        expect(rpcMethods()).not.toContain('getLatestBlockhash');
+        expect(rpcMethods()).not.toContain('sendTransaction');
+        expect(wallet.exportWallet).not.toHaveBeenCalled();
+      });
     });
 
     describe('recipient must be a wallet', () => {
@@ -902,6 +940,47 @@ describe('sendTokens integration', () => {
       const result = await sendTokens({ to: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', amount: '0.01', chain: 'base', password: 'test' });
       expect(result.success).toBe(true);
       expect(result.transactionHash).toBe('0xfallbacktx');
+    });
+
+    // A failed preflight often says only "Transaction simulation failed"; the
+    // reason is in error.data.err and must reach the user.
+    describe('includes the RPC err of a failed simulation', () => {
+      function mockSimulationFailure(error) {
+        fetch.mockImplementation(async (url, opts) => {
+          const body = JSON.parse(opts.body);
+          if (body.method === 'sendTransaction') {
+            return { json: () => Promise.resolve({ jsonrpc: '2.0', id: 1, error }) };
+          }
+          const responses = {
+            'getLatestBlockhash': { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } },
+            'getBalance': { value: 10000000000 },
+            'getAccountInfo': { context: { slot: 1 }, value: null },
+          };
+          return { json: () => Promise.resolve({ result: responses[body.method] ?? null }) };
+        });
+      }
+      const send = () => sendTokens({ to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', amount: '0.5', chain: 'solana', password: 'test' });
+
+      test('appends a string RPC err to the bare simulation message', async () => {
+        mockSimulationFailure({ code: -32002, message: 'Transaction simulation failed', data: { err: 'AccountLoadedTwice', logs: [] } });
+        await expect(send()).rejects.toThrow('RPC error: Transaction simulation failed (RPC err: "AccountLoadedTwice")');
+      });
+
+      test('appends an object RPC err as JSON', async () => {
+        mockSimulationFailure({ code: -32002, message: 'Transaction simulation failed', data: { err: { InstructionError: [0, { Custom: 1 }] }, logs: [] } });
+        await expect(send()).rejects.toThrow('(RPC err: {"InstructionError":[0,{"Custom":1}]})');
+      });
+
+      test('keeps the friendly advice and adds the RPC err', async () => {
+        mockSimulationFailure({
+          code: -32002,
+          message: 'Transaction simulation failed: Transaction results in an account (1) with insufficient funds for rent',
+          data: { err: { InsufficientFundsForRent: { account_index: 1 } }, logs: [] },
+        });
+        const err = await send().catch(e => e);
+        expect(err.message).toContain('below Solana\'s rent-exempt minimum');
+        expect(err.message).toContain('(RPC err: {"InsufficientFundsForRent":{"account_index":1}})');
+      });
     });
 
     test('keeps the SOL advice for a Solana insufficient-funds rejection', async () => {
@@ -1355,6 +1434,15 @@ describe('buildUnsignedSolanaTransaction', () => {
     expect(txBytes[0]).toBe(1); // 1 signature slot
     expect(txBytes.subarray(1, 65).every((b) => b === 0)).toBe(true); // empty signature
   });
+
+  test('refuses to build a self-send', async () => {
+    await expect(buildUnsignedSolanaTransaction({
+      to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+      amount: 1000n,
+      fromAddress: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+    })).rejects.toThrow("is this wallet's own Solana address");
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });
 
 // ============= sendTokens via Privy =============
@@ -1427,6 +1515,42 @@ describe('sendTokens via Privy', () => {
 
     expect(getWalletSpy).toHaveBeenCalledOnce();
     expect(signSpy).not.toHaveBeenCalled();
+  });
+
+  test.each([false, true])('refuses a Solana self-send from a Privy wallet before signing (dryRun %s)', async (dryRun) => {
+    // Without the guard this RPC would let the send reach signing and broadcast.
+    fetch.mockImplementation(async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      const responses = {
+        'getLatestBlockhash': { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } },
+        'getBalance': { value: 1000000000 },
+        'sendTransaction': 'sol_sig_self',
+        'getSignatureStatuses': { value: [{ confirmationStatus: 'confirmed', slot: 1, err: null }] },
+      };
+      return { json: () => Promise.resolve({ result: responses[body.method] ?? { context: { slot: 1 }, value: null } }) };
+    });
+    const signSpy = vi.spyOn(PrivyClient.prototype, 'signSolanaTransaction')
+      .mockResolvedValue({ data: { signed_transaction: 'c2lnbmVkdHg=' } });
+
+    await expect(sendTokens({
+      to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+      amount: '0.001', chain: 'solana', wallet: 'pv', dryRun,
+    })).rejects.toThrow("is this wallet's own Solana address");
+
+    expect(signSpy).not.toHaveBeenCalled();
+  });
+
+  test('keeps the missing-Solana-wallet error for a Privy wallet without a Solana address', async () => {
+    wallet.showWallet.mockReturnValue({
+      name: 'pv', provider: 'privy', evm: '0x742d35Cc6bF4F3F4e0e3a8DD7e37fF4e4be4E4b4', solana: null,
+      privyWalletIds: { evm: 'wl_evm_1' },
+    });
+    fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ result: { context: { slot: 1 }, value: null } }) }));
+
+    await expect(sendTokens({
+      to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+      amount: '0.001', chain: 'solana', wallet: 'pv', dryRun: true,
+    })).rejects.toThrow('No Solana wallet in this Privy wallet');
   });
 
   test('rejects an unsupported EVM chain before looking up the Privy wallet', async () => {
@@ -1781,11 +1905,11 @@ describe('sendTokens --token symbols', () => {
     vi.clearAllMocks();
     vi.spyOn(wallet, 'getWalletConfig').mockReturnValue({ defaultWallet: 'test', passwordHash: { salt: 'test', hash: 'test' } });
     vi.spyOn(wallet, 'verifyPassword').mockReturnValue(true);
-    vi.spyOn(wallet, 'showWallet').mockReturnValue({ name: 'test', provider: 'local', evm: TO_EVM, solana: TO_SOL });
+    vi.spyOn(wallet, 'showWallet').mockReturnValue({ name: 'test', provider: 'local', evm: TO_EVM, solana: FIXTURE_SOL_SENDER });
     vi.spyOn(wallet, 'exportWallet').mockReturnValue({
       name: 'test',
       evm: { address: TO_EVM, privateKey: '0123456789abcdef'.repeat(4) },
-      solana: { address: TO_SOL, privateKey: '0123456789abcdef'.repeat(8) },
+      solana: { address: FIXTURE_SOL_SENDER, privateKey: '0123456789abcdef'.repeat(8) },
     });
   });
 
