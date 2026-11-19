@@ -697,18 +697,22 @@ async function waitForSolanaConfirmation(rpcUrl, txHash, timeoutMs = 30000) {
   stderr('  Waiting for confirmation...');
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
+    let status = null;
     try {
       const result = await rpcCall(rpcUrl, 'getSignatureStatuses', [[txHash]]);
-      const status = result?.value?.[0];
-      if (status) {
-        if (status.err) throw new Error(`Transaction failed: ${JSON.stringify(status.err)}`);
-        if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
-          stderr(`  ✓ Confirmed (${status.confirmationStatus}, slot ${status.slot})`);
-          return { confirmed: true, slot: status.slot };
-        }
+      status = result?.value?.[0] ?? null;
+    } catch {
+      // The transaction is already broadcast, so a failed status request
+      // (network or RPC error) says nothing about it: keep polling until the
+      // deadline, as waitForSolanaSignature in trading.js does. Throwing here
+      // would report a sent transaction as failed and drop its signature.
+    }
+    if (status) {
+      if (status.err) throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}. Signature: ${txHash}`);
+      if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
+        stderr(`  ✓ Confirmed (${status.confirmationStatus}, slot ${status.slot})`);
+        return { confirmed: true, slot: status.slot };
       }
-    } catch (e) {
-      if (e.message.includes('failed')) throw e;
     }
     await new Promise(r => setTimeout(r, 2000));
   }

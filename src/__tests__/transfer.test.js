@@ -607,14 +607,19 @@ describe('sendTokens integration', () => {
   });
 
   describe('Solana', () => {
-    function mockSolRpcSmart() {
+    // `statusReply(poll)` answers the nth getSignatureStatuses request; a
+    // throw fails that request at the transport, as fetch does.
+    function mockSolRpcSmart(statusReply = () => ({ value: [{ confirmationStatus: 'confirmed', slot: 12345, err: null }] })) {
+      let statusPolls = 0;
       fetch.mockImplementation(async (url, opts) => {
         const body = JSON.parse(opts.body);
+        if (body.method === 'getSignatureStatuses') {
+          return { json: () => Promise.resolve({ result: statusReply(++statusPolls) }) };
+        }
         const responses = {
           'getLatestBlockhash': { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } },
           'getBalance': { value: 1000000000 }, // 1 SOL
           'sendTransaction': 'sol_sig_123',
-          'getSignatureStatuses': { value: [{ confirmationStatus: 'confirmed', slot: 12345, err: null }] },
           'getAccountInfo': { context: { slot: 1 }, value: null }, // recipient: no account yet
         };
         return { json: () => Promise.resolve({ result: responses[body.method] || null }) };
@@ -636,6 +641,26 @@ describe('sendTokens integration', () => {
       const body = JSON.parse(sendCall[1].body);
       expect(body.params[1].encoding).toBe('base64');
       expect(() => Buffer.from(body.params[0], 'base64')).not.toThrow();
+    });
+
+    // The status polls come after the broadcast. A poll that fails says
+    // nothing about the transaction, so it must not turn a sent transfer into
+    // a failed one without its signature: a retry would send the funds again.
+    test('keeps polling when a status request fails after the broadcast', async () => {
+      mockSolRpcSmart((poll) => {
+        if (poll === 1) throw new TypeError('fetch failed');
+        return { value: [{ confirmationStatus: 'confirmed', slot: 12345, err: null }] };
+      });
+      const result = await sendTokens({ to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', amount: '0.5', chain: 'solana', password: 'test' });
+      expect(result).toMatchObject({ success: true, transactionHash: 'sol_sig_123', confirmed: true });
+      const polls = fetch.mock.calls.filter(c => JSON.parse(c[1].body).method === 'getSignatureStatuses');
+      expect(polls).toHaveLength(2);
+    });
+
+    test('names the signature when the transaction failed on-chain', async () => {
+      mockSolRpcSmart(() => ({ value: [{ confirmationStatus: 'confirmed', slot: 12345, err: { InstructionError: [0, { Custom: 1 }] } }] }));
+      await expect(sendTokens({ to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', amount: '0.5', chain: 'solana', password: 'test' }))
+        .rejects.toThrow('Transaction failed on-chain: {"InstructionError":[0,{"Custom":1}]}. Signature: sol_sig_123');
     });
 
     // Solana rejects a transfer that lists the same account as sender and
