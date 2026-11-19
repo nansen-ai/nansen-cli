@@ -31,6 +31,7 @@ import {
   waitForSolanaSignature,
   SOLANA_CONFIRM_TIMEOUT_MS,
   buildApprovalTransaction,
+  requiresZeroFirstApproval,
   approvalAmountForSwap,
   approvalCapForQuote,
   assertCompleteEvmRequestIntent,
@@ -249,8 +250,8 @@ describe('resolveChain', () => {
   });
 
   it('should throw for unsupported chain', () => {
-    expect(() => resolveChain('polygon')).toThrow('Unsupported chain');
-    expect(() => resolveChain('ethereum')).toThrow('Unsupported chain');
+    expect(() => resolveChain('avalanche')).toThrow('Unsupported chain');
+    expect(() => resolveChain('bnb')).toThrow('Unsupported chain');
     expect(() => resolveChain('bsc')).toThrow('Unsupported chain');
     expect(() => resolveChain('')).toThrow('Unsupported chain');
     expect(() => resolveChain(null)).toThrow('Unsupported chain');
@@ -883,9 +884,29 @@ describe('signEvmTransaction (API response format)', () => {
     const wallet = generateEvmWallet();
     expect(() => signEvmTransaction({}, wallet.privateKey, 'solana', 0))
       .toThrow('Unsupported EVM chain');
-    expect(() => signEvmTransaction({}, wallet.privateKey, 'polygon', 0))
+    expect(() => signEvmTransaction({}, wallet.privateKey, 'bnb', 0))
       .toThrow('Unsupported EVM chain');
   });
+
+  it.each([['ethereum', 1], ['arbitrum', 42161], ['polygon', 137]])(
+    'signs a LI.FI-shaped legacy quote (gasPrice + gasLimit) on %s with chain id %i',
+    async (chain, chainId) => {
+      const { RLP } = await import('@ethereumjs/rlp');
+      const wallet = generateEvmWallet();
+      const signed = signEvmTransaction({
+        to: '0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE', data: '0xabcd', value: '0',
+        gasLimit: '0x6842a', gasPrice: '0x6e2c85d', chainId,
+      }, wallet.privateKey, chain, 7);
+      // Legacy (type-0) envelope: RLP([nonce, gasPrice, gasLimit, to, value, data, v, r, s]).
+      const fields = RLP.decode(Uint8Array.from(Buffer.from(signed.slice(2), 'hex')));
+      const num = (u8) => (u8.length ? BigInt('0x' + Buffer.from(u8).toString('hex')) : 0n);
+      expect(fields).toHaveLength(9);
+      expect(num(fields[1])).toBe(0x6e2c85dn);
+      expect(num(fields[2])).toBe(0x6842an);
+      // EIP-155: v = chainId * 2 + 35 + recovery bit.
+      expect((num(fields[6]) - 35n) / 2n).toBe(BigInt(chainId));
+    },
+  );
 
   it('should produce different signed tx for different nonces', () => {
     const wallet = generateEvmWallet();
@@ -1020,7 +1041,7 @@ describe('buildApprovalTransaction', () => {
 
   it('should reject unsupported chains', () => {
     const wallet = generateEvmWallet();
-    expect(() => buildApprovalTransaction('0xabc', '0xdef', wallet.privateKey, 'polygon', 0))
+    expect(() => buildApprovalTransaction('0xabc', '0xdef', wallet.privateKey, 'bnb', 0))
       .toThrow('Unsupported chain');
   });
 
@@ -3693,7 +3714,7 @@ describe('resolveTokenDecimals', () => {
   });
 
   it('should throw for unknown chain', async () => {
-    await expect(resolveTokenDecimals('0xabc', 'polygon')).rejects.toThrow('Unknown chain');
+    await expect(resolveTokenDecimals('0xabc', 'bnb')).rejects.toThrow('Unknown chain');
   });
 
   it('should reject bare symbol on EVM chain', async () => {
@@ -5883,6 +5904,73 @@ describe('ERC-20 excessive allowance handling', () => {
     delete process.env.NANSEN_WALLET_PASSWORD;
   });
 
+  describe('zero-first tokens (Ethereum USDT)', () => {
+    const ETH_USDT = '0xdac17f958d2ee523a2206206994597c13d831ec7';
+    const ETH_NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+    function saveEthUsdtQuote(walletAddress, { chain = 'ethereum', token = ETH_USDT } = {}) {
+      const inputAmount = '100000';
+      return saveQuote({
+        success: true,
+        quotes: [{
+          aggregator: 'lifi', inputMint: token, outputMint: ETH_NATIVE,
+          inAmount: inputAmount, inputAmount, outAmount: '44000000000000',
+          approvalAddress: LIFI_ROUTER, gas: '300000',
+          transaction: { to: LIFI_ROUTER, data: '0xdeadbeef', value: '0', gasLimit: '300000', gasPrice: '5000000' },
+          metadata: {},
+        }],
+      }, chain, 'local', null, null, {
+        swapMode: 'exactIn',
+        request: { ...evmIntent({ walletAddress, fromToken: token, toToken: ETH_NATIVE, amount: inputAmount, maxInputAmount: inputAmount }), chain },
+      });
+    }
+
+    it('requiresZeroFirstApproval names only mainnet USDT', () => {
+      expect(requiresZeroFirstApproval('ethereum', ETH_USDT)).toBe(true);
+      expect(requiresZeroFirstApproval('Ethereum', ETH_USDT.toUpperCase().replace('0X', '0x'))).toBe(true);
+      expect(requiresZeroFirstApproval('arbitrum', ETH_USDT)).toBe(false);
+      expect(requiresZeroFirstApproval('ethereum', '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48')).toBe(false);
+    });
+
+    it.each([[{}], [{ 'no-revoke-excessive-allowance': true }]])(
+      'zero-first: a partial USDT allowance is revoked to 0 before the scoped approval (opts %j)',
+      async (extraOpts) => {
+        createWallet('default', 'testpass');
+        process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+        const walletAddress = showWallet('default').evm;
+        const quoteId = saveEthUsdtQuote(walletAddress);
+        const { executeBodies } = mockLocalEvmExecute({
+          allowance: 50000n,
+          executeResponses: [{ status: 'Success', txHash: '0xAny', chainType: 'evm', broadcaster: 'test' }],
+        });
+
+        const logs = [];
+        const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+        await cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true, ...extraOpts }, { quote: quoteId });
+
+        expect(executeBodies).toHaveLength(3);
+        expect(executeBodies[0].signedTransaction).toContain(approveSelector + '000000000000000000000000' + LIFI_ROUTER.slice(2).toLowerCase() + amountWord(0n));
+        expect(executeBodies[1].signedTransaction).toContain(amountWord(100000n));
+        expect(executeBodies[2].signedTransaction).not.toContain(approveSelector);
+        expect(logs.some((l) => l.includes('only accepts a new approval from 0'))).toBe(true);
+      },
+    );
+
+    it('zero-first: a partial allowance on an ordinary token is re-approved directly (no revoke)', async () => {
+      createWallet('default', 'testpass');
+      process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+      const walletAddress = showWallet('default').evm;
+      const quoteId = saveEthUsdtQuote(walletAddress, { token: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' });
+      const { executeBodies } = mockLocalEvmExecute({
+        allowance: 50000n,
+        executeResponses: [{ status: 'Success', txHash: '0xAny', chainType: 'evm', broadcaster: 'test' }],
+      });
+      const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+      await cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
+      expect(executeBodies).toHaveLength(2);
+      expect(executeBodies[0].signedTransaction).toContain(amountWord(100000n));
+    });
+  });
+
   it('revokes an oversized allowance, waits for receipt, reapproves scoped amount, then broadcasts swap', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
@@ -7521,6 +7609,45 @@ describe('verifySwapOutcome (execute-path wiring)', () => {
     global.fetch = vi.fn().mockResolvedValue({ status: 200, text: async () => JSON.stringify({ error: { code: -32601, message: 'method not found' } }) });
     const r = await verifySwapOutcome({ chain: 'base', from: WALLET, quote, quoteData });
     expect(r.proceed).toBe(true);
+  });
+
+  describe('on a non-Base EVM trade chain (arbitrum)', () => {
+    const ARB_USDC = '0xaf88d065e77c8cc2239327c5edb3a432268e5831';
+    const ARB_WETH = '0x82af49447d8a07e3bd95bd0d56f35241523fbab1';
+    const arbQuote = { ...quote, inputMint: ARB_USDC, outputMint: ARB_WETH };
+    const arbQuoteData = { ...quoteData, request: { ...quoteData.request, chain: 'arbitrum', fromToken: ARB_USDC, toToken: ARB_WETH } };
+    const api = { baseUrl: 'https://api.nansen.ai', selection: { kind: 'api-key' }, requestCredentials: async () => ({ apikey: 'secret-key' }) };
+    let origArb;
+    beforeEach(() => { origArb = SIMULATION_RPCS.arbitrum; });
+    afterEach(() => { SIMULATION_RPCS.arbitrum = origArb; });
+
+    it('simulates on the public arbitrum RPC by default, without the Nansen key', () => {
+      expect(SIMULATION_RPCS.arbitrum).toMatch(/^https:\/\//);
+      expect(SIMULATION_RPCS.arbitrum).not.toMatch(/nansen/);
+    });
+
+    it('blocks a sibling-token drain', async () => {
+      SIMULATION_RPCS.arbitrum = 'http://arb-sim.test';
+      const drain = '0xaaaa000000000000000000000000000000000001';
+      global.fetch = vi.fn().mockResolvedValue(simBody([
+        tlog(ARB_USDC, WALLET, ROUTER, 1000000n), tlog(ARB_WETH, ROUTER, WALLET, 1000000n), tlog(drain, WALLET, ROUTER, 5n),
+      ]));
+      const r = await verifySwapOutcome({ chain: 'arbitrum', from: WALLET, quote: arbQuote, quoteData: arbQuoteData, api });
+      expect(r.proceed).toBe(false);
+      expect(r.reason).toMatch(/SWAP_OUTCOME_MISMATCH/i);
+      const [url, opts] = global.fetch.mock.calls[0];
+      expect(url).toBe('http://arb-sim.test');
+      expect('apikey' in opts.headers).toBe(false);
+    });
+
+    it('hosted sim: refuses (blocks, does not degrade) when pointed at the Base-only Nansen-hosted endpoint', async () => {
+      SIMULATION_RPCS.arbitrum = 'https://api.nansen.ai/api/v1/trade/simulate-swap';
+      global.fetch = vi.fn(); // must not be called: the result would describe Base state
+      const r = await verifySwapOutcome({ chain: 'arbitrum', from: WALLET, quote: arbQuote, quoteData: arbQuoteData, api });
+      expect(r.proceed).toBe(false);
+      expect(r.reason).toMatch(/simulates base only/);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
   });
 
   it('skips non-EVM chains', async () => {

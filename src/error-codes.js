@@ -165,6 +165,7 @@ export const ERROR_CODES = {
   SIM_INNER_INSTRUCTIONS_UNAVAILABLE: { group: 'trade', description: 'The Solana simulation RPC did not return inner instructions, so calls made from inside other programs could not be checked. Set NANSEN_SOLANA_SIM_RPC to an RPC that supports them.' },
   NO_SIM_RPC: { group: 'trade', description: 'No simulation RPC is configured for the chain.' },
   NOT_SIM_CAPABLE: { group: 'trade', description: 'The RPC does not support simulation.' },
+  SIM_WRONG_CHAIN: { group: 'trade', description: 'The simulation endpoint configured for the chain simulates a different chain; the swap is not verified or sent.' },
   RPC_UNCONFIGURED: { group: 'trade', description: 'No RPC URL is configured for the chain.' },
   RPC_HTTP_ERROR: { group: 'trade', description: 'The RPC answered with an HTTP or JSON-RPC error.' },
   RPC_JSON_ERROR: { group: 'trade', description: 'The RPC answered with a body that is not JSON.' },

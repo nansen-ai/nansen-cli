@@ -150,7 +150,7 @@ describe('validateQuoteInput', () => {
     it('rejects unsupported chain', () => {
       expect(() => validateQuoteInput({
         ...validSolana,
-        chain: 'polygon',
+        chain: 'bnb',
       })).toThrow(/Unsupported chain/);
     });
 
@@ -221,13 +221,31 @@ describe('validateQuoteInput', () => {
     it('rejects BONK → JUP on Solana (neither side is native or USDC)', () => {
       expect(() => validateQuoteInput({
         chain: 'solana', from: BONK, to: JUP, amount: '1000000000',
-      })).toThrow(/USDC or the native token/);
+      })).toThrow('at least one token must be USDC/USDT or the native token (SOL)');
     });
 
     it('rejects cross-chain WETH → BONK (Base → Solana, neither anchor)', () => {
       expect(() => validateQuoteInput({
         chain: 'base', toChain: 'solana', from: WETH, to: BONK, amount: '1000000000000000000',
-      })).toThrow(/USDC or the native token/);
+      })).toThrow('a stablecoin or the native token on either side (USDC or ETH on base, USDC/USDT or SOL on solana)');
+    });
+
+    it('allows USDT as the anchor where the chain lists it (Solana USDT → BONK)', () => {
+      expect(() => validateQuoteInput({
+        chain: 'solana', from: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', to: BONK, amount: '1000000',
+      })).not.toThrow();
+    });
+
+    it('allows USDT as the anchor on Ethereum (USDT → WETH)', () => {
+      expect(() => validateQuoteInput({
+        chain: 'ethereum', from: '0xdAC17F958D2ee523a2206206994597C13D831ec7', to: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', amount: '1000000',
+      })).not.toThrow();
+    });
+
+    it('names POL as the native token in the Polygon anchor error', () => {
+      expect(() => validateQuoteInput({
+        chain: 'polygon', from: '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270', to: '0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39', amount: '1',
+      })).toThrow('USDC/USDT or the native token (POL)');
     });
 
     it('allows mixed-case USDC on Base (case-insensitive anchor recognition)', () => {

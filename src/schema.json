@@ -3589,11 +3589,11 @@
             "chain": {
               "type": "string",
               "default": "base",
-              "description": "Source blockchain (solana or base)"
+              "description": "Source blockchain (solana, base, ethereum, arbitrum, polygon)"
             },
             "to-chain": {
               "type": "string",
-              "description": "Destination blockchain for cross-chain swap (solana or base). Omit for same-chain. At least one side must be USDC or a native token (ETH, SOL). Non-native to non-native is not supported — swap to USDC first, then bridge. Bridge providers (Li.Fi or Relay) are selected automatically based on best price. Sub-dollar swaps are supported via Relay."
+              "description": "Destination blockchain for cross-chain swap (solana, base, ethereum, arbitrum, polygon). Omit for same-chain. At least one side must be a stablecoin the chain lists (USDC; USDT on Solana, Ethereum, Arbitrum and Polygon) or the native token (SOL, ETH, POL). Non-native to non-native is not supported — swap to USDC first, then bridge. Bridge providers (Li.Fi or Relay) are selected automatically based on best price. Sub-dollar swaps are supported via Relay."
             },
             "from": {
               "type": "string",
@@ -3668,7 +3668,7 @@
             "chain": {
               "type": "string",
               "default": "base",
-              "description": "Blockchain (solana or base)"
+              "description": "Blockchain (solana, base, ethereum, arbitrum, polygon)"
             },
             "wallet": {
               "type": "string",
@@ -3684,11 +3684,11 @@
             },
             "no-verify-outcome": {
               "type": "boolean",
-              "description": "Skip swap-outcome verification. That check simulates the swap and confirms the wallet's balance changes match the quote (input spent within your max, expected output received, no other asset moved) before broadcasting; it needs a simulation-capable endpoint (NANSEN_BASE_SIM_RPC on EVM, NANSEN_SOLANA_SIM_RPC on Solana) and degrades with a warning when none is available."
+              "description": "Skip swap-outcome verification. That check simulates the swap and confirms the wallet's balance changes match the quote (input spent within your max, expected output received, no other asset moved) before broadcasting; it needs a simulation-capable endpoint (NANSEN_BASE_SIM_RPC or the Nansen-hosted default on Base; the public chain RPC, or NANSEN_ETHEREUM_SIM_RPC / NANSEN_ARBITRUM_SIM_RPC / NANSEN_POLYGON_SIM_RPC, on Ethereum, Arbitrum and Polygon; NANSEN_SOLANA_SIM_RPC on Solana) and degrades with a warning when none is available."
             },
             "max-tx-fee": {
               "type": "string",
-              "description": "Most one EVM transaction may pay for gas (fee cap x gas limit), in ETH. A quote above it is refused before anything is signed, approvals included. Default 1; 0 disables the check. Not applied to WalletConnect, where the wallet shows the fee."
+              "description": "Most one EVM transaction may pay for gas (fee cap x gas limit), in the chain's native token (ETH, or POL on Polygon). A quote above it is refused before anything is signed, approvals included. Default 1; 0 disables the check. Not applied to WalletConnect, where the wallet shows the fee."
             },
             "no-revoke-excessive-allowance": {
               "type": "boolean",
@@ -3726,12 +3726,12 @@
             "from-chain": {
               "type": "string",
               "required": true,
-              "description": "Source chain (solana or base)"
+              "description": "Source chain (solana, base, ethereum, arbitrum, polygon)"
             },
             "to-chain": {
               "type": "string",
               "required": true,
-              "description": "Destination chain (solana or base)"
+              "description": "Destination chain (solana, base, ethereum, arbitrum, polygon)"
             },
             "aggregator": {
               "type": "string",

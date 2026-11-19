@@ -50,10 +50,10 @@ export const TRADE_CHAINS = {
     wrappedNative: null,
     stables: [
       { address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', symbol: 'USDC' },
+      { address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', symbol: 'USDT' },
     ],
     extraSymbols: {
       WSOL: 'So11111111111111111111111111111111111111112',
-      USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
     },
     // Solana's real cost is a 5000-lamport base fee plus at most ~0.00204 SOL of
     // ATA rent, so 0.005 is a wide margin. See MIN_GAS_AMOUNTS in
@@ -82,6 +82,68 @@ export const TRADE_CHAINS = {
     },
     minGas: 0.000024,
     feeBuffer: 0.00004,
+  },
+  // Same-chain swaps here route through LI.FI (legacy gasPrice transactions).
+  // Gas floors: mainnet fees swing by two orders of magnitude, so the floor is a
+  // "can you afford a normal swap" margin, not an estimate; the execute-time
+  // eth_call and outcome simulation are the authority on a specific trade.
+  ethereum: {
+    type: 'evm',
+    name: 'Ethereum',
+    chainId: 1,
+    index: '1',
+    lifiChainId: '1',
+    explorer: 'https://etherscan.io/tx/',
+    nativeSymbol: 'ETH',
+    nativeDecimals: 18,
+    nativeAddress: EVM_NATIVE,
+    wrappedNative: { address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', symbol: 'WETH' },
+    stables: [
+      { address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', symbol: 'USDC' },
+      { address: '0xdac17f958d2ee523a2206206994597c13d831ec7', symbol: 'USDT' },
+    ],
+    extraSymbols: {},
+    minGas: 0.0005,
+    feeBuffer: 0.001,
+  },
+  arbitrum: {
+    type: 'evm',
+    name: 'Arbitrum',
+    chainId: 42161,
+    index: '42161',
+    lifiChainId: '42161',
+    explorer: 'https://arbiscan.io/tx/',
+    nativeSymbol: 'ETH',
+    nativeDecimals: 18,
+    nativeAddress: EVM_NATIVE,
+    wrappedNative: { address: '0x82af49447d8a07e3bd95bd0d56f35241523fbab1', symbol: 'WETH' },
+    stables: [
+      { address: '0xaf88d065e77c8cc2239327c5edb3a432268e5831', symbol: 'USDC' },
+      { address: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9', symbol: 'USDT' },
+    ],
+    extraSymbols: {},
+    minGas: 0.00003,
+    feeBuffer: 0.00005,
+  },
+  polygon: {
+    type: 'evm',
+    name: 'Polygon',
+    chainId: 137,
+    index: '137',
+    lifiChainId: '137',
+    explorer: 'https://polygonscan.com/tx/',
+    nativeSymbol: 'POL',
+    nativeDecimals: 18,
+    nativeAddress: EVM_NATIVE,
+    wrappedNative: { address: '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270', symbol: 'WPOL' },
+    stables: [
+      { address: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', symbol: 'USDC' },
+      { address: '0xc2132d05d31c914a87c6611c10748aeb04b58e8f', symbol: 'USDT' },
+    ],
+    // MATIC was renamed POL; accept the old symbol for the native token.
+    extraSymbols: { MATIC: EVM_NATIVE },
+    minGas: 0.2,
+    feeBuffer: 0.5,
   },
 };
 

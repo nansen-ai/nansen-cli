@@ -11,8 +11,13 @@
  *   NANSEN_BSC_RPC        Custom BNB Smart Chain RPC
  *   NANSEN_XLAYER_RPC     Custom X Layer RPC
  *   NANSEN_SOLANA_RPC     Custom Solana RPC
+ *   NANSEN_ARBITRUM_RPC   Custom Arbitrum RPC
+ *   NANSEN_POLYGON_RPC    Custom Polygon RPC
+ *   NANSEN_BNB_RPC        Custom BNB Smart Chain RPC (bridge/perp key `bnb`)
  *   NANSEN_BASE_SIM_RPC   Custom Base simulation RPC (see SIMULATION_RPCS below)
  *   NANSEN_SOLANA_SIM_RPC Custom Solana simulation RPC (see SIMULATION_RPCS below)
+ *   NANSEN_ETHEREUM_SIM_RPC, NANSEN_ARBITRUM_SIM_RPC, NANSEN_POLYGON_SIM_RPC
+ *                         Custom simulation RPCs for those trade chains
  *
  * Simulation RPCs (SIMULATION_RPCS) are a SEPARATE registry from the cheap
  * defaults above. Swap-outcome verification (src/swap-simulation.js) needs an
@@ -45,7 +50,8 @@ const DEFAULT_BSC_RPC      = 'https://bsc-dataseed.binance.org';
 const DEFAULT_XLAYER_RPC   = 'https://rpc.xlayer.tech';
 const DEFAULT_SOLANA_RPC   = 'https://api.mainnet-beta.solana.com';
 const DEFAULT_ARBITRUM_RPC = 'https://arb1.arbitrum.io/rpc';
-const DEFAULT_POLYGON_RPC  = 'https://polygon-rpc.com';
+// polygon-rpc.com now answers 403 "tenant disabled" to anonymous callers.
+const DEFAULT_POLYGON_RPC  = 'https://polygon-bor-rpc.publicnode.com';
 const DEFAULT_BNB_RPC      = 'https://bsc-dataseed.bnbchain.org';
 
 // `bsc` (x402.js) and `bnb` (bridge/perp) are both chain 56 — both keys are read.
@@ -90,10 +96,23 @@ const DEFAULT_BASE_SIM_RPC = 'https://api.nansen.ai/api/v1/trade/simulate-swap';
 // (SIM_INNER_INSTRUCTIONS_UNAVAILABLE), since it can't see what the transaction
 // does from inside other programs. This includes NANSEN_SOLANA_RPC, which is
 // used here when NANSEN_SOLANA_SIM_RPC isn't set.
+//
+// The other EVM trade chains have no Nansen-hosted endpoint: the hosted proxy
+// forwards to a Base node only. Their public default RPCs do serve
+// `eth_simulateV1` with `traceTransfers` (checked 2026-11), so they default to
+// CHAIN_RPCS and are called anonymously, like Solana, with the same degrade
+// policy when a public node throttles. swap-simulation.js refuses a non-Base
+// chain pointed at the hosted proxy, which would simulate it against Base state.
 export const SIMULATION_RPCS = {
   base: process.env.NANSEN_BASE_SIM_RPC || DEFAULT_BASE_SIM_RPC,
   solana: process.env.NANSEN_SOLANA_SIM_RPC || CHAIN_RPCS.solana,
+  ethereum: process.env.NANSEN_ETHEREUM_SIM_RPC || CHAIN_RPCS.ethereum,
+  arbitrum: process.env.NANSEN_ARBITRUM_SIM_RPC || CHAIN_RPCS.arbitrum,
+  polygon: process.env.NANSEN_POLYGON_SIM_RPC || CHAIN_RPCS.polygon,
 };
+
+/** The only chain the Nansen-hosted simulation proxy simulates. */
+export const NANSEN_HOSTED_SIM_CHAIN = 'base';
 
 // Explicit API origins that may receive simulation credentials. No wildcard,
 // userinfo or alternate port is trusted. Browser sessions additionally require

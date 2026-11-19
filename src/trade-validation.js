@@ -123,7 +123,7 @@ export function validateQuoteInput({ chain, toChain, from, to, amount }) {
   const fromIsAnchor = isAnchorToken(from, normalizedChain);
   const toIsAnchor = isAnchorToken(to, normalizedToChain);
   if (!fromIsAnchor && !toIsAnchor) {
-    const stablesOn = (c) => STABLE_SYMBOLS[c].join(' or ');
+    const stablesOn = (c) => STABLE_SYMBOLS[c].join('/');
     const nativeOn = (c) => NATIVE_SYMBOLS[c];
     let anchorDesc;
     if (normalizedChain === normalizedToChain) {
