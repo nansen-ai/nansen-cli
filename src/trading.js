@@ -1403,6 +1403,45 @@ export function resolveQuoteLegacyGasPrice(txData) {
   return gasPrice;
 }
 
+// Headroom applied to a legacy (gasPrice-only) quote before signing. LI.FI
+// quotes on Ethereum, Arbitrum and Polygon carry the network gas price at quote
+// time with no margin, so any base-fee rise before broadcast gets the
+// transaction rejected ("max fee per gas less than block base fee"; seen live
+// on Arbitrum). Arbitrum-stack chains charge only the base fee, so the margin is
+// free there; elsewhere it is a small tip.
+const LEGACY_GAS_PRICE_HEADROOM_PCT = 125n;
+
+/**
+ * Re-price a gasPrice-only EVM quote just before signing: the higher of the
+ * quote's gasPrice and the chain's current eth_gasPrice, plus
+ * LEGACY_GAS_PRICE_HEADROOM_PCT. Quotes with an EIP-1559 maxFeePerGas, and
+ * quotes whose gasPrice is not a positive integer (the signer refuses those),
+ * are returned unchanged. An unreadable eth_gasPrice falls back to the quote's.
+ * The fee cap (--max-tx-fee) is checked later against the re-priced value.
+ *
+ * @param {string} chain - chain key
+ * @param {object} quote - quote with a `transaction`
+ * @returns {Promise<object>} the same quote, or a copy with a re-priced transaction
+ */
+export async function withLegacyGasPriceHeadroom(chain, quote) {
+  const tx = quote?.transaction;
+  if (!tx || tx.maxFeePerGas || !tx.gasPrice) return quote;
+  let quoted;
+  try {
+    quoted = BigInt(tx.gasPrice);
+  } catch {
+    return quote;
+  }
+  if (quoted <= 0n) return quote;
+  let current = 0n;
+  try {
+    current = BigInt(await evmRpcCall(chain, 'eth_gasPrice', []));
+  } catch { /* RPC unavailable: pad the quoted price alone */ }
+  const floor = quoted > current ? quoted : current;
+  const gasPrice = (floor * LEGACY_GAS_PRICE_HEADROOM_PCT) / 100n;
+  return { ...quote, transaction: { ...tx, gasPrice: '0x' + gasPrice.toString(16) } };
+}
+
 /**
  * Canonical EVM transaction hash: keccak256 over the raw signed tx bytes.
  *
@@ -3966,8 +4005,11 @@ EXAMPLES:
 
         for (let qi = startIndex; qi < endIndex; qi++) {
           if (consentedCandidateIndexes && !consentedCandidateIndexes.has(qi)) continue;
-          const currentQuote = allQuotes[qi];
+          let currentQuote = allQuotes[qi];
           if (!currentQuote) continue;
+          // Before any fee check or signature, so the swap and any approval or
+          // revoke it needs are all signed at the re-priced fee.
+          if (chainType === 'evm') currentQuote = await withLegacyGasPriceHeadroom(chain, currentQuote);
 
           const quoteName = currentQuote.source || currentQuote.metadata?.source || `#${qi + 1}`;
 

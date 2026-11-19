@@ -32,6 +32,7 @@ import {
   SOLANA_CONFIRM_TIMEOUT_MS,
   buildApprovalTransaction,
   requiresZeroFirstApproval,
+  withLegacyGasPriceHeadroom,
   approvalAmountForSwap,
   approvalCapForQuote,
   assertCompleteEvmRequestIntent,
@@ -6001,6 +6002,27 @@ describe('ERC-20 excessive allowance handling', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
+    it('signs the approval and the swap of a gasPrice-only quote at the padded gas price', async () => {
+      const { RLP } = await import('@ethereumjs/rlp');
+      createWallet('default', 'testpass');
+      process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+      const walletAddress = showWallet('default').evm;
+      // Ordinary token, no existing allowance: one approval, then the swap. The
+      // mock answers eth_gasPrice with null, so the quote's 5000000 is padded.
+      const quoteId = saveEthUsdtQuote(walletAddress, { token: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' });
+      const { executeBodies } = mockLocalEvmExecute({
+        allowance: 0n,
+        executeResponses: [{ status: 'Success', txHash: '0xAny', chainType: 'evm', broadcaster: 'test' }],
+      });
+      const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+      await cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
+      expect(executeBodies).toHaveLength(2);
+      for (const body of executeBodies) {
+        const fields = RLP.decode(Uint8Array.from(Buffer.from(body.signedTransaction.slice(2), 'hex')));
+        expect(BigInt('0x' + Buffer.from(fields[1]).toString('hex'))).toBe(6250000n);
+      }
+    });
+
     it('zero-first: a partial allowance on an ordinary token is re-approved directly (no revoke)', async () => {
       createWallet('default', 'testpass');
       process.env.NANSEN_WALLET_PASSWORD = 'testpass';
@@ -7623,6 +7645,52 @@ describe('exactOut max-input enforcement (adversarial)', () => {
     await expect(cmds.execute([], screenApi, {}, { quote: quoteId })).rejects.toThrow(/built for wallet .* but the signer is/i);
     noBroadcast(calls);
     expect(logs.some(l => /Approval required|Sending approval|Broadcasting/.test(l))).toBe(false);
+  });
+});
+
+describe('withLegacyGasPriceHeadroom', () => {
+  const quote = (tx) => ({ aggregator: 'lifi', transaction: { to: '0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE', data: '0xabcd', ...tx } });
+  const gasPriceRpc = (result) => vi.fn().mockResolvedValue({
+    ok: true, status: 200,
+    text: async () => JSON.stringify({ jsonrpc: '2.0', id: 1, result }),
+    json: async () => ({ jsonrpc: '2.0', id: 1, result }),
+  });
+  let origFetch;
+  beforeEach(() => { origFetch = global.fetch; });
+  afterEach(() => { global.fetch = origFetch; vi.restoreAllMocks(); });
+
+  it('pads the quoted gasPrice by 25% when the chain is not higher (the live Arbitrum rejection)', async () => {
+    global.fetch = gasPriceRpc('0x' + (20012000).toString(16));
+    const out = await withLegacyGasPriceHeadroom('arbitrum', quote({ gasPrice: '0x' + (20058000).toString(16) }));
+    expect(BigInt(out.transaction.gasPrice)).toBe(25072500n);
+  });
+
+  it('starts from the current eth_gasPrice when it is above the quote', async () => {
+    global.fetch = gasPriceRpc('0x' + (40000000).toString(16));
+    const out = await withLegacyGasPriceHeadroom('arbitrum', quote({ gasPrice: '20058000' }));
+    expect(BigInt(out.transaction.gasPrice)).toBe(50000000n);
+  });
+
+  it('pads the quoted price alone when eth_gasPrice cannot be read', async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error('network down'));
+    const out = await withLegacyGasPriceHeadroom('polygon', quote({ gasPrice: '100' }));
+    expect(BigInt(out.transaction.gasPrice)).toBe(125n);
+  });
+
+  it('leaves EIP-1559 quotes, fee-less quotes and malformed gas prices unchanged, without an RPC call', async () => {
+    global.fetch = vi.fn();
+    for (const tx of [{ maxFeePerGas: '100', gasPrice: '100' }, {}, { gasPrice: 'abc' }, { gasPrice: '0' }]) {
+      const q = quote(tx);
+      expect(await withLegacyGasPriceHeadroom('ethereum', q)).toBe(q);
+    }
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not mutate the stored quote', async () => {
+    global.fetch = gasPriceRpc('0x1');
+    const q = quote({ gasPrice: '100' });
+    await withLegacyGasPriceHeadroom('arbitrum', q);
+    expect(q.transaction.gasPrice).toBe('100');
   });
 });
 
