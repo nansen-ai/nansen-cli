@@ -444,6 +444,10 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
       // (e.g. the output-token ATA). Anything else is another party's account.
       if (!postInfo) return;
       const fields = tokenAccountFields(postInfo);
+      // Unparsed by the node, so it can't be checked as the wallet's account.
+      if (!fields && rawTokenAccountOwner(postInfo)?.equals(walletBytes)) {
+        throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unparsed SPL token account of your wallet created by this transaction (${t.pubkey}); cannot verify the outcome.`);
+      }
       if (fields?.owner !== walletAddress) return;
       assertTokenAccountControl(t.pubkey, null, fields, walletAddress);
       kind = 'token';

@@ -668,6 +668,22 @@ describe('solana-simulation', () => {
       expect(result.deltas[mintOut]).toBe(1_000_000n);
     });
 
+    it("fails closed when a wallet token account the tx creates comes back unparsed", async () => {
+      // No pre-state, so it's classified from the post-state; a raw one can't
+      // be checked for a delegate set as it's created.
+      const created = generateSolanaWallet().address;
+      const post = { ...basePost(), [created]: rawTokenAccount({ mint: mintOut, owner: wallet }) };
+      await expect(run({ pre: basePre(), post, extraWritableKeys: [ataIn, ataOut, created] }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
+    it("ignores an unparsed account the tx creates for someone else", async () => {
+      const created = generateSolanaWallet().address;
+      const post = { ...basePost(), [created]: rawTokenAccount({ mint: mintOut, owner: attacker }) };
+      const result = await run({ pre: basePre(), post, extraWritableKeys: [ataIn, ataOut, created] });
+      expect(result.deltas[mintOut]).toBe(1_000_000n);
+    });
+
     it('fails closed when the wallet post-state shows neither data nor space', async () => {
       const post = basePost();
       post[wallet] = { lamports: 999_995_000, owner: '11111111111111111111111111111111', executable: false, rentEpoch: 0 };
