@@ -21,6 +21,7 @@ import { readCompactU16 } from './solana-tx.js';
 import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 export { readCompactU16 };
 import { CHAIN_RPCS } from './rpc-urls.js';
+import { TRADE_CHAINS, mapTradeChains, tradeChainSymbols } from './trade-chains.js';
 import { simulateAssetChanges, SwapSimulationError, hasSimulationRpc } from './swap-simulation.js';
 import { simulateSolanaAssetChanges, SolanaSimulationError, hasSolanaSimulationRpc } from './solana-simulation.js';
 import { packageVersion, CommandError, telemetryHeaders } from './api.js';
@@ -55,10 +56,10 @@ function executionRoute() {
 // Solana's max transaction wire size (IPv6 MTU minus headers).
 const SOLANA_MAX_TX_SIZE = 1232;
 
-const CHAIN_MAP = {
-  solana:   { index: '501', type: 'solana', chainId: 501,  name: 'Solana',   explorer: 'https://solscan.io/tx/', lifiChainId: '1151111081099710' },
-  base:     { index: '8453', type: 'evm',   chainId: 8453, name: 'Base',     explorer: 'https://basescan.org/tx/', lifiChainId: '8453' },
-};
+// Derived from the trade-chain registry (src/trade-chains.js): add chains there.
+const CHAIN_MAP = mapTradeChains((c) => ({
+  index: c.index, type: c.type, chainId: c.chainId, name: c.name, explorer: c.explorer, lifiChainId: c.lifiChainId,
+}));
 
 // CHAIN_MAP is keyed lowercase, but a quote stores the chain exactly as the
 // user typed it (`--chain Base`) — only resolveChain() lowercases on the way
@@ -67,36 +68,21 @@ function chainConfigFor(name) {
   return name ? CHAIN_MAP[String(name).toLowerCase()] : undefined;
 }
 
-// Extend when adding new EVM chains (e.g. arbitrum WETH, polygon WMATIC)
-const WRAPPED_NATIVE_TOKENS = {
-  base:     { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', nativeSymbol: 'ETH' },
-};
+// Wrapped-native token per EVM chain, for the "did you mean the wrapped token"
+// hint. Derived from the trade-chain registry.
+const WRAPPED_NATIVE_TOKENS = Object.fromEntries(
+  Object.entries(TRADE_CHAINS)
+    .filter(([, c]) => c.wrappedNative)
+    .map(([name, c]) => [name, { ...c.wrappedNative, nativeSymbol: c.nativeSymbol }]),
+);
 
-// Common token symbol → address lookup per chain.
-// Native sentinels: Solana uses native mint, EVM uses 0xeee…eee.
-// Wrapped-native addresses (WETH) are derived from WRAPPED_NATIVE_TOKENS
-// to avoid duplication — keep that map as the single source of truth.
-const EVM_NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+// Common token symbol → address lookup per chain, derived from the trade-chain
+// registry. Native sentinels: Solana uses the native mint, EVM uses 0xeee…eee.
 // Relay returns the Solana System Program mint as the sentinel for native SOL.
 // Recognise it as native so approval/value validation behaves correctly when
 // cross-chain quotes route through Relay. (LiFi/Jupiter still use WSOL.)
 const NATIVE_SOL_SYSTEM_MINT = '11111111111111111111111111111111';
-const TOKEN_SYMBOLS = {
-  solana: {
-    SOL:  'So11111111111111111111111111111111111111112',
-    WSOL: 'So11111111111111111111111111111111111111112',
-    USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-    USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
-  },
-  base: {
-    ETH:  EVM_NATIVE,
-    WETH: WRAPPED_NATIVE_TOKENS.base.address,
-    USDC: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-    // NOTE: Legacy L2-bridged USDT on Base. If Tether deploys natively on Base
-    // (like Circle did with USDC), this address will need updating.
-    USDT: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
-  },
-};
+const TOKEN_SYMBOLS = mapTradeChains((c) => tradeChainSymbols(c));
 
 /**
  * Resolve a token symbol (e.g. "SOL", "USDC") to its canonical address

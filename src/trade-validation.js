@@ -11,8 +11,9 @@ import { base58Encode } from './wallet.js';
 import { parseTransactionMessage, resolveStaticAccount } from './solana-tx.js';
 import { SOL_SENTINEL } from './solana-simulation.js';
 import { EVM_NATIVE_SENTINEL } from './swap-simulation.js';
+import { TRADE_CHAIN_NAMES, mapTradeChains } from './trade-chains.js';
 
-const SUPPORTED_CHAINS = ['solana', 'base'];
+const SUPPORTED_CHAINS = TRADE_CHAIN_NAMES;
 
 // SPL Token / Token-2022 instruction discriminators (first data byte) that can
 // move control of a user's token account without moving its balance — the
@@ -118,19 +119,26 @@ export function validateQuoteInput({ chain, toChain, from, to, amount }) {
     }
   }
 
-  // 5. At least one side must be USDC or the native token
-  const fromIsAnchor = isUsdcOrNative(from, normalizedChain);
-  const toIsAnchor = isUsdcOrNative(to, normalizedToChain);
+  // 5. At least one side must be one of the chain's stablecoins or its native token
+  const fromIsAnchor = isAnchorToken(from, normalizedChain);
+  const toIsAnchor = isAnchorToken(to, normalizedToChain);
   if (!fromIsAnchor && !toIsAnchor) {
-    const anchorDesc = normalizedChain === normalizedToChain
-      ? `USDC or the native token (${NATIVE_SYMBOLS[normalizedChain] ?? normalizedChain})`
-      : `USDC or the native token on either side (${NATIVE_SYMBOLS[normalizedChain] ?? normalizedChain} on ${normalizedChain}, ${NATIVE_SYMBOLS[normalizedToChain] ?? normalizedToChain} on ${normalizedToChain})`;
+    const stablesOn = (c) => STABLE_SYMBOLS[c].join(' or ');
+    const nativeOn = (c) => NATIVE_SYMBOLS[c];
+    let anchorDesc;
+    if (normalizedChain === normalizedToChain) {
+      anchorDesc = `${stablesOn(normalizedChain)} or the native token (${nativeOn(normalizedChain)})`;
+    } else if (stablesOn(normalizedChain) === stablesOn(normalizedToChain)) {
+      anchorDesc = `${stablesOn(normalizedChain)} or the native token on either side (${nativeOn(normalizedChain)} on ${normalizedChain}, ${nativeOn(normalizedToChain)} on ${normalizedToChain})`;
+    } else {
+      anchorDesc = `a stablecoin or the native token on either side (${stablesOn(normalizedChain)} or ${nativeOn(normalizedChain)} on ${normalizedChain}, ${stablesOn(normalizedToChain)} or ${nativeOn(normalizedToChain)} on ${normalizedToChain})`;
+    }
     throw new Error(`Invalid swap: at least one token must be ${anchorDesc}. Got: ${from} → ${to}.`);
   }
 }
 
 // Native token decimals per chain (for converting balance from base units)
-const NATIVE_DECIMALS = { solana: 9, base: 18 };
+const NATIVE_DECIMALS = mapTradeChains((c) => c.nativeDecimals);
 
 /**
  * Fetch the native token balance (ETH or SOL) for a wallet.
@@ -182,10 +190,7 @@ async function fetchNativeBalanceRaw(chain, walletAddress) {
 }
 
 // Addresses that represent native tokens (SOL, ETH) — not ERC-20/SPL contracts.
-const NATIVE_TOKEN_ADDRESSES = {
-  solana: 'So11111111111111111111111111111111111111112',
-  base: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-};
+const NATIVE_TOKEN_ADDRESSES = mapTradeChains((c) => c.nativeAddress);
 
 // Upper bound on native (ETH) that may leave the wallet as a *sibling* of a
 // cross-chain bridge — some bridges pay a network fee via msg.value on a
@@ -221,14 +226,12 @@ const SOLANA_NATIVE_SOL_ALIASES = new Set([
   '11111111111111111111111111111111', // System Program — native SOL sentinel
 ]);
 
-// USDC contract addresses per chain.
-const USDC_ADDRESSES = {
-  solana: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-  base: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-};
+// Stablecoin addresses per chain that, with the native token, may anchor a swap.
+const STABLE_ADDRESSES = mapTradeChains((c) => c.stables.map(({ address }) => address));
+const STABLE_SYMBOLS = mapTradeChains((c) => c.stables.map(({ symbol }) => symbol));
 
 // Native token symbols for error messages.
-const NATIVE_SYMBOLS = { solana: 'SOL', base: 'ETH' };
+const NATIVE_SYMBOLS = mapTradeChains((c) => c.nativeSymbol);
 
 // The floor a wallet must clear to be allowed to quote. Kept in step with
 // FEE_BUFFER below: that is what the CLI itself holds back when selling the
@@ -246,24 +249,21 @@ const NATIVE_SYMBOLS = { solana: 'SOL', base: 'ETH' };
 // authority on "can you afford THIS trade" is the execute-time Solana
 // simulation (verifySolanaSwapOutcome), which reads live balances and skips the
 // quote rather than broadcasting an unpayable transaction.
-const MIN_GAS_AMOUNTS = { solana: 0.005, base: 0.000024 };
-const FEE_BUFFER = { solana: 0.005, base: 0.00004 };
+const MIN_GAS_AMOUNTS = mapTradeChains((c) => c.minGas);
+const FEE_BUFFER = mapTradeChains((c) => c.feeBuffer);
 const HIGH_PERCENTAGE_THRESHOLD = 95;
 const AUTO_ADJUST_THRESHOLD_PERCENT = 2;
 
 /**
- * Check if an address is USDC or the native token for a chain (case-insensitive for EVM).
+ * Check if an address is one of the chain's stablecoins or its native token
+ * (case-insensitive for EVM).
  */
-function isUsdcOrNative(address, chain) {
-  const usdc = USDC_ADDRESSES[chain];
-  const native = NATIVE_TOKEN_ADDRESSES[chain];
-  if (!usdc && !native) return false;
-  if (chain === 'solana') {
-    return address === usdc || address === native;
-  }
+function isAnchorToken(address, chain) {
+  const anchors = [NATIVE_TOKEN_ADDRESSES[chain], ...(STABLE_ADDRESSES[chain] || [])].filter(Boolean);
+  if (chain === 'solana') return anchors.includes(address);
   // EVM: case-insensitive
   const lower = address.toLowerCase();
-  return (usdc && lower === usdc.toLowerCase()) || (native && lower === native.toLowerCase());
+  return anchors.some((a) => a.toLowerCase() === lower);
 }
 
 /**
