@@ -55,9 +55,9 @@ const MAX_ACCOUNTS_PER_CALL = 100;
  *                             couldn't be resolved/parsed
  *   SIM_ACCOUNT_CONTROL_CHANGED - the simulated post-state hands control of one
  *                             of the wallet's own accounts to someone else (new
- *                             owner, delegate or close authority, a closed empty
- *                             token account, or the wallet reassigned to another
- *                             program), whatever the balances say
+ *                             owner, delegate or close authority, or the wallet
+ *                             reassigned to another program or given data),
+ *                             whatever the balances say
  * NO_SIM_RPC and SIM_RPC_ERROR are degrade conditions (warn, proceed per
  * policy); the caller decides. SIM_REVERTED, SIM_RESULT_UNPARSEABLE and
  * SIM_ACCOUNT_CONTROL_CHANGED are outcome/parse problems and must not be
@@ -210,12 +210,6 @@ function extractBalance(kind, info) {
 }
 
 /**
- * The parsed SPL token-account fields of a jsonParsed account, or null if it
- * isn't one. A token-account snapshot missing its mint, owner or amount throws:
- * read as an empty account, its real balance would count as swap output, or it
- * would drop out of tracking.
- */
-/**
  * Whether an account holds data. RPC account objects carry `space` (data
  * length) and `data` as [base64, encoding], or as a parsed object when the node
  * could parse it, which means there is data. A shape that shows neither throws,
@@ -228,6 +222,12 @@ function accountHasData(info) {
   throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned an unreadable wallet account; cannot verify the outcome.');
 }
 
+/**
+ * The parsed SPL token-account fields of a jsonParsed account, or null if it
+ * isn't one. A token-account snapshot missing its mint, owner or amount throws:
+ * read as an empty account, its real balance would count as swap output, or it
+ * would drop out of tracking.
+ */
 function tokenAccountFields(info) {
   const parsed = info?.data?.parsed;
   if (parsed?.type !== 'account') return null;
