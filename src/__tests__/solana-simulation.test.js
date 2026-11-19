@@ -529,6 +529,28 @@ describe('solana-simulation', () => {
         .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`transfers ownership`) });
     });
 
+    it('fails closed when a delegate is set but the post-state has no delegated amount', async () => {
+      // Read as 0, a grown allowance for an existing delegate would go unnoticed.
+      const pre = basePre();
+      pre[ataOut] = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: attacker, delegatedAmount: { amount: '5', decimals: 6 } });
+      await expect(run({ pre, post: basePost({ delegate: attacker }) }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
+    it('fails closed when a delegated amount is not a whole number', async () => {
+      const pre = basePre();
+      pre[ataOut] = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: attacker, delegatedAmount: { amount: '5', decimals: 6 } });
+      await expect(run({ pre, post: basePost({ delegate: attacker, delegatedAmount: { amount: '', decimals: 6 } }) }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
+    it('fails closed when an existing delegate has no delegated amount in the pre-state', async () => {
+      const pre = basePre();
+      pre[ataOut] = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: attacker });
+      await expect(run({ pre, post: basePost({ delegate: attacker, delegatedAmount: { amount: '5', decimals: 6 } }) }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
     it('refuses a new close authority', async () => {
       await expect(run({ pre: basePre(), post: basePost({ closeAuthority: attacker }) }))
         .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('close authority') });

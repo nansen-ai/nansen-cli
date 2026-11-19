@@ -233,12 +233,19 @@ function controlChanged(detail) {
   );
 }
 
-function tokenAmountOf(uiAmount) {
-  try {
-    return BigInt(uiAmount?.amount ?? 0);
-  } catch {
-    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Could not parse a simulated token delegation amount.');
+/**
+ * The delegated amount of a parsed token account, 0n when it has no delegate.
+ * The RPC's parsed form always carries `delegatedAmount` next to a delegate;
+ * one without it (or with a non-numeric amount) throws, since reading it as 0
+ * would hide a grown allowance.
+ */
+function delegatedAmountOf(fields) {
+  if (!fields?.delegate) return 0n;
+  const amount = fields.delegatedAmount?.amount;
+  if (typeof amount !== 'string' || !/^\d+$/.test(amount)) {
+    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned a token delegate without a readable delegated amount; cannot verify the outcome.');
   }
+  return BigInt(amount);
 }
 
 /**
@@ -255,7 +262,7 @@ function assertTokenAccountControl(pubkey, pre, post, walletAddress) {
   }
   if (post.delegate) {
     const preDelegate = pre?.delegate || null;
-    const grew = tokenAmountOf(post.delegatedAmount) > tokenAmountOf(pre?.delegatedAmount);
+    const grew = delegatedAmountOf(post) > delegatedAmountOf(pre);
     if (post.delegate !== preDelegate || grew) {
       throw controlChanged(`approves ${post.delegate} to spend ${post.delegatedAmount?.amount ?? 'an unknown amount'} from your ${label}.`);
     }
