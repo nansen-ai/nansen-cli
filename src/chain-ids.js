@@ -30,5 +30,5 @@ export const EVM_CHAIN_IDS = {
 export const EVM_CHAINS = [
   'ethereum', 'arbitrum', 'base', 'bnb', 'polygon', 'optimism',
   'avalanche', 'linea', 'mantle',
-  'sei', 'plasma', 'sonic', 'monad', 'hyperevm', 'iotaevm',
+  'sei', 'plasma', 'sonic', 'monad', 'hyperevm', 'iotaevm', 'robinhood',
 ];

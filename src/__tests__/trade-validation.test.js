@@ -242,6 +242,22 @@ describe('validateQuoteInput', () => {
       })).not.toThrow();
     });
 
+    it('accepts USDG as the Robinhood anchor and names it in the error', () => {
+      const USDG = '0x5fc5360d0400a0fd4f2af552add042d716f1d168';
+      const OTHER = '0x1111111111111111111111111111111111111111';
+      expect(() => validateQuoteInput({ chain: 'robinhood', from: USDG, to: OTHER, amount: '1' })).not.toThrow();
+      expect(() => validateQuoteInput({ chain: 'robinhood', from: OTHER, to: '0x2222222222222222222222222222222222222222', amount: '1' }))
+        .toThrow('USDG or the native token (ETH)');
+      // Base → Robinhood with no anchor on either side names each side's stables.
+      expect(() => validateQuoteInput({ chain: 'base', toChain: 'robinhood', from: OTHER, to: OTHER, amount: '1' }))
+        .toThrow('(USDC or ETH on base, USDG or ETH on robinhood)');
+    });
+
+    it('rejects a non-0x token address on robinhood', () => {
+      expect(() => validateQuoteInput({ chain: 'robinhood', from: 'ETH', to: 'USDG', amount: '1' }))
+        .toThrow(/Invalid sell token address for robinhood/);
+    });
+
     it('names POL as the native token in the Polygon anchor error', () => {
       expect(() => validateQuoteInput({
         chain: 'polygon', from: '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270', to: '0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39', amount: '1',

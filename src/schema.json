@@ -3589,11 +3589,11 @@
             "chain": {
               "type": "string",
               "default": "base",
-              "description": "Source blockchain (solana, base, ethereum, arbitrum, polygon)"
+              "description": "Source blockchain (solana, base, ethereum, arbitrum, polygon, robinhood)"
             },
             "to-chain": {
               "type": "string",
-              "description": "Destination blockchain for cross-chain swap (solana, base, ethereum, arbitrum, polygon). Omit for same-chain. At least one side must be a stablecoin the chain lists (USDC; USDT on Solana, Ethereum, Arbitrum and Polygon) or the native token (SOL, ETH, POL). Non-native to non-native is not supported — swap to USDC first, then bridge. Bridge providers (Li.Fi or Relay) are selected automatically based on best price. Sub-dollar swaps are supported via Relay."
+              "description": "Destination blockchain for cross-chain swap (solana, base, ethereum, arbitrum, polygon, robinhood). Omit for same-chain. At least one side must be a stablecoin the chain lists (USDC; USDT on Solana, Ethereum, Arbitrum and Polygon; USDG on Robinhood) or the native token (SOL, ETH, POL). Non-native to non-native is not supported — swap to USDC first, then bridge. Bridge providers (Li.Fi or Relay) are selected automatically based on best price. Sub-dollar swaps are supported via Relay."
             },
             "from": {
               "type": "string",
@@ -3668,7 +3668,7 @@
             "chain": {
               "type": "string",
               "default": "base",
-              "description": "Blockchain (solana, base, ethereum, arbitrum, polygon)"
+              "description": "Blockchain (solana, base, ethereum, arbitrum, polygon, robinhood)"
             },
             "wallet": {
               "type": "string",
@@ -3684,7 +3684,7 @@
             },
             "no-verify-outcome": {
               "type": "boolean",
-              "description": "Skip swap-outcome verification. That check simulates the swap and confirms the wallet's balance changes match the quote (input spent within your max, expected output received, no other asset moved) before broadcasting; it needs a simulation-capable endpoint (NANSEN_BASE_SIM_RPC or the Nansen-hosted default on Base; the public chain RPC, or NANSEN_ETHEREUM_SIM_RPC / NANSEN_ARBITRUM_SIM_RPC / NANSEN_POLYGON_SIM_RPC, on Ethereum, Arbitrum and Polygon; NANSEN_SOLANA_SIM_RPC on Solana) and degrades with a warning when none is available."
+              "description": "Skip swap-outcome verification. That check simulates the swap and confirms the wallet's balance changes match the quote (input spent within your max, expected output received, no other asset moved) before broadcasting; it needs a simulation-capable endpoint (NANSEN_BASE_SIM_RPC or the Nansen-hosted default on Base; the public chain RPC, or NANSEN_ETHEREUM_SIM_RPC / NANSEN_ARBITRUM_SIM_RPC / NANSEN_POLYGON_SIM_RPC / NANSEN_ROBINHOOD_SIM_RPC, on Ethereum, Arbitrum, Polygon and Robinhood; NANSEN_SOLANA_SIM_RPC on Solana) and degrades with a warning when none is available."
             },
             "max-tx-fee": {
               "type": "string",
@@ -3726,12 +3726,12 @@
             "from-chain": {
               "type": "string",
               "required": true,
-              "description": "Source chain (solana, base, ethereum, arbitrum, polygon)"
+              "description": "Source chain (solana, base, ethereum, arbitrum, polygon, robinhood)"
             },
             "to-chain": {
               "type": "string",
               "required": true,
-              "description": "Destination chain (solana, base, ethereum, arbitrum, polygon)"
+              "description": "Destination chain (solana, base, ethereum, arbitrum, polygon, robinhood)"
             },
             "aggregator": {
               "type": "string",

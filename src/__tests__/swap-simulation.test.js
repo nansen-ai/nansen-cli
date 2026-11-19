@@ -98,7 +98,7 @@ describe('swap-simulation', () => {
     });
 
     it('has an endpoint for every EVM trade chain', () => {
-      for (const chain of ['ethereum', 'arbitrum', 'polygon']) expect(hasSimulationRpc(chain)).toBe(true);
+      for (const chain of ['ethereum', 'arbitrum', 'polygon', 'robinhood']) expect(hasSimulationRpc(chain)).toBe(true);
     });
   });
 

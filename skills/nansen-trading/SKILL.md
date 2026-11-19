@@ -1,6 +1,6 @@
 ---
 name: nansen-trading
-description: Execute DEX swaps on Solana, Base, Ethereum, Arbitrum or Polygon (including cross-chain bridges) and Hyperliquid perpetual trades. Use when buying or selling a token, getting a swap quote, executing a trade, or opening/closing/managing a perp position.
+description: Execute DEX swaps on Solana, Base, Ethereum, Arbitrum, Polygon or Robinhood Chain (including cross-chain bridges) and Hyperliquid perpetual trades. Use when buying or selling a token, getting a swap quote, executing a trade, or opening/closing/managing a perp position.
 metadata:
   openclaw:
     requires:
@@ -54,6 +54,9 @@ Symbols resolve automatically: `SOL`, `ETH`, `POL`, `USDC`, `USDT`, `WETH`, `WPO
 | ethereum | ETH | USDC, USDT |
 | arbitrum | ETH | USDC, USDT |
 | polygon | POL | USDC, USDT |
+| robinhood | ETH | USDG |
+
+Robinhood Chain trades are refused from some regions; the error comes from the trading service.
 
 
 - USDC (Solana): `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`
@@ -88,7 +91,7 @@ nansen trade execute --quote <quote-id> --yes       # skip the confirmation prom
 
 ## Cross-Chain Swap
 
-Bridge tokens between chains using `--to-chain` (any two of solana, base, ethereum, arbitrum, polygon):
+Bridge tokens between chains using `--to-chain` (any two of solana, base, ethereum, arbitrum, polygon, robinhood):
 
 ```bash
 nansen trade quote \
@@ -156,6 +159,7 @@ nansen trade execute --quote "$quote_id"
 | USDC | Arbitrum | `0xaf88d065e77c8cc2239327c5edb3a432268e5831` |
 | POL | Polygon | `0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee` |
 | USDC | Polygon | `0x3c499c542cef5e3811e1192ce70d8cc03d5c3359` |
+| USDG | Robinhood | `0x5fc5360d0400a0fd4f2af552add042d716f1d168` |
 
 ## Amounts
 
@@ -184,7 +188,7 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 
 | Flag | Purpose |
 |------|---------|
-| `--chain` | Source chain: `solana`, `base`, `ethereum`, `arbitrum` or `polygon` |
+| `--chain` | Source chain: `solana`, `base`, `ethereum`, `arbitrum`, `polygon` or `robinhood` |
 | `--to-chain` | Destination chain for cross-chain swap (omit for same-chain) |
 | `--from` | Source token (symbol or address) |
 | `--to` | Destination token (symbol or address, resolved against destination chain) |

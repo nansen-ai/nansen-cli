@@ -5,7 +5,7 @@
 
 > **Built by agents, for agents.** Command-line interface for the [Nansen API](https://docs.nansen.ai), designed for AI agents to research on-chain data, manage wallets, and trade through `nansen trade`.
 
-Use it for both analytics and execution: `nansen research ...` returns structured on-chain data, while `nansen trade quote` / `nansen trade execute` handle DEX swaps on Solana, Base, Ethereum, Arbitrum and Polygon, including cross-chain bridges.
+Use it for both analytics and execution: `nansen research ...` returns structured on-chain data, while `nansen trade quote` / `nansen trade execute` handle DEX swaps on Solana, Base, Ethereum, Arbitrum, Polygon and Robinhood Chain, including cross-chain bridges.
 
 ## Installation
 
@@ -169,7 +169,7 @@ The points leaderboard API has been removed. `nansen research points leaderboard
 
 Plus the `historical-*` point-in-time commands — run `nansen research help` for the full list.
 
-**Trade:** `quote`, `execute`, `bridge-status`, `limit-order` — DEX swaps on Solana, Base, Ethereum, Arbitrum and Polygon, cross-chain bridges, and Solana limit orders.
+**Trade:** `quote`, `execute`, `bridge-status`, `limit-order` — DEX swaps on Solana, Base, Ethereum, Arbitrum, Polygon and Robinhood Chain, cross-chain bridges, and Solana limit orders.
 
 **Wallet:** `create`, `list`, `show`, `export`, `default`, `delete`, `send`, `forget-password`, `secure` — local or Privy server-side wallets (EVM + Solana).
 

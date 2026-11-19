@@ -13,10 +13,12 @@
  *   NANSEN_SOLANA_RPC     Custom Solana RPC
  *   NANSEN_ARBITRUM_RPC   Custom Arbitrum RPC
  *   NANSEN_POLYGON_RPC    Custom Polygon RPC
+ *   NANSEN_ROBINHOOD_RPC  Custom Robinhood Chain RPC
  *   NANSEN_BNB_RPC        Custom BNB Smart Chain RPC (bridge/perp key `bnb`)
  *   NANSEN_BASE_SIM_RPC   Custom Base simulation RPC (see SIMULATION_RPCS below)
  *   NANSEN_SOLANA_SIM_RPC Custom Solana simulation RPC (see SIMULATION_RPCS below)
- *   NANSEN_ETHEREUM_SIM_RPC, NANSEN_ARBITRUM_SIM_RPC, NANSEN_POLYGON_SIM_RPC
+ *   NANSEN_ETHEREUM_SIM_RPC, NANSEN_ARBITRUM_SIM_RPC, NANSEN_POLYGON_SIM_RPC,
+ *   NANSEN_ROBINHOOD_SIM_RPC
  *                         Custom simulation RPCs for those trade chains
  *
  * Simulation RPCs (SIMULATION_RPCS) are a SEPARATE registry from the cheap
@@ -53,6 +55,7 @@ const DEFAULT_ARBITRUM_RPC = 'https://arb1.arbitrum.io/rpc';
 // polygon-rpc.com now answers 403 "tenant disabled" to anonymous callers.
 const DEFAULT_POLYGON_RPC  = 'https://polygon-bor-rpc.publicnode.com';
 const DEFAULT_BNB_RPC      = 'https://bsc-dataseed.bnbchain.org';
+const DEFAULT_ROBINHOOD_RPC = 'https://rpc.mainnet.chain.robinhood.com';
 
 // `bsc` (x402.js) and `bnb` (bridge/perp) are both chain 56 — both keys are read.
 export const CHAIN_RPCS = {
@@ -65,6 +68,7 @@ export const CHAIN_RPCS = {
   arbitrum: process.env.NANSEN_ARBITRUM_RPC || DEFAULT_ARBITRUM_RPC,
   polygon:  process.env.NANSEN_POLYGON_RPC  || DEFAULT_POLYGON_RPC,
   bnb:      process.env.NANSEN_BNB_RPC      || DEFAULT_BNB_RPC,
+  robinhood: process.env.NANSEN_ROBINHOOD_RPC || DEFAULT_ROBINHOOD_RPC,
 };
 
 // Zero-config default for the shipped Nansen-hosted simulation endpoint. It
@@ -109,6 +113,7 @@ export const SIMULATION_RPCS = {
   ethereum: process.env.NANSEN_ETHEREUM_SIM_RPC || CHAIN_RPCS.ethereum,
   arbitrum: process.env.NANSEN_ARBITRUM_SIM_RPC || CHAIN_RPCS.arbitrum,
   polygon: process.env.NANSEN_POLYGON_SIM_RPC || CHAIN_RPCS.polygon,
+  robinhood: process.env.NANSEN_ROBINHOOD_SIM_RPC || CHAIN_RPCS.robinhood,
 };
 
 /** The only chain the Nansen-hosted simulation proxy simulates. */

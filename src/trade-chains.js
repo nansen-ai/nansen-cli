@@ -145,6 +145,27 @@ export const TRADE_CHAINS = {
     minGas: 0.2,
     feeBuffer: 0.5,
   },
+  // Robinhood Chain (Arbitrum Orbit). The trading service refuses it by the
+  // caller's region; that refusal surfaces as the service's own error.
+  robinhood: {
+    type: 'evm',
+    name: 'Robinhood',
+    chainId: 4663,
+    index: '4663',
+    lifiChainId: '4663',
+    explorer: 'https://robinhoodchain.blockscout.com/tx/',
+    nativeSymbol: 'ETH',
+    nativeDecimals: 18,
+    nativeAddress: EVM_NATIVE,
+    wrappedNative: null,
+    // USDG (Global Dollar), 6 decimals. There is no USDC anchor here.
+    stables: [
+      { address: '0x5fc5360d0400a0fd4f2af552add042d716f1d168', symbol: 'USDG' },
+    ],
+    extraSymbols: {},
+    minGas: 0.00003,
+    feeBuffer: 0.00005,
+  },
 };
 
 /** Chain names `--chain` / `--to-chain` accept, in display order. */
