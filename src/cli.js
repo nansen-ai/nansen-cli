@@ -592,6 +592,18 @@ const CSV_FORMULA_TRIGGER = /^[=+\-@\t\r]/;
 // A plain number literal is read as a number, never as a formula. The API sends
 // some signed amounts as strings (perp sizes, PnL), and those stay numeric.
 const CSV_NUMBER_LITERAL = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/;
+// Excel in locales whose list separator is `;`, and tab-split imports, start a
+// new cell at every `;` or tab, and a new row at every CR or LF, even inside a
+// quoted field (a quote only counts at the start of a field there). Quoting
+// alone does not stop that: a second `;` ends the split-off piece before the
+// closing quote. So each piece that would start with a trigger, possibly behind
+// quote characters, gets the same `'` prefix.
+const CSV_MID_CELL_PIECE = /([;\t\r\n])([^;\t\r\n]*)/g;
+
+function neutralizeMidCellPieces(s) {
+  return s.replace(CSV_MID_CELL_PIECE, (match, sep, piece) =>
+    /^"*[=+\-@]/.test(piece) && !CSV_NUMBER_LITERAL.test(piece) ? `${sep}'${piece}` : match);
+}
 
 function escapeCsvCell(val) {
   if (val === null || val === undefined) return '';
@@ -600,7 +612,8 @@ function escapeCsvCell(val) {
     && CSV_FORMULA_TRIGGER.test(s)
     && !CSV_NUMBER_LITERAL.test(s);
   if (formula) s = `'${s}`;
-  if (formula || /[",\n\r]/.test(s)) {
+  s = neutralizeMidCellPieces(s);
+  if (formula || /[",\n\r;\t]/.test(s)) {
     return '"' + s.replace(/"/g, '""') + '"';
   }
   return s;
