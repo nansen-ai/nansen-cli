@@ -1784,7 +1784,7 @@ describe('outcome verification (fail-closed)', () => {
       { body: { result: { value: [solanaNativeAccountInfo(2_000_000_000)] } } },
       // sim: simulateTransaction — post-state shows a 1.123456789 SOL outflow,
       // not the requested 1 SOL (the reproduced SystemProgram-transfer drain).
-      { body: { result: { value: { err: null, accounts: [solanaNativeAccountInfo(2_000_000_000 - 1_123_456_789)] } } } },
+      { body: { result: { value: { err: null, innerInstructions: [], accounts: [solanaNativeAccountInfo(2_000_000_000 - 1_123_456_789)] } } } },
     ]);
 
     const logs = [];
@@ -1863,6 +1863,7 @@ describe('outcome verification (fail-closed)', () => {
           result: {
             value: {
               err: null,
+              innerInstructions: [],
               accounts: [
                 solanaNativeAccountInfo(2_000_000_000 - 5000),
                 solanaTokenAccountInfo({ mint: siblingMint, owner: wallet.solana, amount: 0 }),
@@ -2103,6 +2104,7 @@ describe('outcome verification (fail-closed)', () => {
           result: {
             value: {
               err: null,
+              innerInstructions: [],
               accounts: [
                 solanaNativeAccountInfo(2_000_000_000 - 5000),
                 solanaTokenAccountInfo({ mint: USDC, owner: wallet.solana, amount: 1 }),

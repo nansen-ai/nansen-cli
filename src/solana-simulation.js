@@ -57,11 +57,16 @@ const MAX_ACCOUNTS_PER_CALL = 100;
  *                             of the wallet's own accounts to someone else (new
  *                             owner, delegate or close authority, or the wallet
  *                             reassigned to another program or given data),
- *                             whatever the balances say
+ *                             whatever the balances say, or a token Approve or
+ *                             SetAuthority the wallet signs from inside another
+ *                             program (CPI), which the post-state can hide
+ *   SIM_INNER_INSTRUCTIONS_UNAVAILABLE - the sim ran but the RPC returned no
+ *                             readable inner instructions, so the CPI check
+ *                             above can't run
  * NO_SIM_RPC and SIM_RPC_ERROR are degrade conditions (warn, proceed per
- * policy); the caller decides. SIM_REVERTED, SIM_RESULT_UNPARSEABLE and
- * SIM_ACCOUNT_CONTROL_CHANGED are outcome/parse problems and must not be
- * silently ignored — fail closed.
+ * policy); the caller decides. SIM_REVERTED, SIM_RESULT_UNPARSEABLE,
+ * SIM_ACCOUNT_CONTROL_CHANGED and SIM_INNER_INSTRUCTIONS_UNAVAILABLE are
+ * outcome/parse problems and must not be silently ignored — fail closed.
  */
 export class SolanaSimulationError extends Error {
   constructor(code, message) {
@@ -336,6 +341,108 @@ function assertTokenAccountControl(pubkey, pre, post, walletAddress) {
   }
 }
 
+// SPL Token instruction discriminators (the same in either token program).
+const SPL_APPROVE = 4;
+const SPL_SET_AUTHORITY = 6;
+const SPL_APPROVE_CHECKED = 13;
+// Raw layouts: position of the authority in the instruction's account list. A
+// multisig authority's signers follow it.
+const RAW_AUTHORITY_LAYOUTS = {
+  [SPL_APPROVE]: { kind: 'approve', authorityPos: 2 },
+  [SPL_APPROVE_CHECKED]: { kind: 'approve', authorityPos: 3 },
+  [SPL_SET_AUTHORITY]: { kind: 'setAuthority', authorityPos: 1 },
+};
+const UNREADABLE_INNER = 'Simulation returned an unreadable token-program inner instruction; cannot verify the outcome.';
+const isPubkey = (v) => typeof v === 'string' && v.length > 0;
+
+/**
+ * Classify one inner instruction as a token-program Approve or SetAuthority
+ * ({ kind, account, authorities }), or null for anything else.
+ * simulateTransaction returns inner instructions with addresses already
+ * resolved (lookup tables included): a parsed token instruction carries
+ * `parsed.type`/`parsed.info`; one the node couldn't parse carries `accounts`
+ * (pubkeys) and base58 `data`. Throws on a shape it can't read, so a malformed
+ * entry never reads as harmless.
+ */
+function classifyInnerTokenInstruction(ix) {
+  if (!ix || typeof ix !== 'object' || !isPubkey(ix.programId)) {
+    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned a malformed inner instruction; cannot verify the outcome.');
+  }
+  if (!TOKEN_PROGRAMS.has(ix.programId)) return null;
+
+  if (ix.parsed !== undefined) {
+    if (!ix.parsed || typeof ix.parsed !== 'object') throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER);
+    const { type, info } = ix.parsed;
+    if (!['approve', 'approveChecked', 'setAuthority'].includes(type)) return null;
+    if (!info || typeof info !== 'object') throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER);
+    const signers = Array.isArray(info.signers) ? info.signers : [];
+    const out = type === 'setAuthority'
+      // `account` is a token account or a mint, depending on the authority type.
+      ? { kind: 'setAuthority', account: info.account ?? info.mint, authorities: [info.authority, info.multisigAuthority, ...signers] }
+      : { kind: 'approve', account: info.source, authorities: [info.owner, info.multisigOwner, ...signers] };
+    const authorities = out.authorities.filter((a) => a != null);
+    if (!isPubkey(out.account) || authorities.length === 0 || !authorities.every(isPubkey)) {
+      throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER);
+    }
+    return { ...out, authorities };
+  }
+
+  // Unparsed: raw account list + data, same layouts as the static top-level check.
+  let data;
+  try {
+    if (!Array.isArray(ix.accounts) || !ix.accounts.every(isPubkey) || typeof ix.data !== 'string') throw new Error('shape');
+    data = base58Decode(ix.data);
+  } catch {
+    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER);
+  }
+  const layout = data.length ? RAW_AUTHORITY_LAYOUTS[data[0]] : undefined;
+  if (!layout) return null;
+  if (ix.accounts.length <= layout.authorityPos) throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER);
+  return { kind: layout.kind, account: ix.accounts[0], authorities: ix.accounts.slice(layout.authorityPos) };
+}
+
+/**
+ * The static instruction check (assertSolanaInstructionsSafe in
+ * trade-validation.js) only sees top-level instructions, and the post-state
+ * can't show a delegate or authority that a CPI sets and the same transaction
+ * then hides again (approve, then close the account; or close it and re-create
+ * it at the same address). A CPI runs with the wallet's signature, so apply the
+ * top-level rule to every inner instruction: refuse an Approve or SetAuthority
+ * the wallet authorizes, whatever account it targets.
+ *
+ * CloseAccount is deliberately not checked here: a router may close a
+ * temporary account it opened for the wallet and pay the SOL on. Where that
+ * rent goes is bounded by the native-SOL output check instead.
+ */
+function assertInnerTokenInstructionsSafe(innerGroups, walletAddress) {
+  for (const group of innerGroups) {
+    if (!Array.isArray(group?.instructions)) {
+      throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned malformed inner instructions; cannot verify the outcome.');
+    }
+    for (const ix of group.instructions) {
+      const op = classifyInnerTokenInstruction(ix);
+      if (!op || !op.authorities.includes(walletAddress)) continue;
+      if (op.kind === 'approve') {
+        throw controlChanged(`approves a delegate on token account ${op.account} with your wallet's signature, from inside another program.`);
+      }
+      throw controlChanged(`changes an authority of ${op.account} with your wallet's signature, from inside another program.`);
+    }
+  }
+}
+
+/**
+ * Whether simulateTransaction returned inner instructions this module can
+ * read. A node that honors the param returns [] when there are none; a missing
+ * field or compiled entries (programIdIndex, no resolved programId) means the
+ * node can't give the CPI check what it needs. Anything else malformed is left
+ * to the classifier to reject.
+ */
+function innerInstructionsReadable(innerGroups) {
+  if (!Array.isArray(innerGroups)) return false;
+  return !innerGroups.some((g) => Array.isArray(g?.instructions)
+    && g.instructions.some((ix) => ix && typeof ix === 'object' && ix.programId === undefined && typeof ix.programIdIndex === 'number'));
+}
+
 /**
  * Simulate a Solana swap transaction and return the normalised asset changes
  * it causes to `walletAddress`'s wallet.
@@ -456,6 +563,7 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
         commitment: 'confirmed',
         encoding: 'base64',
         accounts: { addresses: tracked.map((t) => t.pubkey), encoding: 'jsonParsed' },
+        innerInstructions: true,
       },
     ],
     timeoutMs,
@@ -475,6 +583,18 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
     // and proceeds instead of blocking every trade.
     throw new SolanaSimulationError('SIM_RPC_ERROR', 'Simulation did not return balance data for the tracked accounts (RPC may not support the `accounts` parameter).');
   }
+
+  // Refuse rather than degrade: the default RPC returns inner instructions, so
+  // only a custom endpoint lacks them, and without them a CPI that delegates a
+  // wallet account and then hides it would pass.
+  const innerGroups = simResult.value.innerInstructions;
+  if (!innerInstructionsReadable(innerGroups)) {
+    throw new SolanaSimulationError(
+      'SIM_INNER_INSTRUCTIONS_UNAVAILABLE',
+      'The Solana simulation RPC did not return inner instructions, so calls this transaction makes from inside other programs cannot be checked. Refusing to sign. Set NANSEN_SOLANA_SIM_RPC to an RPC that supports simulateTransaction with innerInstructions.',
+    );
+  }
+  assertInnerTokenInstructionsSafe(innerGroups, walletAddress);
 
   const deltas = {};
   tracked.forEach((t, i) => {
