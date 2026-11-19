@@ -837,6 +837,12 @@ describe('solana-simulation', () => {
       expect(result.deltas[mintOut]).toBe(1_000_000n);
     });
 
+    it('fails closed when the simulation returns no post-state for the wallet', async () => {
+      const post = basePost();
+      delete post[wallet];
+      await expect(run({ pre: basePre(), post })).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining('no post-state for your wallet') });
+    });
+
     it('fails closed when the wallet post-state shows neither data nor space', async () => {
       const post = basePost();
       post[wallet] = { lamports: 999_995_000, owner: '11111111111111111111111111111111', executable: false, rentEpoch: 0 };

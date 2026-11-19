@@ -498,15 +498,20 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
       kind = 'token';
       mint = fields.mint;
     } else if (kind === 'native') {
+      // The wallet pays the fee, so it can't be closed; a missing post-state is
+      // an unreadable result, not a zero balance.
+      if (!postInfo) {
+        throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned no post-state for your wallet account; cannot verify the outcome.');
+      }
       // A CPI'd System Program Assign (the wallet signs) hands the wallet's
       // lamports to whichever program now owns it, with no balance change yet.
-      if (postInfo && postInfo.owner !== SYSTEM_PROGRAM) {
+      if (postInfo.owner !== SYSTEM_PROGRAM) {
         throw controlChanged(`reassigns your wallet account ${t.pubkey} to program ${postInfo.owner}.`);
       }
       // A CPI'd System Program Allocate (the wallet signs) gives the wallet
       // account data while leaving it System-owned. An account with data can't
       // pay fees or send SOL, so the wallet's lamports would be stuck.
-      if (postInfo && accountHasData(postInfo) && !accountHasData(t.preInfo)) {
+      if (accountHasData(postInfo) && !accountHasData(t.preInfo)) {
         throw controlChanged(`allocates data on your wallet account ${t.pubkey}, after which it can no longer pay fees or send SOL.`);
       }
     } else if (isClosedAccount(postInfo)) {
