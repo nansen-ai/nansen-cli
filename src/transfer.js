@@ -707,12 +707,13 @@ async function waitForSolanaConfirmation(rpcUrl, txHash, timeoutMs = 30000) {
       // deadline, as waitForSolanaSignature in trading.js does. Throwing here
       // would report a sent transaction as failed and drop its signature.
     }
-    if (status) {
+    // An `err` seen at `processed` is not trusted: that slot can still be
+    // rolled back, so the poll keeps going until the status is at least
+    // `confirmed`, as in trading.js.
+    if (status && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')) {
       if (status.err) throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}. Signature: ${txHash}`);
-      if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
-        stderr(`  ✓ Confirmed (${status.confirmationStatus}, slot ${status.slot})`);
-        return { confirmed: true, slot: status.slot };
-      }
+      stderr(`  ✓ Confirmed (${status.confirmationStatus}, slot ${status.slot})`);
+      return { confirmed: true, slot: status.slot };
     }
     await new Promise(r => setTimeout(r, 2000));
   }

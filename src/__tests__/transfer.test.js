@@ -657,6 +657,18 @@ describe('sendTokens integration', () => {
       expect(polls).toHaveLength(2);
     });
 
+    // A `processed` status can still be rolled back, so its `err` is not the
+    // final outcome: the send keeps polling until the status is confirmed.
+    test('does not report an err seen at processed as an on-chain failure', async () => {
+      mockSolRpcSmart((poll) => (poll === 1
+        ? { value: [{ confirmationStatus: 'processed', slot: 12344, err: { InstructionError: [0, { Custom: 1 }] } }] }
+        : { value: [{ confirmationStatus: 'confirmed', slot: 12345, err: null }] }));
+      const result = await sendTokens({ to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', amount: '0.5', chain: 'solana', password: 'test' });
+      expect(result).toMatchObject({ success: true, transactionHash: 'sol_sig_123', confirmed: true });
+      const polls = fetch.mock.calls.filter(c => JSON.parse(c[1].body).method === 'getSignatureStatuses');
+      expect(polls).toHaveLength(2);
+    });
+
     test('names the signature when the transaction failed on-chain', async () => {
       mockSolRpcSmart(() => ({ value: [{ confirmationStatus: 'confirmed', slot: 12345, err: { InstructionError: [0, { Custom: 1 }] } }] }));
       await expect(sendTokens({ to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', amount: '0.5', chain: 'solana', password: 'test' }))
