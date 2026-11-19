@@ -4022,7 +4022,7 @@ EXAMPLES:
               assertCompleteEvmRequestIntent(quoteData.request);
               assertQuoteMatchesRequest(quoteData.request, currentQuote, { chain, walletAddress, slippage: quoteData.slippage });
 
-              // Reject a bare ERC-20 transfer/approve/transferFrom as the outer
+              // Reject a bare token transfer/approval method as the outer
               // call: a real swap or bridge routes through an aggregator/router,
               // never a direct token method. Runs on cross-chain too — the
               // validateSwapTarget gate above only refuses `to === inputMint`, so
@@ -4415,7 +4415,7 @@ EXAMPLES:
               assertCompleteEvmRequestIntent(quoteData.request);
               assertQuoteMatchesRequest(quoteData.request, currentQuote, { chain, walletAddress: wcAddress, slippage: quoteData.slippage });
 
-              // Reject a bare ERC-20 transfer/approve/transferFrom as the outer
+              // Reject a bare token transfer/approval method as the outer
               // call: a real swap or bridge routes through an aggregator/router,
               // never a direct token method. Runs on cross-chain too — the
               // validateSwapTarget gate above only refuses `to === inputMint`, so
@@ -4802,7 +4802,7 @@ EXAMPLES:
               assertCompleteEvmRequestIntent(quoteData.request);
               assertQuoteMatchesRequest(quoteData.request, currentQuote, { chain, walletAddress, slippage: quoteData.slippage });
 
-              // Reject a bare ERC-20 transfer/approve/transferFrom as the outer
+              // Reject a bare token transfer/approval method as the outer
               // call: a real swap or bridge routes through an aggregator/router,
               // never a direct token method. Runs on cross-chain too — the
               // validateSwapTarget gate above only refuses `to === inputMint`, so
