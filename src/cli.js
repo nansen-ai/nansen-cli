@@ -599,10 +599,14 @@ const CSV_NUMBER_LITERAL = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/;
 // closing quote. So each piece that would start with a trigger, possibly behind
 // quote characters, gets the same `'` prefix.
 const CSV_MID_CELL_PIECE = /([;\t\r\n])([^;\t\r\n]*)/g;
+// A number directly followed by a quote (the end of a JSON string value) is a
+// syntax error as a formula, so that piece cannot evaluate either.
+const CSV_NUMBER_THEN_QUOTE = new RegExp(CSV_NUMBER_LITERAL.source.slice(0, -1) + '"');
 
 function neutralizeMidCellPieces(s) {
   return s.replace(CSV_MID_CELL_PIECE, (match, sep, piece) =>
-    /^"*[=+\-@]/.test(piece) && !CSV_NUMBER_LITERAL.test(piece) ? `${sep}'${piece}` : match);
+    /^"*[=+\-@]/.test(piece) && !CSV_NUMBER_LITERAL.test(piece) && !CSV_NUMBER_THEN_QUOTE.test(piece)
+      ? `${sep}'${piece}` : match);
 }
 
 function escapeCsvCell(val) {

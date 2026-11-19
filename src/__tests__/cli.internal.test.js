@@ -6018,6 +6018,16 @@ describe('formatCsv', () => {
         expect(formatCsv([row]).split('\n')[1]).toBe('"a;b","a;-5","a;-0.5;+1e3","a\tb"');
       });
 
+      it('should not change a number followed by a closing JSON quote', () => {
+        const row = { a: { n: 'x;-5' }, b: ['a;-0.5', 1] };
+        expect(formatCsv([row]).split('\n')[1]).toBe('"{""n"":""x;-5""}","[""a;-0.5"",1]"');
+      });
+
+      it('should prefix a number followed by an operator', () => {
+        const row = { a: { n: 'x;-5&1' }, b: 'x;-5&"y"' };
+        expect(formatCsv([row]).split('\n')[1]).toBe('"{""n"":""x;\'-5&1""}","x;\'-5&""y"""');
+      });
+
       it('should neutralize JSON object cells and headers', () => {
         const out = formatCsv([{ 'h;=1': { n: 'x;=1+1;y' } }]).split('\n');
         expect(out[0]).toBe('"h;\'=1"');
