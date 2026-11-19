@@ -92,9 +92,12 @@ function rejectionReasonCode(data) {
  * inside the message (e.g. "can't") doesn't truncate it.
  */
 function apiErrorMessage(data, status) {
-  let message = data.message || data.error
-    || (typeof data.detail === 'string' ? data.detail : data.detail?.message)
-    || `API error: ${status}`;
+  // Only a non-empty string is a message: an object `error` (`{"error": {...}}`)
+  // would print as [object Object] and break the string handling downstream.
+  // The body itself still reaches the caller through the error's details.
+  const text = value => (typeof value === 'string' && value !== '' ? value : undefined);
+  let message = text(data.message) ?? text(data.error) ?? text(data.detail) ?? text(data.detail?.message)
+    ?? `API error: ${status}`;
   const nestedMatch = typeof message === 'string' && message.match(/['"]message['"]\s*:\s*['"](.*?)['"]\s*[,}]/s);
   if (nestedMatch) message = nestedMatch[1];
   return message;
@@ -377,7 +380,9 @@ export function statusToErrorCode(status, data = {}) {
     return SERVER_CODE_MAP[serverCode] ?? serverCode;
   }
 
-  const message = data?.message || data?.error || '';
+  // Only prose can refine the code: an object or array `message`/`error`
+  // (`{"error": {"message": ...}}`) is skipped, not called as a string.
+  const message = [data?.message, data?.error].find(value => typeof value === 'string' && value !== '') ?? '';
   const messageLower = message.toLowerCase();
 
   switch (status) {

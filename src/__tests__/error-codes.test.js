@@ -142,6 +142,17 @@ describe('statusToErrorCode', () => {
       expect(statusToErrorCode(404, { message: 'Not Found' })).toBe(ErrorCode.NOT_FOUND);
     });
 
+    it('ignores a message or error that is not a string', () => {
+      expect(statusToErrorCode(400, { error: { message: 'bad request' } })).toBe(ErrorCode.INVALID_PARAMS);
+      expect(statusToErrorCode(404, { message: ['Token not found'] })).toBe(ErrorCode.NOT_FOUND);
+      expect(statusToErrorCode(403, { message: 42, error: true })).toBe(ErrorCode.FORBIDDEN);
+    });
+
+    it('falls through to a string error when the message is not a string', () => {
+      expect(statusToErrorCode(400, { message: { text: 'x' }, error: 'chain not supported' })).toBe(ErrorCode.INVALID_CHAIN);
+      expect(statusToErrorCode(404, { message: '', error: 'Token not found' })).toBe(ErrorCode.TOKEN_NOT_FOUND);
+    });
+
     it('uses the range defaults for statuses it does not list', () => {
       expect(statusToErrorCode(418, {})).toBe(ErrorCode.INVALID_PARAMS);
       expect(statusToErrorCode(599, {})).toBe(ErrorCode.SERVER_ERROR);
@@ -232,6 +243,45 @@ describe('NansenAPI.request with structured server errors', () => {
     expect(thrown.code).toBe(ErrorCode.UNSUPPORTED_FILTER);
     expect(thrown.message).toBe('Filter is unavailable. This filter is not supported for this token/chain combination. Do not retry.');
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  describe('error bodies whose message or error is not a string', () => {
+    function bodyResponse(status, body) {
+      return { ok: false, status, headers: { get: () => null }, json: async () => body };
+    }
+
+    it.each([
+      ['an object error', 400, { error: { message: 'bad request' } }, ErrorCode.INVALID_PARAMS, 'API error: 400'],
+      ['an array message', 404, { message: ['Token not found'] }, ErrorCode.NOT_FOUND, 'API error: 404'],
+      ['an error without toString', 400, { error: { toString: null } }, ErrorCode.INVALID_PARAMS, 'API error: 400'],
+      ['an object detail message', 422, { detail: { message: { text: 'x' } } }, ErrorCode.INVALID_PARAMS, 'API error: 422'],
+    ])('reports %s as a NansenError with the status fallback message', async (_name, status, body, code, message) => {
+      mockFetch.mockResolvedValue(bodyResponse(status, body));
+      const thrown = await capture(new NansenAPI('test-key', 'https://api.nansen.ai'));
+
+      expect(thrown).not.toBeInstanceOf(TypeError);
+      expect(thrown.code).toBe(code);
+      expect(thrown.status).toBe(status);
+      expect(thrown.message).toBe(message);
+    });
+
+    it('keeps the object body in the details', async () => {
+      mockFetch.mockResolvedValue(bodyResponse(400, { error: { message: 'bad request' } }));
+      const thrown = await capture(new NansenAPI('test-key', 'https://api.nansen.ai'));
+
+      expect(thrown.details.error).toEqual({ message: 'bad request' });
+    });
+
+    it.each([
+      ['credits', 403, 'insufficient credits', ErrorCode.CREDITS_EXHAUSTED, 'insufficient credits. No retry will help. Check your Nansen dashboard for credit balance.'],
+      ['an unsupported filter', 400, 'field not recognized', ErrorCode.UNSUPPORTED_FILTER, 'field not recognized. This filter is not supported for this token/chain combination. Do not retry.'],
+    ])('uses a string error for %s when the message is an object', async (_name, status, error, code, message) => {
+      mockFetch.mockResolvedValue(bodyResponse(status, { message: {}, error }));
+      const thrown = await capture(new NansenAPI('test-key', 'https://api.nansen.ai'));
+
+      expect(thrown.code).toBe(code);
+      expect(thrown.message).toBe(message);
+    });
   });
 
   describe('retry decisions stay keyed on the HTTP status', () => {
