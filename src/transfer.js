@@ -179,6 +179,15 @@ function isTransactionFailureMessage(error) {
  * transaction whose account indices this function can interpret.
  */
 function friendlyRpcError(error, method = '', context = {}) {
+  // Solana puts the reason a simulation failed (AccountLoadedTwice,
+  // InstructionError, ...) in data.err, often under a bare "Transaction
+  // simulation failed" message, so keep it in whatever text is returned.
+  const simErr = error?.data?.err;
+  const detail = simErr != null ? ` (RPC err: ${JSON.stringify(simErr)})` : '';
+  return describeRpcError(error, method, context) + detail;
+}
+
+function describeRpcError(error, method, context) {
   const msg = error.message || JSON.stringify(error);
   const lower = msg.toLowerCase();
   const isEvm = typeof method === 'string' && method.toLowerCase().startsWith('eth_');
@@ -475,10 +484,25 @@ export async function getTokenInfo(rpcUrl, mint) {
 }
 
 /**
+ * Refuse a Solana send whose recipient is the sending wallet. The transfer
+ * would list the same account twice, which Solana rejects (AccountLoadedTwice),
+ * and a self-send moves nothing anyway. Compares the decoded keys, not strings.
+ */
+function assertNotSolanaSelfSend(fromAddress, to) {
+  if (base58DecodePubkey(fromAddress).equals(base58DecodePubkey(to))) {
+    throw new Error(
+      `Recipient ${to} is this wallet's own Solana address. Solana rejects a transfer whose sender and recipient are the same account, ` +
+      'so nothing was signed or sent. Pass a different recipient.',
+    );
+  }
+}
+
+/**
  * Build an unsigned Solana transaction for external signing (e.g. Privy).
  * Returns base64-encoded serialized transaction with an empty signature slot.
  */
 export async function buildUnsignedSolanaTransaction({ to, amount, amountStr, token, fromAddress }) {
+  assertNotSolanaSelfSend(fromAddress, to);
   const rpcUrl = CHAIN_RPCS.solana;
   const pubkey = base58DecodePubkey(fromAddress);
 
@@ -912,6 +936,9 @@ export async function sendTokens({ to, amount, chain, token = null, wallet = nul
   if (!walletName) throw new Error('No wallet specified and no default wallet set');
 
   const walletInfo = showWallet(walletName);
+  // Before the password check, any dry run and any signing. A wallet without a
+  // Solana address keeps the provider path's own "no Solana wallet" error.
+  if (chain === 'solana' && walletInfo.solana) assertNotSolanaSelfSend(walletInfo.solana, to);
   if (walletInfo.provider === 'privy') {
     return sendTokensViaPrivy({ to, amount, chain, token, max, dryRun, walletInfo });
   }
