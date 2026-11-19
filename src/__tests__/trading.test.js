@@ -8018,8 +8018,9 @@ describe('verifySolanaSwapOutcome (execute-path wiring)', () => {
     const ok = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64: txWithWsol, quote, quoteData });
     expect(ok.proceed).toBe(true);
 
-    // Same outflow, plus the empty WSOL account closed with its rent sent to an attacker.
-    vi.stubGlobal('fetch', mockSolanaSimRpc({ pre: wsolPre, post: basePost }));
+    // Same outflow, plus the empty WSOL account closed with its rent sent to an
+    // attacker. simulateTransaction shows a closed account as empty and System-owned.
+    vi.stubGlobal('fetch', mockSolanaSimRpc({ pre: wsolPre, post: { ...basePost, [wsolAta]: solanaNativeAccountInfo(0) } }));
     const r = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64: txWithWsol, quote, quoteData });
     expect(r.proceed).toBe(false);
     expect(r.reason).toMatch(/SWAP_OUTCOME_MISMATCH/i);

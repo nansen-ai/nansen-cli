@@ -87,6 +87,12 @@ function tokenAccountInfo({ mint, owner, amount, ...extra }) {
   };
 }
 
+// How simulateTransaction returns a closed account: empty, System-owned, zero
+// lamports (not null). Captured from api.mainnet-beta.solana.com.
+function closedAccountInfo() {
+  return { lamports: 0, owner: '11111111111111111111111111111111', data: ['', 'base64'], executable: false, rentEpoch: 0, space: 0 };
+}
+
 function jsonRpcResponse(result) {
   return { ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: '2.0', id: 1, result }) };
 }
@@ -560,7 +566,7 @@ describe('solana-simulation', () => {
     it('allows closing an empty non-WSOL wallet token account whose rent returns to the wallet', async () => {
       const sibling = generateSolanaWallet().address;
       const pre = { ...basePre(), [sibling]: tokenAccountInfo({ mint: generateSolanaWallet().address, owner: wallet, amount: 0 }) };
-      const post = { ...basePost(), [wallet]: nativeAccountInfo(999_995_000 + 2_039_280), [sibling]: null };
+      const post = { ...basePost(), [wallet]: nativeAccountInfo(999_995_000 + 2_039_280), [sibling]: closedAccountInfo() };
       const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, sibling] });
       expect(result.deltas[SOL_SENTINEL]).toBe(-5_000n);
     });
@@ -568,7 +574,7 @@ describe('solana-simulation', () => {
     it('counts the rent of a closed empty non-WSOL wallet token account sent elsewhere as a native outflow', async () => {
       const sibling = generateSolanaWallet().address;
       const pre = { ...basePre(), [sibling]: tokenAccountInfo({ mint: generateSolanaWallet().address, owner: wallet, amount: 0 }) };
-      const post = { ...basePost(), [sibling]: null }; // rent went to another account
+      const post = { ...basePost(), [sibling]: closedAccountInfo() }; // rent went to another account
       const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, sibling] });
       expect(result.deltas[SOL_SENTINEL]).toBe(-(5_000n + 2_039_280n));
     });
@@ -576,10 +582,139 @@ describe('solana-simulation', () => {
     it('counts both the token balance and the rent of a wallet token account the tx empties and closes', async () => {
       // Sell-all, then close the input account with its rent sent elsewhere.
       const post = basePost();
-      post[ataIn] = null;
+      post[ataIn] = closedAccountInfo();
       const result = await run({ pre: basePre(), post });
       expect(result.deltas[mintIn]).toBe(-1_000_000n);
       expect(result.deltas[SOL_SENTINEL]).toBe(-(5_000n + 2_039_280n));
+    });
+
+    it('treats a null post-state as closed too', async () => {
+      const sibling = generateSolanaWallet().address;
+      const pre = { ...basePre(), [sibling]: tokenAccountInfo({ mint: generateSolanaWallet().address, owner: wallet, amount: 0 }) };
+      const post = { ...basePost(), [sibling]: null };
+      const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, sibling] });
+      expect(result.deltas[SOL_SENTINEL]).toBe(-(5_000n + 2_039_280n));
+    });
+
+    it('nets an existing WSOL account unwrapped back to the wallet (Jupiter SOL output)', async () => {
+      // The wrapped SOL and the rent both return to the wallet's native balance;
+      // counting the WSOL token balance as well would double the outflow.
+      const wsolAta = generateSolanaWallet().address;
+      const wsolPre = tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 500_000_000 });
+      wsolPre.lamports = 2_039_280 + 500_000_000;
+      const pre = { ...basePre(), [wsolAta]: wsolPre };
+      const post = { ...basePost(), [wallet]: nativeAccountInfo(999_995_000 + 2_039_280 + 500_000_000), [wsolAta]: closedAccountInfo() };
+      const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, wsolAta] });
+      expect(result.deltas[SOL_SENTINEL]).toBe(-5_000n);
+    });
+
+    it('fails closed when a wallet token account pre-state has no mint', async () => {
+      const pre = basePre();
+      delete pre[ataOut].data.parsed.info.mint;
+      await expect(run({ pre, post: basePost() })).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
+    it('allows a third-party close authority that was already set', async () => {
+      const existing = generateSolanaWallet().address;
+      const pre = basePre();
+      pre[ataOut] = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, closeAuthority: existing });
+      const result = await run({ pre, post: basePost({ closeAuthority: existing }) });
+      expect(result.deltas[mintOut]).toBe(1_000_000n);
+    });
+
+    it('allows an existing delegate whose allowance shrinks', async () => {
+      const existing = generateSolanaWallet().address;
+      const pre = basePre();
+      pre[ataOut] = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: existing, delegatedAmount: { amount: '5', decimals: 6 } });
+      const result = await run({ pre, post: basePost({ delegate: existing, delegatedAmount: { amount: '3', decimals: 6 } }) });
+      expect(result.deltas[mintOut]).toBe(1_000_000n);
+    });
+
+    it('checks a parsed Token-2022 wallet account like an SPL one', async () => {
+      const t22 = (amount, extra = {}) => {
+        const info = tokenAccountInfo({ mint: mintOut, owner: wallet, amount, ...extra });
+        return { ...info, owner: TOKEN_2022_PROGRAM, data: { ...info.data, program: 'spl-token-2022' } };
+      };
+      const pre = { ...basePre(), [ataOut]: t22(0) };
+      const clean = await run({ pre, post: { ...basePost(), [ataOut]: t22(1_000_000) } });
+      expect(clean.deltas[mintOut]).toBe(1_000_000n);
+      await expect(run({ pre, post: { ...basePost(), [ataOut]: t22(1_000_000, { delegate: attacker, delegatedAmount: { amount: MAX_U64, decimals: 6 } }) } }))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+    });
+
+    describe('existing accounts the tx turns into wallet token accounts', () => {
+      // None of these can be the wallet's ATA, so the risk is future deposits
+      // into an account someone else still controls.
+      it('refuses an uninitialized token account initialized to the wallet with a delegate', async () => {
+        const acct = generateSolanaWallet().address;
+        const uninit = { lamports: 2_039_280, owner: TOKEN_PROGRAM, data: [Buffer.alloc(165).toString('base64'), 'base64'], executable: false, rentEpoch: 0, space: 165 };
+        const pre = { ...basePre(), [acct]: uninit };
+        const post = { ...basePost(), [acct]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: attacker, delegatedAmount: { amount: MAX_U64, decimals: 6 } }) };
+        await expect(run({ pre, post, extraWritableKeys: [ataIn, ataOut, acct] }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it("refuses an attacker's token account handed to the wallet with its close authority kept", async () => {
+        const acct = generateSolanaWallet().address;
+        const pre = { ...basePre(), [acct]: tokenAccountInfo({ mint: mintOut, owner: attacker, amount: 0, closeAuthority: attacker }) };
+        const post = { ...basePost(), [acct]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, closeAuthority: attacker }) };
+        await expect(run({ pre, post, extraWritableKeys: [ataIn, ataOut, acct] }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('close authority') });
+      });
+
+      it("refuses another program's account reassigned to a wallet token account with a delegate", async () => {
+        const acct = generateSolanaWallet().address;
+        const pre = { ...basePre(), [acct]: { lamports: 2_039_280, owner: attacker, data: [Buffer.alloc(165).toString('base64'), 'base64'], executable: false, rentEpoch: 0, space: 165 } };
+        const post = { ...basePost(), [acct]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: attacker, delegatedAmount: { amount: '1', decimals: 6 } }) };
+        await expect(run({ pre, post, extraWritableKeys: [ataIn, ataOut, acct] }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it("doesn't count the balance of an existing account handed over cleanly as output", async () => {
+        const acct = generateSolanaWallet().address;
+        const pre = { ...basePre(), [acct]: tokenAccountInfo({ mint: mintOut, owner: attacker, amount: 7 }) };
+        const post = { ...basePost(), [acct]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 7 }) };
+        const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, acct] });
+        expect(result.deltas[mintOut]).toBe(1_000_000n);
+      });
+    });
+
+    it("ignores other parties' accounts with real post-states, including a large program account", async () => {
+      // A pool vault whose balance moves, and a market account too large to be
+      // a token account (left out of the simulation request).
+      const vault = generateSolanaWallet().address;
+      const market = generateSolanaWallet().address;
+      const big = { lamports: 50_000_000, owner: attacker, data: [Buffer.alloc(4096).toString('base64'), 'base64'], executable: false, rentEpoch: 0, space: 4096 };
+      const pre = { ...basePre(), [vault]: tokenAccountInfo({ mint: mintOut, owner: attacker, amount: 5_000_000 }), [market]: big };
+      const post = { ...basePost(), [vault]: tokenAccountInfo({ mint: mintOut, owner: attacker, amount: 4_000_000 }), [market]: big };
+      let requested;
+      const txBase64 = buildLegacyTx({ wallet, extraWritableKeys: [ataIn, ataOut, vault, market] });
+      vi.stubGlobal('fetch', mockSolanaRpc({
+        trackedAccounts: pre,
+        simValue: (params) => {
+          requested = params[1].accounts.addresses;
+          return { value: { err: null, accounts: requested.map((a) => (a in post ? post[a] : null)) } };
+        },
+      }));
+      const result = await simulateSolanaAssetChanges('solana', txBase64, { walletAddress: wallet });
+      expect(result.deltas[mintOut]).toBe(1_000_000n);
+      expect(requested).toContain(vault);
+      expect(requested).not.toContain(market);
+    });
+
+    it('allows a wallet account that already had data before the tx', async () => {
+      const pre = basePre();
+      pre[wallet] = { ...nativeAccountInfo(1_000_000_000), data: ['AA==', 'base64'], space: 1 };
+      const post = basePost();
+      post[wallet] = { ...nativeAccountInfo(999_995_000), data: ['AA==', 'base64'], space: 1 };
+      const result = await run({ pre, post });
+      expect(result.deltas[mintOut]).toBe(1_000_000n);
+    });
+
+    it('fails closed on a wallet token account post-state that looks closed but has unreadable lamports', async () => {
+      const post = basePost();
+      post[ataOut] = { ...closedAccountInfo(), lamports: '' };
+      await expect(run({ pre: basePre(), post })).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
     });
 
     it('allows the wallet itself as delegate or close authority of its own token account', async () => {
@@ -591,7 +726,7 @@ describe('solana-simulation', () => {
       const wsolAta = generateSolanaWallet().address;
       const pre = { ...basePre(), [wsolAta]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0 }) };
       // The close returns the account's rent to the wallet.
-      const post = { ...basePost(), [wallet]: nativeAccountInfo(999_995_000 + 2_039_280), [wsolAta]: null };
+      const post = { ...basePost(), [wallet]: nativeAccountInfo(999_995_000 + 2_039_280), [wsolAta]: closedAccountInfo() };
       const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, wsolAta] });
       expect(result.deltas[mintOut]).toBe(1_000_000n);
       expect(result.deltas[SOL_SENTINEL]).toBe(-5_000n);
@@ -600,7 +735,7 @@ describe('solana-simulation', () => {
     it('counts a closed empty WSOL account rent sent elsewhere as a native outflow', async () => {
       const wsolAta = generateSolanaWallet().address;
       const pre = { ...basePre(), [wsolAta]: tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0 }) };
-      const post = { ...basePost(), [wsolAta]: null }; // rent went to another account
+      const post = { ...basePost(), [wsolAta]: closedAccountInfo() }; // rent went to another account
       const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, wsolAta] });
       expect(result.deltas[SOL_SENTINEL]).toBe(-(5_000n + 2_039_280n));
     });
@@ -610,7 +745,7 @@ describe('solana-simulation', () => {
       const wsolPre = tokenAccountInfo({ mint: WSOL_MINT, owner: wallet, amount: 0 });
       delete wsolPre.lamports;
       const pre = { ...basePre(), [wsolAta]: wsolPre };
-      const post = { ...basePost(), [wsolAta]: null };
+      const post = { ...basePost(), [wsolAta]: closedAccountInfo() };
       await expect(run({ pre, post, extraWritableKeys: [ataIn, ataOut, wsolAta] }))
         .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
     });
@@ -665,6 +800,24 @@ describe('solana-simulation', () => {
       const vault = generateSolanaWallet().address;
       const pre = { ...basePre(), [vault]: rawTokenAccount({ mint: mintOut, owner: attacker }) };
       const result = await run({ pre, post: basePost(), extraWritableKeys: [ataIn, ataOut, vault] });
+      expect(result.deltas[mintOut]).toBe(1_000_000n);
+    });
+
+    it('ignores raw accounts whose bytes 32..64 match the wallet but are not token accounts', async () => {
+      // A Token-2022 mint (account type 1), an account shorter than a token
+      // account, and a 165-byte account of another program.
+      const mintT22 = generateSolanaWallet().address;
+      const shortAcct = generateSolanaWallet().address;
+      const otherProg = generateSolanaWallet().address;
+      const short = rawTokenAccount({ mint: mintOut, owner: wallet });
+      short.data = [Buffer.from(short.data[0], 'base64').subarray(0, 82).toString('base64'), 'base64'];
+      short.space = 82;
+      const accts = {
+        [mintT22]: rawTokenAccount({ mint: mintOut, owner: wallet, programOwner: TOKEN_2022_PROGRAM, extraBytes: Buffer.from([1, 0, 0, 0, 0]) }),
+        [shortAcct]: short,
+        [otherProg]: rawTokenAccount({ mint: mintOut, owner: wallet, programOwner: attacker }),
+      };
+      const result = await run({ pre: { ...basePre(), ...accts }, post: { ...basePost(), ...accts }, extraWritableKeys: [ataIn, ataOut, mintT22, shortAcct, otherProg] });
       expect(result.deltas[mintOut]).toBe(1_000_000n);
     });
 
