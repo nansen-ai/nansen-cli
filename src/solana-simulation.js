@@ -29,6 +29,8 @@ export const SOL_SENTINEL = '11111111111111111111111111111111';
 // Same base58 string as SOL_SENTINEL, but here it means the program that owns
 // ordinary wallet (keypair) accounts.
 const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+// An SPL Approve of u64::MAX is an unlimited allowance.
+const U64_MAX = (1n << 64n) - 1n;
 
 function isSolanaNativeMint(mint) {
   return mint === WSOL_MINT || mint === SOL_SENTINEL;
@@ -212,6 +214,19 @@ function extractBalance(kind, info) {
  * read as an empty account, its real balance would count as swap output, or it
  * would drop out of tracking.
  */
+/**
+ * Whether an account holds data. RPC account objects carry `space` (data
+ * length) and `data` as [base64, encoding], or as a parsed object when the node
+ * could parse it, which means there is data. A shape that shows neither throws,
+ * so an unreadable wallet post-state is never read as dataless.
+ */
+function accountHasData(info) {
+  if (typeof info?.space === 'number') return info.space > 0;
+  if (Array.isArray(info?.data) && typeof info.data[0] === 'string') return info.data[0].length > 0;
+  if (info?.data && typeof info.data === 'object') return true;
+  throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned an unreadable wallet account; cannot verify the outcome.');
+}
+
 function tokenAccountFields(info) {
   const parsed = info?.data?.parsed;
   if (parsed?.type !== 'account') return null;
@@ -260,14 +275,17 @@ function assertTokenAccountControl(pubkey, pre, post, walletAddress) {
   if (post.owner !== walletAddress) {
     throw controlChanged(`transfers ownership of your ${label} to ${post.owner}.`);
   }
-  if (post.delegate) {
+  // The wallet itself as delegate or close authority leaves control with the
+  // wallet, so it isn't a hand-off.
+  if (post.delegate && post.delegate !== walletAddress) {
     const preDelegate = pre?.delegate || null;
-    const grew = delegatedAmountOf(post) > delegatedAmountOf(pre);
-    if (post.delegate !== preDelegate || grew) {
-      throw controlChanged(`approves ${post.delegate} to spend ${post.delegatedAmount?.amount ?? 'an unknown amount'} from your ${label}.`);
+    const amount = delegatedAmountOf(post);
+    if (post.delegate !== preDelegate || amount > delegatedAmountOf(pre)) {
+      const shown = amount === U64_MAX ? 'an unlimited amount' : `${amount} base units`;
+      throw controlChanged(`approves ${post.delegate} to spend ${shown} from your ${label}.`);
     }
   }
-  if (post.closeAuthority && post.closeAuthority !== (pre?.closeAuthority || null)) {
+  if (post.closeAuthority && post.closeAuthority !== walletAddress && post.closeAuthority !== (pre?.closeAuthority || null)) {
     throw controlChanged(`sets ${post.closeAuthority} as the close authority of your ${label}.`);
   }
 }
@@ -417,28 +435,29 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
       if (postInfo && postInfo.owner !== SYSTEM_PROGRAM) {
         throw controlChanged(`reassigns your wallet account ${t.pubkey} to program ${postInfo.owner}.`);
       }
+      // A CPI'd System Program Allocate (the wallet signs) gives the wallet
+      // account data while leaving it System-owned. An account with data can't
+      // pay fees or send SOL, so the wallet's lamports would be stuck.
+      if (postInfo && accountHasData(postInfo) && !accountHasData(t.preInfo)) {
+        throw controlChanged(`allocates data on your wallet account ${t.pubkey}, after which it can no longer pay fees or send SOL.`);
+      }
     } else if (!postInfo) {
-      // Closing a token account needs a zero balance, so a non-zero pre-balance
-      // already shows up as an outflow. An empty one is a silent 0n delta and
-      // its rent can go anywhere. The WSOL account is the exception: Jupiter's
-      // wrap/unwrap cleanup closes it on every native-SOL swap. All of its
-      // lamports (rent + wrapped amount) go wherever the close sends them, so
-      // count the whole pre-balance as leaving under SOL_SENTINEL: a close back
-      // to the wallet nets out against the wallet's native inflow, and a close
-      // elsewhere shows as native outflow bounded by the fee/rent slack.
-      if (isSolanaNativeMint(mint)) {
-        let lamports;
-        try {
-          lamports = BigInt(t.preInfo.lamports);
-        } catch {
-          throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Could not parse the lamport balance of your WSOL account ${t.pubkey}.`);
-        }
-        if (lamports !== 0n) deltas[SOL_SENTINEL] = (deltas[SOL_SENTINEL] || 0n) - lamports;
-        return;
+      // A closed wallet token account sends all its lamports wherever the close
+      // points. Count them as leaving under SOL_SENTINEL: a close back to the
+      // wallet nets out against the wallet's native inflow, and a close
+      // elsewhere shows as native outflow bounded by the fee/rent slack. For the
+      // WSOL account (Jupiter's wrap/unwrap cleanup closes it on every
+      // native-SOL swap) the lamports are rent + wrapped amount, so they are the
+      // whole delta. For any other mint they are the rent, and the token
+      // pre-balance (zero to close, unless the tx emptied it) is counted below.
+      let lamports;
+      try {
+        lamports = BigInt(t.preInfo.lamports);
+      } catch {
+        throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Could not parse the lamport balance of your token account ${t.pubkey}.`);
       }
-      if (extractBalance('token', t.preInfo) === 0n) {
-        throw controlChanged(`closes your empty token account ${t.pubkey} (mint ${mint}).`);
-      }
+      if (lamports !== 0n) deltas[SOL_SENTINEL] = (deltas[SOL_SENTINEL] || 0n) - lamports;
+      if (isSolanaNativeMint(mint)) return;
     } else {
       const fields = tokenAccountFields(postInfo);
       if (!fields) {

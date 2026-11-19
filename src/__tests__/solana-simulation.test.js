@@ -494,7 +494,7 @@ describe('solana-simulation', () => {
 
     it('refuses a new delegate on the output token account', async () => {
       await expect(run({ pre: basePre(), post: basePost({ delegate: attacker, delegatedAmount: { amount: MAX_U64, decimals: 6 } }) }))
-        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`approves ${attacker}`) });
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`approves ${attacker} to spend an unlimited amount`) });
     });
 
     it('refuses a delegate replaced by a different one', async () => {
@@ -556,12 +556,34 @@ describe('solana-simulation', () => {
         .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('close authority') });
     });
 
-    it('refuses closing an empty non-WSOL wallet token account', async () => {
+    it('allows closing an empty non-WSOL wallet token account whose rent returns to the wallet', async () => {
       const sibling = generateSolanaWallet().address;
       const pre = { ...basePre(), [sibling]: tokenAccountInfo({ mint: generateSolanaWallet().address, owner: wallet, amount: 0 }) };
-      const post = { ...basePost(), [sibling]: null };
-      await expect(run({ pre, post, extraWritableKeys: [ataIn, ataOut, sibling] }))
-        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('closes your empty token account') });
+      const post = { ...basePost(), [wallet]: nativeAccountInfo(999_995_000 + 2_039_280), [sibling]: null };
+      const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, sibling] });
+      expect(result.deltas[SOL_SENTINEL]).toBe(-5_000n);
+    });
+
+    it('counts the rent of a closed empty non-WSOL wallet token account sent elsewhere as a native outflow', async () => {
+      const sibling = generateSolanaWallet().address;
+      const pre = { ...basePre(), [sibling]: tokenAccountInfo({ mint: generateSolanaWallet().address, owner: wallet, amount: 0 }) };
+      const post = { ...basePost(), [sibling]: null }; // rent went to another account
+      const result = await run({ pre, post, extraWritableKeys: [ataIn, ataOut, sibling] });
+      expect(result.deltas[SOL_SENTINEL]).toBe(-(5_000n + 2_039_280n));
+    });
+
+    it('counts both the token balance and the rent of a wallet token account the tx empties and closes', async () => {
+      // Sell-all, then close the input account with its rent sent elsewhere.
+      const post = basePost();
+      post[ataIn] = null;
+      const result = await run({ pre: basePre(), post });
+      expect(result.deltas[mintIn]).toBe(-1_000_000n);
+      expect(result.deltas[SOL_SENTINEL]).toBe(-(5_000n + 2_039_280n));
+    });
+
+    it('allows the wallet itself as delegate or close authority of its own token account', async () => {
+      const result = await run({ pre: basePre(), post: basePost({ delegate: wallet, delegatedAmount: { amount: MAX_U64, decimals: 6 }, closeAuthority: wallet }) });
+      expect(result.deltas[mintOut]).toBe(1_000_000n);
     });
 
     it('allows closing the wallet WSOL account (Jupiter wrap/unwrap cleanup)', async () => {
@@ -597,6 +619,20 @@ describe('solana-simulation', () => {
       post[wallet] = { ...nativeAccountInfo(999_995_000), owner: attacker };
       await expect(run({ pre: basePre(), post }))
         .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('reassigns your wallet account') });
+    });
+
+    it('refuses allocating data on the wallet account (CPI Allocate)', async () => {
+      // Still System-owned, but an account with data can't pay fees or send SOL.
+      const post = basePost();
+      post[wallet] = { ...nativeAccountInfo(999_995_000), data: ['AA==', 'base64'], space: 1 };
+      await expect(run({ pre: basePre(), post }))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('allocates data on your wallet account') });
+    });
+
+    it('fails closed when the wallet post-state shows neither data nor space', async () => {
+      const post = basePost();
+      post[wallet] = { lamports: 999_995_000, owner: '11111111111111111111111111111111', executable: false, rentEpoch: 0 };
+      await expect(run({ pre: basePre(), post })).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
     });
 
     it('fails closed on an unreadable post-state for a wallet token account', async () => {

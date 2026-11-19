@@ -1904,8 +1904,10 @@ export async function verifySwapOutcome({ chain, from, quote, quoteData, api, lo
  * The Solana sibling of verifySwapOutcome: simulates the swap transaction via
  * simulateTransaction and checks the resulting balance deltas against the
  * persisted request intent, degrading (warn + proceed) on any RPC/sim outage
- * so an outage never blocks a trade — only a real outcome mismatch or an
- * in-simulation revert blocks (falls through to the next quote).
+ * so an outage never blocks a trade — only a real outcome mismatch, an
+ * in-simulation revert, a change of control over a wallet account
+ * (SIM_ACCOUNT_CONTROL_CHANGED) or an unreadable result blocks (falls through
+ * to the next quote). Only NO_SIM_RPC and SIM_RPC_ERROR degrade.
  */
 export async function verifySolanaSwapOutcome({ chain, walletAddress, txBase64, quote, quoteData, log = () => {} }) {
   if (chain !== 'solana') return { proceed: true };
