@@ -105,7 +105,7 @@ function saveQuote(quoteResponse, ...rest) {
     ...rest,
   );
 }
-import { SIMULATION_RPCS } from '../rpc-urls.js';
+import { CHAIN_RPCS, SIMULATION_RPCS } from '../rpc-urls.js';
 import { NATIVE_FEE_RENT_SLACK_LAMPORTS } from '../trade-validation.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
@@ -3668,6 +3668,36 @@ describe('exactOut --max-input requirement applies to every chain', () => {
   });
 });
 
+describe('cross-chain exactOut resolves the destination token on the destination chain', () => {
+  const ETH_USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+  const crossChainExactOut = (unit) => ({
+    chain: 'base', 'to-chain': 'ethereum', from: 'ETH', to: 'USDC', amount: '10',
+    'amount-unit': unit, 'swap-mode': 'exactOut', 'max-input': '1000000000000000000',
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('--amount-unit token reads the destination token decimals from the Ethereum RPC, not Base', async () => {
+    const urls = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url, opts) => {
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      if (body.method === 'eth_call') urls.push({ url: String(url), to: body.params?.[0]?.to });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id || 1, result: '0x' })) });
+    }));
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.quote([], screenApi, {}, crossChainExactOut('token')).catch(() => {});
+    const decimalsCall = urls.find((c) => c.to?.toLowerCase() === ETH_USDC);
+    expect(decimalsCall?.url).toBe(CHAIN_RPCS.ethereum);
+  });
+
+  it('--amount-unit usd looks the destination token price up on ethereum, not base', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('stop')));
+    const generalSearch = vi.fn().mockResolvedValue({ tokens: [] });
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await cmds.quote([], { ...screenApi, generalSearch }, {}, crossChainExactOut('usd')).catch(() => {});
+    expect(generalSearch).toHaveBeenCalledWith(expect.objectContaining({ query: ETH_USDC, chain: 'ethereum' }));
+  });
+});
+
 // ============= Token Decimal Resolution =============
 
 describe('resolveTokenDecimals', () => {
@@ -5841,7 +5871,7 @@ describe('ERC-20 excessive allowance handling', () => {
     });
   }
 
-  function mockLocalEvmExecute({ allowance, executeResponses }) {
+  function mockLocalEvmExecute({ allowance, executeResponses, allowanceReadError = false }) {
     const executeBodies = [];
     const sequence = [];
     // Post-action allowance verification re-reads eth_call, so track the
@@ -5884,6 +5914,9 @@ describe('ERC-20 excessive allowance handling', () => {
       }
       if (body.method === 'eth_call') {
         const data = body.params?.[0]?.data || '';
+        if (allowanceReadError && data.startsWith('0xdd62ed3e')) {
+          return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32000, message: 'upstream unavailable' } })) });
+        }
         const result = data.startsWith('0xdd62ed3e') ? hexResult(currentAllowance) : '0x';
         return Promise.resolve({ text: () => Promise.resolve(JSON.stringify({ jsonrpc: '2.0', id: body.id, result })) });
       }
@@ -5981,6 +6014,41 @@ describe('ERC-20 excessive allowance handling', () => {
       await cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId });
       expect(executeBodies).toHaveLength(2);
       expect(executeBodies[0].signedTransaction).toContain(amountWord(100000n));
+    });
+
+    it('zero-first: an unreadable USDT allowance signs and broadcasts nothing', async () => {
+      createWallet('default', 'testpass');
+      process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+      const walletAddress = showWallet('default').evm;
+      const quoteId = saveEthUsdtQuote(walletAddress);
+      const { executeBodies } = mockLocalEvmExecute({
+        allowance: 50000n,
+        allowanceReadError: true,
+        executeResponses: [{ status: 'Success', txHash: '0xAny', chainType: 'evm', broadcaster: 'test' }],
+      });
+      vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const logs = [];
+      const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+      await cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId }).catch(() => {});
+      expect(executeBodies).toHaveLength(0);
+      expect(logs.some((l) => l.includes('Could not read the current allowance'))).toBe(true);
+    });
+
+    it('zero-first: an unreadable allowance on an ordinary token is still approved (treated as 0)', async () => {
+      createWallet('default', 'testpass');
+      process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+      const walletAddress = showWallet('default').evm;
+      const quoteId = saveEthUsdtQuote(walletAddress, { token: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' });
+      const { executeBodies } = mockLocalEvmExecute({
+        allowance: 50000n,
+        allowanceReadError: true,
+        executeResponses: [{ status: 'Success', txHash: '0xAny', chainType: 'evm', broadcaster: 'test' }],
+      });
+      vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+      await cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true }, { quote: quoteId }).catch(() => {});
+      expect(executeBodies.length).toBeGreaterThanOrEqual(1);
+      expect(executeBodies[0].signedTransaction).toContain(approveSelector + '000000000000000000000000' + LIFI_ROUTER.slice(2).toLowerCase() + amountWord(100000n));
     });
   });
 

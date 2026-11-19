@@ -2035,6 +2035,25 @@ export async function checkErc20Allowance(chain, tokenAddress, ownerAddress, spe
 }
 
 /**
+ * Pre-approval allowance read for the execute paths. Zero-first tokens
+ * (requiresZeroFirstApproval) cannot use checkErc20Allowance's treat-as-0
+ * fallback: a real non-zero allowance would skip the required revoke and the
+ * non-zero → non-zero approve() would revert. For those, return null on a
+ * failed read so the caller signs nothing for this quote.
+ */
+async function readAllowanceForApproval(chain, tokenAddress, ownerAddress, spenderAddress) {
+  if (!requiresZeroFirstApproval(chain, tokenAddress)) {
+    return checkErc20Allowance(chain, tokenAddress, ownerAddress, spenderAddress);
+  }
+  try {
+    return await readErc20AllowanceOrThrow(chain, tokenAddress, ownerAddress, spenderAddress);
+  } catch (err) {
+    process.stderr.write(`⚠️  Could not read ERC-20 allowance on ${chain} (${err.message}).\n`);
+    return null;
+  }
+}
+
+/**
  * A successful receipt only proves the revoke/approval call didn't revert —
  * not that approve() actually produced the allowance we expect (a
  * non-standard token or a race with another approval could still leave the
@@ -3249,9 +3268,11 @@ CROSS-CHAIN NOTES (when using --to-chain):
       let usdTokenAmount; // token-unit amount after USD conversion (for balance pre-check)
       if (amountUnit === 'usd') {
         try {
+          // exactOut amounts are in the destination token, which lives on the destination chain.
           const tokenForPrice = swapMode === 'exactOut' ? to : from;
-          const price = await resolveUsdPrice(apiInstance, tokenForPrice, chain);
-          resolvedDecimals = await resolveTokenDecimals(tokenForPrice, chain);
+          const chainForPrice = swapMode === 'exactOut' ? effectiveToChain : chain;
+          const price = await resolveUsdPrice(apiInstance, tokenForPrice, chainForPrice);
+          resolvedDecimals = await resolveTokenDecimals(tokenForPrice, chainForPrice);
           // Convert USD to token amount, then to base units via string math.
           // Use toFixed() instead of String() to avoid scientific notation for small values.
           const tokenAmount = parseFloat(amount) / price;
@@ -3263,7 +3284,8 @@ CROSS-CHAIN NOTES (when using --to-chain):
       } else if (amountUnit === 'token') {
         try {
           const tokenForDecimals = swapMode === 'exactOut' ? to : from;
-          resolvedDecimals = await resolveTokenDecimals(tokenForDecimals, chain);
+          const chainForDecimals = swapMode === 'exactOut' ? effectiveToChain : chain;
+          resolvedDecimals = await resolveTokenDecimals(tokenForDecimals, chainForDecimals);
           resolvedAmount = convertToBaseUnits(amount, resolvedDecimals);
         } catch (err) {
           throw new CommandError(`Error resolving token decimals: ${err.message}`, 'INVALID_INPUT');
@@ -4110,9 +4132,15 @@ EXAMPLES:
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   continue;
                 }
-                const existingAllowance = await checkErc20Allowance(
+                const existingAllowance = await readAllowanceForApproval(
                   chain, currentQuote.inputMint, walletAddress, currentQuote.approvalAddress
                 );
+                if (existingAllowance === null) {
+                  log(`  ❌ Could not read the current allowance for ${quoteName}; this token needs it before a new approval, skipping.`);
+                  lastQuoteError = `could not read the current allowance for ${quoteName}`;
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                  continue;
+                }
 
                 const { shouldRevoke, reuseAllowance, revokeReason } = resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance, { zeroFirst: requiresZeroFirstApproval(chain, currentQuote.inputMint) });
                 if (reuseAllowance) {
@@ -4499,9 +4527,15 @@ EXAMPLES:
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   continue;
                 }
-                const existingAllowance = await checkErc20Allowance(
+                const existingAllowance = await readAllowanceForApproval(
                   chain, currentQuote.inputMint, wcAddress, currentQuote.approvalAddress
                 );
+                if (existingAllowance === null) {
+                  log(`  ❌ Could not read the current allowance for ${quoteName}; this token needs it before a new approval, skipping.`);
+                  lastQuoteError = `could not read the current allowance for ${quoteName}`;
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                  continue;
+                }
 
                 const { shouldRevoke, reuseAllowance, revokeReason } = resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance, { zeroFirst: requiresZeroFirstApproval(chain, currentQuote.inputMint) });
                 if (reuseAllowance) {
@@ -4897,9 +4931,15 @@ EXAMPLES:
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   continue;
                 }
-                const existingAllowance = await checkErc20Allowance(
+                const existingAllowance = await readAllowanceForApproval(
                   chain, currentQuote.inputMint, walletAddress, currentQuote.approvalAddress
                 );
+                if (existingAllowance === null) {
+                  log(`  ❌ Could not read the current allowance for ${quoteName}; this token needs it before a new approval, skipping.`);
+                  lastQuoteError = `could not read the current allowance for ${quoteName}`;
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                  continue;
+                }
 
                 const { shouldRevoke, reuseAllowance, revokeReason } = resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance, { zeroFirst: requiresZeroFirstApproval(chain, currentQuote.inputMint) });
                 if (reuseAllowance) {
