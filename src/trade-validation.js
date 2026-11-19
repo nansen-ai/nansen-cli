@@ -1059,50 +1059,65 @@ export function assertInputWithinMax(request, quote, slippage) {
 
 // ============= Swap-calldata shape guard (same-chain) =============
 
-// Bare ERC-20 methods a legitimate same-chain swap's OUTER call never uses. A
-// real swap routes through an aggregator/router (swap/execute/multicall); if the
-// quote's swap `transaction.data` starts with one of these selectors, the call
-// is a direct token transfer/approval disguised as a swap — the drain shape.
+// Token methods a legitimate swap's OUTER call never uses. A real swap routes
+// through an aggregator/router (swap/execute/multicall); if the quote's swap
+// `transaction.data` starts with one of these selectors, the call is a direct
+// token transfer/approval disguised as a swap — the drain shape.
 //
-// Because the user's wallet is msg.sender, `transfer`/`transferFrom(from=user)`
-// move the user's own tokens with no prior allowance, and `approve` hands an
-// attacker a fresh allowance — so blocking these outer selectors closes the
-// direct sibling-token drain. It does NOT catch a custom contract exploiting a
-// pre-existing allowance; that needs outcome (balance-delta) simulation.
+// Because the user's wallet is msg.sender:
+// - ERC-20 `transfer`/`transferFrom(from=user)` and ERC-721/1155
+//   `safeTransferFrom`/`safeBatchTransferFrom` move the user's own tokens or
+//   NFTs with no prior allowance;
+// - ERC-20 `approve`/`increaseAllowance`/`increaseApproval` and ERC-721/1155
+//   `setApprovalForAll` hand an attacker a fresh allowance or operator role;
+// - Permit2 `transferFrom` (single and batch) spends the user's existing
+//   Permit2 allowances for ANY token they approved to Permit2, and Permit2
+//   `approve` grants an attacker one. Routers call Permit2 internally; a swap
+//   never targets it as the outer call.
+// Blocking these outer selectors closes the direct sibling-token/NFT drain.
+// It does NOT catch a custom contract exploiting a pre-existing allowance;
+// that needs outcome (balance-delta) simulation.
 //
-// The caller runs this SELECTOR check on same-chain swaps only. Cross-chain
-// routes are excluded from THIS check because a bridge deposit can, in
-// principle, encode as a plain `transfer` — but that does NOT mean a cross-chain
-// bare transfer is waved through: a bare ERC-20 `transfer`/`approve` targets the
-// token contract itself, so `validateSwapTarget`'s `to === inputMint` gate still
-// refuses it, for cross-chain and same-chain alike (fail closed). In practice
-// the bridge routes this CLI uses (Relay/Li.Fi) route ERC-20 deposits through a
-// router contract (to != token), so neither guard fires on a legitimate bridge.
-// Safely supporting a genuine deposit-as-transfer bridge would require positive
-// recipient/amount validation (balance-delta outcome simulation), not a blanket
-// exemption — tracked as a follow-up.
-const BARE_ERC20_OUTER_SELECTORS = {
-  '0xa9059cbb': 'transfer(address,uint256)',
-  '0x095ea7b3': 'approve(address,uint256)',
-  '0x23b872dd': 'transferFrom(address,address,uint256)',
+// The match is on the selector only, whatever `to` is, and the callers run it
+// on same-chain and cross-chain quotes alike: the bridge routes this CLI uses
+// (Relay/Li.Fi) route ERC-20 deposits through a router contract, never a
+// direct token method. A bare `transfer`/`approve` to the input token itself
+// is also refused by `validateSwapTarget`'s `to === inputMint` gate. Safely
+// supporting a genuine deposit-as-transfer bridge would require positive
+// recipient/amount validation (balance-delta outcome simulation), not a
+// blanket exemption.
+const BARE_TOKEN_OUTER_SELECTORS = {
+  '0xa9059cbb': 'ERC-20 transfer(address,uint256)',
+  '0x095ea7b3': 'ERC-20 approve(address,uint256)',
+  '0x23b872dd': 'ERC-20 transferFrom(address,address,uint256)',
+  '0x39509351': 'ERC-20 increaseAllowance(address,uint256)',
+  '0xd73dd623': 'ERC-20 increaseApproval(address,uint256)',
+  '0xa22cb465': 'ERC-721/1155 setApprovalForAll(address,bool)',
+  '0x42842e0e': 'ERC-721 safeTransferFrom(address,address,uint256)',
+  '0xb88d4fde': 'ERC-721 safeTransferFrom(address,address,uint256,bytes)',
+  '0xf242432a': 'ERC-1155 safeTransferFrom(address,address,uint256,uint256,bytes)',
+  '0x2eb2c2d6': 'ERC-1155 safeBatchTransferFrom(address,address,uint256[],uint256[],bytes)',
+  '0x36c78516': 'Permit2 transferFrom(address,address,uint160,address)',
+  '0x0d58b1db': 'Permit2 transferFrom((address,address,uint160,address)[])',
+  '0x87517c45': 'Permit2 approve(address,address,uint160,uint48)',
 };
 
 /**
- * Reject a swap or bridge whose transaction calldata is a bare ERC-20
- * transfer/approve/transferFrom rather than a router call. Applies to both
- * same-chain and cross-chain EVM quotes (a legit bridge also routes through a
- * router). No-op when the calldata is absent or too short to carry a 4-byte
- * selector.
+ * Reject a swap or bridge whose transaction calldata is a bare token
+ * transfer/approval method (ERC-20, ERC-721/1155 or Permit2) rather than a
+ * router call. Applies to both same-chain and cross-chain EVM quotes (a legit
+ * bridge also routes through a router). No-op when the calldata is absent or
+ * too short to carry a 4-byte selector.
  *
  * @param {string} data - The swap transaction's calldata (quote.transaction.data)
  */
 export function assertSwapCalldataNotBareTransfer(data) {
   if (!data || typeof data !== 'string' || data.length < 10) return;
   const selector = data.slice(0, 10).toLowerCase();
-  const method = BARE_ERC20_OUTER_SELECTORS[selector];
+  const method = BARE_TOKEN_OUTER_SELECTORS[selector];
   if (method) {
     throw new Error(
-      `Swap transaction is a bare ERC-20 ${method}, not a routed swap. A real swap routes through an aggregator, not a direct token transfer/approval. Refusing to sign.`,
+      `Swap transaction is a bare ${method} call, not a routed swap. A real swap routes through an aggregator, not a direct token transfer/approval. Refusing to sign.`,
     );
   }
 }

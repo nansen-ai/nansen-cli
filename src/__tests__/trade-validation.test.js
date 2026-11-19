@@ -1650,8 +1650,8 @@ describe('assertInputWithinMax', () => {
 // ---------------------------------------------------------------------------
 // Same-chain swap-calldata shape guard
 //
-// A legitimate same-chain swap's outer call is a router method; a bare ERC-20
-// transfer/approve/transferFrom as the swap tx is a disguised drain payload.
+// A legitimate swap's outer call is a router method; a bare token
+// transfer/approval method as the swap tx is a disguised drain payload.
 // (Callers scope this to same-chain swaps — bridges are excluded.)
 // ---------------------------------------------------------------------------
 describe('assertSwapCalldataNotBareTransfer', () => {
@@ -1664,7 +1664,25 @@ describe('assertSwapCalldataNotBareTransfer', () => {
     expect(() => assertSwapCalldataNotBareTransfer('0x23b872dd' + '0'.repeat(192))).toThrow(/bare ERC-20 transferFrom/i);
   });
 
+  // Approval, NFT and Permit2 methods: same drain shape on a contract other
+  // than the sold token (sibling ERC-20, NFT collection, Permit2).
+  it.each([
+    ['0x39509351', /bare ERC-20 increaseAllowance\(address,uint256\) call/],
+    ['0xd73dd623', /bare ERC-20 increaseApproval\(address,uint256\) call/],
+    ['0xa22cb465', /bare ERC-721\/1155 setApprovalForAll\(address,bool\) call/],
+    ['0x42842e0e', /bare ERC-721 safeTransferFrom\(address,address,uint256\) call/],
+    ['0xb88d4fde', /bare ERC-721 safeTransferFrom\(address,address,uint256,bytes\) call/],
+    ['0xf242432a', /bare ERC-1155 safeTransferFrom\(address,address,uint256,uint256,bytes\) call/],
+    ['0x2eb2c2d6', /bare ERC-1155 safeBatchTransferFrom\(address,address,uint256\[\],uint256\[\],bytes\) call/],
+    ['0x36c78516', /bare Permit2 transferFrom\(address,address,uint160,address\) call/],
+    ['0x0d58b1db', /bare Permit2 transferFrom\(\(address,address,uint160,address\)\[\]\) call/],
+    ['0x87517c45', /bare Permit2 approve\(address,address,uint160,uint48\) call/],
+  ])('rejects outer selector %s', (selector, message) => {
+    expect(() => assertSwapCalldataNotBareTransfer(selector + '0'.repeat(256))).toThrow(message);
+  });
+
   it('is case-insensitive on the selector', () => {
+    expect(() => assertSwapCalldataNotBareTransfer('0xA22CB465' + '0'.repeat(128))).toThrow(/bare ERC-721\/1155 setApprovalForAll/i);
     expect(() => assertSwapCalldataNotBareTransfer('0xA9059CBB' + '0'.repeat(128))).toThrow(/bare ERC-20 transfer/i);
   });
 
