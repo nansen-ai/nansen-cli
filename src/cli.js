@@ -604,9 +604,12 @@ const CSV_MID_CELL_PIECE = /([;\t\r\n])([^;\t\r\n]*)/g;
 const CSV_NUMBER_THEN_QUOTE = new RegExp(CSV_NUMBER_LITERAL.source.slice(0, -1) + '"');
 
 function neutralizeMidCellPieces(s) {
-  return s.replace(CSV_MID_CELL_PIECE, (match, sep, piece) =>
-    /^"*[=+\-@]/.test(piece) && !CSV_NUMBER_LITERAL.test(piece) && !CSV_NUMBER_THEN_QUOTE.test(piece)
-      ? `${sep}'${piece}` : match);
+  return s.replace(CSV_MID_CELL_PIECE, (match, sep, piece) => {
+    // Leading quotes are read as an empty string, so the rest is what counts.
+    const rest = piece.replace(/^"*/, '');
+    return /^[=+\-@]/.test(rest) && !CSV_NUMBER_LITERAL.test(rest) && !CSV_NUMBER_THEN_QUOTE.test(rest)
+      ? `${sep}'${piece}` : match;
+  });
 }
 
 function escapeCsvCell(val) {

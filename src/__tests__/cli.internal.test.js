@@ -6028,6 +6028,16 @@ describe('formatCsv', () => {
         expect(formatCsv([row]).split('\n')[1]).toBe('"{""n"":""x;\'-5&1""}","x;\'-5&""y"""');
       });
 
+      it('should not change a number behind leading quotes', () => {
+        const row = { a: 'x;"-5', b: 'x;"+1e3;y' };
+        expect(formatCsv([row]).split('\n')[1]).toBe('"x;""-5","x;""+1e3;y"');
+      });
+
+      it('should prefix a non-number behind leading quotes', () => {
+        const row = { a: 'x;"-5&1', b: 'x;""=1' };
+        expect(formatCsv([row]).split('\n')[1]).toBe('"x;\'""-5&1","x;\'""""=1"');
+      });
+
       it('should neutralize JSON object cells and headers', () => {
         const out = formatCsv([{ 'h;=1': { n: 'x;=1+1;y' } }]).split('\n');
         expect(out[0]).toBe('"h;\'=1"');
@@ -6036,14 +6046,17 @@ describe('formatCsv', () => {
 
       it('should leave no piece of the ;-, tab- or newline-split output starting with a trigger', () => {
         const numberLiteral = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/;
+        const numberThenQuote = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"/;
         const hostile = [
           'x;=1+1', 'x;=1+1;y', 'x;=1&', '&1;z', 'x\t=1+1', ';@a', '=a;=b', '\t=1',
           'x;=HYPERLINK("http://example.com","c")', 'x;-1+1', 'x;+A1', 'x\n=1+1;',
-          'x;\r=1;y', 'x;"=1+1;y', 'x;""+1', 'x\r\n@1', '\n-1+1',
+          'x;\r=1;y', 'x;"=1+1;y', 'x;""+1', 'x;""+1+1', 'x\r\n@1', '\n-1+1',
         ];
         const out = formatCsv([Object.fromEntries(hostile.map((v, i) => [`c${i}`, v]))]);
         for (const piece of out.split(/[;\t\r\n]/)) {
-          if (numberLiteral.test(piece)) continue;
+          // Leading quotes read as an empty string, so a number behind them is harmless.
+          const rest = piece.replace(/^"*/, '');
+          if (numberLiteral.test(rest) || numberThenQuote.test(rest)) continue;
           expect(piece).not.toMatch(/^"*[=+\-@]/);
         }
       });
