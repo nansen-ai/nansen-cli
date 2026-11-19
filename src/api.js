@@ -36,6 +36,21 @@ export const RESPONSE_META = Symbol('nansenResponseMeta');
  */
 export const X402_PAYMENT_REJECTED = Symbol('x402PaymentRejected');
 
+// Marks the API error a paid retry ended with when the server answered a
+// non-402 4xx: the request failed, not the payment, so no other payment
+// option may be signed for it.
+const X402_REQUEST_FAILED = Symbol('x402RequestFailed');
+
+/**
+ * True when a paid retry's error must end the whole payment attempt: its
+ * outcome is unknown (PAYMENT_AMBIGUOUS), or the request itself failed.
+ * The provider loops re-throw these instead of falling back to another signer.
+ */
+function isFinalPaymentOutcome(err) {
+  return err instanceof NansenError
+    && (err.code === ErrorCode.PAYMENT_AMBIGUOUS || err[X402_REQUEST_FAILED] === true);
+}
+
 /**
  * True when an x402 rejection body carries a reason code for an underfunded
  * payer, e.g. "insufficient_funds" or "invalid_exact_evm_insufficient_balance".
@@ -56,19 +71,33 @@ function isInsufficientBalanceRejection(data) {
 const REASON_CODE = /^(?:[a-z]+(?:_[a-z0-9]+)*|[A-Z]+(?:_[A-Z0-9]+)*)$/;
 
 /**
- * The rejection's reason for the audit log, or null. Only a code matching
- * REASON_CODE is copied, never free text. A non-402 status without a code is
- * marked "unexpected_status": the retry still treats it as a rejection, but
- * it is not a payment refusal.
+ * A 402 rejection's reason for the audit log, or null. Only a code matching
+ * REASON_CODE is copied, never free text.
  */
-function rejectionReasonCode(data, status) {
+function rejectionReasonCode(data) {
   if (isInsufficientBalanceRejection(data)) return 'insufficient_balance';
   const code = data !== null && typeof data === 'object'
     ? [data.invalidReason, data.error].find(
       reason => typeof reason === 'string' && reason.length <= 100 && REASON_CODE.test(reason),
     )
     : undefined;
-  return code ?? (status === 402 ? null : 'unexpected_status');
+  return code ?? null;
+}
+
+/**
+ * The human-readable message of an API error body. The nansen-api proxy
+ * stringifies nested error dicts via Python str(), producing
+ * "{'message': 'actual error', ...}"; the inner message is extracted. The
+ * closing quote must be followed by a comma or closing brace so an apostrophe
+ * inside the message (e.g. "can't") doesn't truncate it.
+ */
+function apiErrorMessage(data, status) {
+  let message = data.message || data.error
+    || (typeof data.detail === 'string' ? data.detail : data.detail?.message)
+    || `API error: ${status}`;
+  const nestedMatch = typeof message === 'string' && message.match(/['"]message['"]\s*:\s*['"](.*?)['"]\s*[,}]/s);
+  if (nestedMatch) message = nestedMatch[1];
+  return message;
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -262,6 +291,41 @@ export function apiErrorDetails(data, message, status) {
     delete details.request_id;
   }
   return details;
+}
+
+/**
+ * The API error a paid x402 retry ended with on a non-402 4xx, built as
+ * request() builds an API error and marked as a final payment outcome. A body
+ * the normal builders can't handle still yields a marked error, so no failure
+ * here lets the caller fall back to another payment option. With a browser
+ * session, `sessionSecrets` (the signature and any credential sent) are never
+ * echoed and the request id stays out of details, as in request().
+ */
+function paidRequestError(data, status, requestId, sessionSecrets = null) {
+  let error;
+  try {
+    const body = data !== null && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    if (sessionSecrets) {
+      // A browser session gets request()'s redaction: a validation failure
+      // keeps only its field-level parts, anything else drops the body.
+      const validation = SESSION_VALIDATION_STATUSES.has(status) ? sessionValidationDetails(body, sessionSecrets) : null;
+      error = validation
+        ? new NansenError(validation.message, statusToErrorCode(status, validation.details), status, validation.details)
+        : new NansenError(`API request failed (${status}).`, statusToErrorCode(status), status, null);
+      error[X402_REQUEST_FAILED] = true;
+      return error;
+    }
+    const extracted = apiErrorMessage(body, status);
+    const message = typeof extracted === 'string' ? extracted : `API error: ${status}`;
+    error = new NansenError(message, statusToErrorCode(status, body), status, {
+      ...apiErrorDetails(body, message, status),
+      ...(requestId && { requestId }),
+    });
+  } catch {
+    error = new NansenError(`API error: ${status}`, statusToErrorCode(status, {}), status, requestId && !sessionSecrets ? { requestId } : null);
+  }
+  error[X402_REQUEST_FAILED] = true;
+  return error;
 }
 
 const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
@@ -965,7 +1029,9 @@ export class NansenAPI {
   /**
    * Retry a POST request with a payment signature.
    * Returns parsed JSON if the paid request succeeds, or the X402_PAYMENT_REJECTED
-   * sentinel if the server cleanly, legibly rejected it without settling.
+   * sentinel if the server cleanly, legibly rejected the payment with a 402.
+   * Any other 4xx with a readable body means the request failed: it throws the
+   * API's error, marked so the caller signs no other payment option.
    * Throws a NansenError(PAYMENT_AMBIGUOUS) — instead of returning the sentinel —
    * for any outcome that doesn't prove the payment was rejected: a transport
    * failure after transmission, an admission denial, an HTTP 5xx, or a response body that can't be
@@ -1077,8 +1143,8 @@ export class NansenAPI {
         );
       }
       // A 5xx doesn't prove the payment was rejected — the server could have
-      // processed it before failing to respond. Only a readable non-5xx
-      // rejection body is safe to treat as "try the next option".
+      // processed it before failing to respond. Only a readable 402 rejection
+      // body is safe to treat as "try the next option".
       if (paidResponse.status >= 500) {
         audit('ambiguous', { ...outcome, reason: 'server_error' });
         throw new NansenError(
@@ -1096,7 +1162,18 @@ export class NansenAPI {
           ErrorCode.PAYMENT_AMBIGUOUS,
         );
       }
-      const reason = rejectionReasonCode(rejection, paidResponse.status);
+      // Only a 402 refuses the payment. Any other 4xx means the request itself
+      // failed (bad parameters, unknown route, conflict): another payment
+      // option would fail the same way, so stop with the API's error. The
+      // payment can't be proven unsettled, so it is recorded as ambiguous.
+      if (paidResponse.status !== 402) {
+        audit('ambiguous', { ...outcome, reason: 'request_error' });
+        const sessionSecrets = this.selection.kind === 'session'
+          ? [signature, ...credentialSecrets({ ...this.defaultHeaders, ...options.headers })]
+          : null;
+        throw paidRequestError(rejection, paidResponse.status, outcome.requestId, sessionSecrets);
+      }
+      const reason = rejectionReasonCode(rejection);
       if (reason === 'insufficient_balance') {
         console.error(
           `[x402] Payment rejected: ${walletLabel || 'the paying wallet'} has an insufficient token balance` +
@@ -1292,15 +1369,7 @@ export class NansenAPI {
       if (!response.ok) {
         // A literal `null` body parses as JSON but has no fields to read.
         if (data == null) data = {};
-        let message = data.message || data.error
-          || (typeof data.detail === 'string' ? data.detail : data.detail?.message)
-          || `API error: ${response.status}`;
-        // nansen-api proxy stringifies nested error dicts via Python str(), producing
-        // "{'message': 'actual error', ...}". Extract the inner message if present.
-        // Require the closing quote to be followed by a comma or closing brace so
-        // an apostrophe inside the message (e.g. "can't") doesn't truncate it.
-        const nestedMatch = typeof message === 'string' && message.match(/['"]message['"]\s*:\s*['"](.*?)['"]\s*[,}]/s);
-        if (nestedMatch) message = nestedMatch[1];
+        let message = apiErrorMessage(data, response.status);
         const safeSessionError = this.selection.kind === 'session' ? browserSessionError(response.status, data) : null;
         let code = safeSessionError?.code || statusToErrorCode(response.status, data);
         // Keep a body-only challenge available to the signer without exposing
@@ -1398,7 +1467,7 @@ export class NansenAPI {
                 // after a signed payment was already transmitted must not be
                 // treated as an ordinary payment failure — there is no other
                 // provider to fall back to here, and retrying could double-pay.
-                if (privyErr instanceof NansenError && privyErr.code === ErrorCode.PAYMENT_AMBIGUOUS) throw privyErr;
+                if (isFinalPaymentOutcome(privyErr)) throw privyErr;
                 message = safeSessionError ? 'x402 Privy payment failed. Check the wallet configuration and balance.' : `x402 Privy payment failed: ${privyErr.message}`;
               }
             } else {
@@ -1419,7 +1488,7 @@ export class NansenAPI {
                 // be in flight or settled server-side. Do NOT fall through to
                 // WalletConnect below — that would sign and transmit a second,
                 // independent payment authorization for the same request.
-                if (localErr instanceof NansenError && localErr.code === ErrorCode.PAYMENT_AMBIGUOUS) throw localErr;
+                if (isFinalPaymentOutcome(localErr)) throw localErr;
                 /* local wallet unavailable for any other reason, try WalletConnect */
               }
 
@@ -1457,7 +1526,7 @@ export class NansenAPI {
                     // ambiguous outcome here still must not be reported as an
                     // ordinary "payment failed" that invites the caller to
                     // retry the whole request (and sign yet another payment).
-                    if (x402Err instanceof NansenError && x402Err.code === ErrorCode.PAYMENT_AMBIGUOUS) throw x402Err;
+                    if (isFinalPaymentOutcome(x402Err)) throw x402Err;
                     message = this.selection.kind !== 'anonymous'
                       ? 'x402 wallet payment failed. Check the wallet configuration and balance, or top up the selected account.'
                       : 'No API key configured. Three ways to authenticate:\n' +
