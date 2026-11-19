@@ -2,11 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { formatMcpVerifyReport, runMcpVerifyChecks } from '../mcp-verify.js';
+import { formatMcpVerifyReport, mcpRequest, runMcpVerifyChecks } from '../mcp-verify.js';
 import { runCLI, SCHEMA } from '../cli.js';
 import { MCP_CLIENT_CONFIG } from '../mcp-client-config.js';
 
 const API_KEY = 'nk_test_1234567890abcdef';
+const DEFAULT_URL_FOR_TESTS = MCP_CLIENT_CONFIG.endpoint;
 
 function response(message, contentType = 'application/json', status = 200) {
   return {
@@ -200,16 +201,67 @@ describe('mcp verify', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
-  it('never prints a malformed API key that undici quotes in its header error', async () => {
+  it('never relays the key that undici quotes in a rejected-header error', async () => {
     const key = 'nsk_SECRET\nSECRET';
-    const fetchFn = vi.fn()
-      .mockResolvedValueOnce(listResponse())
-      .mockRejectedValueOnce(new TypeError(`Headers.append: "${key}" is an invalid header value.`));
+    const fetchFn = vi.fn().mockRejectedValueOnce(new TypeError(`Headers.append: "${key}" is an invalid header value.`));
 
-    const check = findCheck(await runChecks(fetchFn, { apiKey: key }), 'mcp-auth');
+    const error = await mcpRequest(DEFAULT_URL_FOR_TESTS, 'tools/call', {}, { apiKey: key, fetchFn }).catch(e => e);
 
-    expect(check).toMatchObject({ status: 'error', message: 'MCP authenticated data call failed: TypeError' });
-    expect(JSON.stringify(check)).not.toContain('SECRET');
+    expect(error.message).toBe('TypeError');
+    expect(error.cause).toBeUndefined();
+  });
+
+  describe('unsendable API key', () => {
+    const cases = [
+      ['--api-key with a line break', () => ({ apiKey: 'nk_test_1234\n567890abcdef' }), 'The API key contains', /Copy the key again\.$/],
+      ['NANSEN_API_KEY with a line break', () => {
+        env.NANSEN_API_KEY = 'nk_test_1234\n567890abcdef';
+        return { apiKey: undefined };
+      }, 'NANSEN_API_KEY contains', /set it with plain quotes/],
+      ['--api-key with an ANSI escape', () => ({ apiKey: 'nk_test_1234\x1b[0m567890abcdef' }), 'The API key contains', /Copy the key again\.$/],
+      ['saved key with a curly quote', () => {
+        fs.writeFileSync(devConfigPath, JSON.stringify({ apiKey: 'nk_test_\u201c1234567890abcdef\u201d' }));
+        return { apiKey: undefined };
+      }, 'The API key saved in the config file contains', /nansen login --human/],
+    ];
+
+    it.each(cases)('fails the key check for %s and never sends it', async (_name, setup, subject, fix) => {
+      const fetchFn = vi.fn().mockResolvedValueOnce(listResponse());
+      const checks = await runChecks(fetchFn, setup());
+
+      const keyCheck = findCheck(checks, 'mcp-api-key');
+      expect(keyCheck.status).toBe('error');
+      expect(keyCheck.message).toContain(`${subject} a line break, a NUL or another character that cannot be sent in a request header`);
+      expect(keyCheck.message).toMatch(fix);
+      expect(findCheck(checks, 'mcp-server')).toMatchObject({ status: 'ok' });
+      expect(findCheck(checks, 'mcp-auth')).toMatchObject({ status: 'info', message: expect.stringMatching(/cannot be sent in a request header/) });
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(fetchFn.mock.calls[0][1].headers).not.toHaveProperty(MCP_CLIENT_CONFIG.apiKeyHeader);
+      // No fragment of the key (the masked first/last four included) is echoed.
+      const output = JSON.stringify(checks);
+      expect(output).not.toContain('nk_t');
+      expect(output).not.toMatch(/cdef|1234/);
+      expect(output).not.toMatch(/network|proxy|TypeError/);
+    });
+
+    it('adds no send-to-custom-URL check, since nothing is sent', async () => {
+      const fetchFn = vi.fn().mockResolvedValueOnce(listResponse());
+      const checks = await runChecks(fetchFn, { apiKey: 'nk_test_1234\n567890abcdef', url: 'http://mcp.example.com/mcp' });
+
+      expect(findCheck(checks, 'mcp-url')).toBeUndefined();
+      expect(findCheck(checks, 'mcp-api-key').status).toBe('error');
+      expect(findCheck(checks, 'mcp-auth').status).toBe('info');
+    });
+
+    it('still accepts a key whose only stray character is surrounding whitespace', async () => {
+      const fetchFn = vi.fn()
+        .mockResolvedValueOnce(listResponse())
+        .mockResolvedValueOnce(authSuccessResponse());
+      const checks = await runChecks(fetchFn, { apiKey: `${API_KEY}\n` });
+
+      expect(findCheck(checks, 'mcp-api-key').status).toBe('ok');
+      expect(fetchFn.mock.calls[1][1].headers[MCP_CLIENT_CONFIG.apiKeyHeader]).toBe(API_KEY);
+    });
   });
 
   it('turns a hung request into a timeout check via the abort signal', async () => {

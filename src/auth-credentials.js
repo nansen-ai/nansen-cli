@@ -74,8 +74,12 @@ export function resolveCredential({ env = process.env, explicitKey, snapshot = r
  * inside the value, or a character above U+00FF such as a curly quote. fetch
  * strips leading and trailing whitespace, so a trailing newline is fine.
  */
+// Headers rejects NUL, CR, LF and chars above U+00FF; undici then also refuses
+// other control characters (ESC, DEL, ...) when it sends the request. Check
+// the value Headers keeps (surrounding whitespace removed) against both.
+const UNSENDABLE_HEADER_CHAR = /[^\t\x20-\x7e\x80-\xff]/;
 export function isSendableHeaderValue(value) {
-  try { new Headers([['x', value]]); return true; } catch { return false; }
+  try { return !UNSENDABLE_HEADER_CHAR.test(new Headers([['x', value]]).get('x')); } catch { return false; }
 }
 const UNSENDABLE_KEY_SOURCES = {
   env: 'NANSEN_API_KEY contains',
