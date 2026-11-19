@@ -19,7 +19,7 @@
 
 import { SIMULATION_RPCS } from './rpc-urls.js';
 import { parseTransactionMessage } from './solana-tx.js';
-import { base58Encode } from './wallet.js';
+import { base58Decode, base58Encode } from './wallet.js';
 
 // Mirrors NATIVE_SOL_SYSTEM_MINT in trading.js / SOLANA_NATIVE_SOL_ALIASES in
 // trade-validation.js (duplicated, not imported, to avoid a circular import —
@@ -29,6 +29,7 @@ export const SOL_SENTINEL = '11111111111111111111111111111111';
 // Same base58 string as SOL_SENTINEL, but here it means the program that owns
 // ordinary wallet (keypair) accounts.
 const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+const TOKEN_PROGRAMS = new Set(['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb']);
 // An SPL Approve of u64::MAX is an unlimited allowance.
 const U64_MAX = (1n << 64n) - 1n;
 
@@ -241,6 +242,19 @@ function tokenAccountFields(info) {
   return fields;
 }
 
+/**
+ * The owner bytes of a token account the node returned raw (base64) instead of
+ * parsed, or null when it isn't a token account. SPL layout: mint 0..32, owner
+ * 32..64. A 165-byte account is a token account; a longer Token-2022 one
+ * carries account type 2 at offset 165 (a mint has 1 there).
+ */
+function rawTokenAccountOwner(info) {
+  if (!TOKEN_PROGRAMS.has(info?.owner) || !Array.isArray(info.data) || info.data[1] !== 'base64') return null;
+  const bytes = Buffer.from(info.data[0], 'base64');
+  if (bytes.length < 165 || (bytes.length > 165 && bytes[165] !== 2)) return null;
+  return bytes.subarray(32, 64);
+}
+
 function controlChanged(detail) {
   return new SolanaSimulationError(
     'SIM_ACCOUNT_CONTROL_CHANGED',
@@ -351,6 +365,7 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
   // set a delegate on it as it's created. Its token pre-balance is zero.
   const tracked = []; // { pubkey, preInfo, classified, kind?, mint? }
   let sawWalletAccount = false;
+  const walletBytes = base58Decode(walletAddress);
   writableKeys.forEach((pubkey, i) => {
     const info = preAccountInfos[i];
     if (!info) {
@@ -367,6 +382,10 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
       tracked.push({ pubkey, preInfo: info, classified: true, kind: 'token', mint: fields.mint });
       sawWalletAccount = true;
       return;
+    }
+    // Unparsed by the node, so its post-state could not be checked either.
+    if (!fields && rawTokenAccountOwner(info)?.equals(walletBytes)) {
+      throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned an unparsed SPL token account of your wallet; cannot verify the outcome.');
     }
     if (info.owner === SYSTEM_PROGRAM) {
       tracked.push({ pubkey, preInfo: null, classified: false });

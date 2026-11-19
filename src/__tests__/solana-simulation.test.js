@@ -9,6 +9,7 @@ import {
 } from '../solana-simulation.js';
 
 const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 
 // Same hand-rolled builder as solana-tx.test.js, kept independent of
@@ -627,6 +628,44 @@ describe('solana-simulation', () => {
       post[wallet] = { ...nativeAccountInfo(999_995_000), data: ['AA==', 'base64'], space: 1 };
       await expect(run({ pre: basePre(), post }))
         .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('allocates data on your wallet account') });
+    });
+
+    // A 165-byte SPL token account in raw (base64) form, as a node returns it
+    // when it can't parse the account under jsonParsed.
+    const rawTokenAccount = ({ mint, owner, amount = 0n, programOwner = TOKEN_PROGRAM, extraBytes = null }) => {
+      const buf = Buffer.alloc(165);
+      Buffer.from(base58Decode(mint)).copy(buf, 0);
+      Buffer.from(base58Decode(owner)).copy(buf, 32);
+      buf.writeBigUInt64LE(BigInt(amount), 64);
+      buf[108] = 1; // state: initialized
+      const data = extraBytes ? Buffer.concat([buf, extraBytes]) : buf;
+      return { lamports: 2039280, owner: programOwner, data: [data.toString('base64'), 'base64'], executable: false, rentEpoch: 0, space: data.length };
+    };
+
+    it("fails closed when a wallet token account's pre-state comes back unparsed", async () => {
+      // Dropping it from tracking would leave its post-state (here a new
+      // delegate) unchecked.
+      const pre = basePre();
+      pre[ataOut] = rawTokenAccount({ mint: mintOut, owner: wallet });
+      await expect(run({ pre, post: basePost({ delegate: attacker, delegatedAmount: { amount: MAX_U64, decimals: 6 } }) }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
+    it("fails closed when a wallet Token-2022 account with extensions comes back unparsed", async () => {
+      const pre = basePre();
+      // Token-2022: account type byte 2 (account) at offset 165, then extension data.
+      pre[ataOut] = rawTokenAccount({ mint: mintOut, owner: wallet, programOwner: TOKEN_2022_PROGRAM, extraBytes: Buffer.from([2, 0, 0, 0, 0]) });
+      await expect(run({ pre, post: basePost() }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
+    it("ignores an unparsed token account that belongs to someone else", async () => {
+      // A pool vault or other party's account the node can't parse is not the
+      // wallet's to verify; refusing it would block the swap for nothing.
+      const vault = generateSolanaWallet().address;
+      const pre = { ...basePre(), [vault]: rawTokenAccount({ mint: mintOut, owner: attacker }) };
+      const result = await run({ pre, post: basePost(), extraWritableKeys: [ataIn, ataOut, vault] });
+      expect(result.deltas[mintOut]).toBe(1_000_000n);
     });
 
     it('fails closed when the wallet post-state shows neither data nor space', async () => {
