@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { TRADE_CHAINS, TRADE_CHAIN_NAMES, tradeChain, tradeChainSymbols } from '../trade-chains.js';
-import { CHAIN_RPCS } from '../rpc-urls.js';
+import { TRADE_CHAINS, TRADE_CHAIN_NAMES, TRADE_SOURCE_CHAIN_NAMES, tradeChain, tradeChainSymbols } from '../trade-chains.js';
+import { CHAIN_RPCS, SIMULATION_RPCS } from '../rpc-urls.js';
 import { resolveChain, resolveTokenAddress } from '../trading.js';
 import { validateQuoteInput } from '../trade-validation.js';
 
@@ -52,11 +52,29 @@ describe('trade-chain registry', () => {
     }
   });
 
-  it.each(TRADE_CHAIN_NAMES)('%s is accepted by resolveChain and validateQuoteInput', (name) => {
+  it.each(TRADE_SOURCE_CHAIN_NAMES.filter((n) => TRADE_CHAINS[n].type === 'evm'))(
+    '%s (an EVM chain a trade signs on) has a swap-outcome simulation endpoint',
+    (name) => {
+      expect(SIMULATION_RPCS[name]).toMatch(/^https:\/\//);
+    },
+  );
+
+  it.each(TRADE_SOURCE_CHAIN_NAMES)('%s is accepted by resolveChain and validateQuoteInput', (name) => {
     const chain = TRADE_CHAINS[name];
     expect(resolveChain(name).chainId).toBe(chain.chainId);
     expect(() => validateQuoteInput({
       chain: name, from: chain.nativeAddress, to: chain.stables[0].address, amount: '1',
+    })).not.toThrow();
+  });
+
+  it('hyperevm is a bridge destination only: refused as --chain, accepted as --to-chain', () => {
+    expect(TRADE_SOURCE_CHAIN_NAMES).not.toContain('hyperevm');
+    expect(TRADE_CHAIN_NAMES).toContain('hyperevm');
+    expect(() => validateQuoteInput({ chain: 'hyperevm', from: 'HYPE', to: 'USDC', amount: '1' }))
+      .toThrow('HyperEVM is supported as a bridge destination only');
+    expect(() => validateQuoteInput({
+      chain: 'base', toChain: 'hyperevm',
+      from: TRADE_CHAINS.base.nativeAddress, to: TRADE_CHAINS.hyperevm.stables[0].address, amount: '1',
     })).not.toThrow();
   });
 

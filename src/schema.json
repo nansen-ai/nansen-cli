@@ -3593,7 +3593,7 @@
             },
             "to-chain": {
               "type": "string",
-              "description": "Destination blockchain for cross-chain swap (solana, base, ethereum, arbitrum, polygon, robinhood). Omit for same-chain. At least one side must be a stablecoin the chain lists (USDC; USDT on Solana, Ethereum, Arbitrum and Polygon; USDG on Robinhood) or the native token (SOL, ETH, POL). Non-native to non-native is not supported — swap to USDC first, then bridge. Bridge providers (Li.Fi or Relay) are selected automatically based on best price. Sub-dollar swaps are supported via Relay."
+              "description": "Destination blockchain for cross-chain swap (solana, base, ethereum, arbitrum, polygon, robinhood, hyperevm; hyperevm is a bridge destination only). Omit for same-chain. At least one side must be a stablecoin the chain lists (USDC; USDT on Solana, Ethereum, Arbitrum and Polygon; USDG on Robinhood) or the native token (SOL, ETH, POL). Non-native to non-native is not supported — swap to USDC first, then bridge. Bridge providers (Li.Fi or Relay) are selected automatically based on best price. Sub-dollar swaps are supported via Relay."
             },
             "from": {
               "type": "string",
@@ -3731,7 +3731,7 @@
             "to-chain": {
               "type": "string",
               "required": true,
-              "description": "Destination chain (solana, base, ethereum, arbitrum, polygon, robinhood)"
+              "description": "Destination chain (solana, base, ethereum, arbitrum, polygon, robinhood, hyperevm)"
             },
             "aggregator": {
               "type": "string",

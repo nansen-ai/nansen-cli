@@ -32,6 +32,8 @@ const EVM_NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
  * @property {Record<string, string>} extraSymbols  Other symbols `--from`/`--to` accept
  * @property {number} minGas        Native balance (token units) needed to quote
  * @property {number} feeBuffer     Native amount held back when selling the max
+ * @property {boolean} [destinationOnly] Accepted as --to-chain and in
+ *   bridge-status only. Nothing is signed on it, so it needs no sim-capable RPC.
  */
 
 /** @type {Record<string, TradeChain>} */
@@ -166,6 +168,30 @@ export const TRADE_CHAINS = {
     minGas: 0.00003,
     feeBuffer: 0.00005,
   },
+  // HyperEVM: a bridge destination only. Same-chain swaps get no quotes from the
+  // trading service, and no public HyperEVM RPC serves eth_simulateV1, so a
+  // transaction signed here would skip swap-outcome verification. Refused as
+  // --chain (assertTradeSourceChain); bridging into it signs on the source chain.
+  hyperevm: {
+    type: 'evm',
+    name: 'HyperEVM',
+    chainId: 999,
+    index: '999',
+    lifiChainId: '999',
+    explorer: 'https://hyperevmscan.io/tx/',
+    nativeSymbol: 'HYPE',
+    nativeDecimals: 18,
+    nativeAddress: EVM_NATIVE,
+    wrappedNative: { address: '0x5555555555555555555555555555555555555555', symbol: 'WHYPE' },
+    stables: [
+      { address: '0xb88339cb7199b77e23db6e890353e22632ba630f', symbol: 'USDC' },
+    ],
+    extraSymbols: {},
+    // Unused while destinationOnly (no balance or gas check runs on a destination).
+    minGas: 0.001,
+    feeBuffer: 0.001,
+    destinationOnly: true,
+  },
 };
 
 /** Chain names `--chain` / `--to-chain` accept, in display order. */
@@ -176,6 +202,22 @@ export function tradeChain(name) {
   if (!name) return undefined;
   const key = String(name).toLowerCase();
   return Object.hasOwn(TRADE_CHAINS, key) ? TRADE_CHAINS[key] : undefined;
+}
+
+/** Chain names `--chain` accepts: every chain that is not destination-only. */
+export const TRADE_SOURCE_CHAIN_NAMES = TRADE_CHAIN_NAMES.filter((name) => !TRADE_CHAINS[name].destinationOnly);
+
+/**
+ * Refuse a destination-only chain as the chain a trade signs on.
+ * @throws {Error} with an actionable message
+ */
+export function assertTradeSourceChain(name) {
+  const chain = tradeChain(name);
+  if (chain?.destinationOnly) {
+    throw new Error(
+      `${chain.name} is supported as a bridge destination only: use it as --to-chain from ${TRADE_SOURCE_CHAIN_NAMES.join(', ')}. Swaps on ${chain.name} itself are not available.`,
+    );
+  }
 }
 
 /** Symbol → address for every token symbol a chain accepts. */

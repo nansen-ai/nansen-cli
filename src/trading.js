@@ -21,7 +21,7 @@ import { readCompactU16 } from './solana-tx.js';
 import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 export { readCompactU16 };
 import { CHAIN_RPCS } from './rpc-urls.js';
-import { TRADE_CHAINS, TRADE_CHAIN_NAMES, mapTradeChains, tradeChain, tradeChainSymbols } from './trade-chains.js';
+import { TRADE_CHAINS, TRADE_CHAIN_NAMES, TRADE_SOURCE_CHAIN_NAMES, assertTradeSourceChain, mapTradeChains, tradeChain, tradeChainSymbols } from './trade-chains.js';
 import { simulateAssetChanges, SwapSimulationError, hasSimulationRpc } from './swap-simulation.js';
 import { simulateSolanaAssetChanges, SolanaSimulationError, hasSolanaSimulationRpc } from './solana-simulation.js';
 import { packageVersion, CommandError, telemetryHeaders } from './api.js';
@@ -3138,8 +3138,8 @@ PREREQUISITE:
   Authenticate with: nansen login (or set NANSEN_API_KEY)
 
 OPTIONS:
-  --chain <chain>           Source chain: ${TRADE_CHAIN_NAMES.join(', ')}
-  --to-chain <chain>        Destination chain for cross-chain swap (same list)
+  --chain <chain>           Source chain: ${TRADE_SOURCE_CHAIN_NAMES.join(', ')}
+  --to-chain <chain>        Destination chain for cross-chain swap: ${TRADE_CHAIN_NAMES.join(', ')}
   --from <symbol|address>   Input token (symbol like SOL, USDC or address)
   --to <symbol|address>     Output token (symbol like USDC, ETH or address)
   --amount <units>          Amount in BASE UNITS (e.g. lamports, wei)
@@ -3652,6 +3652,13 @@ EXAMPLES:
         const chain = quoteData.chain?.toLowerCase();
         const chainConfig = resolveChain(chain);
         const chainType = chainConfig.type;
+        // A quote can't be made on a destination-only chain, so this only trips on
+        // a hand-edited quote file; refuse before anything is signed.
+        try {
+          assertTradeSourceChain(chain);
+        } catch (e) {
+          throw new CommandError(e.message, 'INVALID_INPUT');
+        }
 
 
         // One correlation id per execute invocation, reused across the swap POST

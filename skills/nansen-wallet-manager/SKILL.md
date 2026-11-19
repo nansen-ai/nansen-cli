@@ -218,4 +218,4 @@ For detailed migration steps (from `~/.nansen/.env`, `.credentials`, or env-var-
 | `NANSEN_WALLET_PROVIDER` | Default provider for wallet create — `local` or `privy` |
 | `NANSEN_EVM_RPC` | Custom EVM RPC endpoint |
 | `NANSEN_SOLANA_RPC` | Custom Solana RPC endpoint |
-| `NANSEN_BASE_RPC`, `NANSEN_ARBITRUM_RPC`, `NANSEN_POLYGON_RPC`, `NANSEN_ROBINHOOD_RPC` | Custom RPC endpoint for that chain (`NANSEN_EVM_RPC` covers Ethereum) |
+| `NANSEN_BASE_RPC`, `NANSEN_ARBITRUM_RPC`, `NANSEN_POLYGON_RPC`, `NANSEN_ROBINHOOD_RPC`, `NANSEN_HYPEREVM_RPC` | Custom RPC endpoint for that chain (`NANSEN_EVM_RPC` covers Ethereum) |

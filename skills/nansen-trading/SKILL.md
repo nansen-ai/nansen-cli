@@ -91,7 +91,7 @@ nansen trade execute --quote <quote-id> --yes       # skip the confirmation prom
 
 ## Cross-Chain Swap
 
-Bridge tokens between chains using `--to-chain` (any two of solana, base, ethereum, arbitrum, polygon, robinhood):
+Bridge tokens between chains using `--to-chain` (any two of solana, base, ethereum, arbitrum, polygon, robinhood; `hyperevm` as the destination only):
 
 ```bash
 nansen trade quote \

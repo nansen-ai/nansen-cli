@@ -5955,6 +5955,19 @@ describe('ERC-20 excessive allowance handling', () => {
       },
     );
 
+    it('refuses to execute a (hand-edited) quote whose source is a destination-only chain, before any request', async () => {
+      createWallet('default', 'testpass');
+      process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+      const walletAddress = showWallet('default').evm;
+      const quoteId = saveEthUsdtQuote(walletAddress, { chain: 'hyperevm', token: '0xb88339cb7199b77e23db6e890353e22632ba630f' });
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+      const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+      await expect(cmds.execute([], screenApi, { 'no-simulate': true }, { quote: quoteId }))
+        .rejects.toThrow('HyperEVM is supported as a bridge destination only');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
     it('zero-first: a partial allowance on an ordinary token is re-approved directly (no revoke)', async () => {
       createWallet('default', 'testpass');
       process.env.NANSEN_WALLET_PASSWORD = 'testpass';

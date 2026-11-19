@@ -5,7 +5,7 @@
 
 > **Built by agents, for agents.** Command-line interface for the [Nansen API](https://docs.nansen.ai), designed for AI agents to research on-chain data, manage wallets, and trade through `nansen trade`.
 
-Use it for both analytics and execution: `nansen research ...` returns structured on-chain data, while `nansen trade quote` / `nansen trade execute` handle DEX swaps on Solana, Base, Ethereum, Arbitrum, Polygon and Robinhood Chain, including cross-chain bridges.
+Use it for both analytics and execution: `nansen research ...` returns structured on-chain data, while `nansen trade quote` / `nansen trade execute` handle DEX swaps on Solana, Base, Ethereum, Arbitrum, Polygon and Robinhood Chain, including cross-chain bridges (HyperEVM as a bridge destination).
 
 ## Installation
 

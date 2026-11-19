@@ -11,7 +11,7 @@ import { base58Encode } from './wallet.js';
 import { parseTransactionMessage, resolveStaticAccount } from './solana-tx.js';
 import { SOL_SENTINEL } from './solana-simulation.js';
 import { EVM_NATIVE_SENTINEL } from './swap-simulation.js';
-import { TRADE_CHAIN_NAMES, mapTradeChains } from './trade-chains.js';
+import { TRADE_CHAIN_NAMES, assertTradeSourceChain, mapTradeChains } from './trade-chains.js';
 
 const SUPPORTED_CHAINS = TRADE_CHAIN_NAMES;
 
@@ -78,6 +78,7 @@ export function validateQuoteInput({ chain, toChain, from, to, amount }) {
       `Unsupported chain "${chain}". Supported chains: ${SUPPORTED_CHAINS.join(', ')}.`
     );
   }
+  assertTradeSourceChain(normalizedChain);
 
   const normalizedToChain = toChain ? toChain.toLowerCase() : normalizedChain;
   if (toChain && !SUPPORTED_CHAINS.includes(normalizedToChain)) {

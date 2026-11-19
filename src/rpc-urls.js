@@ -14,6 +14,7 @@
  *   NANSEN_ARBITRUM_RPC   Custom Arbitrum RPC
  *   NANSEN_POLYGON_RPC    Custom Polygon RPC
  *   NANSEN_ROBINHOOD_RPC  Custom Robinhood Chain RPC
+ *   NANSEN_HYPEREVM_RPC   Custom HyperEVM RPC
  *   NANSEN_BNB_RPC        Custom BNB Smart Chain RPC (bridge/perp key `bnb`)
  *   NANSEN_BASE_SIM_RPC   Custom Base simulation RPC (see SIMULATION_RPCS below)
  *   NANSEN_SOLANA_SIM_RPC Custom Solana simulation RPC (see SIMULATION_RPCS below)
@@ -56,6 +57,7 @@ const DEFAULT_ARBITRUM_RPC = 'https://arb1.arbitrum.io/rpc';
 const DEFAULT_POLYGON_RPC  = 'https://polygon-bor-rpc.publicnode.com';
 const DEFAULT_BNB_RPC      = 'https://bsc-dataseed.bnbchain.org';
 const DEFAULT_ROBINHOOD_RPC = 'https://rpc.mainnet.chain.robinhood.com';
+const DEFAULT_HYPEREVM_RPC = 'https://rpc.hyperliquid.xyz/evm';
 
 // `bsc` (x402.js) and `bnb` (bridge/perp) are both chain 56 — both keys are read.
 export const CHAIN_RPCS = {
@@ -69,6 +71,7 @@ export const CHAIN_RPCS = {
   polygon:  process.env.NANSEN_POLYGON_RPC  || DEFAULT_POLYGON_RPC,
   bnb:      process.env.NANSEN_BNB_RPC      || DEFAULT_BNB_RPC,
   robinhood: process.env.NANSEN_ROBINHOOD_RPC || DEFAULT_ROBINHOOD_RPC,
+  hyperevm: process.env.NANSEN_HYPEREVM_RPC || DEFAULT_HYPEREVM_RPC,
 };
 
 // Zero-config default for the shipped Nansen-hosted simulation endpoint. It
