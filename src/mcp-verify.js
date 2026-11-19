@@ -1,4 +1,5 @@
 import { transportFailure } from './api.js';
+import { AuthError, assertUsableSelection } from './auth-credentials.js';
 import { check, formatChecks, maskKey, resolveAuthConfig } from './doctor.js';
 import { MCP_CLIENT_CONFIG } from './mcp-client-config.js';
 
@@ -214,6 +215,20 @@ function keySourceLabel(source) {
 }
 
 /**
+ * The shared malformed-key message (same rule and wording as every other
+ * command), or null when the key can be sent in a request header.
+ */
+function unsendableKeyMessage(apiKey, source) {
+  try {
+    assertUsableSelection({ kind: 'api-key', apiKey, source });
+    return null;
+  } catch (error) {
+    if (error instanceof AuthError) return error.message;
+    throw error;
+  }
+}
+
+/**
  * Run the unauthenticated reachability check and the paid authenticated canary.
  * Every expected failure is represented as a check instead of escaping.
  */
@@ -233,8 +248,14 @@ export async function runMcpVerifyChecks({
   const explicitKey = apiKey !== undefined;
   const resolvedKey = explicitKey ? apiKey : auth.apiKey;
   const key = typeof resolvedKey === 'string' ? resolvedKey.trim() : '';
+  const unsendableKey = key ? unsendableKeyMessage(key, explicitKey ? 'explicit' : auth.apiKeySource) : null;
 
-  if (key) {
+  if (unsendableKey) {
+    // fetch() would reject the header locally and the canary would report a
+    // network failure. No masked fragment: its last characters can be the
+    // line break or quote that makes the key unsendable.
+    checks.push(check('mcp-api-key', 'error', unsendableKey));
+  } else if (key) {
     checks.push(check('mcp-api-key', 'ok', `API key found (${maskKey(key)}, source: ${explicitKey ? '--api-key' : keySourceLabel(auth.apiKeySource)})`));
   } else {
     checks.push(check(
@@ -249,7 +270,7 @@ export async function runMcpVerifyChecks({
   // to a caller-supplied URL requires explicit per-invocation consent, and no
   // key may travel in cleartext to a public host.
   let keyWithheld = null;
-  if (key && url !== DEFAULT_MCP_URL) {
+  if (key && !unsendableKey && url !== DEFAULT_MCP_URL) {
     const dest = classifyDestination(url);
     if (dest.protocol === 'http:' && !dest.loopback) {
       keyWithheld = check(
@@ -310,6 +331,8 @@ export async function runMcpVerifyChecks({
 
   if (!key) {
     checks.push(skippedAuth('no API key was provided'));
+  } else if (unsendableKey) {
+    checks.push(skippedAuth('the API key cannot be sent in a request header (see above)'));
   } else if (keyWithheld) {
     checks.push(skippedAuth('the API key was withheld from this custom URL (see above)'));
   } else if (!serverReady) {
