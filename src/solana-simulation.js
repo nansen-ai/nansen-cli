@@ -57,7 +57,9 @@ const MAX_ACCOUNTS_PER_CALL = 100;
  *                             of the wallet's own accounts to someone else (new
  *                             owner, delegate or close authority, or the wallet
  *                             reassigned to another program or given data),
- *                             whatever the balances say, or a token Approve or
+ *                             whatever the balances say; a changed authority,
+ *                             close or withdrawal on a stake or nonce account
+ *                             the wallet controls; or a token Approve or
  *                             SetAuthority the wallet signs from inside another
  *                             program (CPI), which the post-state can hide, or
  *                             a CPI that hands the wallet a token account whose
@@ -345,6 +347,99 @@ function assertTokenAccountControl(pubkey, pre, post, walletAddress) {
   }
 }
 
+const STAKE_PROGRAM = 'Stake11111111111111111111111111111111111111';
+
+/**
+ * Which kind of wallet-controlled authority account a jsonParsed pre-state is:
+ * 'stake' (the wallet is its staker, withdrawer or lockup custodian), 'nonce'
+ * (an initialized nonce account the wallet is the authority of), or null.
+ * Shapes captured from mainnet getAccountInfo and simulateTransaction.
+ */
+function walletAuthorityAccountKind(info, walletAddress) {
+  const parsed = info?.data?.parsed;
+  if (info?.owner === STAKE_PROGRAM) {
+    // An uninitialized stake account has no meta.
+    const meta = parsed?.info?.meta;
+    const { staker, withdrawer } = meta?.authorized || {};
+    return staker === walletAddress || withdrawer === walletAddress || meta?.lockup?.custodian === walletAddress ? 'stake' : null;
+  }
+  return info?.owner === SYSTEM_PROGRAM && info.data?.program === 'nonce' && parsed?.type === 'initialized'
+    && parsed.info?.authority === walletAddress ? 'nonce' : null;
+}
+
+/**
+ * Whether a stake or nonce account the node returned unparsed (base64) holds the
+ * wallet's key in an authority field. Stake layout: state u32, rent-exempt
+ * reserve u64, staker 12..44, withdrawer 44..76, lockup timestamp and epoch,
+ * custodian 92..124. Nonce layout: version u32, state u32, authority 8..40.
+ */
+function rawWalletAuthorityAccount(info, walletBytes) {
+  // Only these two owners' accounts are decoded: other writable accounts (pools,
+  // markets) can be large.
+  if ((info?.owner !== STAKE_PROGRAM && info?.owner !== SYSTEM_PROGRAM) || !Array.isArray(info.data)) return false;
+  const bytes = Buffer.from(info.data[0], 'base64');
+  const at = (start) => bytes.subarray(start, start + 32).equals(walletBytes);
+  if (info.owner === STAKE_PROGRAM) return at(12) || at(44) || at(92);
+  return info.owner === SYSTEM_PROGRAM && bytes.length === 80 && at(8);
+}
+
+function lamportsOf(info, label) {
+  const { lamports } = info;
+  if ((typeof lamports === 'number' && Number.isSafeInteger(lamports) && lamports >= 0) || (typeof lamports === 'string' && /^\d+$/.test(lamports))) {
+    return BigInt(lamports);
+  }
+  throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Could not parse the lamport balance of your ${label}; cannot verify the outcome.`);
+}
+
+/**
+ * The authority fields of a parsed stake or nonce account, as strings, or null
+ * when the post-state isn't a readable account of that kind.
+ */
+function authorityFields(kind, info) {
+  const parsed = info?.data?.parsed;
+  if (kind === 'stake') {
+    if (info.owner !== STAKE_PROGRAM) return null;
+    const meta = parsed?.info?.meta;
+    const { staker, withdrawer } = meta?.authorized || {};
+    const { custodian, epoch, unixTimestamp } = meta?.lockup || {};
+    if (![staker, withdrawer, custodian].every(isPubkey) || epoch == null || unixTimestamp == null) return null;
+    return { staker, withdrawer, 'lockup custodian': custodian, 'lockup epoch': String(epoch), 'lockup end time': String(unixTimestamp) };
+  }
+  if (info.owner !== SYSTEM_PROGRAM || info.data?.program !== 'nonce' || !isPubkey(parsed?.info?.authority)) return null;
+  return { authority: parsed.info.authority };
+}
+
+/**
+ * A stake or nonce account the wallet controls holds SOL that balance deltas
+ * don't count. A wallet-signed Authorize, SetLockup or AuthorizeNonceAccount
+ * hands it to someone else without moving a lamport, and a wallet-signed
+ * Withdraw moves its lamports out (to an attacker, or to the wallet, where it
+ * would count as swap output). No swap needs either, so refuse any authority
+ * change, a close, or a lamport decrease. Lamports coming in and a nonce
+ * advancing are fine.
+ */
+function assertWalletAuthorityAccountUnchanged(pubkey, kind, pre, post) {
+  const label = `${kind} account ${pubkey}`;
+  if (isClosedAccount(post)) {
+    throw controlChanged(`closes your ${label} and withdraws its SOL.`);
+  }
+  const before = authorityFields(kind, pre);
+  const after = authorityFields(kind, post);
+  if (!before || !after) {
+    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unreadable post-state for your ${label}; cannot verify who controls it.`);
+  }
+  for (const [field, value] of Object.entries(before)) {
+    if (after[field] !== value) {
+      throw controlChanged(`changes the ${field} of your ${label} from ${value} to ${after[field]}.`);
+    }
+  }
+  const preLamports = lamportsOf(pre, label);
+  const postLamports = lamportsOf(post, label);
+  if (postLamports < preLamports) {
+    throw controlChanged(`withdraws ${preLamports - postLamports} lamports from your ${label}.`);
+  }
+}
+
 // SPL Token instruction discriminators (the same in either token program).
 const SPL_APPROVE = 4;
 const SPL_SET_AUTHORITY = 6;
@@ -579,6 +674,16 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
     if (!fields && rawTokenAccountOwner(info)?.equals(walletBytes)) {
       throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned an unparsed SPL token account of your wallet; cannot verify the outcome.');
     }
+    // Checked before the System-owned candidate branch: a nonce account is
+    // System-owned.
+    const authorityKind = walletAuthorityAccountKind(info, walletAddress);
+    if (authorityKind) {
+      tracked.push({ pubkey, preInfo: info, classified: true, kind: authorityKind });
+      return;
+    }
+    if (rawWalletAuthorityAccount(info, walletBytes)) {
+      throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unparsed stake or nonce account your wallet controls (${pubkey}); cannot verify the outcome.`);
+    }
     if (info.owner === SYSTEM_PROGRAM) {
       tracked.push({ pubkey, preInfo: null, classified: false, credit: true });
     } else if (accountDataLength(info) <= MAX_CANDIDATE_ACCOUNT_BYTES) {
@@ -666,6 +771,10 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
   tracked.forEach((t, i) => {
     const postInfo = postAccountInfos[i];
     let { kind, mint } = t;
+    if (kind === 'stake' || kind === 'nonce') {
+      assertWalletAuthorityAccountUnchanged(t.pubkey, kind, t.preInfo, postInfo);
+      return;
+    }
     if (!t.classified) {
       // Newly-created account: classify from its post-simulation state and
       // count it only if the tx created it as one of the wallet's own accounts
