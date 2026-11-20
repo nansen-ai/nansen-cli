@@ -820,27 +820,24 @@ async function sendTokensViaPrivy({ to, amount, chain, token, max, dryRun, walle
       const maxAmount = BigInt(balResult.value) - fee;
       if (maxAmount <= 0n) throw new Error('Insufficient SOL balance for fees');
       amount = formatAmount(maxAmount, 9);
-    } else if (token) {
+    } else if (max && token) {
       const rpcUrl = CHAIN_RPCS.solana;
-      const { tokenProgram, decimals } = await getTokenInfo(rpcUrl, token);
-      if (max) {
-        const sourceATA = deriveATA(fromAddress, token, tokenProgram);
-        const sourceAtaAddr = base58Encode(sourceATA);
-        const ataInfo = await rpcCall(rpcUrl, 'getTokenAccountBalance', [sourceAtaAddr]);
-        amount = ataInfo.value.uiAmountString;
-      }
-      // The SPL amount is otherwise parsed only while building the transaction,
-      // after the dry-run return. Parse it here so a preview refuses the same
-      // malformed, zero or sub-unit amounts the real send does.
-      parseAmount(amount, decimals);
+      const { tokenProgram } = await getTokenInfo(rpcUrl, token);
+      const sourceATA = deriveATA(fromAddress, token, tokenProgram);
+      const sourceAtaAddr = base58Encode(sourceATA);
+      const ataInfo = await rpcCall(rpcUrl, 'getTokenAccountBalance', [sourceAtaAddr]);
+      amount = ataInfo.value.uiAmountString;
     }
 
-    if (dryRun) return { dryRun: true, from: fromAddress, to, amount, token, chain };
-
+    // Build before the dry-run return: building does not sign, and it runs the
+    // amount, balance and token-account checks, so a preview refuses what the
+    // real send would.
     const amountRaw = token ? null : parseAmount(amount, 9);
     const { unsignedTransaction } = await buildUnsignedSolanaTransaction({
       to, amount: amountRaw, amountStr: amount, token, fromAddress,
     });
+
+    if (dryRun) return { dryRun: true, from: fromAddress, to, amount, token, chain };
 
     const signResult = await client.signSolanaTransaction(walletId, unsignedTransaction);
     const signedTx = signResult.data?.signed_transaction || signResult.signed_transaction;
