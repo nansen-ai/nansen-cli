@@ -426,8 +426,8 @@ export async function signTransaction(txBase64, walletType, walletInfo) {
  * in-simulation revert, a change of control over a wallet account
  * (SIM_ACCOUNT_CONTROL_CHANGED, including a token Approve or SetAuthority the
  * wallet signs from inside another program), an unreadable result, or an RPC
- * that returns no inner instructions (SIM_INNER_INSTRUCTIONS_UNAVAILABLE)
- * refuses to sign. Only NO_SIM_RPC and SIM_RPC_ERROR degrade.
+ * that returns no inner instructions (SIM_INNER_INSTRUCTIONS_UNAVAILABLE; a
+ * deposit only, a cancel warns and keeps the other checks) refuses to sign. Only NO_SIM_RPC and SIM_RPC_ERROR degrade.
  */
 async function verifyLimitOrderOutcome({ kind, walletAddress, txBase64, inputMint, amount, log = () => {} }) {
   if (!hasSolanaSimulationRpc('solana')) {
@@ -435,7 +435,13 @@ async function verifyLimitOrderOutcome({ kind, walletAddress, txBase64, inputMin
     return { proceed: true };
   }
   try {
-    const sim = await simulateSolanaAssetChanges('solana', txBase64, { walletAddress });
+    // A cancel only returns escrowed funds to the wallet, so an RPC without
+    // inner instructions mustn't strand them: skip that one check (with a
+    // warning) and keep the balance and end-state checks. A deposit refuses.
+    const sim = await simulateSolanaAssetChanges('solana', txBase64, { walletAddress, allowMissingInnerInstructions: kind === 'cancel' });
+    if (!sim.innerInstructionsChecked) {
+      log('  ⚠ The Solana simulation RPC returned no inner instructions, so calls this withdrawal makes from inside other programs were not checked. Balance and account-control checks still ran.');
+    }
     if (kind === 'deposit') {
       assertLimitOrderDepositOutcome(sim, { inputMint, amount });
     } else {

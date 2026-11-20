@@ -1933,6 +1933,77 @@ describe('outcome verification (fail-closed)', () => {
     expect(global.fetch).toHaveBeenCalledTimes(6);
   });
 
+  describe('when the simulation RPC returns no inner instructions', () => {
+    const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    function mockCancel(walletName, refunded) {
+      SIMULATION_RPCS.solana = 'http://sol-sim.test';
+      const wallet = createTestWallet(walletName);
+      const tokenAccount = generateSolanaWallet().address;
+      const cancelTx = buildLimitOrderTx({ walletPubkey: wallet.solana, extraWritableKey: tokenAccount });
+      mockFetchSequence([
+        { body: { challenge: 'sign' } },
+        { body: { token: 'jwt' } },
+        { body: { orders: [{ id: 'order-1', inputMint: USDC, inputAmount: '1000000', fills: [] }] } },
+        { body: { id: 'order-1', transaction: cancelTx, requestId: 'cancel-req-1' } },
+        { body: { result: { value: [solanaNativeAccountInfo(2_000_000_000), solanaTokenAccountInfo({ mint: USDC, owner: wallet.solana, amount: 0 })] } } },
+        // No innerInstructions key: the node didn't return them.
+        { body: { result: { value: { err: null, accounts: [solanaNativeAccountInfo(2_000_000_000 - 5000), refunded(wallet.solana)] } } } },
+        { body: { id: 'order-1', txSignature: 'cancel-sig' } },
+      ]);
+    }
+
+    it('cancel: proceeds with a warning, so escrowed funds are not stranded', async () => {
+      mockCancel('lo-cancel-no-inner', (owner) => solanaTokenAccountInfo({ mint: USDC, owner, amount: 1_000_000 }));
+      const logs = [];
+      const exit = vi.fn();
+      await buildLimitOrderCommands({ log: (m) => logs.push(m), exit }).cancel([], null, {}, { order: 'order-1', wallet: 'lo-cancel-no-inner' });
+      expect(exit).not.toHaveBeenCalled();
+      expect(logs.some(l => /returned no inner instructions/.test(l))).toBe(true);
+      expect(logs.some(l => l.includes('Order cancelled'))).toBe(true);
+    });
+
+    it('cancel: still refuses an account-control change the end state shows', async () => {
+      const attacker = generateSolanaWallet().address;
+      mockCancel('lo-cancel-no-inner-delegate', (owner) => {
+        const info = solanaTokenAccountInfo({ mint: USDC, owner, amount: 1_000_000 });
+        info.data.parsed.info.delegate = attacker;
+        info.data.parsed.info.delegatedAmount = { amount: '1', decimals: 6 };
+        return info;
+      });
+      const logs = [];
+      const exit = vi.fn();
+      await buildLimitOrderCommands({ log: (m) => logs.push(m), exit }).cancel([], null, {}, { order: 'order-1', wallet: 'lo-cancel-no-inner-delegate' });
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(logs.some(l => new RegExp(`approves ${attacker} to spend`).test(l))).toBe(true);
+      expect(global.fetch).toHaveBeenCalledTimes(6);
+    });
+
+    it('create: refuses the deposit', async () => {
+      SIMULATION_RPCS.solana = 'http://sol-sim.test';
+      const wallet = createTestWallet('lo-deposit-no-inner');
+      const depositTx = buildLimitOrderTx({ walletPubkey: wallet.solana });
+      mockFetchSequence([
+        { body: { challenge: 'sign this' } },
+        { body: { token: 'jwt-123' } },
+        { body: { vaultPubkey: '11111111111111111111111111111111', userPubkey: 'pub1' } },
+        { body: { transaction: depositTx, requestId: 'dep-req-1' } },
+        { body: { result: { value: [solanaNativeAccountInfo(2_000_000_000)] } } },
+        // An exact 1 SOL deposit plus fee, but no innerInstructions key.
+        { body: { result: { value: { err: null, accounts: [solanaNativeAccountInfo(2_000_000_000 - 1_000_005_000)] } } } },
+      ]);
+      const logs = [];
+      const exit = vi.fn();
+      await buildLimitOrderCommands({ log: (m) => logs.push(m), exit }).create([], null, {}, {
+        from: 'SOL', to: 'USDC', amount: '1',
+        'trigger-mint': 'SOL', 'trigger-condition': 'below', 'trigger-price': '80',
+        wallet: 'lo-deposit-no-inner',
+      });
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(logs.some(l => /Refusing to sign deposit/i.test(l) && /inner instructions/.test(l))).toBe(true);
+      expect(global.fetch).toHaveBeenCalledTimes(6);
+    });
+  });
+
   it('cancel: refuses to sign when the order cannot be found in the lookup, rather than skipping the asset-binding check', async () => {
     SIMULATION_RPCS.solana = 'http://sol-sim.test';
     createTestWallet('lo-outcome-cancel-notfound');

@@ -489,14 +489,18 @@ function innerInstructionsReadable(innerGroups) {
  *
  * @param {string} chain - chain key (only 'solana' is wired today)
  * @param {string} txBase64 - the serialized transaction to simulate, unsigned
- * @param {{ walletAddress: string, timeoutMs?: number }} opts
- * @returns {Promise<{ deltas: Record<string, bigint>, method: string }>}
+ * @param {{ walletAddress: string, timeoutMs?: number, allowMissingInnerInstructions?: boolean }} opts
+ *   allowMissingInnerInstructions: when the RPC returns no inner instructions,
+ *   skip the inner-instruction check instead of throwing
+ *   SIM_INNER_INSTRUCTIONS_UNAVAILABLE. Every other check still runs.
+ * @returns {Promise<{ deltas: Record<string, bigint>, method: string, innerInstructionsChecked: boolean }>}
  *   deltas is keyed by mint address, with native SOL (and any WSOL leg of the
- *   same swap) folded under SOL_SENTINEL.
+ *   same swap) folded under SOL_SENTINEL. innerInstructionsChecked is false
+ *   only when allowMissingInnerInstructions let a missing set through.
  * @throws {SolanaSimulationError} on any degrade condition, an in-sim revert,
  *   or an unparseable result.
  */
-export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddress, timeoutMs = 20000 } = {}) {
+export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddress, timeoutMs = 20000, allowMissingInnerInstructions = false } = {}) {
   const rpcUrl = SIMULATION_RPCS[chain];
   if (!rpcUrl) {
     throw new SolanaSimulationError('NO_SIM_RPC', `No simulation RPC configured for chain '${chain}'.`);
@@ -648,13 +652,15 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
   // only a custom endpoint lacks them, and without them a CPI that delegates a
   // wallet account and then hides it would pass.
   const innerGroups = simResult.value.innerInstructions;
-  if (!innerInstructionsReadable(innerGroups)) {
+  const innerInstructionsChecked = innerInstructionsReadable(innerGroups);
+  if (innerInstructionsChecked) {
+    assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKeys);
+  } else if (!allowMissingInnerInstructions) {
     throw new SolanaSimulationError(
       'SIM_INNER_INSTRUCTIONS_UNAVAILABLE',
       'The Solana simulation RPC did not return inner instructions, so calls this transaction makes from inside other programs cannot be checked. Refusing to sign. Set NANSEN_SOLANA_SIM_RPC to an RPC that supports simulateTransaction with innerInstructions.',
     );
   }
-  assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKeys);
 
   const deltas = {};
   tracked.forEach((t, i) => {
@@ -732,5 +738,5 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
     if (deltas[k] === 0n) delete deltas[k];
   }
 
-  return { deltas, method: 'simulateTransaction' };
+  return { deltas, method: 'simulateTransaction', innerInstructionsChecked };
 }
