@@ -1892,6 +1892,7 @@ describe('sendTokens via Privy', () => {
     test.each([
       ['an SPL amount above the token balance', { token: TOKEN_MINT, amount: '10' }, {}, 'Insufficient token balance: have 5, need 10'],
       ['an SPL send with no source token account', { token: TOKEN_MINT, amount: '1' }, { tokenAccount: null }, 'Source token account not found'],
+      ['an SPL --max send with no source token account', { token: TOKEN_MINT, max: true }, { tokenAccount: null }, 'Source token account not found'],
       ['a SOL amount above the SOL balance', { amount: '2' }, {}, 'Insufficient SOL balance: have 1000000000 lamports, need 2000005000'],
     ])('refuses %s, as the real send does, without signing', async (_name, args, rpc, error) => {
       const signSpy = vi.spyOn(PrivyClient.prototype, 'signSolanaTransaction')
@@ -2093,5 +2094,132 @@ describe('sendTokens --token symbols', () => {
 
   test('leaves a missing token as native', () => {
     expect(resolveSendToken(null, 'base')).toBeNull();
+  });
+});
+
+// ============= SPL source token balance read =============
+
+// Only the RPC's "could not find account" reply means the sender has no token
+// account. A rate limit, a network failure or a malformed reply must not be
+// reported as "not found" to a wallet that holds the token.
+describe('Solana SPL source token balance read', () => {
+  const TOKEN_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+  const TO = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+
+  const jsonReply = (payload) => ({ status: 200, json: () => Promise.resolve(payload) });
+  // Replies to getTokenAccountBalance. The 429 text and the not-found error are
+  // what the public mainnet RPC returns.
+  const BALANCE_REPLIES = {
+    ok: () => jsonReply({ jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: { amount: '5000000', decimals: 6, uiAmount: 5, uiAmountString: '5' } } }),
+    notFound: () => jsonReply({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'Invalid param: could not find account' } }),
+    rateLimited: () => jsonReply({ jsonrpc: '2.0', id: 1, error: { code: 429, message: 'Too many requests for a specific RPC call' } }),
+    http429Text: () => ({ status: 429, json: () => Promise.reject(new SyntaxError('Unexpected token \'T\', "Too Many Requests" is not valid JSON')) }),
+    network: () => { throw new TypeError('fetch failed'); },
+    nullResult: () => jsonReply({ jsonrpc: '2.0', id: 1, result: null }),
+    noValue: () => jsonReply({ jsonrpc: '2.0', id: 1, result: { context: { slot: 1 } } }),
+    badAmount: () => jsonReply({ jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: { amount: 'abc', decimals: 6, uiAmountString: '5' } } }),
+    noUiAmount: () => jsonReply({ jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: { amount: '5000000', decimals: 6 } } }),
+  };
+
+  function mockRpc(balanceReply) {
+    const methods = [];
+    fetch.mockImplementation(async (_url, opts) => {
+      const body = JSON.parse(opts.body);
+      methods.push(body.method);
+      switch (body.method) {
+        case 'getTokenAccountBalance':
+          return BALANCE_REPLIES[balanceReply]();
+        case 'getAccountInfo':
+          if (body.params[0] === TOKEN_MINT) {
+            return jsonReply({ result: { context: { slot: 1 }, value: { owner: TOKEN_PROGRAM, data: { parsed: { info: { decimals: 6 } } } } } });
+          }
+          return jsonReply({ result: { context: { slot: 1 }, value: null } });
+        case 'getLatestBlockhash':
+          return jsonReply({ result: { context: { slot: 1 }, value: { blockhash: 'EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k', lastValidBlockHeight: 1 } } });
+        case 'getBalance':
+          return jsonReply({ result: { context: { slot: 1 }, value: 1_000_000_000 } });
+        default:
+          throw new Error(`Unexpected RPC call: ${body.method}`);
+      }
+    });
+    return methods;
+  }
+
+  const build = (amountStr = '1') => buildUnsignedSolanaTransaction({
+    to: TO, amount: null, amountStr, token: TOKEN_MINT, fromAddress: FIXTURE_SOL_SENDER,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  test('reports a missing token account as not found', async () => {
+    mockRpc('notFound');
+    const err = await build().catch((e) => e);
+    expect(err.message).toBe('Source token account not found. Do you hold this token?');
+    expect(err.cause.message).toContain('could not find account');
+  });
+
+  test.each([
+    ['a JSON-RPC rate limit', 'rateLimited', 'Too many requests for a specific RPC call'],
+    ['an HTTP 429 with a text body', 'http429Text', 'RPC returned HTTP 429 with a body that is not JSON'],
+    ['a network failure', 'network', 'fetch failed'],
+    ['a null result', 'nullResult', 'unexpected RPC reply null'],
+    ['a reply without a value', 'noValue', 'unexpected RPC reply null'],
+    ['a non-integer amount', 'badAmount', 'unexpected RPC reply {"amount":"abc"'],
+    ['a reply without uiAmountString', 'noUiAmount', 'unexpected RPC reply {"amount":"5000000","decimals":6}'],
+  ])('reports %s as a failed balance read, not a missing account', async (_name, reply, detail) => {
+    mockRpc(reply);
+    const err = await build().catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/^Could not read the source token account balance: /);
+    expect(err.message).toContain(detail);
+    expect(err.message).toContain('Nothing was signed or sent');
+    expect(err.message).not.toContain('not found');
+  });
+
+  test('keeps the RPC error as the cause', async () => {
+    mockRpc('rateLimited');
+    const err = await build().catch((e) => e);
+    expect(err.cause.rpcError).toEqual({ code: 429, message: 'Too many requests for a specific RPC call' });
+  });
+
+  test('still reports an amount above the balance as insufficient', async () => {
+    mockRpc('ok');
+    await expect(build('10')).rejects.toThrow('Insufficient token balance: have 5, need 10');
+  });
+
+  test('builds when the balance covers the amount', async () => {
+    mockRpc('ok');
+    await expect(build('5')).resolves.toHaveProperty('unsignedTransaction');
+  });
+
+  describe('--max from a local wallet', () => {
+    beforeEach(() => {
+      vi.spyOn(wallet, 'getWalletConfig').mockReturnValue({ defaultWallet: 'test', passwordHash: { salt: 'test', hash: 'test' } });
+      vi.spyOn(wallet, 'verifyPassword').mockReturnValue(true);
+      vi.spyOn(wallet, 'showWallet').mockReturnValue({ name: 'test', provider: 'local', solana: FIXTURE_SOL_SENDER });
+      vi.spyOn(wallet, 'exportWallet').mockReturnValue({
+        name: 'test',
+        solana: { address: FIXTURE_SOL_SENDER, privateKey: '0123456789abcdef'.repeat(8) },
+      });
+    });
+
+    test.each([
+      ['a missing token account as not found', 'notFound', 'Source token account not found. Do you hold this token?'],
+      ['a rate limit as a failed balance read', 'rateLimited', 'Could not read the source token account balance: RPC error: Too many requests'],
+    ])('reports %s without broadcasting', async (_name, reply, error) => {
+      const methods = mockRpc(reply);
+      await expect(sendTokens({ to: TO, chain: 'solana', token: TOKEN_MINT, max: true, password: 'test' })).rejects.toThrow(error);
+      expect(methods).not.toContain('sendTransaction');
+    });
+
+    test('sends the full balance', async () => {
+      const methods = mockRpc('ok');
+      const result = await sendTokens({ to: TO, chain: 'solana', token: TOKEN_MINT, max: true, password: 'test', dryRun: true });
+      expect(result).toMatchObject({ dryRun: true, amount: '5' });
+      expect(methods).not.toContain('sendTransaction');
+    });
   });
 });
