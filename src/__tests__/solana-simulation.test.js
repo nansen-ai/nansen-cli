@@ -1349,9 +1349,19 @@ describe('solana-simulation', () => {
       expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
     });
 
-    it('leaves a stake-owned account with no data alone', async () => {
-      const r = await run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: null } }, post: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: null } } });
-      expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
+    it('fails closed on a stake- or System-owned account with no data', async () => {
+      const post = { [stakeAcct]: stakeInfo({ staker: attacker, withdrawer: attacker }) };
+      for (const data of [null, undefined]) {
+        await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data } }, post }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(stakeAcct) });
+      }
+      await expect(run({ pre: { [nonceAcct]: { lamports: 1, owner: SYSTEM_PROGRAM, data: null } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(nonceAcct) });
+    });
+
+    it('fails closed on a raw stake account too short to hold its authorities', async () => {
+      await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: ['AAAAAA==', 'base64'], space: 4 } }, post: { [stakeAcct]: stakeInfo({ staker: attacker, withdrawer: attacker }) } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
     });
 
     it('leaves an uninitialized stake account alone', async () => {

@@ -358,9 +358,11 @@ const STAKE_PROGRAM = 'Stake11111111111111111111111111111111111111';
  */
 function walletAuthorityAccountKind(pubkey, info, walletAddress) {
   // Raw (base64) data is left to rawWalletAuthorityAccount.
-  if ((info?.owner !== STAKE_PROGRAM && info?.owner !== SYSTEM_PROGRAM) || !info.data || Array.isArray(info.data)) return null;
-  const parsed = info.data.parsed;
+  if ((info?.owner !== STAKE_PROGRAM && info?.owner !== SYSTEM_PROGRAM) || Array.isArray(info.data)) return null;
   const unreadable = () => new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unreadable stake or nonce account (${pubkey}); cannot verify who controls it.`);
+  // No data at all can't be shown not to be the wallet's.
+  if (!info.data || typeof info.data !== 'object') throw unreadable();
+  const parsed = info.data.parsed;
   // Allow-list the shapes that carry no authority; any other one must have
   // readable authorities, since it can't be shown not to be the wallet's.
   if (info.owner === STAKE_PROGRAM) {
@@ -393,7 +395,11 @@ function rawWalletAuthorityAccount(info, walletBytes) {
   }
   const bytes = Buffer.from(info.data[0], 'base64');
   const at = (start) => bytes.subarray(start, start + 32).equals(walletBytes);
-  if (info.owner === STAKE_PROGRAM) return at(12) || at(44) || at(92);
+  if (info.owner === STAKE_PROGRAM) {
+    // Too short to hold the custodian: its authorities can't be read.
+    if (bytes.length < 124) throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned an unreadable stake or nonce account; cannot verify who controls it.');
+    return at(12) || at(44) || at(92);
+  }
   return info.owner === SYSTEM_PROGRAM && bytes.length === 80 && at(8);
 }
 
