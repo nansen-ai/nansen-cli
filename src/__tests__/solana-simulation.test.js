@@ -1159,7 +1159,39 @@ describe('solana-simulation', () => {
         for (const ix of [
           { programId: SYSTEM_PROGRAM, accounts: [nonceAcct, other], data: rawData(u32le(7)), stackHeight: 2 },
           { programId: generateSolanaWallet().address, accounts: [nonceAcct, wallet], data: rawData(u32le(7)), stackHeight: 2 },
+          systemIx('transfer', { source: wallet, destination: other, lamports: 1000 }),
+        ]) {
+          await expect(run(inner(ix))).resolves.toBeTruthy();
+        }
+      });
+
+      it('fails closed on a malformed parsed System inner instruction', async () => {
+        for (const ix of [
+          { parsed: null, program: 'system', programId: SYSTEM_PROGRAM, stackHeight: 2 },
           systemIx('transfer', null),
+          systemIx('withdrawFromNonce', null),
+          systemIx('withdrawFromNonce', 'x'),
+        ]) {
+          await expect(run(inner(ix))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+        }
+      });
+
+      it('refuses a parsed CPI nonce withdraw that names the wallet under any signer key', async () => {
+        const other = generateSolanaWallet().address;
+        for (const info of [
+          { nonceAccount: nonceAcct, destination: attacker, lamports: 1, recentBlockhashesSysvar: RECENT_BLOCKHASHES, withdrawAuthority: wallet },
+          { nonceAccount: nonceAcct, destination: attacker, lamports: 1, nonceAuthority: other, extraSigner: wallet },
+        ]) {
+          await expect(run(inner(systemIx('withdrawFromNonce', info)))).rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+        }
+      });
+
+      it('allows parsed CPI nonce instructions that name the wallet only as a recipient or new authority, or advance it', async () => {
+        const other = generateSolanaWallet().address;
+        for (const ix of [
+          systemIx('authorizeNonce', { nonceAccount: nonceAcct, nonceAuthority: other, newAuthorized: wallet }),
+          systemIx('withdrawFromNonce', { nonceAccount: nonceAcct, destination: wallet, lamports: 1, recentBlockhashesSysvar: RECENT_BLOCKHASHES, nonceAuthority: other }),
+          systemIx('advanceNonce', { nonceAccount: nonceAcct, nonceAuthority: wallet, recentBlockhashesSysvar: RECENT_BLOCKHASHES }),
         ]) {
           await expect(run(inner(ix))).resolves.toBeTruthy();
         }

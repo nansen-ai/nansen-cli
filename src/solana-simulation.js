@@ -551,6 +551,8 @@ function classifyInnerTokenInstruction(ix) {
 // parsed.info keys that name a new authority or a recipient, not a signer: a
 // stake-pool withdrawal legitimately names the wallet there.
 const STAKE_NON_SIGNER_KEYS = new Set(['newAuthority', 'newAuthorized', 'destination']);
+// Same idea for parsed System nonce instructions.
+const NONCE_NON_SIGNER_KEYS = new Set(['newAuthorized', 'destination']);
 const SYSTEM_WITHDRAW_NONCE = 5;
 const SYSTEM_AUTHORIZE_NONCE = 7;
 
@@ -593,10 +595,13 @@ function assertInnerStakeNonceInstructionSafe(ix, walletAddress, walletAuthority
   } else if (ix.programId === SYSTEM_PROGRAM) {
     if (ix.parsed !== undefined) {
       const info = ix.parsed?.info;
-      if (walletAuthorityAccounts.nonce.has(info?.nonceAccount) && ix.parsed.type !== 'advanceNonce') {
+      if (!info || typeof info !== 'object') throw unreadable('System');
+      if (walletAuthorityAccounts.nonce.has(info.nonceAccount) && ix.parsed.type !== 'advanceNonce') {
         throw onNonce(info.nonceAccount);
       }
-      if (info?.nonceAccount !== undefined && info.nonceAuthority === walletAddress && ix.parsed.type !== 'advanceNonce') {
+      // Deny by default: don't depend on the parser's name for the signer.
+      if (info.nonceAccount !== undefined && ix.parsed.type !== 'advanceNonce'
+        && Object.entries(info).some(([k, v]) => !NONCE_NON_SIGNER_KEYS.has(k) && v === walletAddress)) {
         throw controlChanged(`changes or withdraws from nonce account ${info.nonceAccount} with your wallet's signature, from inside another program.`);
       }
       return;
