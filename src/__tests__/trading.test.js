@@ -6065,6 +6065,26 @@ describe('ERC-20 excessive allowance handling', () => {
         expect(executeBodies[0].signedTransaction).not.toContain(approveSelector);
       });
 
+      it('--dry-run refuses a sell that needs an approval, as execute would', async () => {
+        const { executeBodies, error } = await runArbSell({ allowance: 0n, opts: { 'dry-run': true } });
+        expect(executeBodies).toHaveLength(0);
+        expect(error?.code).toBe('ALL_QUOTES_FAILED');
+        expect(error.message).toContain("approvals on Arbitrum aren't supported yet");
+      });
+
+      it('--dry-run refuses a sell that would revoke an oversized allowance', async () => {
+        const { executeBodies, error } = await runArbSell({ allowance: 10n ** 30n, opts: { 'dry-run': true } });
+        expect(executeBodies).toHaveLength(0);
+        expect(error?.code).toBe('ALL_QUOTES_FAILED');
+        expect(error.message).toContain('--no-revoke-excessive-allowance');
+      });
+
+      it('--dry-run passes an oversized allowance with --no-revoke-excessive-allowance', async () => {
+        const { executeBodies, error } = await runArbSell({ allowance: 10n ** 30n, opts: { 'dry-run': true, 'no-revoke-excessive-allowance': true } });
+        expect(error).toBeNull();
+        expect(executeBodies).toHaveLength(0);
+      });
+
       it('unsupportedApprovalMessage follows the registry', () => {
         for (const name of ['base', 'ethereum']) expect(unsupportedApprovalMessage(name, 'q', null)).toBeNull();
         for (const name of ['arbitrum', 'polygon', 'robinhood']) expect(unsupportedApprovalMessage(name, 'q', null)).toMatch(/aren't supported yet/);
@@ -7724,6 +7744,28 @@ describe('withLegacyGasPriceHeadroom', () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('network down'));
     const out = await withLegacyGasPriceHeadroom('polygon', quote({ gasPrice: '100' }));
     expect(BigInt(out.transaction.gasPrice)).toBe(125n);
+  });
+
+  it('gives up on an eth_gasPrice that never answers and pads the quoted price alone', async () => {
+    vi.useFakeTimers();
+    // AbortSignal.timeout runs on Node's internal timers, which fake timers do
+    // not drive; route it through the (faked) global setTimeout instead.
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException('timed out', 'TimeoutError')), ms);
+      return controller.signal;
+    });
+    try {
+      global.fetch = vi.fn((_url, opts) => new Promise((_resolve, reject) => {
+        opts?.signal?.addEventListener('abort', () => reject(opts.signal.reason));
+      }));
+      const pending = withLegacyGasPriceHeadroom('arbitrum', quote({ gasPrice: '100' }));
+      await vi.advanceTimersByTimeAsync(10_000);
+      const out = await pending;
+      expect(BigInt(out.transaction.gasPrice)).toBe(125n);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('leaves EIP-1559 quotes, fee-less quotes and malformed gas prices unchanged, without an RPC call', async () => {

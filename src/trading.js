@@ -1410,6 +1410,9 @@ export function resolveQuoteLegacyGasPrice(txData) {
 // on Arbitrum). Arbitrum-stack chains charge only the base fee, so the margin is
 // free there; elsewhere it is a small tip.
 const LEGACY_GAS_PRICE_HEADROOM_PCT = 125n;
+// How long to wait for eth_gasPrice before padding the quoted price alone. The
+// lookup runs before signing, so an RPC that never answers must not hang execute.
+const LEGACY_GAS_PRICE_LOOKUP_TIMEOUT_MS = 5000;
 
 /**
  * Re-price a gasPrice-only EVM quote just before signing: the higher of the
@@ -1435,7 +1438,7 @@ export async function withLegacyGasPriceHeadroom(chain, quote) {
   if (quoted <= 0n) return quote;
   let current = 0n;
   try {
-    current = BigInt(await evmRpcCall(chain, 'eth_gasPrice', []));
+    current = BigInt(await evmRpcCall(chain, 'eth_gasPrice', [], { timeoutMs: LEGACY_GAS_PRICE_LOOKUP_TIMEOUT_MS }));
   } catch { /* RPC unavailable: pad the quoted price alone */ }
   const floor = quoted > current ? quoted : current;
   const gasPrice = (floor * LEGACY_GAS_PRICE_HEADROOM_PCT) / 100n;
@@ -2966,6 +2969,7 @@ async function preflightTradeExecutionCandidate({
   walletAddress,
   noSimulate,
   noVerifyOutcome,
+  noRevokeExcessiveAllowance,
   api,
   verifiedTargets,
   log,
@@ -3066,6 +3070,13 @@ async function preflightTradeExecutionCandidate({
       walletAddress,
       quote.approvalAddress,
     );
+    // Execute refuses an approval or revoke on chains without standalone
+    // approvals (unsupportedApprovalMessage); fail the preview the same way.
+    const { reuseAllowance, revokeReason } = resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance, { zeroFirst: requiresZeroFirstApproval(chain, quote.inputMint) });
+    if (!reuseAllowance) {
+      const approvalBlocked = unsupportedApprovalMessage(chain, quote.source || quote.metadata?.source || 'This quote', revokeReason);
+      if (approvalBlocked) throw new CommandError(approvalBlocked, 'ALL_QUOTES_FAILED');
+    }
     approvalPending = existingAllowance < approveAmt;
   }
 
@@ -3843,6 +3854,7 @@ EXAMPLES:
                 walletAddress: planWallet,
                 noSimulate,
                 noVerifyOutcome,
+                noRevokeExcessiveAllowance,
                 api: apiInstance,
                 verifiedTargets: verifiedPlanTargets,
                 log,
