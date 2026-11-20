@@ -1297,6 +1297,19 @@ describe('solana-simulation', () => {
       }
     });
 
+    it('fails closed on a lockup epoch or end time it cannot read exactly', async () => {
+      // JSON.parse has already rounded a u64 above 2^53: two lockups could compare equal.
+      await expect(run({ pre: { [stakeAcct]: stakeInfo({ epoch: 2 ** 53 }) }, post: { [stakeAcct]: stakeInfo({ epoch: 2 ** 53 + 2 }) } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: stakeInfo({ unixTimestamp: 1.5 }) } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      // A decimal string and a safe number compare as the same value; unixTimestamp is i64.
+      await expect(run({ pre: { [stakeAcct]: stakeInfo({ unixTimestamp: 4102444800 }) }, post: { [stakeAcct]: stakeInfo({ unixTimestamp: '4102444800' }) } }))
+        .resolves.toBeDefined();
+      await expect(run({ pre: { [stakeAcct]: stakeInfo({ unixTimestamp: -1 }) }, post: { [stakeAcct]: stakeInfo({ unixTimestamp: -1 }) } }))
+        .resolves.toBeDefined();
+    });
+
     it('fails closed on a lamport balance it cannot read exactly', async () => {
       for (const lamports of [-1, 1.5, 2 ** 60, '12a', '', null]) {
         await expect(run({ pre: { [nonceAcct]: nonceInfo() }, post: { [nonceAcct]: nonceInfo({ lamports }) } }))
@@ -1385,6 +1398,9 @@ describe('solana-simulation', () => {
       await expect(run({ pre: { [nonceAcct]: { lamports: 1, owner: SYSTEM_PROGRAM, data: ['not base64!', 'base64'], space: 80 } } }))
         .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
       await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: ['%%%', 'base64'], space: 200 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      // Exactly [data, encoding], as the RPC returns it.
+      await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: ['AAAA', 'base64', 'x'], space: 200 } } }))
         .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
     });
   });

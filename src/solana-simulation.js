@@ -388,7 +388,7 @@ function rawWalletAuthorityAccount(info, walletBytes) {
   // markets) can be large.
   if ((info?.owner !== STAKE_PROGRAM && info?.owner !== SYSTEM_PROGRAM) || !Array.isArray(info.data)) return false;
   // Canonical base64 only: Node's decoder silently drops invalid characters.
-  if (info.data[1] !== 'base64' || typeof info.data[0] !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(info.data[0])) {
+  if (info.data.length !== 2 || info.data[1] !== 'base64' || typeof info.data[0] !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(info.data[0])) {
     throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned an unreadable stake or nonce account; cannot verify who controls it.');
   }
   const bytes = Buffer.from(info.data[0], 'base64');
@@ -416,7 +416,9 @@ function authorityFields(kind, info) {
     const meta = parsed?.info?.meta;
     const { staker, withdrawer } = meta?.authorized || {};
     const { custodian, epoch, unixTimestamp } = meta?.lockup || {};
-    if (![staker, withdrawer, custodian].every(isPubkey) || epoch == null || unixTimestamp == null) return null;
+    // u64/i64 values: a number above 2^53 was already rounded by JSON.parse.
+    const exact = (v) => (typeof v === 'number' && Number.isSafeInteger(v)) || (typeof v === 'string' && /^-?\d+$/.test(v));
+    if (![staker, withdrawer, custodian].every(isPubkey) || !exact(epoch) || !exact(unixTimestamp)) return null;
     return { staker, withdrawer, 'lockup custodian': custodian, 'lockup epoch': String(epoch), 'lockup end time': String(unixTimestamp) };
   }
   if (info.owner !== SYSTEM_PROGRAM || info.data?.program !== 'nonce' || !isPubkey(parsed?.info?.authority)) return null;
