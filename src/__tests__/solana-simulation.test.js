@@ -1248,6 +1248,22 @@ describe('solana-simulation', () => {
       expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
     });
 
+    it('fails closed on an initialized stake or nonce pre-state whose authorities are unreadable', async () => {
+      const noAuthorized = stakeInfo();
+      delete noAuthorized.data.parsed.info.meta.authorized;
+      const noMeta = stakeInfo();
+      delete noMeta.data.parsed.info.meta;
+      const badCustodian = stakeInfo({ custodian: 42 });
+      for (const pre of [noAuthorized, noMeta, badCustodian]) {
+        await expect(run({ pre: { [stakeAcct]: pre }, post: { [stakeAcct]: stakeInfo({ staker: attacker, withdrawer: attacker }) } }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(stakeAcct) });
+      }
+      const noAuthority = nonceInfo();
+      delete noAuthority.data.parsed.info.authority;
+      await expect(run({ pre: { [nonceAcct]: noAuthority }, post: { [nonceAcct]: nonceInfo({ authority: attacker }) } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(nonceAcct) });
+    });
+
     it('fails closed on an unreadable post-state', async () => {
       const raw = { ...stakeInfo(), data: [Buffer.alloc(200).toString('base64'), 'base64'] };
       await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: raw } }))
@@ -1288,6 +1304,12 @@ describe('solana-simulation', () => {
       }
       // A balance returned as a decimal string is read exactly.
       const r = await run({ pre: { [nonceAcct]: nonceInfo() }, post: { [nonceAcct]: nonceInfo({ lamports: '101447712' }) } });
+      expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
+    });
+
+    it("leaves another program's account parsed as 'initialized' alone", async () => {
+      const other = { data: { parsed: { type: 'initialized', info: {} }, program: 'other', space: 100 }, lamports: 1_000_000, owner: attacker, space: 100 };
+      const r = await run({ pre: { [stakeAcct]: other }, post: { [stakeAcct]: other } });
       expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
     });
 

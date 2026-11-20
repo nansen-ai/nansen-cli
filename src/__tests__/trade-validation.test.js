@@ -3068,8 +3068,24 @@ describe('assertSolanaInstructionsSafe', () => {
         .toThrow(/nonce account your wallet controls/);
     });
 
+    it('rejects nonce instructions naming the wallet at a position other than the usual authority slot', () => {
+      // The System program takes the nonce authority from any signer of the
+      // instruction, so the wallet as a trailing extra signer still authorizes.
+      expect(check([wallet, nonceAccount, attacker, SYSTEM_PROGRAM], { programIdIndex: 3, accountIndexes: [1, 2, 0], data: Buffer.concat([u32(7), base58Decode(attacker)]) }))
+        .toThrow(/nonce account your wallet controls/);
+      const recent = generateSolanaWallet().address;
+      const rent = generateSolanaWallet().address;
+      expect(check([wallet, nonceAccount, attacker, recent, rent, SYSTEM_PROGRAM], { programIdIndex: 5, accountIndexes: [1, 2, 3, 4, 2, 0], data: Buffer.concat([u32(5), Buffer.alloc(8)]) }))
+        .toThrow(/nonce account your wallet controls/);
+      // The wallet as recipient of a withdrawal someone else authorizes.
+      expect(check([wallet, nonceAccount, attacker, recent, rent, SYSTEM_PROGRAM], { programIdIndex: 5, accountIndexes: [1, 0, 3, 4, 2], data: Buffer.concat([u32(5), Buffer.alloc(8)]) }))
+        .toThrow(/nonce account your wallet controls/);
+    });
+
     it('allows nonce instructions whose authority is someone else, AdvanceNonceAccount, and a plain transfer', () => {
       expect(check([wallet, nonceAccount, attacker, SYSTEM_PROGRAM], { programIdIndex: 3, accountIndexes: [1, 2], data: Buffer.concat([u32(7), base58Decode(wallet)]) }))
+        .not.toThrow();
+      expect(check([wallet, nonceAccount, attacker, SYSTEM_PROGRAM], { programIdIndex: 3, accountIndexes: [1, 2], data: Buffer.concat([u32(7), base58Decode(attacker)]) }))
         .not.toThrow();
       const recent = generateSolanaWallet().address;
       expect(check([wallet, nonceAccount, recent, SYSTEM_PROGRAM], { programIdIndex: 3, accountIndexes: [1, 2, 0], data: u32(4) }))

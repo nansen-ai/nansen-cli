@@ -68,10 +68,11 @@ const SOLANA_BUILTIN_PROGRAMS = new Set([
 // withdrawer, custodian, recipient) is one a hostile transaction could abuse.
 const STAKE_PROGRAM = 'Stake11111111111111111111111111111111111111';
 // System instructions (u32 LE discriminator) that move a nonce account's SOL or
-// authority, with the position of the nonce authority in their account list.
-const SYSTEM_NONCE_AUTHORITY_POSITIONS = new Map([
-  [5, 4], // WithdrawNonceAccount: nonce, recipient, RecentBlockhashes, Rent, authority
-  [7, 1], // AuthorizeNonceAccount: nonce, authority
+// authority. The System program accepts the nonce authority from any signer of
+// the instruction, not a fixed position, so the wallet anywhere in them counts.
+const SYSTEM_NONCE_AUTHORITY_DISCRIMINATORS = new Set([
+  5, // WithdrawNonceAccount
+  7, // AuthorizeNonceAccount
 ]);
 const MAX_PRIORITY_FEE_LAMPORTS = 10_000_000n; // 0.01 SOL sanity ceiling on the priority fee a
                                                 // single trade can be made to pay.
@@ -2071,8 +2072,8 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
         );
       }
     } else if (programId === SYSTEM_PROGRAM) {
-      const authorityPos = ix.data.length >= 4 ? SYSTEM_NONCE_AUTHORITY_POSITIONS.get(ix.data.readUInt32LE(0)) : undefined;
-      if (authorityPos !== undefined && accountAt(ix, authorityPos) === walletAddress) {
+      if (ix.data.length >= 4 && SYSTEM_NONCE_AUTHORITY_DISCRIMINATORS.has(ix.data.readUInt32LE(0))
+        && ix.accountIndexes.some((_, i) => accountAt(ix, i) === walletAddress)) {
         throw new Error(
           'Solana transaction changes the authority of, or withdraws from, a nonce account your wallet controls. Refusing to sign.',
         );

@@ -353,10 +353,18 @@ const STAKE_PROGRAM = 'Stake11111111111111111111111111111111111111';
  * Which kind of wallet-controlled authority account a jsonParsed pre-state is:
  * 'stake' (the wallet is its staker, withdrawer or lockup custodian), 'nonce'
  * (an initialized nonce account the wallet is the authority of), or null.
+ * Throws when an initialized one has unreadable authorities.
  * Shapes captured from mainnet getAccountInfo and simulateTransaction.
  */
-function walletAuthorityAccountKind(info, walletAddress) {
+function walletAuthorityAccountKind(pubkey, info, walletAddress) {
   const parsed = info?.data?.parsed;
+  // Real initialized stake and nonce accounts always carry readable authorities;
+  // one that doesn't can't be shown not to be the wallet's, so fail closed.
+  const isInitializedStake = info?.owner === STAKE_PROGRAM && (parsed?.type === 'initialized' || parsed?.type === 'delegated');
+  const isInitializedNonce = info?.owner === SYSTEM_PROGRAM && info.data?.program === 'nonce' && parsed?.type === 'initialized';
+  if ((isInitializedStake || isInitializedNonce) && !authorityFields(isInitializedStake ? 'stake' : 'nonce', info)) {
+    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unreadable stake or nonce account (${pubkey}); cannot verify who controls it.`);
+  }
   if (info?.owner === STAKE_PROGRAM) {
     // An uninitialized stake account has no meta.
     const meta = parsed?.info?.meta;
@@ -676,7 +684,7 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
     }
     // Checked before the System-owned candidate branch: a nonce account is
     // System-owned.
-    const authorityKind = walletAuthorityAccountKind(info, walletAddress);
+    const authorityKind = walletAuthorityAccountKind(pubkey, info, walletAddress);
     if (authorityKind) {
       tracked.push({ pubkey, preInfo: info, classified: true, kind: authorityKind });
       return;
