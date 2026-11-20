@@ -1276,7 +1276,7 @@ describe('solana-simulation', () => {
       };
     }
 
-    function run({ pre = {}, post = {} }) {
+    function run({ pre = {}, post = {}, innerIxs }) {
       const txBase64 = buildLegacyTx({ wallet, extraWritableKeys: [stakeAcct, nonceAcct] });
       let requested;
       vi.stubGlobal('fetch', mockSolanaRpc({
@@ -1284,12 +1284,65 @@ describe('solana-simulation', () => {
         simValue: (params) => {
           requested = params[1].accounts.addresses;
           const all = { [wallet]: nativeAccountInfo(999_995_000), ...post };
-          return { value: { err: null, accounts: requested.map((a) => (a in all ? all[a] : null)) } };
+          const value = { err: null, accounts: requested.map((a) => (a in all ? all[a] : null)) };
+          if (innerIxs) value.innerInstructions = [{ index: 0, instructions: innerIxs }];
+          return { value };
         },
       }));
       return simulateSolanaAssetChanges('solana', txBase64, { walletAddress: wallet }).then((r) => ({ ...r, requested }));
     }
     const refused = (message) => ({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(message) });
+
+    describe('inner (CPI) instructions on them that list someone else as the signer', () => {
+      // The Stake and System programs take the authority from any signer of the
+      // instruction, so a CPI can pass the wallet as an extra account while the
+      // parsed instruction names someone else at the authority position.
+      const CLOCK = 'SysvarC1ock11111111111111111111111111111111';
+      const STAKE_HISTORY = 'SysvarStakeHistory1111111111111111111111111';
+      const RECENT_BLOCKHASHES = 'SysvarRecentB1ockHashes11111111111111111111';
+      let other;
+      beforeEach(() => { other = generateSolanaWallet().address; });
+      const stakeIx = (type, info) => ({ parsed: { info, type }, program: 'stake', programId: STAKE_PROGRAM, stackHeight: 2 });
+      const systemIx = (type, info) => ({ parsed: { info, type }, program: 'system', programId: SYSTEM_PROGRAM, stackHeight: 2 });
+      const rawData = (bytes) => base58Encode(Buffer.from(bytes));
+      const u32le = (n) => [n & 0xff, (n >> 8) & 0xff, 0, 0];
+      const withNonce = (...innerIxs) => run({ pre: { [nonceAcct]: nonceInfo() }, post: { [nonceAcct]: nonceInfo() }, innerIxs });
+      const withStake = (...innerIxs) => run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: stakeInfo() }, innerIxs });
+
+      it('refuses a parsed nonce authorize or withdraw on the wallet nonce account whoever is listed as its authority', async () => {
+        await expect(withNonce(systemIx('authorizeNonce', { newAuthorized: attacker, nonceAccount: nonceAcct, nonceAuthority: other })))
+          .rejects.toMatchObject(refused(`changes or withdraws from your nonce account ${nonceAcct} from inside another program`));
+        await expect(withNonce(systemIx('withdrawFromNonce', {
+          destination: attacker, lamports: 1_000_000, nonceAccount: nonceAcct, nonceAuthority: other,
+          recentBlockhashesSysvar: RECENT_BLOCKHASHES, rentSysvar: 'SysvarRent111111111111111111111111111111111',
+        }))).rejects.toMatchObject(refused(`changes or withdraws from your nonce account ${nonceAcct} from inside another program`));
+      });
+
+      it('refuses a raw System AuthorizeNonceAccount on the wallet nonce account that does not list the wallet', async () => {
+        await expect(withNonce({ programId: SYSTEM_PROGRAM, accounts: [nonceAcct, other], data: rawData([...u32le(7), ...Array(32).fill(1)]), stackHeight: 2 }))
+          .rejects.toMatchObject(refused(`changes or withdraws from your nonce account ${nonceAcct} from inside another program`));
+      });
+
+      it('refuses a parsed or raw Stake instruction on the wallet stake account whoever is listed as its authority', async () => {
+        await expect(withStake(stakeIx('authorize', { authority: other, authorityType: 'Withdrawer', clockSysvar: CLOCK, newAuthority: attacker, stakeAccount: stakeAcct })))
+          .rejects.toMatchObject(refused(`runs a Stake program instruction (authorize) on your stake account ${stakeAcct} from inside another program`));
+        await expect(withStake({ programId: STAKE_PROGRAM, accounts: [stakeAcct, other], data: rawData([...u32le(1), ...Array(33).fill(1)]), stackHeight: 2 }))
+          .rejects.toMatchObject(refused(`on your stake account ${stakeAcct} from inside another program`));
+      });
+
+      it('allows a nonce advance on the wallet nonce account, and Stake/nonce instructions on accounts that are not the wallet\'s', async () => {
+        const poolStake = generateSolanaWallet().address;
+        const otherNonce = generateSolanaWallet().address;
+        await expect(withNonce(systemIx('advanceNonce', { nonceAccount: nonceAcct, nonceAuthority: wallet, recentBlockhashesSysvar: RECENT_BLOCKHASHES })))
+          .resolves.toBeTruthy();
+        await expect(run({ pre: { [stakeAcct]: stakeInfo(), [nonceAcct]: nonceInfo() }, post: { [stakeAcct]: stakeInfo(), [nonceAcct]: nonceInfo() }, innerIxs: [
+          stakeIx('withdraw', { clockSysvar: CLOCK, destination: wallet, lamports: 35171897, stakeAccount: poolStake, stakeHistorySysvar: STAKE_HISTORY, withdrawAuthority: other }),
+          { programId: STAKE_PROGRAM, accounts: [poolStake, CLOCK, other], data: rawData(u32le(5)), stackHeight: 2 },
+          systemIx('authorizeNonce', { newAuthorized: attacker, nonceAccount: otherNonce, nonceAuthority: other }),
+          { programId: SYSTEM_PROGRAM, accounts: [otherNonce, other], data: rawData([...u32le(7), ...Array(32).fill(1)]), stackHeight: 2 },
+        ] })).resolves.toBeTruthy();
+      });
+    });
 
     it('refuses a changed withdrawer or staker on a wallet stake account', async () => {
       await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: stakeInfo({ withdrawer: attacker }) } }))

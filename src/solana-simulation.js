@@ -563,24 +563,39 @@ const SYSTEM_AUTHORIZE_NONCE = 7;
  * `info` value other than a new authority or a recipient (deny by default, so
  * types not captured here are covered); raw ones when the wallet is anywhere
  * in `accounts`. `ix.programId` was already validated by the token classifier.
+ *
+ * Both programs accept the authority's signature from any account of the
+ * instruction, not only the one a parsed instruction names, so a CPI can list
+ * someone else there and pass the wallet as an extra account. Any instruction
+ * on a stake or nonce account the wallet controls before the transaction
+ * (`walletAuthorityAccounts`) is refused for that reason, except a nonce advance.
  */
-function assertInnerStakeNonceInstructionSafe(ix, walletAddress) {
+function assertInnerStakeNonceInstructionSafe(ix, walletAddress, walletAuthorityAccounts) {
   const unreadable = (program) => new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unreadable ${program} program inner instruction; cannot verify the outcome.`);
+  const onStake = (type, account) => controlChanged(`runs a Stake program instruction${type ? ` (${type})` : ''} on your stake account ${account} from inside another program.`);
+  const onNonce = (account) => controlChanged(`changes or withdraws from your nonce account ${account} from inside another program.`);
   if (ix.programId === STAKE_PROGRAM) {
     if (ix.parsed !== undefined) {
       const info = ix.parsed?.info;
       if (!info || typeof info !== 'object') throw unreadable('Stake');
+      const ownStake = Object.values(info).find((v) => typeof v === 'string' && walletAuthorityAccounts.stake.has(v));
+      if (ownStake) throw onStake(ix.parsed.type, ownStake);
       if (Object.entries(info).some(([k, v]) => !STAKE_NON_SIGNER_KEYS.has(k) && v === walletAddress)) {
         throw controlChanged(`runs a Stake program instruction (${ix.parsed.type}) with your wallet's signature, from inside another program.`);
       }
     } else if (!Array.isArray(ix.accounts)) {
       throw unreadable('Stake');
+    } else if (ix.accounts.some((a) => walletAuthorityAccounts.stake.has(a))) {
+      throw onStake(null, ix.accounts.find((a) => walletAuthorityAccounts.stake.has(a)));
     } else if (ix.accounts.includes(walletAddress)) {
       throw controlChanged('runs a Stake program instruction with your wallet\'s signature, from inside another program.');
     }
   } else if (ix.programId === SYSTEM_PROGRAM) {
     if (ix.parsed !== undefined) {
       const info = ix.parsed?.info;
+      if (walletAuthorityAccounts.nonce.has(info?.nonceAccount) && ix.parsed.type !== 'advanceNonce') {
+        throw onNonce(info.nonceAccount);
+      }
       if (info?.nonceAccount !== undefined && info.nonceAuthority === walletAddress && ix.parsed.type !== 'advanceNonce') {
         throw controlChanged(`changes or withdraws from nonce account ${info.nonceAccount} with your wallet's signature, from inside another program.`);
       }
@@ -594,7 +609,9 @@ function assertInnerStakeNonceInstructionSafe(ix, walletAddress) {
       throw unreadable('System');
     }
     const discriminator = data.length >= 4 ? data.readUInt32LE(0) : null;
-    if ((discriminator === SYSTEM_WITHDRAW_NONCE || discriminator === SYSTEM_AUTHORIZE_NONCE) && ix.accounts.includes(walletAddress)) {
+    const nonceOp = discriminator === SYSTEM_WITHDRAW_NONCE || discriminator === SYSTEM_AUTHORIZE_NONCE;
+    if (nonceOp && walletAuthorityAccounts.nonce.has(ix.accounts[0])) throw onNonce(ix.accounts[0]);
+    if (nonceOp && ix.accounts.includes(walletAddress)) {
       throw controlChanged(`changes or withdraws from nonce account ${ix.accounts[0]} with your wallet's signature, from inside another program.`);
     }
   }
@@ -621,7 +638,7 @@ function assertInnerStakeNonceInstructionSafe(ix, walletAddress) {
  * temporary account it opened for the wallet and pay the SOL on. Where that
  * rent goes is bounded by the native-SOL output check instead.
  */
-function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKeys) {
+function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKeys, walletAuthorityAccounts) {
   for (const group of innerGroups) {
     if (!Array.isArray(group?.instructions)) {
       throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned malformed inner instructions; cannot verify the outcome.');
@@ -629,7 +646,7 @@ function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKey
     for (const ix of group.instructions) {
       const op = classifyInnerTokenInstruction(ix);
       if (!op) {
-        assertInnerStakeNonceInstructionSafe(ix, walletAddress);
+        assertInnerStakeNonceInstructionSafe(ix, walletAddress, walletAuthorityAccounts);
         continue;
       }
       if (op.authorities.includes(walletAddress)) {
@@ -839,7 +856,11 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
   const innerGroups = simResult.value.innerInstructions;
   const innerInstructionsChecked = innerInstructionsReadable(innerGroups);
   if (innerInstructionsChecked) {
-    assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKeys);
+    const walletAuthorityAccounts = {
+      stake: new Set(tracked.filter((t) => t.kind === 'stake').map((t) => t.pubkey)),
+      nonce: new Set(tracked.filter((t) => t.kind === 'nonce').map((t) => t.pubkey)),
+    };
+    assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKeys, walletAuthorityAccounts);
   } else if (!allowMissingInnerInstructions) {
     throw new SolanaSimulationError(
       'SIM_INNER_INSTRUCTIONS_UNAVAILABLE',
