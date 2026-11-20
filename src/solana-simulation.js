@@ -357,22 +357,24 @@ const STAKE_PROGRAM = 'Stake11111111111111111111111111111111111111';
  * Shapes captured from mainnet getAccountInfo and simulateTransaction.
  */
 function walletAuthorityAccountKind(pubkey, info, walletAddress) {
-  const parsed = info?.data?.parsed;
-  // Real initialized stake and nonce accounts always carry readable authorities;
-  // one that doesn't can't be shown not to be the wallet's, so fail closed.
-  const isInitializedStake = info?.owner === STAKE_PROGRAM && (parsed?.type === 'initialized' || parsed?.type === 'delegated');
-  const isInitializedNonce = info?.owner === SYSTEM_PROGRAM && info.data?.program === 'nonce' && parsed?.type === 'initialized';
-  if ((isInitializedStake || isInitializedNonce) && !authorityFields(isInitializedStake ? 'stake' : 'nonce', info)) {
-    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unreadable stake or nonce account (${pubkey}); cannot verify who controls it.`);
+  // Raw (base64) data is left to rawWalletAuthorityAccount.
+  if ((info?.owner !== STAKE_PROGRAM && info?.owner !== SYSTEM_PROGRAM) || !info.data || Array.isArray(info.data)) return null;
+  const parsed = info.data.parsed;
+  const unreadable = () => new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unreadable stake or nonce account (${pubkey}); cannot verify who controls it.`);
+  // Allow-list the shapes that carry no authority; any other one must have
+  // readable authorities, since it can't be shown not to be the wallet's.
+  if (info.owner === STAKE_PROGRAM) {
+    if (parsed?.type === 'uninitialized' || parsed?.type === 'rewardsPool') return null;
+    const fields = authorityFields('stake', info);
+    if (!fields) throw unreadable();
+    return fields.staker === walletAddress || fields.withdrawer === walletAddress || fields['lockup custodian'] === walletAddress ? 'stake' : null;
   }
-  if (info?.owner === STAKE_PROGRAM) {
-    // An uninitialized stake account has no meta.
-    const meta = parsed?.info?.meta;
-    const { staker, withdrawer } = meta?.authorized || {};
-    return staker === walletAddress || withdrawer === walletAddress || meta?.lockup?.custodian === walletAddress ? 'stake' : null;
-  }
-  return info?.owner === SYSTEM_PROGRAM && info.data?.program === 'nonce' && parsed?.type === 'initialized'
-    && parsed.info?.authority === walletAddress ? 'nonce' : null;
+  // Under jsonParsed the node parses a System-owned account only as a nonce
+  // account (authorityFields checks the program too).
+  if (parsed?.type === 'uninitialized') return null;
+  const fields = parsed?.type === 'initialized' ? authorityFields('nonce', info) : null;
+  if (!fields) throw unreadable();
+  return fields.authority === walletAddress ? 'nonce' : null;
 }
 
 /**

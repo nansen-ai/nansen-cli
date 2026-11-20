@@ -1313,6 +1313,34 @@ describe('solana-simulation', () => {
       expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
     });
 
+    it('fails closed on a parsed nonce or stake pre-state missing its program or type', async () => {
+      const noProgram = nonceInfo();
+      delete noProgram.data.program;
+      const noNonceType = nonceInfo();
+      delete noNonceType.data.parsed.type;
+      for (const pre of [noProgram, noNonceType]) {
+        await expect(run({ pre: { [nonceAcct]: pre }, post: { [nonceAcct]: nonceInfo({ authority: attacker }) } }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(nonceAcct) });
+      }
+      const noStakeType = stakeInfo();
+      delete noStakeType.data.parsed.type;
+      delete noStakeType.data.parsed.info.meta;
+      await expect(run({ pre: { [stakeAcct]: noStakeType }, post: { [stakeAcct]: stakeInfo({ staker: attacker, withdrawer: attacker }) } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(stakeAcct) });
+    });
+
+    it('leaves a rewards-pool stake account and an uninitialized nonce account alone', async () => {
+      const rewardsPool = { data: { parsed: { type: 'rewardsPool' }, program: 'stake', space: 200 }, lamports: 2_282_880, owner: STAKE_PROGRAM, space: 200 };
+      const uninitNonce = { data: { parsed: { type: 'uninitialized' }, program: 'nonce', space: 80 }, lamports: 1_447_680, owner: SYSTEM_PROGRAM, space: 80 };
+      const r = await run({ pre: { [stakeAcct]: rewardsPool, [nonceAcct]: uninitNonce }, post: { [stakeAcct]: rewardsPool, [nonceAcct]: uninitNonce } });
+      expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
+    });
+
+    it('leaves a stake-owned account with no data alone', async () => {
+      const r = await run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: null } }, post: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: null } } });
+      expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
+    });
+
     it('leaves an uninitialized stake account alone', async () => {
       const uninit = { data: { parsed: { type: 'uninitialized' }, program: 'stake', space: 200 }, lamports: 2_282_880, owner: STAKE_PROGRAM, space: 200 };
       const r = await run({ pre: { [stakeAcct]: uninit }, post: { [stakeAcct]: { ...uninit, lamports: 0 } } });
