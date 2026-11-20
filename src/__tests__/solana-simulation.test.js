@@ -1137,6 +1137,34 @@ describe('solana-simulation', () => {
       const rawData = (bytes) => base58Encode(Buffer.from(bytes));
       const u32le = (n) => [n & 0xff, (n >> 8) & 0xff, 0, 0];
 
+      it('fails closed on malformed Stake or raw System inner instructions', async () => {
+        const malformed = [
+          { parsed: null, program: 'stake', programId: STAKE_PROGRAM, stackHeight: 2 },
+          stakeIx('authorize', null),
+          stakeIx('authorize', 'not an object'),
+          { programId: STAKE_PROGRAM, data: rawData(u32le(1)), stackHeight: 2 },
+          { programId: SYSTEM_PROGRAM, data: rawData(u32le(7)), stackHeight: 2 },
+          { programId: SYSTEM_PROGRAM, accounts: [nonceAcct, wallet], data: '0OIl', stackHeight: 2 },
+          { programId: SYSTEM_PROGRAM, accounts: [nonceAcct, wallet], stackHeight: 2 },
+        ];
+        for (const ix of malformed) {
+          await expect(run(inner(ix))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+        }
+      });
+
+      it('reads a 4-byte raw System nonce instruction, and ignores one or another program that does not name the wallet', async () => {
+        await expect(run(inner({ programId: SYSTEM_PROGRAM, accounts: [nonceAcct, wallet], data: rawData(u32le(7)), stackHeight: 2 })))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+        const other = generateSolanaWallet().address;
+        for (const ix of [
+          { programId: SYSTEM_PROGRAM, accounts: [nonceAcct, other], data: rawData(u32le(7)), stackHeight: 2 },
+          { programId: generateSolanaWallet().address, accounts: [nonceAcct, wallet], data: rawData(u32le(7)), stackHeight: 2 },
+          systemIx('transfer', null),
+        ]) {
+          await expect(run(inner(ix))).resolves.toBeTruthy();
+        }
+      });
+
       it('refuses a parsed CPI stake authorize, withdraw, merge or deactivate the wallet signs', async () => {
         const cases = [
           stakeIx('authorize', { authority: wallet, authorityType: 'Staker', clockSysvar: CLOCK, newAuthority: attacker, stakeAccount: stakeAcct }),

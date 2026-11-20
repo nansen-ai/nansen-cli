@@ -551,7 +551,6 @@ function classifyInnerTokenInstruction(ix) {
 // parsed.info keys that name a new authority or a recipient, not a signer: a
 // stake-pool withdrawal legitimately names the wallet there.
 const STAKE_NON_SIGNER_KEYS = new Set(['newAuthority', 'newAuthorized', 'destination']);
-const UNREADABLE_INNER_STAKE = 'Simulation returned an unreadable Stake program inner instruction; cannot verify the outcome.';
 const SYSTEM_WITHDRAW_NONCE = 5;
 const SYSTEM_AUTHORIZE_NONCE = 7;
 
@@ -566,44 +565,38 @@ const SYSTEM_AUTHORIZE_NONCE = 7;
  * in `accounts`. `ix.programId` was already validated by the token classifier.
  */
 function assertInnerStakeNonceInstructionSafe(ix, walletAddress) {
+  const unreadable = (program) => new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unreadable ${program} program inner instruction; cannot verify the outcome.`);
   if (ix.programId === STAKE_PROGRAM) {
     if (ix.parsed !== undefined) {
-      if (!ix.parsed || typeof ix.parsed !== 'object') throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER_STAKE);
-      const { type, info } = ix.parsed;
-      if (!info || typeof info !== 'object') throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER_STAKE);
+      const info = ix.parsed?.info;
+      if (!info || typeof info !== 'object') throw unreadable('Stake');
       if (Object.entries(info).some(([k, v]) => !STAKE_NON_SIGNER_KEYS.has(k) && v === walletAddress)) {
-        throw controlChanged(`runs a Stake program instruction (${type}) with your wallet's signature, from inside another program.`);
+        throw controlChanged(`runs a Stake program instruction (${ix.parsed.type}) with your wallet's signature, from inside another program.`);
+      }
+    } else if (!Array.isArray(ix.accounts)) {
+      throw unreadable('Stake');
+    } else if (ix.accounts.includes(walletAddress)) {
+      throw controlChanged('runs a Stake program instruction with your wallet\'s signature, from inside another program.');
+    }
+  } else if (ix.programId === SYSTEM_PROGRAM) {
+    if (ix.parsed !== undefined) {
+      const info = ix.parsed?.info;
+      if (info?.nonceAccount !== undefined && info.nonceAuthority === walletAddress && ix.parsed.type !== 'advanceNonce') {
+        throw controlChanged(`changes or withdraws from nonce account ${info.nonceAccount} with your wallet's signature, from inside another program.`);
       }
       return;
     }
-    if (!Array.isArray(ix.accounts)) throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER_STAKE);
-    if (ix.accounts.includes(walletAddress)) {
-      throw controlChanged('runs a Stake program instruction with your wallet\'s signature, from inside another program.');
+    if (!Array.isArray(ix.accounts)) throw unreadable('System');
+    let data;
+    try {
+      data = base58Decode(ix.data);
+    } catch {
+      throw unreadable('System');
     }
-    return;
-  }
-  if (ix.programId !== SYSTEM_PROGRAM) return;
-  if (ix.parsed !== undefined) {
-    const info = ix.parsed?.info;
-    if (info && typeof info === 'object' && info.nonceAccount !== undefined
-      && info.nonceAuthority === walletAddress && ix.parsed.type !== 'advanceNonce') {
-      throw controlChanged(`changes or withdraws from nonce account ${info.nonceAccount} with your wallet's signature, from inside another program.`);
+    const discriminator = data.length >= 4 ? data.readUInt32LE(0) : null;
+    if ((discriminator === SYSTEM_WITHDRAW_NONCE || discriminator === SYSTEM_AUTHORIZE_NONCE) && ix.accounts.includes(walletAddress)) {
+      throw controlChanged(`changes or withdraws from nonce account ${ix.accounts[0]} with your wallet's signature, from inside another program.`);
     }
-    return;
-  }
-  if (!Array.isArray(ix.accounts) || typeof ix.data !== 'string') {
-    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned an unreadable System program inner instruction; cannot verify the outcome.');
-  }
-  let data;
-  try {
-    data = base58Decode(ix.data);
-  } catch {
-    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned an unreadable System program inner instruction; cannot verify the outcome.');
-  }
-  if (data.length < 4) return;
-  const discriminator = data.readUInt32LE(0);
-  if ((discriminator === SYSTEM_WITHDRAW_NONCE || discriminator === SYSTEM_AUTHORIZE_NONCE) && ix.accounts.includes(walletAddress)) {
-    throw controlChanged(`changes or withdraws from nonce account ${ix.accounts[0]} with your wallet's signature, from inside another program.`);
   }
 }
 
