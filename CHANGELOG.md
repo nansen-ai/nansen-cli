@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.6.3
+
+### Patch Changes
+
+- [#863](https://github.com/nansen-ai/nansen-cli/pull/863) [`4197d36`](https://github.com/nansen-ai/nansen-cli/commit/4197d36b2f8badc5ab8ed2c8e67d0206a915e440) Thanks [@kome12](https://github.com/kome12)! - Report an API error whose body has a non-string `message` or `error` field (for example `{"error": {"message": "..."}}`) as a normal error instead of crashing with `message.toLowerCase is not a function`.
+
+- [#862](https://github.com/nansen-ai/nansen-cli/pull/862) [`d9291d3`](https://github.com/nansen-ai/nansen-cli/commit/d9291d34a5653e453c4c234d74a7ffb6f9bfbb1d) Thanks [@kome12](https://github.com/kome12)! - `nansen mcp verify` now reports an API key that contains a line break, a NUL, a curly quote or another character that cannot be sent in a request header as a bad key ("Copy the key again") instead of a network failure, and no longer prints part of such a key. Every command now also catches keys with control characters such as an ANSI escape code from a coloured paste, which were reported as network errors.
+
+- [#872](https://github.com/nansen-ai/nansen-cli/pull/872) [`431e3e3`](https://github.com/nansen-ai/nansen-cli/commit/431e3e32b45805c53fcc22cfa6c444ddd1c45355) Thanks [@kome12](https://github.com/kome12)! - `wallet send --dry-run` from a Privy wallet on Solana now runs the same checks as the real send, so it refuses an SPL amount above the token balance, a send with no source token account, and a SOL amount above the SOL balance. The dry run now makes read-only RPC calls; it still never signs.
+
+- [#866](https://github.com/nansen-ai/nansen-cli/pull/866) [`c461942`](https://github.com/nansen-ai/nansen-cli/commit/c4619427c297a63ed52ee0fc16ceb95b9ecdf4d1) Thanks [@kome12](https://github.com/kome12)! - `wallet send --chain solana` now refuses a send to the wallet's own address before signing, with a message that says why, instead of failing with "Transaction simulation failed". Failed Solana simulations now include the RPC's `err` value (for example `AccountLoadedTwice`) in the error text.
+
+- [#868](https://github.com/nansen-ai/nansen-cli/pull/868) [`d6ab3f1`](https://github.com/nansen-ai/nansen-cli/commit/d6ab3f1b2d67acbcddd89b77d2647434b6b3cdb1) Thanks [@furkan3152](https://github.com/furkan3152)! - `wallet send --chain solana` no longer reports a broadcast transfer as failed when a confirmation poll hits a network or RPC error (for example `fetch failed`). It keeps polling and prints the signature, so the transfer is not mistaken for a failed send and sent again. An `err` seen at `processed`, which can still be rolled back, is no longer treated as final: the send waits for a `confirmed` status. A transfer that failed on-chain is reported with its signature.
+
+- [#865](https://github.com/nansen-ai/nansen-cli/pull/865) [`1e8f78d`](https://github.com/nansen-ai/nansen-cli/commit/1e8f78dbabce8be0f8f759ed246f185068ae70fe) Thanks [@kome12](https://github.com/kome12)! - Solana swap and limit-order verification now refuses to sign when the simulated transaction would hand control of one of your wallet's token accounts to someone else (a new owner, delegate or close authority), or would lock the wallet itself (reassigned to another program, or given account data), even when every balance looks right. The rent of a closed token account now counts toward the SOL balance check.
+
+- [#869](https://github.com/nansen-ai/nansen-cli/pull/869) [`4daa3d9`](https://github.com/nansen-ai/nansen-cli/commit/4daa3d92fa95d144eb9625b12f0e39d833a1a04f) Thanks [@kome12](https://github.com/kome12)! - Solana swap and limit-order verification now also refuses to sign when the transaction approves a token delegate or changes a token or mint authority with your wallet's signature from inside another program, even if the transaction undoes the visible change before it ends, or when another party hands your wallet an existing token account that could still carry its close authority. If the simulation RPC (`NANSEN_SOLANA_SIM_RPC`, or `NANSEN_SOLANA_RPC` when that isn't set) does not return inner instructions, swaps, bridges and limit-order deposits now refuse to sign instead of skipping the check; a limit-order cancel warns and proceeds with the other checks so escrowed funds aren't stranded. The default RPC returns them.
+
+- [#873](https://github.com/nansen-ai/nansen-cli/pull/873) [`71f275b`](https://github.com/nansen-ai/nansen-cli/commit/71f275bd883754b181f4f2136a3d061f00343461) Thanks [@kome12](https://github.com/kome12)! - Solana SPL sends no longer report a rate limit, network failure or malformed RPC reply as "Source token account not found". Only a missing token account gives that message; other failures say the balance could not be read. `--max` SPL sends report a missing token account the same way.
+
+- [#870](https://github.com/nansen-ai/nansen-cli/pull/870) [`1409e7d`](https://github.com/nansen-ai/nansen-cli/commit/1409e7d078f8530323562f5ceddf6372877cdfc1) Thanks [@kome12](https://github.com/kome12)! - `wallet send` on Solana now tells you to top up SOL when the wallet cannot pay fees, also when the RPC reports `AccountNotFound` only in the error data
+
 ## 2.6.2
 
 ### Patch Changes
