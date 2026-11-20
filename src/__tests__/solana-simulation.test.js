@@ -1121,6 +1121,154 @@ describe('solana-simulation', () => {
       });
     });
 
+    describe('Stake and System nonce instructions the wallet signs', () => {
+      // Shapes captured from mainnet simulateTransaction / getTransaction (jsonParsed).
+      const STAKE_PROGRAM = 'Stake11111111111111111111111111111111111111';
+      const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+      const CLOCK = 'SysvarC1ock11111111111111111111111111111111';
+      const STAKE_HISTORY = 'SysvarStakeHistory1111111111111111111111111';
+      const RECENT_BLOCKHASHES = 'SysvarRecentB1ockHashes11111111111111111111';
+      let stakeAcct, nonceAcct;
+      beforeEach(() => {
+        [stakeAcct, nonceAcct] = Array.from({ length: 2 }, () => generateSolanaWallet().address);
+      });
+      const stakeIx = (type, info) => ({ parsed: { info, type }, program: 'stake', programId: STAKE_PROGRAM, stackHeight: 2 });
+      const systemIx = (type, info) => ({ parsed: { info, type }, program: 'system', programId: SYSTEM_PROGRAM, stackHeight: 2 });
+      const rawData = (bytes) => base58Encode(Buffer.from(bytes));
+      const u32le = (n) => [n & 0xff, (n >> 8) & 0xff, 0, 0];
+
+      it('fails closed on malformed Stake or raw System inner instructions', async () => {
+        const malformed = [
+          { parsed: null, program: 'stake', programId: STAKE_PROGRAM, stackHeight: 2 },
+          stakeIx('authorize', null),
+          stakeIx('authorize', 'not an object'),
+          { programId: STAKE_PROGRAM, data: rawData(u32le(1)), stackHeight: 2 },
+          { programId: SYSTEM_PROGRAM, data: rawData(u32le(7)), stackHeight: 2 },
+          { programId: SYSTEM_PROGRAM, accounts: [nonceAcct, wallet], data: '0OIl', stackHeight: 2 },
+          { programId: SYSTEM_PROGRAM, accounts: [nonceAcct, wallet], stackHeight: 2 },
+        ];
+        for (const ix of malformed) {
+          await expect(run(inner(ix))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+        }
+      });
+
+      it('reads a 4-byte raw System nonce instruction, and ignores one or another program that does not name the wallet', async () => {
+        await expect(run(inner({ programId: SYSTEM_PROGRAM, accounts: [nonceAcct, wallet], data: rawData(u32le(7)), stackHeight: 2 })))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+        const other = generateSolanaWallet().address;
+        for (const ix of [
+          { programId: SYSTEM_PROGRAM, accounts: [nonceAcct, other], data: rawData(u32le(7)), stackHeight: 2 },
+          { programId: generateSolanaWallet().address, accounts: [nonceAcct, wallet], data: rawData(u32le(7)), stackHeight: 2 },
+          systemIx('transfer', { source: wallet, destination: other, lamports: 1000 }),
+        ]) {
+          await expect(run(inner(ix))).resolves.toBeTruthy();
+        }
+      });
+
+      it('fails closed on a malformed parsed System inner instruction', async () => {
+        for (const ix of [
+          { parsed: null, program: 'system', programId: SYSTEM_PROGRAM, stackHeight: 2 },
+          systemIx('transfer', null),
+          systemIx('withdrawFromNonce', null),
+          systemIx('withdrawFromNonce', 'x'),
+          systemIx('transfer', 'x'),
+        ]) {
+          await expect(run(inner(ix))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+        }
+      });
+
+      it('fails closed on a parsed System nonce instruction without a nonce account, or of an unknown nonce type', async () => {
+        const other = generateSolanaWallet().address;
+        for (const ix of [
+          systemIx('withdrawFromNonce', { nonceAuthority: wallet, destination: other, lamports: 1 }),
+          systemIx('futureNonceOp', { nonceAccount: nonceAcct }),
+        ]) {
+          await expect(run(inner(ix))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+        }
+      });
+
+      it('refuses a parsed CPI nonce withdraw that names the wallet under any signer key', async () => {
+        const other = generateSolanaWallet().address;
+        for (const info of [
+          { nonceAccount: nonceAcct, destination: attacker, lamports: 1, recentBlockhashesSysvar: RECENT_BLOCKHASHES, withdrawAuthority: wallet },
+          { nonceAccount: nonceAcct, destination: attacker, lamports: 1, nonceAuthority: other, extraSigner: wallet },
+        ]) {
+          await expect(run(inner(systemIx('withdrawFromNonce', info)))).rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+        }
+      });
+
+      it('allows parsed CPI nonce instructions that name the wallet only as a recipient or new authority, or advance it', async () => {
+        const other = generateSolanaWallet().address;
+        for (const ix of [
+          systemIx('authorizeNonce', { nonceAccount: nonceAcct, nonceAuthority: other, newAuthorized: wallet }),
+          systemIx('withdrawFromNonce', { nonceAccount: nonceAcct, destination: wallet, lamports: 1, recentBlockhashesSysvar: RECENT_BLOCKHASHES, nonceAuthority: other }),
+          systemIx('advanceNonce', { nonceAccount: nonceAcct, nonceAuthority: wallet, recentBlockhashesSysvar: RECENT_BLOCKHASHES }),
+        ]) {
+          await expect(run(inner(ix))).resolves.toBeTruthy();
+        }
+      });
+
+      it('refuses a parsed CPI stake authorize, withdraw, merge or deactivate the wallet signs', async () => {
+        const cases = [
+          stakeIx('authorize', { authority: wallet, authorityType: 'Staker', clockSysvar: CLOCK, newAuthority: attacker, stakeAccount: stakeAcct }),
+          stakeIx('withdraw', { clockSysvar: CLOCK, destination: attacker, lamports: 35171897, stakeAccount: stakeAcct, stakeHistorySysvar: STAKE_HISTORY, withdrawAuthority: wallet }),
+          stakeIx('merge', { clockSysvar: CLOCK, destination: stakeAcct, source: generateSolanaWallet().address, stakeAuthority: wallet, stakeHistorySysvar: STAKE_HISTORY }),
+          stakeIx('deactivate', { clockSysvar: CLOCK, stakeAccount: stakeAcct, stakeAuthority: wallet }),
+        ];
+        for (const ix of cases) {
+          await expect(run(inner(ix))).rejects.toMatchObject({
+            code: 'SIM_ACCOUNT_CONTROL_CHANGED',
+            message: expect.stringContaining(`runs a Stake program instruction (${ix.parsed.type}) with your wallet's signature, from inside another program`),
+          });
+        }
+      });
+
+      it('refuses a parsed CPI stake instruction of an unknown type that names the wallet', async () => {
+        await expect(run(inner(stakeIx('setLockupChecked', { stakeAccount: stakeAcct, custodian: wallet }))))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('refuses a raw CPI Stake instruction with the wallet in its accounts', async () => {
+        await expect(run(inner({ programId: STAKE_PROGRAM, accounts: [stakeAcct, CLOCK, wallet], data: rawData([...u32le(1), ...Array(33).fill(1)]), stackHeight: 2 })))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('refuses a parsed CPI nonce authorize or withdraw the wallet signs, whatever its type name', async () => {
+        for (const type of ['authorizeNonce', 'withdrawFromNonce']) {
+          await expect(run(inner(systemIx(type, { nonceAccount: nonceAcct, nonceAuthority: wallet, newAuthorized: attacker }))))
+            .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+        }
+      });
+
+      it('refuses raw CPI System AuthorizeNonceAccount (7) and WithdrawNonceAccount (5) with the wallet in its accounts', async () => {
+        await expect(run(inner({ programId: SYSTEM_PROGRAM, accounts: [nonceAcct, wallet], data: rawData([...u32le(7), ...Array(32).fill(1)]), stackHeight: 2 })))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+        await expect(run(inner({ programId: SYSTEM_PROGRAM, accounts: [nonceAcct, attacker, RECENT_BLOCKHASHES, 'SysvarRent111111111111111111111111111111111', wallet], data: rawData([...u32le(5), 1, 0, 0, 0, 0, 0, 0, 0]), stackHeight: 2 })))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('allows stake withdrawals to the wallet, nonce advances and System transfers the wallet signs', async () => {
+        const r = await run(inner(
+          // Stake-pool withdrawal: the pool authorizes the wallet as the new staker/withdrawer.
+          stakeIx('authorize', { authority: router, authorityType: 'Withdrawer', clockSysvar: CLOCK, newAuthority: wallet, stakeAccount: stakeAcct }),
+          stakeIx('withdraw', { clockSysvar: CLOCK, destination: wallet, lamports: 35171897, stakeAccount: stakeAcct, stakeHistorySysvar: STAKE_HISTORY, withdrawAuthority: router }),
+          stakeIx('deactivate', { clockSysvar: CLOCK, stakeAccount: stakeAcct, stakeAuthority: router }),
+          { programId: STAKE_PROGRAM, accounts: [stakeAcct, CLOCK, router], data: rawData(u32le(5)), stackHeight: 2 },
+          systemIx('advanceNonce', { nonceAccount: nonceAcct, nonceAuthority: wallet, recentBlockhashesSysvar: RECENT_BLOCKHASHES }),
+          systemIx('authorizeNonce', { nonceAccount: nonceAcct, nonceAuthority: router, newAuthorized: wallet }),
+          { programId: SYSTEM_PROGRAM, accounts: [wallet, router], data: rawData([...u32le(2), 1, 0, 0, 0, 0, 0, 0, 0]), stackHeight: 2 },
+          { programId: SYSTEM_PROGRAM, accounts: [wallet], data: rawData([7]), stackHeight: 2 },
+        ));
+        expect(r.deltas[mintOut]).toBe(1_000_000n);
+      });
+
+      it('fails closed on a malformed parsed Stake inner instruction', async () => {
+        await expect(run(inner({ programId: STAKE_PROGRAM, parsed: 'withdraw', stackHeight: 2 }))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+        await expect(run(inner(stakeIx('withdraw', null)))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+        await expect(run(inner({ programId: STAKE_PROGRAM, parsed: null, stackHeight: 2 }))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      });
+    });
+
     it('fails closed on a malformed inner instruction or group', async () => {
       await expect(run({ innerInstructions: [{ index: 1 }] })).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
       await expect(run(inner({ accounts: [], data: '' }))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
@@ -1129,6 +1277,351 @@ describe('solana-simulation', () => {
       await expect(run(inner({ programId: TOKEN_PROGRAM, parsed: 'approve', stackHeight: 2 }))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
       await expect(run(inner({ programId: TOKEN_PROGRAM, accounts: [ataOut], data: 'not base58 0OIl' }))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
       await expect(run(inner(rawIx(4, [ataOut, attacker])))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+  });
+
+  describe('stake and nonce accounts the wallet controls', () => {
+    // Shapes captured from mainnet getAccountInfo / simulateTransaction
+    // (jsonParsed) on a delegated stake account and an initialized nonce account.
+    const STAKE_PROGRAM = 'Stake11111111111111111111111111111111111111';
+    const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+    let wallet, attacker, stakeAcct, nonceAcct;
+    beforeEach(() => {
+      wallet = generateSolanaWallet().address;
+      attacker = generateSolanaWallet().address;
+      stakeAcct = generateSolanaWallet().address;
+      nonceAcct = generateSolanaWallet().address;
+    });
+
+    function stakeInfo({ staker = wallet, withdrawer = wallet, custodian = SYSTEM_PROGRAM, epoch = 0, unixTimestamp = 0, lamports = 1_200_000_000 } = {}) {
+      return {
+        data: {
+          parsed: {
+            info: {
+              meta: { authorized: { staker, withdrawer }, lockup: { custodian, epoch, unixTimestamp }, rentExemptReserve: '2282880' },
+              stake: {
+                creditsObserved: 27620789198706,
+                delegation: { activationEpoch: '1091', deactivationEpoch: '18446744073709551615', stake: '1198333760', voter: 'DumiCKHVqoCQKD8roLApzR5Fit8qGV5fVQsJV9sTZk4a' },
+              },
+            },
+            type: 'delegated',
+          },
+          program: 'stake',
+          space: 200,
+        },
+        executable: false, lamports, owner: STAKE_PROGRAM, rentEpoch: 18446744073709552000, space: 200,
+      };
+    }
+    function nonceInfo({ authority = wallet, blockhash = 'H12ZUXRdcxTfJFtJcC1rU6gGBc7F8JcyqPXkQo5hVPY', lamports = 101_447_712 } = {}) {
+      return {
+        data: { parsed: { info: { authority, blockhash, feeCalculator: { lamportsPerSignature: '5000' } }, type: 'initialized' }, program: 'nonce', space: 80 },
+        executable: false, lamports, owner: SYSTEM_PROGRAM, rentEpoch: 18446744073709552000, space: 80,
+      };
+    }
+
+    function run({ pre = {}, post = {}, innerIxs }) {
+      const txBase64 = buildLegacyTx({ wallet, extraWritableKeys: [stakeAcct, nonceAcct] });
+      let requested;
+      vi.stubGlobal('fetch', mockSolanaRpc({
+        trackedAccounts: { [wallet]: nativeAccountInfo(1_000_000_000), ...pre },
+        simValue: (params) => {
+          requested = params[1].accounts.addresses;
+          const all = { [wallet]: nativeAccountInfo(999_995_000), ...post };
+          const value = { err: null, accounts: requested.map((a) => (a in all ? all[a] : null)) };
+          if (innerIxs) value.innerInstructions = [{ index: 0, instructions: innerIxs }];
+          return { value };
+        },
+      }));
+      return simulateSolanaAssetChanges('solana', txBase64, { walletAddress: wallet }).then((r) => ({ ...r, requested }));
+    }
+    const refused = (message) => ({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(message) });
+
+    describe('inner (CPI) instructions on them that list someone else as the signer', () => {
+      // The Stake and System programs take the authority from any signer of the
+      // instruction, so a CPI can pass the wallet as an extra account while the
+      // parsed instruction names someone else at the authority position.
+      const CLOCK = 'SysvarC1ock11111111111111111111111111111111';
+      const STAKE_HISTORY = 'SysvarStakeHistory1111111111111111111111111';
+      const RECENT_BLOCKHASHES = 'SysvarRecentB1ockHashes11111111111111111111';
+      let other;
+      beforeEach(() => { other = generateSolanaWallet().address; });
+      const stakeIx = (type, info) => ({ parsed: { info, type }, program: 'stake', programId: STAKE_PROGRAM, stackHeight: 2 });
+      const systemIx = (type, info) => ({ parsed: { info, type }, program: 'system', programId: SYSTEM_PROGRAM, stackHeight: 2 });
+      const rawData = (bytes) => base58Encode(Buffer.from(bytes));
+      const u32le = (n) => [n & 0xff, (n >> 8) & 0xff, 0, 0];
+      const withNonce = (...innerIxs) => run({ pre: { [nonceAcct]: nonceInfo() }, post: { [nonceAcct]: nonceInfo() }, innerIxs });
+      const withStake = (...innerIxs) => run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: stakeInfo() }, innerIxs });
+
+      it('refuses a parsed nonce authorize or withdraw on the wallet nonce account whoever is listed as its authority', async () => {
+        await expect(withNonce(systemIx('authorizeNonce', { newAuthorized: attacker, nonceAccount: nonceAcct, nonceAuthority: other })))
+          .rejects.toMatchObject(refused(`changes or withdraws from your nonce account ${nonceAcct} from inside another program`));
+        await expect(withNonce(systemIx('withdrawFromNonce', {
+          destination: attacker, lamports: 1_000_000, nonceAccount: nonceAcct, nonceAuthority: other,
+          recentBlockhashesSysvar: RECENT_BLOCKHASHES, rentSysvar: 'SysvarRent111111111111111111111111111111111',
+        }))).rejects.toMatchObject(refused(`changes or withdraws from your nonce account ${nonceAcct} from inside another program`));
+      });
+
+      it('refuses a raw System AuthorizeNonceAccount on the wallet nonce account that does not list the wallet', async () => {
+        await expect(withNonce({ programId: SYSTEM_PROGRAM, accounts: [nonceAcct, other], data: rawData([...u32le(7), ...Array(32).fill(1)]), stackHeight: 2 }))
+          .rejects.toMatchObject(refused(`changes or withdraws from your nonce account ${nonceAcct} from inside another program`));
+      });
+
+      it('refuses a parsed or raw Stake instruction on the wallet stake account whoever is listed as its authority', async () => {
+        await expect(withStake(stakeIx('authorize', { authority: other, authorityType: 'Withdrawer', clockSysvar: CLOCK, newAuthority: attacker, stakeAccount: stakeAcct })))
+          .rejects.toMatchObject(refused(`runs a Stake program instruction (authorize) on your stake account ${stakeAcct} from inside another program`));
+        await expect(withStake({ programId: STAKE_PROGRAM, accounts: [stakeAcct, other], data: rawData([...u32le(1), ...Array(33).fill(1)]), stackHeight: 2 }))
+          .rejects.toMatchObject(refused(`on your stake account ${stakeAcct} from inside another program`));
+      });
+
+      it('allows a nonce advance on the wallet nonce account, and Stake/nonce instructions on accounts that are not the wallet\'s', async () => {
+        const poolStake = generateSolanaWallet().address;
+        const otherNonce = generateSolanaWallet().address;
+        await expect(withNonce(systemIx('advanceNonce', { nonceAccount: nonceAcct, nonceAuthority: wallet, recentBlockhashesSysvar: RECENT_BLOCKHASHES })))
+          .resolves.toBeTruthy();
+        await expect(run({ pre: { [stakeAcct]: stakeInfo(), [nonceAcct]: nonceInfo() }, post: { [stakeAcct]: stakeInfo(), [nonceAcct]: nonceInfo() }, innerIxs: [
+          stakeIx('withdraw', { clockSysvar: CLOCK, destination: wallet, lamports: 35171897, stakeAccount: poolStake, stakeHistorySysvar: STAKE_HISTORY, withdrawAuthority: other }),
+          { programId: STAKE_PROGRAM, accounts: [poolStake, CLOCK, other], data: rawData(u32le(5)), stackHeight: 2 },
+          systemIx('authorizeNonce', { newAuthorized: attacker, nonceAccount: otherNonce, nonceAuthority: other }),
+          { programId: SYSTEM_PROGRAM, accounts: [otherNonce, other], data: rawData([...u32le(7), ...Array(32).fill(1)]), stackHeight: 2 },
+        ] })).resolves.toBeTruthy();
+      });
+    });
+
+    it('refuses a changed withdrawer or staker on a wallet stake account', async () => {
+      await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: stakeInfo({ withdrawer: attacker }) } }))
+        .rejects.toMatchObject(refused(`changes the withdrawer of your stake account ${stakeAcct} from ${wallet} to ${attacker}`));
+      await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: stakeInfo({ staker: attacker }) } }))
+        .rejects.toMatchObject(refused('changes the staker'));
+    });
+
+    it('refuses a lockup change (custodian, epoch or end time)', async () => {
+      await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: stakeInfo({ custodian: attacker }) } }))
+        .rejects.toMatchObject(refused('changes the lockup custodian'));
+      await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: stakeInfo({ epoch: 999999 }) } }))
+        .rejects.toMatchObject(refused('changes the lockup epoch'));
+      await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: stakeInfo({ unixTimestamp: 4102444800 }) } }))
+        .rejects.toMatchObject(refused('changes the lockup end time'));
+    });
+
+    it('tracks a stake account the wallet controls only as staker, withdrawer or custodian', async () => {
+      for (const roles of [{ withdrawer: attacker }, { staker: attacker }, { staker: attacker, withdrawer: attacker, custodian: wallet }]) {
+        const other = generateSolanaWallet().address;
+        await expect(run({ pre: { [stakeAcct]: stakeInfo(roles) }, post: { [stakeAcct]: stakeInfo({ ...roles, ...(roles.custodian ? { custodian: other } : { staker: other, withdrawer: other }) }) } }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      }
+    });
+
+    it('refuses a withdrawal from, or a close of, a wallet stake account', async () => {
+      await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: stakeInfo({ lamports: 1_190_000_000 }) } }))
+        .rejects.toMatchObject(refused(`withdraws 10000000 lamports from your stake account ${stakeAcct}`));
+      await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: closedAccountInfo() } }))
+        .rejects.toMatchObject(refused(`closes your stake account ${stakeAcct}`));
+      await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: {} }))
+        .rejects.toMatchObject(refused('closes your stake account'));
+    });
+
+    it('refuses a changed authority, a withdrawal or a close on a wallet nonce account', async () => {
+      await expect(run({ pre: { [nonceAcct]: nonceInfo() }, post: { [nonceAcct]: nonceInfo({ authority: attacker }) } }))
+        .rejects.toMatchObject(refused(`changes the authority of your nonce account ${nonceAcct} from ${wallet} to ${attacker}`));
+      await expect(run({ pre: { [nonceAcct]: nonceInfo() }, post: { [nonceAcct]: nonceInfo({ lamports: 100_447_712 }) } }))
+        .rejects.toMatchObject(refused(`withdraws 1000000 lamports from your nonce account ${nonceAcct}`));
+      await expect(run({ pre: { [nonceAcct]: nonceInfo() }, post: { [nonceAcct]: nonceInfo({ lamports: 0 }) } }))
+        .rejects.toMatchObject(refused(`withdraws 101447712 lamports from your nonce account ${nonceAcct}`));
+      await expect(run({ pre: { [nonceAcct]: nonceInfo() }, post: { [nonceAcct]: closedAccountInfo() } }))
+        .rejects.toMatchObject(refused(`closes your nonce account ${nonceAcct}`));
+    });
+
+    it('allows a nonce advance, lamports coming in, and an unchanged account, with no balance delta', async () => {
+      const r = await run({
+        pre: { [stakeAcct]: stakeInfo(), [nonceAcct]: nonceInfo() },
+        post: { [stakeAcct]: stakeInfo({ lamports: 1_200_001_000 }), [nonceAcct]: nonceInfo({ blockhash: 'GSQYhshKPn8yZjQXGEdnKyagYEHNGBcph2hh5KKVSHiU' }) },
+      });
+      expect(r.requested.filter((k) => k === stakeAcct || k === nonceAcct).sort()).toEqual([stakeAcct, nonceAcct].sort());
+      expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
+    });
+
+    it("leaves someone else's stake or nonce account alone", async () => {
+      const other = generateSolanaWallet().address;
+      const r = await run({
+        pre: { [stakeAcct]: stakeInfo({ staker: other, withdrawer: other }), [nonceAcct]: nonceInfo({ authority: other }) },
+        post: { [stakeAcct]: stakeInfo({ staker: attacker, withdrawer: attacker }), [nonceAcct]: nonceInfo({ authority: attacker, lamports: 0 }) },
+      });
+      expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
+    });
+
+    it('fails closed on an initialized stake or nonce pre-state whose authorities are unreadable', async () => {
+      const noAuthorized = stakeInfo();
+      delete noAuthorized.data.parsed.info.meta.authorized;
+      const noMeta = stakeInfo();
+      delete noMeta.data.parsed.info.meta;
+      const badCustodian = stakeInfo({ custodian: 42 });
+      for (const pre of [noAuthorized, noMeta, badCustodian]) {
+        await expect(run({ pre: { [stakeAcct]: pre }, post: { [stakeAcct]: stakeInfo({ staker: attacker, withdrawer: attacker }) } }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(stakeAcct) });
+      }
+      const noAuthority = nonceInfo();
+      delete noAuthority.data.parsed.info.authority;
+      await expect(run({ pre: { [nonceAcct]: noAuthority }, post: { [nonceAcct]: nonceInfo({ authority: attacker }) } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(nonceAcct) });
+    });
+
+    it('fails closed on an unreadable post-state', async () => {
+      const raw = { ...stakeInfo(), data: [Buffer.alloc(200).toString('base64'), 'base64'] };
+      await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: raw } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      const noAuthority = nonceInfo();
+      delete noAuthority.data.parsed.info.authority;
+      await expect(run({ pre: { [nonceAcct]: nonceInfo() }, post: { [nonceAcct]: noAuthority } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run({ pre: { [nonceAcct]: nonceInfo() }, post: { [nonceAcct]: nonceInfo({ lamports: 'x' }) } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
+    it('fails closed on a post-state missing its authorities or lockup, or no longer owned by the program', async () => {
+      const strip = (info, fn) => { const c = structuredClone(info); fn(c.data.parsed.info); return c; };
+      const posts = [
+        { data: { parsed: { type: 'uninitialized' }, program: 'stake', space: 200 }, lamports: 1_200_000_000, owner: STAKE_PROGRAM, space: 200 },
+        strip(stakeInfo(), (i) => { delete i.meta.authorized; }),
+        strip(stakeInfo(), (i) => { delete i.meta.lockup; }),
+        strip(stakeInfo(), (i) => { delete i.meta.lockup.epoch; }),
+        strip(stakeInfo(), (i) => { delete i.meta.lockup.unixTimestamp; }),
+        strip(stakeInfo(), (i) => { i.meta.lockup.custodian = null; }),
+        { ...stakeInfo(), owner: attacker },
+      ];
+      for (const post of posts) {
+        await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: post } }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      }
+      for (const post of [{ ...nonceInfo(), owner: attacker }, { ...nonceInfo(), data: { ...nonceInfo().data, program: 'other' } }]) {
+        await expect(run({ pre: { [nonceAcct]: nonceInfo() }, post: { [nonceAcct]: post } }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      }
+    });
+
+    it('fails closed on a lockup epoch or end time it cannot read exactly', async () => {
+      // JSON.parse has already rounded a u64 above 2^53: two lockups could compare equal.
+      await expect(run({ pre: { [stakeAcct]: stakeInfo({ epoch: 2 ** 53 }) }, post: { [stakeAcct]: stakeInfo({ epoch: 2 ** 53 + 2 }) } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run({ pre: { [stakeAcct]: stakeInfo() }, post: { [stakeAcct]: stakeInfo({ unixTimestamp: 1.5 }) } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      // A decimal string and a safe number compare as the same value; unixTimestamp is i64.
+      await expect(run({ pre: { [stakeAcct]: stakeInfo({ unixTimestamp: 4102444800 }) }, post: { [stakeAcct]: stakeInfo({ unixTimestamp: '4102444800' }) } }))
+        .resolves.toBeDefined();
+      await expect(run({ pre: { [stakeAcct]: stakeInfo({ unixTimestamp: -1 }) }, post: { [stakeAcct]: stakeInfo({ unixTimestamp: -1 }) } }))
+        .resolves.toBeDefined();
+    });
+
+    it('fails closed on a lamport balance it cannot read exactly', async () => {
+      for (const lamports of [-1, 1.5, 2 ** 60, '12a', '', null]) {
+        await expect(run({ pre: { [nonceAcct]: nonceInfo() }, post: { [nonceAcct]: nonceInfo({ lamports }) } }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      }
+      // A balance returned as a decimal string is read exactly.
+      const r = await run({ pre: { [nonceAcct]: nonceInfo() }, post: { [nonceAcct]: nonceInfo({ lamports: '101447712' }) } });
+      expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
+    });
+
+    it("leaves another program's account parsed as 'initialized' alone", async () => {
+      const other = { data: { parsed: { type: 'initialized', info: {} }, program: 'other', space: 100 }, lamports: 1_000_000, owner: attacker, space: 100 };
+      const r = await run({ pre: { [stakeAcct]: other }, post: { [stakeAcct]: other } });
+      expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
+    });
+
+    it('fails closed on a parsed nonce or stake pre-state missing its program or type', async () => {
+      const noProgram = nonceInfo();
+      delete noProgram.data.program;
+      const noNonceType = nonceInfo();
+      delete noNonceType.data.parsed.type;
+      for (const pre of [noProgram, noNonceType]) {
+        await expect(run({ pre: { [nonceAcct]: pre }, post: { [nonceAcct]: nonceInfo({ authority: attacker }) } }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(nonceAcct) });
+      }
+      const noStakeType = stakeInfo();
+      delete noStakeType.data.parsed.type;
+      delete noStakeType.data.parsed.info.meta;
+      await expect(run({ pre: { [stakeAcct]: noStakeType }, post: { [stakeAcct]: stakeInfo({ staker: attacker, withdrawer: attacker }) } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(stakeAcct) });
+    });
+
+    it('leaves a rewards-pool stake account and an uninitialized nonce account alone', async () => {
+      const rewardsPool = { data: { parsed: { type: 'rewardsPool' }, program: 'stake', space: 200 }, lamports: 2_282_880, owner: STAKE_PROGRAM, space: 200 };
+      const uninitNonce = { data: { parsed: { type: 'uninitialized' }, program: 'nonce', space: 80 }, lamports: 1_447_680, owner: SYSTEM_PROGRAM, space: 80 };
+      const r = await run({ pre: { [stakeAcct]: rewardsPool, [nonceAcct]: uninitNonce }, post: { [stakeAcct]: rewardsPool, [nonceAcct]: uninitNonce } });
+      expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
+    });
+
+    it('fails closed on a stake- or System-owned account with no data', async () => {
+      const post = { [stakeAcct]: stakeInfo({ staker: attacker, withdrawer: attacker }) };
+      for (const data of [null, undefined]) {
+        await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data } }, post }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(stakeAcct) });
+      }
+      await expect(run({ pre: { [nonceAcct]: { lamports: 1, owner: SYSTEM_PROGRAM, data: null } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(nonceAcct) });
+    });
+
+    it('fails closed on a raw stake account too short to hold its authorities', async () => {
+      await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: ['AAAAAA==', 'base64'], space: 4 } }, post: { [stakeAcct]: stakeInfo({ staker: attacker, withdrawer: attacker }) } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
+
+    it('leaves an uninitialized stake account alone', async () => {
+      const uninit = { data: { parsed: { type: 'uninitialized' }, program: 'stake', space: 200 }, lamports: 2_282_880, owner: STAKE_PROGRAM, space: 200 };
+      const r = await run({ pre: { [stakeAcct]: uninit }, post: { [stakeAcct]: { ...uninit, lamports: 0 } } });
+      expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
+    });
+
+    it('does not mistake other raw System-owned accounts for a wallet nonce account', async () => {
+      const walletBytes = Buffer.from(base58Decode(wallet));
+      const longer = Buffer.alloc(100);
+      walletBytes.copy(longer, 8);
+      const otherNonce = Buffer.alloc(80);
+      Buffer.from(base58Decode(attacker)).copy(otherNonce, 8);
+      const r = await run({ pre: {
+        [stakeAcct]: { lamports: 1, owner: SYSTEM_PROGRAM, data: [longer.toString('base64'), 'base64'], space: 100 },
+        [nonceAcct]: { lamports: 1, owner: SYSTEM_PROGRAM, data: [otherNonce.toString('base64'), 'base64'], space: 80 },
+      } });
+      expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
+    });
+
+    it('requires the base64 tag even on a well-formed raw stake account, and reads one exactly 124 bytes long', async () => {
+      const full = Buffer.alloc(200).toString('base64');
+      await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: [full, 'base58'], space: 200 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      const minimal = Buffer.alloc(124).toString('base64');
+      const r = await run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: [minimal, 'base64'], space: 124 } } });
+      expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
+    });
+
+    it('fails closed on an unparsed (base64) stake or nonce account the wallet controls', async () => {
+      const walletBytes = Buffer.from(base58Decode(wallet));
+      for (const offset of [12, 44, 92]) {
+        const bytes = Buffer.alloc(200);
+        walletBytes.copy(bytes, offset);
+        await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: [bytes.toString('base64'), 'base64'], space: 200 } } }))
+          .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(stakeAcct) });
+      }
+      const nonceBytes = Buffer.alloc(80);
+      walletBytes.copy(nonceBytes, 8);
+      await expect(run({ pre: { [nonceAcct]: { lamports: 1, owner: SYSTEM_PROGRAM, data: [nonceBytes.toString('base64'), 'base64'], space: 80 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(nonceAcct) });
+    });
+
+    it('fails closed on a raw stake or nonce account whose data is not a base64 string', async () => {
+      await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: [null, 'base64'], space: 200 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run({ pre: { [nonceAcct]: { lamports: 1, owner: SYSTEM_PROGRAM, data: [{}, 'base64'], space: 80 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      // A wrong encoding tag, or characters Node's base64 decoder would silently drop.
+      await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: ['AAAA', 'base58'], space: 200 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run({ pre: { [nonceAcct]: { lamports: 1, owner: SYSTEM_PROGRAM, data: ['not base64!', 'base64'], space: 80 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: ['%%%', 'base64'], space: 200 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      // Exactly [data, encoding], as the RPC returns it.
+      await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: ['AAAA', 'base64', 'x'], space: 200 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
     });
   });
 });

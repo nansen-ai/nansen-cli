@@ -57,11 +57,15 @@ const MAX_ACCOUNTS_PER_CALL = 100;
  *                             of the wallet's own accounts to someone else (new
  *                             owner, delegate or close authority, or the wallet
  *                             reassigned to another program or given data),
- *                             whatever the balances say, or a token Approve or
+ *                             whatever the balances say; a changed authority,
+ *                             close or withdrawal on a stake or nonce account
+ *                             the wallet controls; or a token Approve or
  *                             SetAuthority the wallet signs from inside another
  *                             program (CPI), which the post-state can hide, or
  *                             a CPI that hands the wallet a token account whose
- *                             post-state wasn't checked
+ *                             post-state wasn't checked; or a CPI'd Stake
+ *                             program instruction, or System nonce authorize or
+ *                             withdraw, the wallet signs
  *   SIM_INNER_INSTRUCTIONS_UNAVAILABLE - the sim ran but the RPC returned no
  *                             readable inner instructions, so the CPI check
  *                             above can't run
@@ -345,6 +349,121 @@ function assertTokenAccountControl(pubkey, pre, post, walletAddress) {
   }
 }
 
+const STAKE_PROGRAM = 'Stake11111111111111111111111111111111111111';
+
+/**
+ * Which kind of wallet-controlled authority account a jsonParsed pre-state is:
+ * 'stake' (the wallet is its staker, withdrawer or lockup custodian), 'nonce'
+ * (an initialized nonce account the wallet is the authority of), or null.
+ * Throws when an initialized one has unreadable authorities.
+ * Shapes captured from mainnet getAccountInfo and simulateTransaction.
+ */
+function walletAuthorityAccountKind(pubkey, info, walletAddress) {
+  // Raw (base64) data is left to rawWalletAuthorityAccount.
+  if ((info?.owner !== STAKE_PROGRAM && info?.owner !== SYSTEM_PROGRAM) || Array.isArray(info.data)) return null;
+  const unreadable = () => new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unreadable stake or nonce account (${pubkey}); cannot verify who controls it.`);
+  // No data at all can't be shown not to be the wallet's.
+  if (!info.data) throw unreadable();
+  const parsed = info.data.parsed;
+  // Allow-list the shapes that carry no authority; any other one must have
+  // readable authorities, since it can't be shown not to be the wallet's.
+  if (info.owner === STAKE_PROGRAM) {
+    if (parsed?.type === 'uninitialized' || parsed?.type === 'rewardsPool') return null;
+    const fields = authorityFields('stake', info);
+    if (!fields) throw unreadable();
+    return fields.staker === walletAddress || fields.withdrawer === walletAddress || fields['lockup custodian'] === walletAddress ? 'stake' : null;
+  }
+  // Under jsonParsed the node parses a System-owned account only as a nonce
+  // account (authorityFields checks the program too).
+  if (parsed?.type === 'uninitialized') return null;
+  const fields = parsed?.type === 'initialized' ? authorityFields('nonce', info) : null;
+  if (!fields) throw unreadable();
+  return fields.authority === walletAddress ? 'nonce' : null;
+}
+
+/**
+ * Whether a stake or nonce account the node returned unparsed (base64) holds the
+ * wallet's key in an authority field. Stake layout: state u32, rent-exempt
+ * reserve u64, staker 12..44, withdrawer 44..76, lockup timestamp and epoch,
+ * custodian 92..124. Nonce layout: version u32, state u32, authority 8..40.
+ */
+function rawWalletAuthorityAccount(info, walletBytes) {
+  // Only these two owners' accounts are decoded: other writable accounts (pools,
+  // markets) can be large.
+  if ((info?.owner !== STAKE_PROGRAM && info?.owner !== SYSTEM_PROGRAM) || !Array.isArray(info.data)) return false;
+  // Canonical base64 only: Node's decoder silently drops invalid characters.
+  if (info.data.length !== 2 || info.data[1] !== 'base64' || typeof info.data[0] !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(info.data[0])) {
+    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned an unreadable stake or nonce account; cannot verify who controls it.');
+  }
+  const bytes = Buffer.from(info.data[0], 'base64');
+  const at = (start) => bytes.subarray(start, start + 32).equals(walletBytes);
+  if (info.owner === STAKE_PROGRAM) {
+    // Too short to hold the custodian: its authorities can't be read.
+    if (bytes.length < 124) throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned an unreadable stake or nonce account; cannot verify who controls it.');
+    return at(12) || at(44) || at(92);
+  }
+  return info.owner === SYSTEM_PROGRAM && bytes.length === 80 && at(8);
+}
+
+function lamportsOf(info, label) {
+  const { lamports } = info;
+  if ((typeof lamports === 'number' && Number.isSafeInteger(lamports) && lamports >= 0) || (typeof lamports === 'string' && /^\d+$/.test(lamports))) {
+    return BigInt(lamports);
+  }
+  throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Could not parse the lamport balance of your ${label}; cannot verify the outcome.`);
+}
+
+/**
+ * The authority fields of a parsed stake or nonce account, as strings, or null
+ * when the post-state isn't a readable account of that kind.
+ */
+function authorityFields(kind, info) {
+  const parsed = info?.data?.parsed;
+  if (kind === 'stake') {
+    if (info.owner !== STAKE_PROGRAM) return null;
+    const meta = parsed?.info?.meta;
+    const { staker, withdrawer } = meta?.authorized || {};
+    const { custodian, epoch, unixTimestamp } = meta?.lockup || {};
+    // u64/i64 values: a number above 2^53 was already rounded by JSON.parse.
+    const exact = (v) => (typeof v === 'number' && Number.isSafeInteger(v)) || (typeof v === 'string' && /^-?\d+$/.test(v));
+    if (![staker, withdrawer, custodian].every(isPubkey) || !exact(epoch) || !exact(unixTimestamp)) return null;
+    return { staker, withdrawer, 'lockup custodian': custodian, 'lockup epoch': String(epoch), 'lockup end time': String(unixTimestamp) };
+  }
+  if (info.owner !== SYSTEM_PROGRAM || info.data?.program !== 'nonce' || !isPubkey(parsed?.info?.authority)) return null;
+  return { authority: parsed.info.authority };
+}
+
+/**
+ * A stake or nonce account the wallet controls holds SOL that balance deltas
+ * don't count. A wallet-signed Authorize, SetLockup or AuthorizeNonceAccount
+ * hands it to someone else without moving a lamport, and a wallet-signed
+ * Withdraw moves its lamports out (to an attacker, or to the wallet, where it
+ * would count as swap output). No swap needs either, so refuse any authority
+ * change, a close, or a lamport decrease. Lamports coming in and a nonce
+ * advancing are fine.
+ */
+function assertWalletAuthorityAccountUnchanged(pubkey, kind, pre, post) {
+  const label = `${kind} account ${pubkey}`;
+  if (isClosedAccount(post)) {
+    throw controlChanged(`closes your ${label} and withdraws its SOL.`);
+  }
+  const before = authorityFields(kind, pre);
+  const after = authorityFields(kind, post);
+  if (!before || !after) {
+    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unreadable post-state for your ${label}; cannot verify who controls it.`);
+  }
+  for (const [field, value] of Object.entries(before)) {
+    if (after[field] !== value) {
+      throw controlChanged(`changes the ${field} of your ${label} from ${value} to ${after[field]}.`);
+    }
+  }
+  const preLamports = lamportsOf(pre, label);
+  const postLamports = lamportsOf(post, label);
+  if (postLamports < preLamports) {
+    throw controlChanged(`withdraws ${preLamports - postLamports} lamports from your ${label}.`);
+  }
+}
+
 // SPL Token instruction discriminators (the same in either token program).
 const SPL_APPROVE = 4;
 const SPL_SET_AUTHORITY = 6;
@@ -429,6 +548,85 @@ function classifyInnerTokenInstruction(ix) {
   };
 }
 
+// parsed.info keys that name a new authority or a recipient, not a signer: a
+// stake-pool withdrawal legitimately names the wallet there.
+const STAKE_NON_SIGNER_KEYS = new Set(['newAuthority', 'newAuthorized', 'destination']);
+// Same idea for parsed System nonce instructions.
+const NONCE_NON_SIGNER_KEYS = new Set(['newAuthorized', 'destination']);
+// The RPC's parsed System nonce types (agave transaction-status parse_system.rs).
+const PARSED_NONCE_TYPES = new Set(['advanceNonce', 'withdrawFromNonce', 'initializeNonce', 'authorizeNonce', 'upgradeNonce']);
+const SYSTEM_WITHDRAW_NONCE = 5;
+const SYSTEM_AUTHORIZE_NONCE = 7;
+
+/**
+ * Throw when an inner instruction runs a Stake program instruction, or a
+ * System nonce authorize/withdraw, with the wallet's signature: the same rule
+ * the static check applies at top level. A CPI can change and restore the
+ * account inside one transaction, so the post-state alone can't show it.
+ * Parsed Stake instructions are refused when the wallet is any top-level
+ * `info` value other than a new authority or a recipient (deny by default, so
+ * types not captured here are covered); raw ones when the wallet is anywhere
+ * in `accounts`. `ix.programId` was already validated by the token classifier.
+ *
+ * Both programs accept the authority's signature from any account of the
+ * instruction, not only the one a parsed instruction names, so a CPI can list
+ * someone else there and pass the wallet as an extra account. Any instruction
+ * on a stake or nonce account the wallet controls before the transaction
+ * (`walletAuthorityAccounts`) is refused for that reason, except a nonce advance.
+ */
+function assertInnerStakeNonceInstructionSafe(ix, walletAddress, walletAuthorityAccounts) {
+  const unreadable = (program) => new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unreadable ${program} program inner instruction; cannot verify the outcome.`);
+  const onStake = (type, account) => controlChanged(`runs a Stake program instruction${type ? ` (${type})` : ''} on your stake account ${account} from inside another program.`);
+  const onNonce = (account) => controlChanged(`changes or withdraws from your nonce account ${account} from inside another program.`);
+  if (ix.programId === STAKE_PROGRAM) {
+    if (ix.parsed !== undefined) {
+      const info = ix.parsed?.info;
+      if (!info || typeof info !== 'object') throw unreadable('Stake');
+      const ownStake = Object.values(info).find((v) => typeof v === 'string' && walletAuthorityAccounts.stake.has(v));
+      if (ownStake) throw onStake(ix.parsed.type, ownStake);
+      if (Object.entries(info).some(([k, v]) => !STAKE_NON_SIGNER_KEYS.has(k) && v === walletAddress)) {
+        throw controlChanged(`runs a Stake program instruction (${ix.parsed.type}) with your wallet's signature, from inside another program.`);
+      }
+    } else if (!Array.isArray(ix.accounts)) {
+      throw unreadable('Stake');
+    } else if (ix.accounts.some((a) => walletAuthorityAccounts.stake.has(a))) {
+      throw onStake(null, ix.accounts.find((a) => walletAuthorityAccounts.stake.has(a)));
+    } else if (ix.accounts.includes(walletAddress)) {
+      throw controlChanged('runs a Stake program instruction with your wallet\'s signature, from inside another program.');
+    }
+  } else if (ix.programId === SYSTEM_PROGRAM) {
+    if (ix.parsed !== undefined) {
+      const info = ix.parsed?.info;
+      if (!info || typeof info !== 'object') throw unreadable('System');
+      // Every parsed nonce type names its nonce account; an unknown one can't be classified.
+      if (typeof ix.parsed.type !== 'string' || !/nonce/i.test(ix.parsed.type)) return;
+      if (!isPubkey(info.nonceAccount) || !PARSED_NONCE_TYPES.has(ix.parsed.type)) throw unreadable('System');
+      if (walletAuthorityAccounts.nonce.has(info.nonceAccount) && ix.parsed.type !== 'advanceNonce') {
+        throw onNonce(info.nonceAccount);
+      }
+      // Deny by default: don't depend on the parser's name for the signer.
+      if (ix.parsed.type !== 'advanceNonce'
+        && Object.entries(info).some(([k, v]) => !NONCE_NON_SIGNER_KEYS.has(k) && v === walletAddress)) {
+        throw controlChanged(`changes or withdraws from nonce account ${info.nonceAccount} with your wallet's signature, from inside another program.`);
+      }
+      return;
+    }
+    if (!Array.isArray(ix.accounts)) throw unreadable('System');
+    let data;
+    try {
+      data = base58Decode(ix.data);
+    } catch {
+      throw unreadable('System');
+    }
+    const discriminator = data.length >= 4 ? data.readUInt32LE(0) : null;
+    const nonceOp = discriminator === SYSTEM_WITHDRAW_NONCE || discriminator === SYSTEM_AUTHORIZE_NONCE;
+    if (nonceOp && walletAuthorityAccounts.nonce.has(ix.accounts[0])) throw onNonce(ix.accounts[0]);
+    if (nonceOp && ix.accounts.includes(walletAddress)) {
+      throw controlChanged(`changes or withdraws from nonce account ${ix.accounts[0]} with your wallet's signature, from inside another program.`);
+    }
+  }
+}
+
 /**
  * The static instruction check (assertSolanaInstructionsSafe in
  * trade-validation.js) only sees top-level instructions, and the post-state
@@ -436,7 +634,8 @@ function classifyInnerTokenInstruction(ix) {
  * then hides again (approve, then close the account; or close it and re-create
  * it at the same address). A CPI runs with the wallet's signature, so apply the
  * top-level rule to every inner instruction: refuse an Approve or SetAuthority
- * the wallet authorizes, whatever account it targets.
+ * the wallet authorizes, whatever account it targets, and a Stake or nonce
+ * instruction the wallet signs (assertInnerStakeNonceInstructionSafe).
  *
  * A SetAuthority that someone else signs to hand a token account to the wallet
  * is refused when that account's post-state isn't checked (`trackedKeys`):
@@ -449,14 +648,17 @@ function classifyInnerTokenInstruction(ix) {
  * temporary account it opened for the wallet and pay the SOL on. Where that
  * rent goes is bounded by the native-SOL output check instead.
  */
-function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKeys) {
+function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKeys, walletAuthorityAccounts) {
   for (const group of innerGroups) {
     if (!Array.isArray(group?.instructions)) {
       throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned malformed inner instructions; cannot verify the outcome.');
     }
     for (const ix of group.instructions) {
       const op = classifyInnerTokenInstruction(ix);
-      if (!op) continue;
+      if (!op) {
+        assertInnerStakeNonceInstructionSafe(ix, walletAddress, walletAuthorityAccounts);
+        continue;
+      }
       if (op.authorities.includes(walletAddress)) {
         if (op.kind === 'approve') {
           throw controlChanged(`approves a delegate on token account ${op.account} with your wallet's signature, from inside another program.`);
@@ -579,6 +781,16 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
     if (!fields && rawTokenAccountOwner(info)?.equals(walletBytes)) {
       throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned an unparsed SPL token account of your wallet; cannot verify the outcome.');
     }
+    // Checked before the System-owned candidate branch: a nonce account is
+    // System-owned.
+    const authorityKind = walletAuthorityAccountKind(pubkey, info, walletAddress);
+    if (authorityKind) {
+      tracked.push({ pubkey, preInfo: info, classified: true, kind: authorityKind });
+      return;
+    }
+    if (rawWalletAuthorityAccount(info, walletBytes)) {
+      throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unparsed stake or nonce account your wallet controls (${pubkey}); cannot verify the outcome.`);
+    }
     if (info.owner === SYSTEM_PROGRAM) {
       tracked.push({ pubkey, preInfo: null, classified: false, credit: true });
     } else if (accountDataLength(info) <= MAX_CANDIDATE_ACCOUNT_BYTES) {
@@ -654,7 +866,11 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
   const innerGroups = simResult.value.innerInstructions;
   const innerInstructionsChecked = innerInstructionsReadable(innerGroups);
   if (innerInstructionsChecked) {
-    assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKeys);
+    const walletAuthorityAccounts = {
+      stake: new Set(tracked.filter((t) => t.kind === 'stake').map((t) => t.pubkey)),
+      nonce: new Set(tracked.filter((t) => t.kind === 'nonce').map((t) => t.pubkey)),
+    };
+    assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKeys, walletAuthorityAccounts);
   } else if (!allowMissingInnerInstructions) {
     throw new SolanaSimulationError(
       'SIM_INNER_INSTRUCTIONS_UNAVAILABLE',
@@ -666,6 +882,10 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
   tracked.forEach((t, i) => {
     const postInfo = postAccountInfos[i];
     let { kind, mint } = t;
+    if (kind === 'stake' || kind === 'nonce') {
+      assertWalletAuthorityAccountUnchanged(t.pubkey, kind, t.preInfo, postInfo);
+      return;
+    }
     if (!t.classified) {
       // Newly-created account: classify from its post-simulation state and
       // count it only if the tx created it as one of the wallet's own accounts
