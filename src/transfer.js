@@ -195,7 +195,10 @@ function describeRpcError(error, method, context) {
   if (isEvm && lower.includes('insufficient funds')) {
     return `Insufficient native balance to cover gas and value for this transaction. Top up the wallet with the chain's native gas token (ETH on most EVM chains). RPC said: ${msg}`;
   }
-  if (lower.includes('no record of a prior credit') || lower.includes('accountnotfound')) {
+  // An unfunded fee payer. Current Solana RPCs send only "Transaction
+  // simulation failed" as the message and put the reason in data.err.
+  if (lower.includes('no record of a prior credit') || lower.includes('accountnotfound')
+    || error?.data?.err === 'AccountNotFound') {
     return 'Insufficient SOL for transaction fees. Send at least 0.01 SOL to your wallet.';
   }
   // Solana names the account short of rent by its index in the transaction.
