@@ -472,7 +472,7 @@ nansen research token screener --chain solana --cache --no-cache   # veto: alway
 that cannot change the command line.
 
 With `--cache` on, every read the CLI makes through the Nansen API client is
-cached — all of `nansen research ...`, plus `alerts list` and `alerts get`.
+cached — all of `nansen research ...`, plus `alerts list`.
 Never cached: `account`, `web search`, the `alerts`
 create/update/toggle/delete commands, `agent`, every `trade`, `bridge`, `wallet`
 and `mcp` command, and `perp` trading. The analytics commands `perp screener`

@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 
 let NansenAPI;
+let buildAlertsCommands;
 let originalHome;
 let tempHome;
 
@@ -14,6 +15,7 @@ describe('Smart Alert mutation cache isolation', () => {
     process.env.HOME = tempHome;
     vi.resetModules();
     ({ NansenAPI } = await import('../api.js'));
+    ({ buildAlertsCommands } = await import('../commands/alerts.js'));
   });
 
   afterEach(() => {
@@ -46,5 +48,35 @@ describe('Smart Alert mutation cache isolation', () => {
     await api[method](...args);
 
     expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  // alerts update merges its flags into the alert it reads and PATCHes the
+  // result. Reading that alert from a cached alerts list would send stale
+  // filters back to the server and undo any change made since it was cached.
+  it('alerts update merges into the live alert, not a cached alerts list', async () => {
+    let inflowMin = 1000;
+    const mockFetch = vi.fn(async (_url, init) => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => (init.method === 'PATCH'
+        ? { success: true }
+        : [{ id: 'cache-get', type: 'sm-token-flows', data: { chains: ['ethereum'], inflow_1h: { min: inflowMin } } }]),
+    }));
+    vi.stubGlobal('fetch', mockFetch);
+
+    const api = new NansenAPI('test-api-key', 'https://api.nansen.ai', {
+      cache: { enabled: true, ttl: 300 },
+    });
+    await api.alertsList();
+    inflowMin = 5000; // changed on the server after the list was cached
+    await buildAlertsCommands().alerts(['update', 'cache-get'], api, {}, { 'outflow-1h-min': '200' });
+
+    const [, patch] = mockFetch.mock.calls.find(([, init]) => init.method === 'PATCH');
+    expect(JSON.parse(patch.body).data).toEqual({
+      chains: ['ethereum'],
+      inflow_1h: { min: 5000 },
+      outflow_1h: { min: 200 },
+    });
   });
 });

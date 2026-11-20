@@ -742,6 +742,8 @@ describe('documented cache surface stays in sync with the code', () => {
       webSearch: 'web search',
       alertsCreate: 'alerts create',
       alertsUpdate: 'alerts update',
+      // The read alerts update merges into before it PATCHes.
+      alertsGet: 'alerts update',
       alertsToggle: 'alerts toggle',
       alertsDelete: 'alerts delete',
     };
