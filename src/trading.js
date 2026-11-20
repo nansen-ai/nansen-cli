@@ -1906,8 +1906,10 @@ export async function verifySwapOutcome({ chain, from, quote, quoteData, api, lo
  * persisted request intent, degrading (warn + proceed) on any RPC/sim outage
  * so an outage never blocks a trade — only a real outcome mismatch, an
  * in-simulation revert, a change of control over a wallet account
- * (SIM_ACCOUNT_CONTROL_CHANGED) or an unreadable result blocks (falls through
- * to the next quote). Only NO_SIM_RPC and SIM_RPC_ERROR degrade.
+ * (SIM_ACCOUNT_CONTROL_CHANGED, including a token Approve or SetAuthority the
+ * wallet signs from inside another program), an unreadable result, or an RPC
+ * that returns no inner instructions (SIM_INNER_INSTRUCTIONS_UNAVAILABLE)
+ * blocks (falls through to the next quote). Only NO_SIM_RPC and SIM_RPC_ERROR degrade.
  */
 export async function verifySolanaSwapOutcome({ chain, walletAddress, txBase64, quote, quoteData, log = () => {} }) {
   if (chain !== 'solana') return { proceed: true };

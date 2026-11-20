@@ -88,7 +88,8 @@ const DEFAULT_BASE_SIM_RPC = 'https://api.nansen.ai/api/v1/trade/simulate-swap';
 // (warns and proceeds) rather than blocking a trade. A custom endpoint must also
 // return `innerInstructions`: without them the check refuses to sign
 // (SIM_INNER_INSTRUCTIONS_UNAVAILABLE), since it can't see what the transaction
-// does from inside other programs.
+// does from inside other programs. This includes NANSEN_SOLANA_RPC, which is
+// used here when NANSEN_SOLANA_SIM_RPC isn't set.
 export const SIMULATION_RPCS = {
   base: process.env.NANSEN_BASE_SIM_RPC || DEFAULT_BASE_SIM_RPC,
   solana: process.env.NANSEN_SOLANA_SIM_RPC || CHAIN_RPCS.solana,

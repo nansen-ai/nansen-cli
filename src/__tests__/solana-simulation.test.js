@@ -1006,8 +1006,9 @@ describe('solana-simulation', () => {
     describe('token accounts someone else hands to the wallet', () => {
       // A program account larger than the candidate cap isn't tracked, so its
       // post-state isn't checked. It can be zeroed, shrunk, reassigned to a
-      // token program, initialized to the attacker, given a delegate, and then
-      // handed to the wallet with SetAuthority(AccountOwner) in one tx.
+      // token program, initialized to the attacker, given the attacker as close
+      // authority, and then handed to the wallet with SetAuthority(AccountOwner)
+      // in one tx. (The owner change clears a delegate, not a close authority.)
       const bigAccount = () => ({ lamports: 50_000_000, owner: generateSolanaWallet().address, data: [Buffer.alloc(4096).toString('base64'), 'base64'], executable: false, rentEpoch: 0, space: 4096 });
       const ownerHandOff = (account, newOwner, authorityType = 2) => ({
         programId: TOKEN_PROGRAM,
@@ -1039,7 +1040,7 @@ describe('solana-simulation', () => {
 
       it('refuses a CPI SetAuthority(AccountOwner) to the wallet on an account whose end state is not checked, parsed or raw', async () => {
         const acct = generateSolanaWallet().address;
-        const postAcct = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: attacker, delegatedAmount: { amount: '1', decimals: 6 } });
+        const postAcct = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, closeAuthority: attacker });
         await expect(runWith({ acct, preAcct: bigAccount(), postAcct, innerIxs: [ownerHandOff(acct, wallet)] }))
           .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`hands token account ${acct} to your wallet`) });
         await expect(runWith({ acct, preAcct: bigAccount(), postAcct, innerIxs: [parsedIx('setAuthority', { account: acct, authority: router, authorityType: 'accountOwner', newAuthority: wallet })] }))
@@ -1097,7 +1098,7 @@ describe('solana-simulation', () => {
           [wallet]: nativeAccountInfo(999_995_000),
           [ataIn]: tokenAccountInfo({ mint: mintIn, owner: wallet, amount: 0 }),
           [ataOut]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 1_000_000 }),
-          [acct]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, delegate: attacker, delegatedAmount: { amount: '1', decimals: 6 } }),
+          [acct]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, closeAuthority: attacker }),
         };
         let requested;
         vi.stubGlobal('fetch', mockSolanaRpc({
@@ -1114,7 +1115,7 @@ describe('solana-simulation', () => {
       it('checks the end state of an account a top-level SetAuthority hands to the wallet, whatever its size', async () => {
         for (const viaAlt of [false, true]) {
           const t = runTopLevel({ viaAlt });
-          await expect(t.promise).rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`approves ${attacker}`) });
+          await expect(t.promise).rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`sets ${attacker} as the close authority`) });
           expect(t.requested()).toContain(t.acct);
         }
       });

@@ -440,8 +440,8 @@ function classifyInnerTokenInstruction(ix) {
  *
  * A SetAuthority that someone else signs to hand a token account to the wallet
  * is refused when that account's post-state isn't checked (`trackedKeys`):
- * the account could come with that party's delegate or close authority still
- * in place. Accounts larger than MAX_CANDIDATE_ACCOUNT_BYTES before the
+ * the token program clears the delegate on an owner change, but the previous
+ * owner's close authority stays in place. Accounts larger than MAX_CANDIDATE_ACCOUNT_BYTES before the
  * transaction aren't tracked, and the end state alone can't show this. A
  * tracked account goes through assertTokenAccountControl instead.
  *
@@ -464,7 +464,7 @@ function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKey
         throw controlChanged(`changes an authority of ${op.account} with your wallet's signature, from inside another program.`);
       }
       if (op.newOwner === walletAddress && !trackedKeys.has(op.account)) {
-        throw controlChanged(`hands token account ${op.account} to your wallet from inside another program, and its end state was not checked for a delegate or close authority left in place.`);
+        throw controlChanged(`hands token account ${op.account} to your wallet from inside another program, and its end state was not checked for a close authority left in place.`);
       }
     }
   }
@@ -548,8 +548,8 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
   // candidate for the control check only: a tx can hand the wallet an existing
   // token account (SetAuthority on the account owner), initialize an
   // uninitialized one, or reassign another program's account to a token
-  // program, each with an attacker's delegate or close authority already in
-  // place. Its balance isn't counted as output (`credit: false`), since it
+  // program. A hand-off keeps the previous owner's close authority (the token
+  // program clears only the delegate). Its balance isn't counted as output (`credit: false`), since it
   // wasn't created for this swap.
   const tracked = []; // { pubkey, preInfo, classified, credit?, kind?, mint? }
   let sawWalletAccount = false;
