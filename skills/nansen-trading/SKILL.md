@@ -58,6 +58,8 @@ Symbols resolve automatically: `SOL`, `ETH`, `POL`, `USDC`, `USDT`, `WETH`, `WPO
 
 Robinhood Chain trades are refused from some regions; the error comes from the trading service.
 
+On arbitrum, polygon and robinhood, `trade execute` can't send a token approval yet. Selling the native token works, and so does selling a token the wallet has already approved for the swap's router. A sell that needs an approval, or a revoke of an oversized allowance first, is refused before anything is signed (`ALL_QUOTES_FAILED`); `--no-revoke-excessive-allowance` lets an oversized allowance be used instead.
+
 
 - USDC (Solana): `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`
 - USDC (Base): `0x833589fcd6edb6e08f4c7c32d4f71b54bda02913`

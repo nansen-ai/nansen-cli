@@ -21,6 +21,7 @@ const REQUIRED = {
   extraSymbols: (v) => v && typeof v === 'object',
   minGas: (v) => typeof v === 'number' && v > 0,
   feeBuffer: (v) => typeof v === 'number' && v > 0,
+  standaloneApprovals: (v) => typeof v === 'boolean',
 };
 
 describe('trade-chain registry', () => {

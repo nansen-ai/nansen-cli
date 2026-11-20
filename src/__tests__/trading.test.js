@@ -32,6 +32,7 @@ import {
   SOLANA_CONFIRM_TIMEOUT_MS,
   buildApprovalTransaction,
   requiresZeroFirstApproval,
+  unsupportedApprovalMessage,
   withLegacyGasPriceHeadroom,
   approvalAmountForSwap,
   approvalCapForQuote,
@@ -6021,6 +6022,54 @@ describe('ERC-20 excessive allowance handling', () => {
         const fields = RLP.decode(Uint8Array.from(Buffer.from(body.signedTransaction.slice(2), 'hex')));
         expect(BigInt('0x' + Buffer.from(fields[1]).toString('hex'))).toBe(6250000n);
       }
+    });
+
+    describe('chains where the trading service sends no standalone approvals (arbitrum)', () => {
+      const ARB_USDC = '0xaf88d065e77c8cc2239327c5edb3a432268e5831';
+      async function runArbSell({ allowance, opts = {} }) {
+        createWallet('default', 'testpass');
+        process.env.NANSEN_WALLET_PASSWORD = 'testpass';
+        const walletAddress = showWallet('default').evm;
+        const quoteId = saveEthUsdtQuote(walletAddress, { chain: 'arbitrum', token: ARB_USDC });
+        const { executeBodies } = mockLocalEvmExecute({
+          allowance,
+          executeResponses: [{ status: 'Success', txHash: '0xAny', chainType: 'evm', broadcaster: 'test' }],
+        });
+        const logs = [];
+        const cmds = buildTradingCommands({ log: (m) => logs.push(m), exit: () => {} });
+        const error = await cmds.execute([], screenApi, { 'no-simulate': true, 'no-verify-outcome': true, ...opts }, { quote: quoteId })
+          .then(() => null, (err) => err);
+        return { executeBodies, logs, error };
+      }
+
+      it('refuses a sell that needs an approval, signing and broadcasting nothing', async () => {
+        const { executeBodies, error } = await runArbSell({ allowance: 0n });
+        expect(executeBodies).toHaveLength(0);
+        expect(error?.code).toBe('ALL_QUOTES_FAILED');
+        expect(error.message).toContain("approvals on Arbitrum aren't supported yet");
+      });
+
+      it('refuses a sell that would revoke an oversized allowance, and names the opt-out', async () => {
+        const { executeBodies, error } = await runArbSell({ allowance: 10n ** 30n });
+        expect(executeBodies).toHaveLength(0);
+        expect(error.message).toContain('--no-revoke-excessive-allowance');
+      });
+
+      it.each([
+        ['a sufficient allowance', 200000n, {}],
+        ['an oversized allowance with --no-revoke-excessive-allowance', 10n ** 30n, { 'no-revoke-excessive-allowance': true }],
+      ])('swaps with %s (no approval needed)', async (_label, allowance, opts) => {
+        const { executeBodies, error } = await runArbSell({ allowance, opts });
+        expect(error).toBeNull();
+        expect(executeBodies).toHaveLength(1);
+        expect(executeBodies[0].signedTransaction).not.toContain(approveSelector);
+      });
+
+      it('unsupportedApprovalMessage follows the registry', () => {
+        for (const name of ['base', 'ethereum']) expect(unsupportedApprovalMessage(name, 'q', null)).toBeNull();
+        for (const name of ['arbitrum', 'polygon', 'robinhood']) expect(unsupportedApprovalMessage(name, 'q', null)).toMatch(/aren't supported yet/);
+        expect(unsupportedApprovalMessage('polygon', 'q', null)).toContain('(POL)');
+      });
     });
 
     it('zero-first: a partial allowance on an ordinary token is re-approved directly (no revoke)', async () => {

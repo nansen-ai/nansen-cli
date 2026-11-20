@@ -2249,6 +2249,22 @@ function allowanceRevokeMessage(revokeReason, existingAllowance, quoteName) {
   return `  ⚠ Existing allowance (${existingAllowance}) for ${quoteName} is excessive (>${OVERSIZED_ALLOWANCE_MULTIPLIER}x this trade) — revoking before re-approving`;
 }
 
+/**
+ * Why an approval (and any revoke before it) can't be sent on this chain, or
+ * null when it can. The trading service broadcasts an approval or revoke sent
+ * on its own only on chains with `standaloneApprovals` (see trade-chains.js).
+ * Broadcasting it from the CLI's own RPC instead would skip the service's
+ * sanctions screening, so the sell is refused before anything is signed.
+ */
+export function unsupportedApprovalMessage(chain, quoteName, revokeReason) {
+  const config = tradeChain(chain);
+  if (!config || config.standaloneApprovals) return null;
+  if (revokeReason === 'excessive') {
+    return `${quoteName} would first revoke this wallet's oversized allowance, and approvals and revokes on ${config.name} aren't supported yet. Pass --no-revoke-excessive-allowance to use the existing allowance.`;
+  }
+  return `${quoteName} needs a token approval, and approvals on ${config.name} aren't supported yet. Sell the native token (${config.nativeSymbol}) or a token already approved for this swap.`;
+}
+
 export function assertCompleteEvmRequestIntent(request) {
   if (!request) {
     throw new Error('Quote is missing request intent. Re-quote with this CLI version before executing an EVM swap. Refusing to sign.');
@@ -4191,6 +4207,13 @@ EXAMPLES:
                   }
                   log(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
                 } else {
+                  const approvalBlocked = unsupportedApprovalMessage(chain, quoteName, revokeReason);
+                  if (approvalBlocked) {
+                    log(`  ❌ ${approvalBlocked}`);
+                    lastQuoteError = approvalBlocked;
+                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                    continue;
+                  }
                   const { maxFeePerGas: approvalMaxFee, maxPriorityFeePerGas: approvalPriorityFee } =
                     resolveQuoteEip1559Fees(currentQuote.transaction);
                   // One check covers the revoke and the approval (same fee, same
@@ -4586,6 +4609,13 @@ EXAMPLES:
                   }
                   log(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
                 } else {
+                  const approvalBlocked = unsupportedApprovalMessage(chain, quoteName, revokeReason);
+                  if (approvalBlocked) {
+                    log(`  ❌ ${approvalBlocked}`);
+                    lastQuoteError = approvalBlocked;
+                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                    continue;
+                  }
                   if (shouldRevoke) {
                     log(allowanceRevokeMessage(revokeReason, existingAllowance, quoteName));
                     log(`  Sending allowance revocation via WalletConnect (you'll be asked to approve this separately)...`);
@@ -4990,6 +5020,13 @@ EXAMPLES:
                   }
                   log(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
                 } else {
+                  const approvalBlocked = unsupportedApprovalMessage(chain, quoteName, revokeReason);
+                  if (approvalBlocked) {
+                    log(`  ❌ ${approvalBlocked}`);
+                    lastQuoteError = approvalBlocked;
+                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                    continue;
+                  }
                   const approvalGasPrice = resolveQuoteLegacyGasPrice(currentQuote.transaction);
 
                   if (shouldRevoke) {

@@ -32,6 +32,11 @@ const EVM_NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
  * @property {Record<string, string>} extraSymbols  Other symbols `--from`/`--to` accept
  * @property {number} minGas        Native balance (token units) needed to quote
  * @property {number} feeBuffer     Native amount held back when selling the max
+ * @property {boolean} standaloneApprovals Whether the trading service broadcasts
+ *   an ERC-20 approval or revoke sent on its own. It does so only on the legacy
+ *   /execute route, whose chain list is shorter than the quote chains; the
+ *   standard route takes swaps only. Where false, a sell that needs an approval
+ *   or revoke is refused before anything is signed.
  * @property {boolean} [destinationOnly] Accepted as --to-chain and in
  *   bridge-status only. Nothing is signed on it, so it needs no sim-capable RPC.
  */
@@ -62,6 +67,7 @@ export const TRADE_CHAINS = {
     // trade-validation.js for why this is not sized off the priority-fee ceiling.
     minGas: 0.005,
     feeBuffer: 0.005,
+    standaloneApprovals: true,
   },
   base: {
     type: 'evm',
@@ -84,6 +90,7 @@ export const TRADE_CHAINS = {
     },
     minGas: 0.000024,
     feeBuffer: 0.00004,
+    standaloneApprovals: true,
   },
   // Same-chain swaps here route through LI.FI (legacy gasPrice transactions).
   // Gas floors: mainnet fees swing by two orders of magnitude, so the floor is a
@@ -107,6 +114,7 @@ export const TRADE_CHAINS = {
     extraSymbols: {},
     minGas: 0.0005,
     feeBuffer: 0.001,
+    standaloneApprovals: true,
   },
   arbitrum: {
     type: 'evm',
@@ -126,6 +134,7 @@ export const TRADE_CHAINS = {
     extraSymbols: {},
     minGas: 0.00003,
     feeBuffer: 0.00005,
+    standaloneApprovals: false,
   },
   polygon: {
     type: 'evm',
@@ -146,6 +155,7 @@ export const TRADE_CHAINS = {
     extraSymbols: { MATIC: EVM_NATIVE },
     minGas: 0.2,
     feeBuffer: 0.5,
+    standaloneApprovals: false,
   },
   // Robinhood Chain (Arbitrum Orbit). The trading service refuses it by the
   // caller's region; that refusal surfaces as the service's own error.
@@ -167,6 +177,7 @@ export const TRADE_CHAINS = {
     extraSymbols: {},
     minGas: 0.00003,
     feeBuffer: 0.00005,
+    standaloneApprovals: false,
   },
   // HyperEVM: a bridge destination only. Same-chain swaps get no quotes from the
   // trading service, and no public HyperEVM RPC serves eth_simulateV1, so a
@@ -190,6 +201,7 @@ export const TRADE_CHAINS = {
     // Unused while destinationOnly (no balance or gas check runs on a destination).
     minGas: 0.001,
     feeBuffer: 0.001,
+    standaloneApprovals: false,
     destinationOnly: true,
   },
 };
