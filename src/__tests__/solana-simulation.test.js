@@ -1121,6 +1121,83 @@ describe('solana-simulation', () => {
       });
     });
 
+    describe('Stake and System nonce instructions the wallet signs', () => {
+      // Shapes captured from mainnet simulateTransaction / getTransaction (jsonParsed).
+      const STAKE_PROGRAM = 'Stake11111111111111111111111111111111111111';
+      const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+      const CLOCK = 'SysvarC1ock11111111111111111111111111111111';
+      const STAKE_HISTORY = 'SysvarStakeHistory1111111111111111111111111';
+      const RECENT_BLOCKHASHES = 'SysvarRecentB1ockHashes11111111111111111111';
+      let stakeAcct, nonceAcct;
+      beforeEach(() => {
+        [stakeAcct, nonceAcct] = Array.from({ length: 2 }, () => generateSolanaWallet().address);
+      });
+      const stakeIx = (type, info) => ({ parsed: { info, type }, program: 'stake', programId: STAKE_PROGRAM, stackHeight: 2 });
+      const systemIx = (type, info) => ({ parsed: { info, type }, program: 'system', programId: SYSTEM_PROGRAM, stackHeight: 2 });
+      const rawData = (bytes) => base58Encode(Buffer.from(bytes));
+      const u32le = (n) => [n & 0xff, (n >> 8) & 0xff, 0, 0];
+
+      it('refuses a parsed CPI stake authorize, withdraw, merge or deactivate the wallet signs', async () => {
+        const cases = [
+          stakeIx('authorize', { authority: wallet, authorityType: 'Staker', clockSysvar: CLOCK, newAuthority: attacker, stakeAccount: stakeAcct }),
+          stakeIx('withdraw', { clockSysvar: CLOCK, destination: attacker, lamports: 35171897, stakeAccount: stakeAcct, stakeHistorySysvar: STAKE_HISTORY, withdrawAuthority: wallet }),
+          stakeIx('merge', { clockSysvar: CLOCK, destination: stakeAcct, source: generateSolanaWallet().address, stakeAuthority: wallet, stakeHistorySysvar: STAKE_HISTORY }),
+          stakeIx('deactivate', { clockSysvar: CLOCK, stakeAccount: stakeAcct, stakeAuthority: wallet }),
+        ];
+        for (const ix of cases) {
+          await expect(run(inner(ix))).rejects.toMatchObject({
+            code: 'SIM_ACCOUNT_CONTROL_CHANGED',
+            message: expect.stringContaining(`runs a Stake program instruction (${ix.parsed.type}) with your wallet's signature, from inside another program`),
+          });
+        }
+      });
+
+      it('refuses a parsed CPI stake instruction of an unknown type that names the wallet', async () => {
+        await expect(run(inner(stakeIx('setLockupChecked', { stakeAccount: stakeAcct, custodian: wallet }))))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('refuses a raw CPI Stake instruction with the wallet in its accounts', async () => {
+        await expect(run(inner({ programId: STAKE_PROGRAM, accounts: [stakeAcct, CLOCK, wallet], data: rawData([...u32le(1), ...Array(33).fill(1)]), stackHeight: 2 })))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('refuses a parsed CPI nonce authorize or withdraw the wallet signs, whatever its type name', async () => {
+        for (const type of ['authorizeNonce', 'withdrawFromNonce']) {
+          await expect(run(inner(systemIx(type, { nonceAccount: nonceAcct, nonceAuthority: wallet, newAuthorized: attacker }))))
+            .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+        }
+      });
+
+      it('refuses raw CPI System AuthorizeNonceAccount (7) and WithdrawNonceAccount (5) with the wallet in its accounts', async () => {
+        await expect(run(inner({ programId: SYSTEM_PROGRAM, accounts: [nonceAcct, wallet], data: rawData([...u32le(7), ...Array(32).fill(1)]), stackHeight: 2 })))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+        await expect(run(inner({ programId: SYSTEM_PROGRAM, accounts: [nonceAcct, attacker, RECENT_BLOCKHASHES, 'SysvarRent111111111111111111111111111111111', wallet], data: rawData([...u32le(5), 1, 0, 0, 0, 0, 0, 0, 0]), stackHeight: 2 })))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      });
+
+      it('allows stake withdrawals to the wallet, nonce advances and System transfers the wallet signs', async () => {
+        const r = await run(inner(
+          // Stake-pool withdrawal: the pool authorizes the wallet as the new staker/withdrawer.
+          stakeIx('authorize', { authority: router, authorityType: 'Withdrawer', clockSysvar: CLOCK, newAuthority: wallet, stakeAccount: stakeAcct }),
+          stakeIx('withdraw', { clockSysvar: CLOCK, destination: wallet, lamports: 35171897, stakeAccount: stakeAcct, stakeHistorySysvar: STAKE_HISTORY, withdrawAuthority: router }),
+          stakeIx('deactivate', { clockSysvar: CLOCK, stakeAccount: stakeAcct, stakeAuthority: router }),
+          { programId: STAKE_PROGRAM, accounts: [stakeAcct, CLOCK, router], data: rawData(u32le(5)), stackHeight: 2 },
+          systemIx('advanceNonce', { nonceAccount: nonceAcct, nonceAuthority: wallet, recentBlockhashesSysvar: RECENT_BLOCKHASHES }),
+          systemIx('authorizeNonce', { nonceAccount: nonceAcct, nonceAuthority: router, newAuthorized: wallet }),
+          { programId: SYSTEM_PROGRAM, accounts: [wallet, router], data: rawData([...u32le(2), 1, 0, 0, 0, 0, 0, 0, 0]), stackHeight: 2 },
+          { programId: SYSTEM_PROGRAM, accounts: [wallet], data: rawData([7]), stackHeight: 2 },
+        ));
+        expect(r.deltas[mintOut]).toBe(1_000_000n);
+      });
+
+      it('fails closed on a malformed parsed Stake inner instruction', async () => {
+        await expect(run(inner({ programId: STAKE_PROGRAM, parsed: 'withdraw', stackHeight: 2 }))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+        await expect(run(inner(stakeIx('withdraw', null)))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+        await expect(run(inner({ programId: STAKE_PROGRAM, parsed: null, stackHeight: 2 }))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      });
+    });
+
     it('fails closed on a malformed inner instruction or group', async () => {
       await expect(run({ innerInstructions: [{ index: 1 }] })).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
       await expect(run(inner({ accounts: [], data: '' }))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
