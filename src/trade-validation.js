@@ -1211,15 +1211,18 @@ export function assertSwapOutcome(request, quote, sim, { slippage, expectedSpend
   if (!inputToken || !outputToken) {
     throw fail('quote is missing the input or output token address.');
   }
-  // Fail closed on a same-token quote: assertion 3 skips the input token, so if
-  // output == input a drain of that token would slip past unverified. A real
-  // swap never sells and buys the same token (also rejected upstream).
-  if (inputToken === outputToken) {
-    throw fail(`quote input and output tokens are the same (${inputToken}); refusing to verify.`);
-  }
-
   // Bridges skip only assertion 2 (output arrival) below — see isBridgeRequest.
   const isBridge = isBridgeRequest(request);
+
+  // Fail closed on a same-token swap: assertion 3 skips the input token, so if
+  // output == input a drain of that token would slip past unverified. A real
+  // swap never sells and buys the same token (also rejected upstream). A bridge
+  // between two EVM chains can (ETH on Base to ETH on Ethereum: the same native
+  // address on each chain); its output is never read on the source chain, and
+  // assertion 1 plus the bridge outflow floor bound the input.
+  if (inputToken === outputToken && !isBridge) {
+    throw fail(`quote input and output tokens are the same (${inputToken}); refusing to verify.`);
+  }
   const inputIsNative = inputToken === EVM_NATIVE_SENTINEL;
 
   // --- Assertion 1: input outflow within the spend ceiling ---

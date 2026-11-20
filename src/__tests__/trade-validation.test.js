@@ -1823,6 +1823,34 @@ describe('assertSwapOutcome', () => {
       .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*input and output tokens are the same/i);
   });
 
+  describe('a native-to-native bridge between EVM chains (same address on each side)', () => {
+    const NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+    const req = { chain: 'base', toChain: 'ethereum', fromToken: NATIVE, toToken: NATIVE, swapMode: 'exactIn', amount: '1300000000000000', maxInputAmount: '1300000000000000' };
+    const quote = { inputMint: NATIVE, outputMint: NATIVE, inAmount: '1300000000000000', outAmount: '1270000000000000' };
+
+    it('verifies when only the bridged ETH leaves the wallet', () => {
+      const sim = { deltas: { [NATIVE]: -1300000000000000n }, approvals: [] };
+      expect(assertSwapOutcome(req, quote, sim, {})).toEqual({ verified: true, outputAssertionSkipped: true });
+    });
+
+    it('still rejects a sibling-token drain', () => {
+      const sim = { deltas: { [NATIVE]: -1300000000000000n, [USDC]: -1n }, approvals: [] };
+      expect(() => assertSwapOutcome(req, quote, sim, {}))
+        .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*other than the one you are selling/i);
+    });
+
+    it('still rejects an input outflow above the maximum', () => {
+      const sim = { deltas: { [NATIVE]: -1300000000000001n }, approvals: [] };
+      expect(() => assertSwapOutcome(req, quote, sim, {})).toThrow(/exceeding your maximum input/);
+    });
+
+    it('a same-chain request with the same token is still refused', () => {
+      const sim = { deltas: { [NATIVE]: -1300000000000000n }, approvals: [] };
+      expect(() => assertSwapOutcome({ ...req, toChain: 'base' }, quote, sim, {}))
+        .toThrow(/input and output tokens are the same/);
+    });
+  });
+
   it('fails closed when an NFT leaves the wallet (assertion 3b)', () => {
     // Input + output are correct, but the sim also reports an ERC-721/1155 leaving
     // the wallet — invisible to the fungible-only deltas map. A swap must not move
