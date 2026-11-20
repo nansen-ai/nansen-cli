@@ -1379,6 +1379,13 @@ describe('solana-simulation', () => {
         .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
       await expect(run({ pre: { [nonceAcct]: { lamports: 1, owner: SYSTEM_PROGRAM, data: [{}, 'base64'], space: 80 } } }))
         .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      // A wrong encoding tag, or characters Node's base64 decoder would silently drop.
+      await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: ['AAAA', 'base58'], space: 200 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run({ pre: { [nonceAcct]: { lamports: 1, owner: SYSTEM_PROGRAM, data: ['not base64!', 'base64'], space: 80 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: ['%%%', 'base64'], space: 200 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
     });
   });
 });
