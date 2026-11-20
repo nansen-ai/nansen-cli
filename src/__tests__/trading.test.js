@@ -105,6 +105,7 @@ function saveQuote(quoteResponse, ...rest) {
   );
 }
 import { SIMULATION_RPCS } from '../rpc-urls.js';
+import { NATIVE_FEE_RENT_SLACK_LAMPORTS } from '../trade-validation.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
 import {
@@ -7886,16 +7887,16 @@ function encodeSolanaCompactU16(value) {
 // A minimal legacy tx: [wallet (signer, writable), tokenAccountIn (writable),
 // tokenAccountOut (writable), programId (readonly)]. Contents of the single
 // instruction are irrelevant — simulation only reads the accounts snapshot.
-function buildSolanaSwapTx({ wallet, tokenAccountIn, tokenAccountOut }) {
+function buildSolanaSwapTx({ wallet, tokenAccountIn, tokenAccountOut, extraWritable = [] }) {
   const programId = generateSolanaWallet().address;
   const recentBlockhash = generateSolanaWallet().address;
-  const accountKeys = [wallet, tokenAccountIn, tokenAccountOut, programId];
+  const accountKeys = [wallet, tokenAccountIn, tokenAccountOut, ...extraWritable, programId];
   const parts = [Buffer.from([1, 0, 1])]; // 1 required sig, 0 readonly signed, 1 readonly unsigned (programId)
   parts.push(encodeSolanaCompactU16(accountKeys.length));
   for (const k of accountKeys) parts.push(base58Decode(k));
   parts.push(base58Decode(recentBlockhash));
   parts.push(encodeSolanaCompactU16(1));
-  parts.push(Buffer.from([3])); // programIdIndex
+  parts.push(Buffer.from([accountKeys.length - 1])); // programIdIndex
   parts.push(encodeSolanaCompactU16(1));
   parts.push(Buffer.from([0]));
   parts.push(encodeSolanaCompactU16(1));
@@ -7972,6 +7973,22 @@ describe('verifySolanaSwapOutcome (execute-path wiring)', () => {
     expect(r.proceed).toBe(true);
   });
 
+  it('blocks (proceed=false) when the simulated post-state adds a delegate on the output token account', async () => {
+    const attacker = generateSolanaWallet().address;
+    const outWithDelegate = solanaTokenAccountInfo({ mint: mintOut, owner: wallet, amount: 1_000_000 });
+    outWithDelegate.data.parsed.info.delegate = attacker;
+    outWithDelegate.data.parsed.info.delegatedAmount = { amount: '18446744073709551615', decimals: 6 };
+    const post = {
+      [wallet]: solanaNativeAccountInfo(999_995_000),
+      [tokenIn]: solanaTokenAccountInfo({ mint: mintIn, owner: wallet, amount: 0 }),
+      [tokenOut]: outWithDelegate, // balances are a clean swap; only the delegate is new
+    };
+    vi.stubGlobal('fetch', mockSolanaSimRpc({ pre, post }));
+    const r = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64, quote, quoteData });
+    expect(r.proceed).toBe(false);
+    expect(r.reason).toMatch(new RegExp(`approves ${attacker} to spend`));
+  });
+
   it('blocks (proceed=false) when a sibling token is drained', async () => {
     const siblingPre = { ...pre, [tokenOut]: solanaTokenAccountInfo({ mint: 'SiblingMint111111111111111111111111111111', owner: wallet, amount: 500 }) };
     const post = {
@@ -7981,6 +7998,30 @@ describe('verifySolanaSwapOutcome (execute-path wiring)', () => {
     };
     vi.stubGlobal('fetch', mockSolanaSimRpc({ pre: siblingPre, post }));
     const r = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64, quote, quoteData });
+    expect(r.proceed).toBe(false);
+    expect(r.reason).toMatch(/SWAP_OUTCOME_MISMATCH/i);
+  });
+
+  it('counts a closed empty WSOL account rent against the native slack (no stacking on a full-slack outflow)', async () => {
+    const wsolAta = generateSolanaWallet().address;
+    const txWithWsol = buildSolanaSwapTx({ wallet, tokenAccountIn: tokenIn, tokenAccountOut: tokenOut, extraWritable: [wsolAta] });
+    const wsolPre = { ...pre, [wsolAta]: solanaTokenAccountInfo({ mint: 'So11111111111111111111111111111111111111112', owner: wallet, amount: 0 }) };
+    // SOL is a sibling here (USDC -> USDT); its outflow sits just under the slack.
+    const nativePost = 1_000_000_000 - Number(NATIVE_FEE_RENT_SLACK_LAMPORTS - 1_000n);
+    const basePost = {
+      [wallet]: solanaNativeAccountInfo(nativePost),
+      [tokenIn]: solanaTokenAccountInfo({ mint: mintIn, owner: wallet, amount: 0 }),
+      [tokenOut]: solanaTokenAccountInfo({ mint: mintOut, owner: wallet, amount: 1_000_000 }),
+    };
+    const wsolKept = { ...basePost, [wsolAta]: solanaTokenAccountInfo({ mint: 'So11111111111111111111111111111111111111112', owner: wallet, amount: 0 }) };
+    vi.stubGlobal('fetch', mockSolanaSimRpc({ pre: wsolPre, post: wsolKept }));
+    const ok = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64: txWithWsol, quote, quoteData });
+    expect(ok.proceed).toBe(true);
+
+    // Same outflow, plus the empty WSOL account closed with its rent sent to an
+    // attacker. simulateTransaction shows a closed account as empty and System-owned.
+    vi.stubGlobal('fetch', mockSolanaSimRpc({ pre: wsolPre, post: { ...basePost, [wsolAta]: solanaNativeAccountInfo(0) } }));
+    const r = await verifySolanaSwapOutcome({ chain: 'solana', walletAddress: wallet, txBase64: txWithWsol, quote, quoteData });
     expect(r.proceed).toBe(false);
     expect(r.reason).toMatch(/SWAP_OUTCOME_MISMATCH/i);
   });

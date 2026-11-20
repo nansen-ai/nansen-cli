@@ -422,8 +422,10 @@ export async function signTransaction(txBase64, walletType, walletInfo) {
  * The limit-order sibling of verifySolanaSwapOutcome: simulates the deposit/
  * cancel transaction and checks the resulting balance deltas against the
  * requested operation, degrading (warn + proceed) on any RPC/sim outage so an
- * outage never blocks an order — only a real outcome mismatch or an
- * in-simulation revert refuses to sign.
+ * outage never blocks an order — only a real outcome mismatch, an
+ * in-simulation revert, a change of control over a wallet account
+ * (SIM_ACCOUNT_CONTROL_CHANGED) or an unreadable result refuses to sign. Only
+ * NO_SIM_RPC and SIM_RPC_ERROR degrade.
  */
 async function verifyLimitOrderOutcome({ kind, walletAddress, txBase64, inputMint, amount, log = () => {} }) {
   if (!hasSolanaSimulationRpc('solana')) {

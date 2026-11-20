@@ -1891,6 +1891,47 @@ describe('outcome verification (fail-closed)', () => {
     expect(orderLookupUrl).toContain('state=active');
   });
 
+  it('cancel: refuses to sign a withdrawal that adds a delegate on a wallet token account', async () => {
+    SIMULATION_RPCS.solana = 'http://sol-sim.test';
+    const wallet = createTestWallet('lo-outcome-cancel-delegate');
+    const tokenAccount = generateSolanaWallet().address;
+    const attacker = generateSolanaWallet().address;
+    const cancelTx = buildLimitOrderTx({ walletPubkey: wallet.solana, extraWritableKey: tokenAccount });
+    const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const withDelegate = solanaTokenAccountInfo({ mint: USDC, owner: wallet.solana, amount: 1_000_000 });
+    withDelegate.data.parsed.info.delegate = attacker;
+    withDelegate.data.parsed.info.delegatedAmount = { amount: '18446744073709551615', decimals: 6 };
+    mockFetchSequence([
+      { body: { challenge: 'sign' } },
+      { body: { token: 'jwt' } },
+      { body: { orders: [{ id: 'order-1', inputMint: USDC, inputAmount: '1000000', fills: [] }] } },
+      { body: { id: 'order-1', transaction: cancelTx, requestId: 'cancel-req-1' } },
+      {
+        body: {
+          result: {
+            value: [
+              solanaNativeAccountInfo(2_000_000_000),
+              solanaTokenAccountInfo({ mint: USDC, owner: wallet.solana, amount: 0 }),
+            ],
+          },
+        },
+      },
+      // The refund arrives, but the account now has an unlimited delegate.
+      { body: { result: { value: { err: null, accounts: [solanaNativeAccountInfo(2_000_000_000 - 5000), withDelegate] } } } },
+    ]);
+
+    const logs = [];
+    const exit = vi.fn();
+    const cmds = buildLimitOrderCommands({ log: (m) => logs.push(m), exit });
+
+    await cmds.cancel([], null, {}, { order: 'order-1', wallet: 'lo-outcome-cancel-delegate' });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(logs.some(l => /Refusing to sign withdrawal/i.test(l))).toBe(true);
+    expect(logs.some(l => new RegExp(`approves ${attacker} to spend`).test(l))).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(6);
+  });
+
   it('cancel: refuses to sign when the order cannot be found in the lookup, rather than skipping the asset-binding check', async () => {
     SIMULATION_RPCS.solana = 'http://sol-sim.test';
     createTestWallet('lo-outcome-cancel-notfound');
