@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SIMULATION_RPCS } from '../rpc-urls.js';
-import { generateSolanaWallet, base58Decode } from '../wallet.js';
+import { generateSolanaWallet, base58Decode, base58Encode } from '../wallet.js';
 import {
   simulateSolanaAssetChanges,
   SolanaSimulationError,
@@ -113,7 +113,13 @@ function mockSolanaRpc({ trackedAccounts = {}, altAccounts = {}, simValue, onReq
       return jsonRpcResponse({ value: pubkeys.map((pk) => table[pk] ?? null) });
     }
     if (body.method === 'simulateTransaction') {
-      return jsonRpcResponse(simValue(body.params));
+      // A node that honors innerInstructions:true returns [] when there are
+      // none; a test that needs another value (or none) sets the key itself.
+      const result = simValue(body.params);
+      if (result?.value && typeof result.value === 'object' && !('innerInstructions' in result.value)) {
+        result.value.innerInstructions = [];
+      }
+      return jsonRpcResponse(result);
     }
     throw new Error(`solana-simulation.test.js: unhandled RPC method ${body.method}`);
   });
@@ -894,6 +900,235 @@ describe('solana-simulation', () => {
       const pre = { ...basePre(), [ataOut]: nativeAccountInfo(1_000_000) };
       const result = await run({ pre, post: basePost() });
       expect(result.deltas[mintOut]).toBe(1_000_000n);
+    });
+  });
+  describe('inner (CPI) token instructions the wallet authorizes', () => {
+    // Balances and the post-state are clean in every case: the delegate or
+    // authority a CPI set is gone again by the end of the transaction (say the
+    // account is closed and re-created), so only the inner instructions show it.
+    let wallet, ataIn, ataOut, attacker, router, mintIn, mintOut;
+    beforeEach(() => {
+      [wallet, ataIn, ataOut, attacker, router, mintIn, mintOut] = Array.from({ length: 7 }, () => generateSolanaWallet().address);
+    });
+
+    function run(value) {
+      const txBase64 = buildLegacyTx({ wallet, extraWritableKeys: [ataIn, ataOut] });
+      const pre = {
+        [wallet]: nativeAccountInfo(1_000_000_000),
+        [ataIn]: tokenAccountInfo({ mint: mintIn, owner: wallet, amount: 1_000_000 }),
+        [ataOut]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0 }),
+      };
+      const post = {
+        [wallet]: nativeAccountInfo(999_995_000),
+        [ataIn]: tokenAccountInfo({ mint: mintIn, owner: wallet, amount: 0 }),
+        [ataOut]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 1_000_000 }),
+      };
+      let request;
+      vi.stubGlobal('fetch', mockSolanaRpc({
+        trackedAccounts: pre,
+        onRequest: (body) => { if (body.method === 'simulateTransaction') request = body.params[1]; },
+        simValue: (params) => ({ value: { err: null, accounts: params[1].accounts.addresses.map((a) => post[a] ?? null), ...value } }),
+      }));
+      return simulateSolanaAssetChanges('solana', txBase64, { walletAddress: wallet }).then((r) => ({ ...r, request }));
+    }
+    const parsedIx = (type, info, programId = TOKEN_PROGRAM) => ({ program: 'spl-token', programId, parsed: { type, info }, stackHeight: 2 });
+    const rawIx = (discriminator, accounts, programId = TOKEN_PROGRAM) => ({ programId, accounts, data: base58Encode(Buffer.from([discriminator, 1, 0, 0, 0, 0, 0, 0, 0])), stackHeight: 2 });
+    const inner = (...instructions) => ({ innerInstructions: [{ index: 1, instructions }] });
+
+    it('asks the RPC for inner instructions', async () => {
+      const r = await run({});
+      expect(r.request.innerInstructions).toBe(true);
+    });
+
+    it('refuses a parsed CPI Approve the wallet signs', async () => {
+      await expect(run(inner(parsedIx('approve', { source: ataOut, delegate: attacker, owner: wallet, amount: '1' }))))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('from inside another program') });
+    });
+
+    it('refuses a parsed CPI ApproveChecked the wallet signs, under either token program', async () => {
+      await expect(run(inner(parsedIx('approveChecked', { source: ataOut, mint: mintOut, delegate: attacker, owner: wallet, tokenAmount: { amount: '1' } }, TOKEN_2022_PROGRAM))))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+    });
+
+    it('refuses a parsed CPI SetAuthority the wallet signs, on a token account or a mint', async () => {
+      await expect(run(inner(parsedIx('setAuthority', { account: ataOut, authority: wallet, authorityType: 'closeAccount', newAuthority: attacker }))))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('changes an authority') });
+      await expect(run(inner(parsedIx('setAuthority', { mint: mintOut, authority: wallet, authorityType: 'mintTokens', newAuthority: attacker }))))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+    });
+
+    it('refuses a CPI Approve the wallet signs as a multisig signer', async () => {
+      const multisig = generateSolanaWallet().address;
+      await expect(run(inner(parsedIx('approve', { source: ataOut, delegate: attacker, multisigOwner: multisig, signers: [wallet], amount: '1' }))))
+        .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+    });
+
+    it('refuses unparsed CPI Approve, ApproveChecked and SetAuthority the wallet signs', async () => {
+      await expect(run(inner(rawIx(4, [ataOut, attacker, wallet])))).rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      await expect(run(inner(rawIx(13, [ataOut, mintOut, attacker, wallet], TOKEN_2022_PROGRAM)))).rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+      await expect(run(inner(rawIx(6, [ataOut, wallet])))).rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED' });
+    });
+
+    it('allows a CPI Approve or SetAuthority another account signs', async () => {
+      const r = await run(inner(
+        parsedIx('approve', { source: generateSolanaWallet().address, delegate: attacker, owner: router, amount: '1' }),
+        rawIx(6, [generateSolanaWallet().address, router]),
+        // The wallet as the delegate, not the signer: [source, mint, delegate, owner].
+        rawIx(13, [generateSolanaWallet().address, mintOut, wallet, router]),
+      ));
+      expect(r.deltas[mintOut]).toBe(1_000_000n);
+    });
+
+    it('allows other token-program CPIs the wallet signs (transfer, and a close: its rent is bounded by the SOL output check)', async () => {
+      const r = await run(inner(
+        parsedIx('transferChecked', { source: ataIn, destination: generateSolanaWallet().address, authority: wallet, mint: mintIn, tokenAmount: { amount: '1000000' } }),
+        parsedIx('closeAccount', { account: generateSolanaWallet().address, destination: router, owner: wallet }),
+        rawIx(9, [generateSolanaWallet().address, router, wallet]),
+      ));
+      expect(r.deltas[mintOut]).toBe(1_000_000n);
+    });
+
+    it('ignores non-token programs, parsed or not', async () => {
+      const r = await run(inner(
+        { program: 'system', programId: '11111111111111111111111111111111', parsed: { type: 'transfer', info: { source: wallet, destination: router, lamports: 1 } }, stackHeight: 2 },
+        { programId: router, accounts: [wallet], data: base58Encode(Buffer.from([4, 6, 13])), stackHeight: 2 },
+      ));
+      expect(r.deltas[mintOut]).toBe(1_000_000n);
+    });
+
+    it('refuses when the RPC omits inner instructions, or returns them compiled', async () => {
+      await expect(run({ innerInstructions: undefined })).rejects.toMatchObject({ code: 'SIM_INNER_INSTRUCTIONS_UNAVAILABLE' });
+      await expect(run({ innerInstructions: null })).rejects.toMatchObject({ code: 'SIM_INNER_INSTRUCTIONS_UNAVAILABLE' });
+      await expect(run(inner({ programIdIndex: 2, accounts: [0, 1], data: '2' })))
+        .rejects.toMatchObject({ code: 'SIM_INNER_INSTRUCTIONS_UNAVAILABLE' });
+    });
+
+    describe('token accounts someone else hands to the wallet', () => {
+      // A program account larger than the candidate cap isn't tracked, so its
+      // post-state isn't checked. It can be zeroed, shrunk, reassigned to a
+      // token program, initialized to the attacker, given the attacker as close
+      // authority, and then handed to the wallet with SetAuthority(AccountOwner)
+      // in one tx. (The owner change clears a delegate, not a close authority.)
+      const bigAccount = () => ({ lamports: 50_000_000, owner: generateSolanaWallet().address, data: [Buffer.alloc(4096).toString('base64'), 'base64'], executable: false, rentEpoch: 0, space: 4096 });
+      const ownerHandOff = (account, newOwner, authorityType = 2) => ({
+        programId: TOKEN_PROGRAM,
+        accounts: [account, router],
+        data: base58Encode(Buffer.concat([Buffer.from([6, authorityType, 1]), base58Decode(newOwner)])),
+        stackHeight: 2,
+      });
+
+      function runWith({ acct, preAcct, postAcct, innerIxs }) {
+        const txBase64 = buildLegacyTx({ wallet, extraWritableKeys: [ataIn, ataOut, acct] });
+        const pre = {
+          [wallet]: nativeAccountInfo(1_000_000_000),
+          [ataIn]: tokenAccountInfo({ mint: mintIn, owner: wallet, amount: 1_000_000 }),
+          [ataOut]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0 }),
+          [acct]: preAcct,
+        };
+        const post = {
+          [wallet]: nativeAccountInfo(999_995_000),
+          [ataIn]: tokenAccountInfo({ mint: mintIn, owner: wallet, amount: 0 }),
+          [ataOut]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 1_000_000 }),
+          [acct]: postAcct,
+        };
+        vi.stubGlobal('fetch', mockSolanaRpc({
+          trackedAccounts: pre,
+          simValue: (params) => ({ value: { err: null, accounts: params[1].accounts.addresses.map((a) => post[a] ?? null), innerInstructions: [{ index: 1, instructions: innerIxs }] } }),
+        }));
+        return simulateSolanaAssetChanges('solana', txBase64, { walletAddress: wallet });
+      }
+
+      it('refuses a CPI SetAuthority(AccountOwner) to the wallet on an account whose end state is not checked, parsed or raw', async () => {
+        const acct = generateSolanaWallet().address;
+        const postAcct = tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, closeAuthority: attacker });
+        await expect(runWith({ acct, preAcct: bigAccount(), postAcct, innerIxs: [ownerHandOff(acct, wallet)] }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`hands token account ${acct} to your wallet`) });
+        await expect(runWith({ acct, preAcct: bigAccount(), postAcct, innerIxs: [parsedIx('setAuthority', { account: acct, authority: router, authorityType: 'accountOwner', newAuthority: wallet })] }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('hands token account') });
+      });
+
+      it('leaves a tracked account handed to the wallet to the post-state check', async () => {
+        const acct = generateSolanaWallet().address;
+        const preAcct = tokenAccountInfo({ mint: mintOut, owner: attacker, amount: 7 });
+        const r = await runWith({ acct, preAcct, postAcct: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 7 }), innerIxs: [ownerHandOff(acct, wallet)] });
+        expect(r.deltas[mintOut]).toBe(1_000_000n);
+        await expect(runWith({ acct, preAcct, postAcct: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 7, closeAuthority: attacker }), innerIxs: [ownerHandOff(acct, wallet)] }))
+          .rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining('close authority') });
+      });
+
+      it('allows an untracked account handed to someone else, or the wallet made a non-owner authority', async () => {
+        const acct = generateSolanaWallet().address;
+        const r = await runWith({
+          acct,
+          preAcct: bigAccount(),
+          postAcct: bigAccount(),
+          innerIxs: [
+            ownerHandOff(acct, attacker),
+            ownerHandOff(acct, wallet, 3), // close authority
+            parsedIx('setAuthority', { account: acct, authority: router, authorityType: 'closeAccount', newAuthority: wallet }),
+            parsedIx('setAuthority', { account: acct, authority: router, authorityType: 'accountOwner', newAuthority: null }),
+          ],
+        });
+        expect(r.deltas[mintOut]).toBe(1_000_000n);
+      });
+
+      function runTopLevel({ viaAlt }) {
+        // [wallet (signer), attacker (readonly signer), ataIn, ataOut, (acct), token program]
+        const acct = generateSolanaWallet().address;
+        const altAddress = generateSolanaWallet().address;
+        const staticKeys = [wallet, attacker, ataIn, ataOut, ...(viaAlt ? [] : [acct]), TOKEN_PROGRAM];
+        const programIdIndex = staticKeys.length - 1;
+        const acctIndex = viaAlt ? staticKeys.length + 1 : 4; // ALT writable entries follow the static keys
+        const messageBytes = buildMessageBytes({
+          versioned: viaAlt,
+          accountKeys: staticKeys,
+          header: { numRequiredSignatures: 2, numReadonlySignedAccounts: 1, numReadonlyUnsignedAccounts: 1 },
+          recentBlockhash: generateSolanaWallet().address,
+          instructions: [{ programIdIndex, accountIndexes: [acctIndex, 1], data: Buffer.concat([Buffer.from([6, 2, 1]), base58Decode(wallet)]) }],
+          addressTableLookups: viaAlt ? [{ lookupTableAddress: altAddress, writableIndexes: [0, 1], readonlyIndexes: [] }] : [],
+        });
+        const altTableData = Buffer.concat([Buffer.alloc(56), base58Decode(generateSolanaWallet().address), base58Decode(acct)]).toString('base64');
+        const pre = {
+          [wallet]: nativeAccountInfo(1_000_000_000),
+          [ataIn]: tokenAccountInfo({ mint: mintIn, owner: wallet, amount: 1_000_000 }),
+          [ataOut]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0 }),
+          [acct]: bigAccount(),
+        };
+        const post = {
+          [wallet]: nativeAccountInfo(999_995_000),
+          [ataIn]: tokenAccountInfo({ mint: mintIn, owner: wallet, amount: 0 }),
+          [ataOut]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 1_000_000 }),
+          [acct]: tokenAccountInfo({ mint: mintOut, owner: wallet, amount: 0, closeAuthority: attacker }),
+        };
+        let requested;
+        vi.stubGlobal('fetch', mockSolanaRpc({
+          trackedAccounts: pre,
+          altAccounts: { [altAddress]: { data: [altTableData, 'base64'], owner: 'AddressLookupTab1e1111111111111111111111111', lamports: 1 } },
+          simValue: (params) => {
+            requested = params[1].accounts.addresses;
+            return { value: { err: null, accounts: requested.map((a) => post[a] ?? null) } };
+          },
+        }));
+        return { acct, requested: () => requested, promise: simulateSolanaAssetChanges('solana', wrapTransaction(messageBytes, 2), { walletAddress: wallet }) };
+      }
+
+      it('checks the end state of an account a top-level SetAuthority hands to the wallet, whatever its size', async () => {
+        for (const viaAlt of [false, true]) {
+          const t = runTopLevel({ viaAlt });
+          await expect(t.promise).rejects.toMatchObject({ code: 'SIM_ACCOUNT_CONTROL_CHANGED', message: expect.stringContaining(`sets ${attacker} as the close authority`) });
+          expect(t.requested()).toContain(t.acct);
+        }
+      });
+    });
+
+    it('fails closed on a malformed inner instruction or group', async () => {
+      await expect(run({ innerInstructions: [{ index: 1 }] })).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run(inner({ accounts: [], data: '' }))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run(inner(parsedIx('approve', null)))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run(inner(parsedIx('approve', { source: ataOut, delegate: attacker, amount: '1' })))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run(inner({ programId: TOKEN_PROGRAM, parsed: 'approve', stackHeight: 2 }))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run(inner({ programId: TOKEN_PROGRAM, accounts: [ataOut], data: 'not base58 0OIl' }))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run(inner(rawIx(4, [ataOut, attacker])))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
     });
   });
 });

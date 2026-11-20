@@ -7931,7 +7931,7 @@ function mockSolanaSimRpc({ pre, post }) {
     }
     if (body.method === 'simulateTransaction') {
       const addrs = body.params[1].accounts.addresses;
-      return solanaJsonRpcResponse({ value: { err: null, accounts: addrs.map((a) => post[a] ?? null) } });
+      return solanaJsonRpcResponse({ value: { err: null, innerInstructions: [], accounts: addrs.map((a) => post[a] ?? null) } });
     }
     throw new Error(`unhandled RPC method in test: ${body.method}`);
   });
