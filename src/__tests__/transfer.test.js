@@ -1925,7 +1925,7 @@ describe('sendTokens via Privy', () => {
     const TOKEN_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
     const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
-    function mockSplRpc({ uiAmountString = '5.0' } = {}) {
+    function mockSplRpc({ uiAmountString = '5.0', amount = '5000000' } = {}) {
       fetch.mockImplementation(async (_url, opts) => {
         const body = typeof opts?.body === 'string' ? JSON.parse(opts.body) : null;
         const reply = (result) => ({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body?.id, result }) });
@@ -1933,7 +1933,6 @@ describe('sendTokens via Privy', () => {
           return reply({ value: { owner: TOKEN_PROGRAM, data: { parsed: { info: { decimals: 6 } } } }, context: { slot: 1 } });
         }
         if (body?.method === 'getTokenAccountBalance') {
-          const amount = String(Math.round(Number(uiAmountString) * 1e6));
           return reply({ value: { amount, uiAmountString }, context: { slot: 1 } });
         }
         if (body?.method === 'getLatestBlockhash') {
@@ -1961,7 +1960,7 @@ describe('sendTokens via Privy', () => {
     });
 
     test('rejects a --max dry run when the token balance is zero', async () => {
-      mockSplRpc({ uiAmountString: '0' });
+      mockSplRpc({ uiAmountString: '0', amount: '0' });
 
       await expect(sendTokens({
         to: '11111111111111111111111111111112',
