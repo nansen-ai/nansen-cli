@@ -1918,7 +1918,7 @@ describe('outcome verification (fail-closed)', () => {
         },
       },
       // The refund arrives, but the account now has an unlimited delegate.
-      { body: { result: { value: { err: null, accounts: [solanaNativeAccountInfo(2_000_000_000 - 5000), withDelegate] } } } },
+      { body: { result: { value: { err: null, innerInstructions: [], accounts: [solanaNativeAccountInfo(2_000_000_000 - 5000), withDelegate] } } } },
     ]);
 
     const logs = [];

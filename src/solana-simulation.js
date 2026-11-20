@@ -59,7 +59,9 @@ const MAX_ACCOUNTS_PER_CALL = 100;
  *                             reassigned to another program or given data),
  *                             whatever the balances say, or a token Approve or
  *                             SetAuthority the wallet signs from inside another
- *                             program (CPI), which the post-state can hide
+ *                             program (CPI), which the post-state can hide, or
+ *                             a CPI that hands the wallet a token account whose
+ *                             post-state wasn't checked
  *   SIM_INNER_INSTRUCTIONS_UNAVAILABLE - the sim ran but the RPC returned no
  *                             readable inner instructions, so the CPI check
  *                             above can't run
@@ -251,6 +253,8 @@ function isClosedAccount(info) {
 // newer token program with every account extension stays well under this.
 // Pool and market accounts above it are left out, so their post-state isn't
 // requested from the simulation, where it could push the call past its timeout.
+// A larger account handed to the wallet with SetAuthority(AccountOwner) is
+// caught from the instructions instead (see assertInnerTokenInstructionsSafe).
 const MAX_CANDIDATE_ACCOUNT_BYTES = 2048;
 
 function accountDataLength(info) {
@@ -352,12 +356,26 @@ const RAW_AUTHORITY_LAYOUTS = {
   [SPL_APPROVE_CHECKED]: { kind: 'approve', authorityPos: 3 },
   [SPL_SET_AUTHORITY]: { kind: 'setAuthority', authorityPos: 1 },
 };
+// SetAuthority data: [6, authorityType u8, COption tag u8, new authority 32].
+// AuthorityType::AccountOwner is 2 in either token program.
+const SPL_AUTHORITY_ACCOUNT_OWNER = 2;
 const UNREADABLE_INNER = 'Simulation returned an unreadable token-program inner instruction; cannot verify the outcome.';
 const isPubkey = (v) => typeof v === 'string' && v.length > 0;
 
 /**
+ * The new owner a raw SetAuthority data buffer hands a token account to, or
+ * null when it changes another authority type or clears it.
+ */
+function rawNewAccountOwner(data) {
+  if (data.length < 35 || data[1] !== SPL_AUTHORITY_ACCOUNT_OWNER || data[2] !== 1) return null;
+  return base58Encode(data.subarray(3, 35));
+}
+
+/**
  * Classify one inner instruction as a token-program Approve or SetAuthority
- * ({ kind, account, authorities }), or null for anything else.
+ * ({ kind, account, authorities, newOwner? }), or null for anything else.
+ * `newOwner` is set on a SetAuthority that hands a token account to a new
+ * owner.
  * simulateTransaction returns inner instructions with addresses already
  * resolved (lookup tables included): a parsed token instruction carries
  * `parsed.type`/`parsed.info`; one the node couldn't parse carries `accounts`
@@ -378,7 +396,12 @@ function classifyInnerTokenInstruction(ix) {
     const signers = Array.isArray(info.signers) ? info.signers : [];
     const out = type === 'setAuthority'
       // `account` is a token account or a mint, depending on the authority type.
-      ? { kind: 'setAuthority', account: info.account ?? info.mint, authorities: [info.authority, info.multisigAuthority, ...signers] }
+      ? {
+        kind: 'setAuthority',
+        account: info.account ?? info.mint,
+        authorities: [info.authority, info.multisigAuthority, ...signers],
+        newOwner: info.authorityType === 'accountOwner' && isPubkey(info.newAuthority) ? info.newAuthority : null,
+      }
       : { kind: 'approve', account: info.source, authorities: [info.owner, info.multisigOwner, ...signers] };
     const authorities = out.authorities.filter((a) => a != null);
     if (!isPubkey(out.account) || authorities.length === 0 || !authorities.every(isPubkey)) {
@@ -398,7 +421,12 @@ function classifyInnerTokenInstruction(ix) {
   const layout = data.length ? RAW_AUTHORITY_LAYOUTS[data[0]] : undefined;
   if (!layout) return null;
   if (ix.accounts.length <= layout.authorityPos) throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', UNREADABLE_INNER);
-  return { kind: layout.kind, account: ix.accounts[0], authorities: ix.accounts.slice(layout.authorityPos) };
+  return {
+    kind: layout.kind,
+    account: ix.accounts[0],
+    authorities: ix.accounts.slice(layout.authorityPos),
+    newOwner: layout.kind === 'setAuthority' ? rawNewAccountOwner(data) : null,
+  };
 }
 
 /**
@@ -410,22 +438,34 @@ function classifyInnerTokenInstruction(ix) {
  * top-level rule to every inner instruction: refuse an Approve or SetAuthority
  * the wallet authorizes, whatever account it targets.
  *
+ * A SetAuthority that someone else signs to hand a token account to the wallet
+ * is refused when that account's post-state isn't checked (`trackedKeys`):
+ * the account could come with that party's delegate or close authority still
+ * in place. Accounts larger than MAX_CANDIDATE_ACCOUNT_BYTES before the
+ * transaction aren't tracked, and the end state alone can't show this. A
+ * tracked account goes through assertTokenAccountControl instead.
+ *
  * CloseAccount is deliberately not checked here: a router may close a
  * temporary account it opened for the wallet and pay the SOL on. Where that
  * rent goes is bounded by the native-SOL output check instead.
  */
-function assertInnerTokenInstructionsSafe(innerGroups, walletAddress) {
+function assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKeys) {
   for (const group of innerGroups) {
     if (!Array.isArray(group?.instructions)) {
       throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned malformed inner instructions; cannot verify the outcome.');
     }
     for (const ix of group.instructions) {
       const op = classifyInnerTokenInstruction(ix);
-      if (!op || !op.authorities.includes(walletAddress)) continue;
-      if (op.kind === 'approve') {
-        throw controlChanged(`approves a delegate on token account ${op.account} with your wallet's signature, from inside another program.`);
+      if (!op) continue;
+      if (op.authorities.includes(walletAddress)) {
+        if (op.kind === 'approve') {
+          throw controlChanged(`approves a delegate on token account ${op.account} with your wallet's signature, from inside another program.`);
+        }
+        throw controlChanged(`changes an authority of ${op.account} with your wallet's signature, from inside another program.`);
       }
-      throw controlChanged(`changes an authority of ${op.account} with your wallet's signature, from inside another program.`);
+      if (op.newOwner === walletAddress && !trackedKeys.has(op.account)) {
+        throw controlChanged(`hands token account ${op.account} to your wallet from inside another program, and its end state was not checked for a delegate or close authority left in place.`);
+      }
     }
   }
 }
@@ -483,7 +523,8 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
   for (let i = 0; i < parsed.staticAccountKeys.length; i++) {
     if (isStaticWritable(parsed, i)) pushWritable(parsed.staticAccountKeys[i]);
   }
-  for (const key of await resolveAltWritableAccounts(rpcUrl, parsed, timeoutMs)) {
+  const altWritableKeys = await resolveAltWritableAccounts(rpcUrl, parsed, timeoutMs);
+  for (const key of altWritableKeys) {
     pushWritable(key);
   }
 
@@ -541,6 +582,25 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
     }
   });
 
+  // A top-level SetAuthority that someone else signs to hand a token account to
+  // the wallet: track that account whatever its size, so its post-state goes
+  // through the control check. (The inner-instruction check below refuses the
+  // same hand-off from inside a program when the account isn't tracked.)
+  const trackedKeys = new Set(tracked.map((t) => t.pubkey));
+  for (const ix of parsed.instructions) {
+    const programId = parsed.staticAccountKeys[ix.programIdIndex];
+    if (!TOKEN_PROGRAMS.has(programId) || ix.data[0] !== SPL_SET_AUTHORITY) continue;
+    if (rawNewAccountOwner(ix.data) !== walletAddress) continue;
+    // Message index space: static keys, then every lookup table's writable
+    // entries in order. A readonly entry can't be the target of a SetAuthority.
+    const idx = ix.accountIndexes[0];
+    const target = idx < parsed.staticAccountKeys.length ? parsed.staticAccountKeys[idx] : altWritableKeys[idx - parsed.staticAccountKeys.length];
+    if (target && !trackedKeys.has(target)) {
+      tracked.push({ pubkey: target, preInfo: null, classified: false, credit: false });
+      trackedKeys.add(target);
+    }
+  }
+
   // The wallet's native account is the fee payer, so it always pre-exists and is
   // writable; not seeing it means we couldn't locate the signer's own accounts
   // and can't meaningfully verify the outcome. (Unclassified candidates alone
@@ -594,7 +654,7 @@ export async function simulateSolanaAssetChanges(chain, txBase64, { walletAddres
       'The Solana simulation RPC did not return inner instructions, so calls this transaction makes from inside other programs cannot be checked. Refusing to sign. Set NANSEN_SOLANA_SIM_RPC to an RPC that supports simulateTransaction with innerInstructions.',
     );
   }
-  assertInnerTokenInstructionsSafe(innerGroups, walletAddress);
+  assertInnerTokenInstructionsSafe(innerGroups, walletAddress, trackedKeys);
 
   const deltas = {};
   tracked.forEach((t, i) => {
