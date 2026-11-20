@@ -193,6 +193,28 @@ describe("submitExchange", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  // fetch resolves once the headers arrive; a body that then stalls must still
+  // time out. The stand-in body resolves after 200 ms unless the request's
+  // signal aborts it first, as Node's fetch does.
+  it("keeps the timeout armed while the response body is read", async () => {
+    const fetchImpl = vi.fn(async (_url, { signal }) => ({
+      ok: true,
+      status: 200,
+      text: () => new Promise((resolve, reject) => {
+        const late = setTimeout(() => resolve(JSON.stringify({ status: "ok", response: { type: "default" } })), 200);
+        signal.addEventListener("abort", () => {
+          clearTimeout(late);
+          reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }));
+        });
+      }),
+    }));
+    const error = await submitExchange(SIGNED, { fetchImpl, baseUrl: "https://hl.test", timeoutMs: 20 })
+      .catch((caught) => caught);
+    expect(error).toMatchObject({ code: "HL_TIMEOUT_INDETERMINATE" });
+    expect(error.message).toContain("Timed out after 20ms waiting for Hyperliquid");
+    expect(error.message).toContain("nansen perp orders");
+  });
+
   it("treats a failure without a transport code as indeterminate", async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("ECONNRESET");

@@ -105,53 +105,60 @@ export async function submitExchange(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+  // A timeout on a POST is indeterminate: the request may have reached
+  // Hyperliquid and been applied even though the response never arrived.
+  // Say so rather than implying nothing was sent, and point at the reads that
+  // resolve it.
+  const timedOut = () =>
+    new CommandError(
+      `Timed out after ${timeoutMs}ms waiting for Hyperliquid. The request may still have been received — ${RECONCILE_ADVICE}`,
+      "HL_TIMEOUT_INDETERMINATE"
+    );
+
+  // The timer stays armed until the whole body is read: fetch resolves once
+  // the headers arrive, and a body that then stalls must time out too.
   let response;
+  let text;
   try {
-    response = await fetchImpl(`${baseUrl}/exchange`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } catch (err) {
-    // A timeout on a POST is indeterminate: the request may have reached
-    // Hyperliquid and been applied even though the response never arrived.
-    // Say so rather than implying nothing was sent, and point at the reads that
-    // resolve it.
-    if (err.name === "AbortError") {
+    try {
+      response = await fetchImpl(`${baseUrl}/exchange`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (err.name === "AbortError") throw timedOut();
+      // Only a failure that proves nothing was sent is reported as "could not
+      // reach". A connection lost after the request went out is as
+      // indeterminate as a timeout: the order may be live, and a retry would
+      // place it twice.
+      const reason = transportFailure(err);
+      if (NOT_SENT_FAILURES.has(reason)) {
+        throw new CommandError(
+          `Could not reach Hyperliquid (${reason}); the action was not sent. Check your connection and retry.`,
+          "HL_NETWORK_ERROR"
+        );
+      }
       throw new CommandError(
-        `Timed out after ${timeoutMs}ms waiting for Hyperliquid. The request may still have been received — ${RECONCILE_ADVICE}`,
+        `The connection to Hyperliquid failed (${reason}). The request may have been received — ${RECONCILE_ADVICE}`,
         "HL_TIMEOUT_INDETERMINATE"
       );
     }
-    // Only a failure that proves nothing was sent is reported as "could not
-    // reach". A connection lost after the request went out is as indeterminate
-    // as a timeout: the order may be live, and a retry would place it twice.
-    const reason = transportFailure(err);
-    if (NOT_SENT_FAILURES.has(reason)) {
+
+    // The response headers arrived, so Hyperliquid has the request. A body
+    // that stalls or is cut off leaves the outcome just as unknown.
+    try {
+      text = await response.text();
+    } catch (err) {
+      if (err.name === "AbortError") throw timedOut();
       throw new CommandError(
-        `Could not reach Hyperliquid (${reason}); the action was not sent. Check your connection and retry.`,
-        "HL_NETWORK_ERROR"
+        `The connection to Hyperliquid failed (${transportFailure(err)}) while its response was read. The request was received — ${RECONCILE_ADVICE}`,
+        "HL_TIMEOUT_INDETERMINATE"
       );
     }
-    throw new CommandError(
-      `The connection to Hyperliquid failed (${reason}). The request may have been received — ${RECONCILE_ADVICE}`,
-      "HL_TIMEOUT_INDETERMINATE"
-    );
   } finally {
     clearTimeout(timer);
-  }
-
-  // The response headers arrived, so Hyperliquid has the request. A connection
-  // lost while the body is read leaves the outcome just as unknown.
-  let text;
-  try {
-    text = await response.text();
-  } catch (err) {
-    throw new CommandError(
-      `The connection to Hyperliquid failed (${transportFailure(err)}) while its response was read. The request was received — ${RECONCILE_ADVICE}`,
-      "HL_TIMEOUT_INDETERMINATE"
-    );
   }
   let data;
   try {
