@@ -2119,6 +2119,7 @@ describe('Solana SPL source token balance read', () => {
     nullResult: () => jsonReply({ jsonrpc: '2.0', id: 1, result: null }),
     noValue: () => jsonReply({ jsonrpc: '2.0', id: 1, result: { context: { slot: 1 } } }),
     badAmount: () => jsonReply({ jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: { amount: 'abc', decimals: 6, uiAmountString: '5' } } }),
+    rateLimitedWithPeriod: () => jsonReply({ jsonrpc: '2.0', id: 1, error: { code: 429, message: 'Too many requests. Contact support.' } }),
     noUiAmount: () => jsonReply({ jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: { amount: '5000000', decimals: 6 } } }),
   };
 
@@ -2168,6 +2169,7 @@ describe('Solana SPL source token balance read', () => {
     ['a null result', 'nullResult', 'unexpected RPC reply null'],
     ['a reply without a value', 'noValue', 'unexpected RPC reply null'],
     ['a non-integer amount', 'badAmount', 'unexpected RPC reply {"amount":"abc"'],
+    ['an RPC message ending in a period, without doubling it', 'rateLimitedWithPeriod', 'Contact support. Nothing was signed'],
     ['a reply without uiAmountString', 'noUiAmount', 'unexpected RPC reply {"amount":"5000000","decimals":6}'],
   ])('reports %s as a failed balance read, not a missing account', async (_name, reply, detail) => {
     mockRpc(reply);

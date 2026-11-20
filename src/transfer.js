@@ -533,7 +533,7 @@ async function readSourceTokenBalance(rpcUrl, sourceAtaAddr) {
 
 function unreadableTokenBalance(reason, cause) {
   return new Error(
-    `Could not read the source token account balance: ${reason}. Nothing was signed or sent. ` +
+    `Could not read the source token account balance: ${String(reason).replace(/\.+$/, '')}. Nothing was signed or sent. ` +
     'Try again, or set NANSEN_SOLANA_RPC to another Solana RPC.',
     cause ? { cause } : undefined,
   );
