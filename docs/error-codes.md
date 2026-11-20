@@ -210,6 +210,8 @@ A connection failure is `NETWORK_ERROR` and never `UNAUTHORIZED`: the CLI could 
 | --- | --- | --- |
 | `BUILDER_FEE_TOO_HIGH` | The builder fee is above the allowed ceiling. | No |
 | `BUILDER_FEE_UNAVAILABLE` | The builder fee could not be read or approved. | No |
+| `HL_NETWORK_ERROR` | Hyperliquid could not be reached (the host did not resolve, or the connection was refused), so the signed action was not sent. | Yes |
+| `HL_TIMEOUT_INDETERMINATE` | The request to Hyperliquid timed out or its connection was lost after the signed action may have been received, so it may or may not have been applied. Check `nansen perp orders` and `nansen perp positions` before retrying. | No |
 | `META_UNAVAILABLE` | Hyperliquid asset metadata is not available. | Yes |
 | `NO_OPEN_POSITION` | perp close --dry-run found no open position in that coin, so a real close would be rejected. The positions data can lag a fill that just happened, so retry after a few seconds if the position was opened moments ago. | Yes |
 | `SANCTIONED` | The address failed sanctions screening. | No |
