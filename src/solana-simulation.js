@@ -553,6 +553,8 @@ function classifyInnerTokenInstruction(ix) {
 const STAKE_NON_SIGNER_KEYS = new Set(['newAuthority', 'newAuthorized', 'destination']);
 // Same idea for parsed System nonce instructions.
 const NONCE_NON_SIGNER_KEYS = new Set(['newAuthorized', 'destination']);
+// The RPC's parsed System nonce types (agave transaction-status parse_system.rs).
+const PARSED_NONCE_TYPES = new Set(['advanceNonce', 'withdrawFromNonce', 'initializeNonce', 'authorizeNonce', 'upgradeNonce']);
 const SYSTEM_WITHDRAW_NONCE = 5;
 const SYSTEM_AUTHORIZE_NONCE = 7;
 
@@ -596,11 +598,14 @@ function assertInnerStakeNonceInstructionSafe(ix, walletAddress, walletAuthority
     if (ix.parsed !== undefined) {
       const info = ix.parsed?.info;
       if (!info || typeof info !== 'object') throw unreadable('System');
+      // Every parsed nonce type names its nonce account; an unknown one can't be classified.
+      if (typeof ix.parsed.type !== 'string' || !/nonce/i.test(ix.parsed.type)) return;
+      if (!isPubkey(info.nonceAccount) || !PARSED_NONCE_TYPES.has(ix.parsed.type)) throw unreadable('System');
       if (walletAuthorityAccounts.nonce.has(info.nonceAccount) && ix.parsed.type !== 'advanceNonce') {
         throw onNonce(info.nonceAccount);
       }
       // Deny by default: don't depend on the parser's name for the signer.
-      if (info.nonceAccount !== undefined && ix.parsed.type !== 'advanceNonce'
+      if (ix.parsed.type !== 'advanceNonce'
         && Object.entries(info).some(([k, v]) => !NONCE_NON_SIGNER_KEYS.has(k) && v === walletAddress)) {
         throw controlChanged(`changes or withdraws from nonce account ${info.nonceAccount} with your wallet's signature, from inside another program.`);
       }

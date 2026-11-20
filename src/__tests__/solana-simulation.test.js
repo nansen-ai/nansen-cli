@@ -1171,6 +1171,17 @@ describe('solana-simulation', () => {
           systemIx('transfer', null),
           systemIx('withdrawFromNonce', null),
           systemIx('withdrawFromNonce', 'x'),
+          systemIx('transfer', 'x'),
+        ]) {
+          await expect(run(inner(ix))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+        }
+      });
+
+      it('fails closed on a parsed System nonce instruction without a nonce account, or of an unknown nonce type', async () => {
+        const other = generateSolanaWallet().address;
+        for (const ix of [
+          systemIx('withdrawFromNonce', { nonceAuthority: wallet, destination: other, lamports: 1 }),
+          systemIx('futureNonceOp', { nonceAccount: nonceAcct }),
         ]) {
           await expect(run(inner(ix))).rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
         }
