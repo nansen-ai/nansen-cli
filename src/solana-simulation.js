@@ -387,6 +387,9 @@ function rawWalletAuthorityAccount(info, walletBytes) {
   // Only these two owners' accounts are decoded: other writable accounts (pools,
   // markets) can be large.
   if ((info?.owner !== STAKE_PROGRAM && info?.owner !== SYSTEM_PROGRAM) || !Array.isArray(info.data)) return false;
+  if (typeof info.data[0] !== 'string') {
+    throw new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', 'Simulation returned an unreadable stake or nonce account; cannot verify who controls it.');
+  }
   const bytes = Buffer.from(info.data[0], 'base64');
   const at = (start) => bytes.subarray(start, start + 32).equals(walletBytes);
   if (info.owner === STAKE_PROGRAM) return at(12) || at(44) || at(92);

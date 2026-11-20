@@ -1373,5 +1373,12 @@ describe('solana-simulation', () => {
       await expect(run({ pre: { [nonceAcct]: { lamports: 1, owner: SYSTEM_PROGRAM, data: [nonceBytes.toString('base64'), 'base64'], space: 80 } } }))
         .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE', message: expect.stringContaining(nonceAcct) });
     });
+
+    it('fails closed on a raw stake or nonce account whose data is not a base64 string', async () => {
+      await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: [null, 'base64'], space: 200 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      await expect(run({ pre: { [nonceAcct]: { lamports: 1, owner: SYSTEM_PROGRAM, data: [{}, 'base64'], space: 80 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+    });
   });
 });
