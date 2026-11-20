@@ -141,12 +141,20 @@ async function rpcCall(url, method, params = [], context = {}) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
-  const data = await response.json();
+  let data;
+  try {
+    data = await response.json();
+  } catch (e) {
+    // A rate limit or gateway error often arrives as plain text; name the
+    // HTTP status instead of surfacing only the JSON parse error.
+    throw new Error(`RPC returned HTTP ${response.status ?? 'error'} with a body that is not JSON`, { cause: e });
+  }
   if (data.error) {
     const err = new Error(friendlyRpcError(data.error, method, context));
     // Classified from the raw RPC text, before any rewording, so callers can
     // branch on it without depending on the friendly message's wording.
     err.transactionWouldFail = isTransactionFailureMessage(data.error);
+    err.rpcError = data.error;
     throw err;
   }
   return data.result;
@@ -501,6 +509,37 @@ function assertNotSolanaSelfSend(fromAddress, to) {
 }
 
 /**
+ * Read the balance of the sending wallet's token account. Only the RPC's
+ * "could not find account" reply means the account does not exist; a rate
+ * limit, a network failure or a malformed reply is reported as a failed read,
+ * so a wallet that holds the token is not told it doesn't.
+ * Returns { amount: BigInt raw amount, uiAmountString }.
+ */
+async function readSourceTokenBalance(rpcUrl, sourceAtaAddr) {
+  let value;
+  try {
+    value = (await rpcCall(rpcUrl, 'getTokenAccountBalance', [sourceAtaAddr]))?.value;
+  } catch (e) {
+    if (String(e.rpcError?.message ?? '').toLowerCase().includes('could not find account')) {
+      throw new Error('Source token account not found. Do you hold this token?', { cause: e });
+    }
+    throw unreadableTokenBalance(e.message, e);
+  }
+  if (typeof value?.amount !== 'string' || !/^\d+$/.test(value.amount) || typeof value.uiAmountString !== 'string') {
+    throw unreadableTokenBalance(`unexpected RPC reply ${JSON.stringify(value ?? null)}`);
+  }
+  return { amount: BigInt(value.amount), uiAmountString: value.uiAmountString };
+}
+
+function unreadableTokenBalance(reason, cause) {
+  return new Error(
+    `Could not read the source token account balance: ${String(reason).replace(/\.+$/, '')}. Nothing was signed or sent. ` +
+    'Try again, or set NANSEN_SOLANA_RPC to another Solana RPC.',
+    cause ? { cause } : undefined,
+  );
+}
+
+/**
  * Build an unsigned Solana transaction for external signing (e.g. Privy).
  * Returns base64-encoded serialized transaction with an empty signature slot.
  */
@@ -525,16 +564,9 @@ export async function buildUnsignedSolanaTransaction({ to, amount, amountStr, to
     const tokenProgBuf = base58DecodePubkey(tokenProgram);
 
     // Pre-check: SPL token balance
-    const sourceAtaAddr = base58Encode(sourceATA);
-    try {
-      const ataInfo = await rpcCall(rpcUrl, 'getTokenAccountBalance', [sourceAtaAddr]);
-      const tokenBalance = BigInt(ataInfo.value.amount);
-      if (tokenBalance < tokenAmount) {
-        throw new Error(`Insufficient token balance: have ${ataInfo.value.uiAmountString}, need ${amountStr}`);
-      }
-    } catch (e) {
-      if (e.message.includes('Insufficient')) throw e;
-      throw new Error(`Source token account not found. Do you hold this token?`, { cause: e });
+    const sourceBalance = await readSourceTokenBalance(rpcUrl, base58Encode(sourceATA));
+    if (sourceBalance.amount < tokenAmount) {
+      throw new Error(`Insufficient token balance: have ${sourceBalance.uiAmountString}, need ${amountStr}`);
     }
 
     // TransferChecked instruction data: [12, amount u64 LE, decimals u8]
@@ -824,9 +856,7 @@ async function sendTokensViaPrivy({ to, amount, chain, token, max, dryRun, walle
       const rpcUrl = CHAIN_RPCS.solana;
       const { tokenProgram } = await getTokenInfo(rpcUrl, token);
       const sourceATA = deriveATA(fromAddress, token, tokenProgram);
-      const sourceAtaAddr = base58Encode(sourceATA);
-      const ataInfo = await rpcCall(rpcUrl, 'getTokenAccountBalance', [sourceAtaAddr]);
-      amount = ataInfo.value.uiAmountString;
+      amount = (await readSourceTokenBalance(rpcUrl, base58Encode(sourceATA))).uiAmountString;
     }
 
     // Build before the dry-run return: building does not sign, and it runs the
@@ -969,9 +999,7 @@ export async function sendTokens({ to, amount, chain, token = null, wallet = nul
       const rpcUrl = CHAIN_RPCS.solana;
       const { tokenProgram, decimals: _decimals } = await getTokenInfo(rpcUrl, token);
       const sourceATA = deriveATA(walletData.solana.address, token, tokenProgram);
-      const sourceAtaAddr = base58Encode(sourceATA);
-      const ataInfo = await rpcCall(rpcUrl, 'getTokenAccountBalance', [sourceAtaAddr]);
-      amount = ataInfo.value.uiAmountString;
+      amount = (await readSourceTokenBalance(rpcUrl, base58Encode(sourceATA))).uiAmountString;
       stderr(`  Max send: ${amount} (SPL token)`);
     }
     const amountRaw = token ? null : parseAmount(amount, 9);
