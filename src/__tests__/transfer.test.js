@@ -1853,27 +1853,72 @@ describe('sendTokens via Privy', () => {
     expect(result.amount).toBe('5.0');
   });
 
-  test('sends SOL via Privy dry run with no RPC call but the recipient check', async () => {
-    fetch.mockImplementation(async (url, opts) => {
-      const body = JSON.parse(opts.body);
-      if (body.method === 'getAccountInfo' && body.params[0] === '11111111111111111111111111111112') {
-        return { json: () => Promise.resolve({ result: { value: null } }) };
-      }
-      throw new Error(`No other RPC call should be made during Solana Privy dry run (got ${body.method})`);
+  describe('Solana dry run runs the balance checks the real send runs', () => {
+    const FROM = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+    const TO = '11111111111111111111111111111112';
+    const TOKEN_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+
+    // tokenAccount: null makes getTokenAccountBalance fail the way mainnet does
+    // for a wallet without a token account for the mint.
+    function mockSolanaRpc({ tokenAccount = { amount: '5000000', uiAmountString: '5' }, lamports = 1_000_000_000 } = {}) {
+      const methods = [];
+      fetch.mockImplementation(async (_url, opts) => {
+        const body = JSON.parse(opts.body);
+        methods.push(body.method);
+        const reply = (result) => ({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, result }) });
+        switch (body.method) {
+          case 'getAccountInfo':
+            if (body.params[0] === TOKEN_MINT) {
+              return reply({ context: { slot: 1 }, value: { owner: TOKEN_PROGRAM, data: { parsed: { info: { decimals: 6 } } } } });
+            }
+            return reply({ context: { slot: 1 }, value: null });
+          case 'getTokenAccountBalance':
+            if (!tokenAccount) {
+              return { json: () => Promise.resolve({ jsonrpc: '2.0', id: body.id, error: { code: -32602, message: 'Invalid param: could not find account' } }) };
+            }
+            return reply({ context: { slot: 1 }, value: { ...tokenAccount, decimals: 6 } });
+          case 'getBalance':
+            return reply({ context: { slot: 1 }, value: lamports });
+          case 'getLatestBlockhash':
+            return reply({ context: { slot: 1 }, value: { blockhash: 'EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k', lastValidBlockHeight: 1 } });
+          default:
+            throw new Error(`Unexpected RPC call during a Privy Solana dry run: ${body.method}`);
+        }
+      });
+      return methods;
+    }
+
+    test.each([
+      ['an SPL amount above the token balance', { token: TOKEN_MINT, amount: '10' }, {}, 'Insufficient token balance: have 5, need 10'],
+      ['an SPL send with no source token account', { token: TOKEN_MINT, amount: '1' }, { tokenAccount: null }, 'Source token account not found'],
+      ['a SOL amount above the SOL balance', { amount: '2' }, {}, 'Insufficient SOL balance: have 1000000000 lamports, need 2000005000'],
+    ])('refuses %s, as the real send does, without signing', async (_name, args, rpc, error) => {
+      const signSpy = vi.spyOn(PrivyClient.prototype, 'signSolanaTransaction')
+        .mockRejectedValue(new Error('signing must not be reached'));
+
+      mockSolanaRpc(rpc);
+      await expect(sendTokens({ to: TO, chain: 'solana', wallet: 'pv', dryRun: true, ...args })).rejects.toThrow(error);
+      mockSolanaRpc(rpc);
+      await expect(sendTokens({ to: TO, chain: 'solana', wallet: 'pv', ...args })).rejects.toThrow(error);
+
+      expect(signSpy).not.toHaveBeenCalled();
     });
 
-    const result = await sendTokens({
-      to: '11111111111111111111111111111112',
-      amount: '0.001',
-      chain: 'solana',
-      wallet: 'pv',
-      dryRun: true,
-    });
+    test.each([
+      ['a SOL', { amount: '0.001' }, ['getBalance']],
+      ['an SPL token', { token: TOKEN_MINT, amount: '1.5' }, ['getTokenAccountBalance']],
+    ])('previews %s send that passes the checks without signing or broadcasting', async (_name, args, checks) => {
+      const signSpy = vi.spyOn(PrivyClient.prototype, 'signSolanaTransaction');
+      const methods = mockSolanaRpc();
 
-    expect(result.dryRun).toBe(true);
-    expect(result.from).toBe('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
-    expect(result.chain).toBe('solana');
-    expect(fetch).toHaveBeenCalledTimes(1);
+      const result = await sendTokens({ to: TO, chain: 'solana', wallet: 'pv', dryRun: true, ...args });
+
+      expect(result).toEqual({ dryRun: true, from: FROM, to: TO, amount: args.amount, token: args.token ?? null, chain: 'solana' });
+      expect(methods).toEqual(expect.arrayContaining(['getLatestBlockhash', ...checks]));
+      expect(methods).not.toContain('sendTransaction');
+      expect(signSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('SPL token dry run validates the amount at the mint precision', () => {
@@ -1888,7 +1933,11 @@ describe('sendTokens via Privy', () => {
           return reply({ value: { owner: TOKEN_PROGRAM, data: { parsed: { info: { decimals: 6 } } } }, context: { slot: 1 } });
         }
         if (body?.method === 'getTokenAccountBalance') {
-          return reply({ value: { amount: '0', uiAmountString }, context: { slot: 1 } });
+          const amount = String(Math.round(Number(uiAmountString) * 1e6));
+          return reply({ value: { amount, uiAmountString }, context: { slot: 1 } });
+        }
+        if (body?.method === 'getLatestBlockhash') {
+          return reply({ value: { blockhash: 'EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k', lastValidBlockHeight: 1 }, context: { slot: 1 } });
         }
         if (body?.method === 'getAccountInfo') return reply({ value: null, context: { slot: 1 } });
         return reply(null);
