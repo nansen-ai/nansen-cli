@@ -1383,6 +1383,15 @@ describe('solana-simulation', () => {
       expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
     });
 
+    it('requires the base64 tag even on a well-formed raw stake account, and reads one exactly 124 bytes long', async () => {
+      const full = Buffer.alloc(200).toString('base64');
+      await expect(run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: [full, 'base58'], space: 200 } } }))
+        .rejects.toMatchObject({ code: 'SIM_RESULT_UNPARSEABLE' });
+      const minimal = Buffer.alloc(124).toString('base64');
+      const r = await run({ pre: { [stakeAcct]: { lamports: 1, owner: STAKE_PROGRAM, data: [minimal, 'base64'], space: 124 } } });
+      expect(r.deltas).toEqual({ [SOL_SENTINEL]: -5_000n });
+    });
+
     it('fails closed on an unparsed (base64) stake or nonce account the wallet controls', async () => {
       const walletBytes = Buffer.from(base58Decode(wallet));
       for (const offset of [12, 44, 92]) {

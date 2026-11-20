@@ -361,7 +361,7 @@ function walletAuthorityAccountKind(pubkey, info, walletAddress) {
   if ((info?.owner !== STAKE_PROGRAM && info?.owner !== SYSTEM_PROGRAM) || Array.isArray(info.data)) return null;
   const unreadable = () => new SolanaSimulationError('SIM_RESULT_UNPARSEABLE', `Simulation returned an unreadable stake or nonce account (${pubkey}); cannot verify who controls it.`);
   // No data at all can't be shown not to be the wallet's.
-  if (!info.data || typeof info.data !== 'object') throw unreadable();
+  if (!info.data) throw unreadable();
   const parsed = info.data.parsed;
   // Allow-list the shapes that carry no authority; any other one must have
   // readable authorities, since it can't be shown not to be the wallet's.
