@@ -17,7 +17,7 @@
  *      going direct, the CLI has to catch it itself.
  */
 
-import { CommandError } from "./api.js";
+import { CommandError, transportFailure } from "./api.js";
 // The base URL and network live in hl-env.js so hl-action.js can resolve the
 // network without importing this module (it builds actions; this one submits
 // them). Re-exported here because this is where callers expect to find them.
@@ -29,6 +29,16 @@ export {
 } from "./hl-env.js";
 
 import { hlApiUrl } from "./hl-env.js";
+
+// Transport failures that happen before a connection exists (the host name did
+// not resolve, or the connection was refused), so the signed action never left
+// this machine. Any other failure, such as a reset or a closed socket, can
+// happen after Hyperliquid has read the whole request and applied it.
+const NOT_SENT_FAILURES = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED"]);
+
+// What to do when the outcome of a submitted action is unknown.
+const RECONCILE_ADVICE =
+  'the action may or may not have been applied. Check "nansen perp orders" and "nansen perp positions" before retrying.';
 
 function exchangeError(message, code, exchangeResult) {
   const error = new CommandError(message, code);
@@ -81,7 +91,8 @@ export function extractActionErrors(responseBody, action) {
 //
 // Deliberately NOT retried: each submit carries a unique nonce and is not
 // idempotent, so a retry after a request that may have reached HL risks a
-// double-submit. A network error surfaces to the caller as-is.
+// double-submit. A transport failure is HL_NETWORK_ERROR only when the
+// connection was never made; any other is HL_TIMEOUT_INDETERMINATE.
 export async function submitExchange(
   { action, nonce, signature, vaultAddress = null },
   { fetchImpl = fetch, baseUrl = hlApiUrl(), timeoutMs = 30000 } = {}
@@ -94,34 +105,61 @@ export async function submitExchange(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+  // A timeout on a POST is indeterminate: the request may have reached
+  // Hyperliquid and been applied even though the response never arrived.
+  // Say so rather than implying nothing was sent, and point at the reads that
+  // resolve it.
+  const timedOut = () =>
+    new CommandError(
+      `Timed out after ${timeoutMs}ms waiting for Hyperliquid. The request may still have been received — ${RECONCILE_ADVICE}`,
+      "HL_TIMEOUT_INDETERMINATE"
+    );
+
+  // The timer stays armed until the whole body is read: fetch resolves once
+  // the headers arrive, and a body that then stalls must time out too.
   let response;
+  let text;
   try {
-    response = await fetchImpl(`${baseUrl}/exchange`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } catch (err) {
-    // A timeout on a POST is indeterminate: the request may have reached
-    // Hyperliquid and been applied even though the response never arrived.
-    // Say so rather than implying nothing was sent, and point at the reads that
-    // resolve it.
-    if (err.name === "AbortError") {
+    try {
+      response = await fetchImpl(`${baseUrl}/exchange`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (err.name === "AbortError") throw timedOut();
+      // Only a failure that proves nothing was sent is reported as "could not
+      // reach". A connection lost after the request went out is as
+      // indeterminate as a timeout: the order may be live, and a retry would
+      // place it twice.
+      const reason = transportFailure(err);
+      if (NOT_SENT_FAILURES.has(reason)) {
+        throw new CommandError(
+          `Could not reach Hyperliquid (${reason}); the action was not sent. Check your connection and retry.`,
+          "HL_NETWORK_ERROR"
+        );
+      }
       throw new CommandError(
-        `Timed out after ${timeoutMs}ms waiting for Hyperliquid. The request may still have been received — the action may or may not have been applied. Check "nansen perp orders" and "nansen perp positions" before retrying.`,
+        `The connection to Hyperliquid failed (${reason}). The request may have been received — ${RECONCILE_ADVICE}`,
         "HL_TIMEOUT_INDETERMINATE"
       );
     }
-    throw new CommandError(
-      `Could not reach Hyperliquid: ${err.message}`,
-      "HL_NETWORK_ERROR"
-    );
+
+    // The response headers arrived, so Hyperliquid has the request. A body
+    // that stalls or is cut off leaves the outcome just as unknown.
+    try {
+      text = await response.text();
+    } catch (err) {
+      if (err.name === "AbortError") throw timedOut();
+      throw new CommandError(
+        `The connection to Hyperliquid failed (${transportFailure(err)}) while its response was read. The request was received — ${RECONCILE_ADVICE}`,
+        "HL_TIMEOUT_INDETERMINATE"
+      );
+    }
   } finally {
     clearTimeout(timer);
   }
-
-  const text = await response.text();
   let data;
   try {
     data = JSON.parse(text);

@@ -187,6 +187,8 @@ export const ERROR_CODES = {
   // ── Perpetuals ──
   BUILDER_FEE_TOO_HIGH: { group: 'perp', description: 'The builder fee is above the allowed ceiling.' },
   BUILDER_FEE_UNAVAILABLE: { group: 'perp', description: 'The builder fee could not be read or approved.' },
+  HL_NETWORK_ERROR: { group: 'perp', description: 'Hyperliquid could not be reached (the host did not resolve, or the connection was refused), so the signed action was not sent.', retry: true },
+  HL_TIMEOUT_INDETERMINATE: { group: 'perp', description: 'The request to Hyperliquid timed out or its connection was lost after the signed action may have been received, so it may or may not have been applied. Check `nansen perp orders` and `nansen perp positions` before retrying.' },
   META_UNAVAILABLE: { group: 'perp', description: 'Hyperliquid asset metadata is not available.', retry: true },
   NO_OPEN_POSITION: { group: 'perp', description: 'perp close --dry-run found no open position in that coin, so a real close would be rejected. The positions data can lag a fill that just happened, so retry after a few seconds if the position was opened moments ago.', retry: true },
   SANCTIONED: { group: 'perp', description: 'The address failed sanctions screening.' },

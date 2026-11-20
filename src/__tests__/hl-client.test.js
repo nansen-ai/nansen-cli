@@ -135,14 +135,94 @@ describe("submitExchange", () => {
     });
   });
 
-  it("wraps a network error as HL_NETWORK_ERROR and does not retry", async () => {
+  // The shape Node's fetch rejects with: TypeError("fetch failed") carrying the
+  // socket error as its cause.
+  const fetchFailed = (code) => vi.fn(async () => {
+    throw Object.assign(new TypeError("fetch failed"), {
+      cause: Object.assign(new Error("socket error"), { code }),
+    });
+  });
+
+  it.each(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED"])(
+    "reports %s (no connection was made) as HL_NETWORK_ERROR and does not retry",
+    async (code) => {
+      const fetchImpl = fetchFailed(code);
+      await expect(
+        submitExchange(SIGNED, { fetchImpl, baseUrl: "https://hl.test" })
+      ).rejects.toMatchObject({
+        code: "HL_NETWORK_ERROR",
+        message: `Could not reach Hyperliquid (${code}); the action was not sent. Check your connection and retry.`,
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  // Hyperliquid can read the whole signed order and then lose the connection
+  // before it replies (UND_ERR_SOCKET is Node's "other side closed"). The order
+  // may be live, so "could not reach" would invite a retry that places it twice.
+  it.each(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE", "ETIMEDOUT"])(
+    "reports %s as indeterminate, not as clean non-delivery, and does not retry",
+    async (code) => {
+      const fetchImpl = fetchFailed(code);
+      const error = await submitExchange(SIGNED, { fetchImpl, baseUrl: "https://hl.test" })
+        .catch((caught) => caught);
+      expect(error).toMatchObject({ code: "HL_TIMEOUT_INDETERMINATE" });
+      expect(error.message).toContain(`(${code})`);
+      expect(error.message).toContain("may or may not have been applied");
+      expect(error.message).toContain("nansen perp orders");
+      expect(error.message).not.toMatch(/could not reach/i);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("reports a connection lost while the response is read as indeterminate", async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => {
+        throw Object.assign(new TypeError("terminated"), {
+          cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }),
+        });
+      },
+    }));
+    const error = await submitExchange(SIGNED, { fetchImpl, baseUrl: "https://hl.test" })
+      .catch((caught) => caught);
+    expect(error).toMatchObject({ code: "HL_TIMEOUT_INDETERMINATE" });
+    expect(error.message).toContain("(UND_ERR_SOCKET) while its response was read");
+    expect(error.message).toContain("nansen perp orders");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  // fetch resolves once the headers arrive; a body that then stalls must still
+  // time out. The stand-in body resolves after 200 ms unless the request's
+  // signal aborts it first, as Node's fetch does.
+  it("keeps the timeout armed while the response body is read", async () => {
+    const fetchImpl = vi.fn(async (_url, { signal }) => ({
+      ok: true,
+      status: 200,
+      text: () => new Promise((resolve, reject) => {
+        const late = setTimeout(() => resolve(JSON.stringify({ status: "ok", response: { type: "default" } })), 200);
+        signal.addEventListener("abort", () => {
+          clearTimeout(late);
+          reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }));
+        });
+      }),
+    }));
+    const error = await submitExchange(SIGNED, { fetchImpl, baseUrl: "https://hl.test", timeoutMs: 20 })
+      .catch((caught) => caught);
+    expect(error).toMatchObject({ code: "HL_TIMEOUT_INDETERMINATE" });
+    expect(error.message).toContain("Timed out after 20ms waiting for Hyperliquid");
+    expect(error.message).toContain("nansen perp orders");
+  });
+
+  it("treats a failure without a transport code as indeterminate", async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("ECONNRESET");
     });
     await expect(
       submitExchange(SIGNED, { fetchImpl, baseUrl: "https://hl.test" })
     ).rejects.toMatchObject({
-      code: "HL_NETWORK_ERROR",
+      code: "HL_TIMEOUT_INDETERMINATE",
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
