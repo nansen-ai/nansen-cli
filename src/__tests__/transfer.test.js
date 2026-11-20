@@ -971,6 +971,13 @@ describe('sendTokens integration', () => {
         await expect(send()).rejects.toThrow('(RPC err: {"InstructionError":[0,{"Custom":1}]})');
       });
 
+      // Mainnet reply for a send from a wallet that has never held SOL: the
+      // reason is only in data.err, not in the message.
+      test('gives the top-up advice for an AccountNotFound RPC err', async () => {
+        mockSimulationFailure({ code: -32002, message: 'Transaction simulation failed', data: { err: 'AccountNotFound', logs: [] } });
+        await expect(send()).rejects.toThrow('Insufficient SOL for transaction fees. Send at least 0.01 SOL to your wallet. (RPC err: "AccountNotFound")');
+      });
+
       test('keeps the friendly advice and adds the RPC err', async () => {
         mockSimulationFailure({
           code: -32002,
