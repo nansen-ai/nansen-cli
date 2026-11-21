@@ -40,6 +40,22 @@ function intHeader(response, name) {
 }
 
 /**
+ * Read a header as a non-negative decimal number, or null when absent, unparseable
+ * or not exactly representable. The remaining balance can hold a fraction of a
+ * credit, up to 6 decimal places ("9994.7126"), after usage-priced requests such
+ * as inference. Below 2^32 a JavaScript number keeps 6 decimal places exactly;
+ * a whole value is exact up to Number.MAX_SAFE_INTEGER.
+ */
+function decimalHeader(response, name) {
+  const raw = stringHeader(response, name);
+  const match = raw === null ? null : /^(\d+)(\.\d{1,6})?$/.exec(raw);
+  if (match === null) return null;
+  const value = Number(raw);
+  const limit = match[2] === undefined ? Number.MAX_SAFE_INTEGER : 2 ** 32 - 1;
+  return Number(match[1]) <= limit ? value : null;
+}
+
+/**
  * Read a header as a trimmed non-empty string, or null when absent.
  * Tolerates any header bag with a .get() — a real Headers, or a Map in tests.
  */
@@ -57,7 +73,7 @@ export function stringHeader(response, name) {
  */
 export function readResponseMeta(response) {
   const used = intHeader(response, CREDITS_USED);
-  const remaining = intHeader(response, CREDITS_REMAINING);
+  const remaining = decimalHeader(response, CREDITS_REMAINING);
   const cost = intHeader(response, CREDITS_COST);
   const limit = intHeader(response, RATE_LIMIT);
   const rateRemaining = intHeader(response, RATE_REMAINING);
