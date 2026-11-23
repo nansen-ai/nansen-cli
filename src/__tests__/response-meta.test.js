@@ -126,6 +126,43 @@ describe('readResponseMeta', () => {
     expect(meta.credits).toEqual({ used: 0, remaining: 0, cost: 0 });
   });
 
+  it('reads a fractional remaining balance exactly', () => {
+    const meta = readResponseMeta({
+      headers: headers({
+        'x-nansen-credits-used': '1',
+        'x-nansen-credits-remaining': '9994.7126',
+        'x-nansen-credits-cost': '1',
+      }),
+    });
+    expect(meta.credits).toEqual({ used: 1, remaining: 9994.7126, cost: 1 });
+  });
+
+  it('reads balances at the exact-representation bounds', () => {
+    for (const [raw, expected] of [
+      ['4294967295.999999', 4294967295.999999],
+      ['0.000001', 0.000001],
+      ['9007199254740991', Number.MAX_SAFE_INTEGER],
+    ]) {
+      const meta = readResponseMeta({
+        headers: headers({ 'x-nansen-credits-used': '1', 'x-nansen-credits-remaining': raw }),
+      });
+      expect(meta.credits.remaining).toBe(expected);
+      expect(String(meta.credits.remaining)).toBe(raw);
+    }
+  });
+
+  it('treats a malformed remaining balance as unknown', () => {
+    for (const raw of [
+      '-1', '1e3', 'abc', '9.', '.5', '1.1234567',
+      '9'.repeat(400), '9007199254740993', '9007199254740991.1', '4294967296.5',
+    ]) {
+      const meta = readResponseMeta({
+        headers: headers({ 'x-nansen-credits-used': '1', 'x-nansen-credits-remaining': raw }),
+      });
+      expect(meta.credits.remaining).toBeNull();
+    }
+  });
+
   it('parses the authoritative cost header', () => {
     const meta = readResponseMeta({
       headers: headers({
