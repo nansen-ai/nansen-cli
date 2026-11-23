@@ -184,8 +184,33 @@ describe('scaledUiAmountToRaw', () => {
     expect(() => scaledUiAmountToRaw(amount, 8, scaled(), AFTER)).toThrow(error);
   });
 
-  test('accepts an amount of exactly the u64 maximum', () => {
-    expect(scaledUiAmountToRaw('18446744073709551615', 0, scaled({ multiplier: '1', newMultiplier: '1' }), AFTER)).toBe((1n << 64n) - 1n);
+  test('refuses an amount of exactly the u64 maximum: wallets cannot display it exactly', () => {
+    expect(() => scaledUiAmountToRaw('18446744073709551615', 0, scaled({ multiplier: '1', newMultiplier: '1' }), AFTER)).toThrow(/too large to convert exactly/);
+  });
+
+  describe('amounts wallets cannot display exactly (15 significant digits, raw below 2^53)', () => {
+    const one = scaled({ multiplier: '1', newMultiplier: '1' });
+
+    test('converts 10^15 - 1 displayed base units', () => {
+      expect(scaledUiAmountToRaw('999999999999999', 0, one, AFTER)).toBe(999999999999999n);
+    });
+
+    test.each(['1000000000000000', '9007199254740991'])('refuses %s displayed base units', amount => {
+      expect(() => scaledUiAmountToRaw(amount, 0, one, AFTER)).toThrow(
+        new RegExp(`Amount ${amount} is too large to convert exactly for this token.*exact only up to 15 significant digits.*Nothing was signed or sent`),
+      );
+    });
+
+    test('refuses when the displayed amount reaches 10^15 base units under the real multiplier', () => {
+      expect(scaledUiAmountToRaw('9999999.99999999', 8, scaled(), AFTER)).toBe(166420535378106n);
+      expect(() => scaledUiAmountToRaw('10000000', 8, scaled(), AFTER)).toThrow(/too large to convert exactly/);
+    });
+
+    test('refuses when the raw amount reaches 2^53 under a multiplier below one, though the displayed one stays below 10^15', () => {
+      const tenth = scaled({ multiplier: '0.1', newMultiplier: '0.1' });
+      expect(scaledUiAmountToRaw('900719925474099', 0, tenth, AFTER)).toBe(9007199254740990n);
+      expect(() => scaledUiAmountToRaw('900719925474100', 0, tenth, AFTER)).toThrow(/too large to convert exactly/);
+    });
   });
 
   test('refuses an amount above the u64 range', () => {

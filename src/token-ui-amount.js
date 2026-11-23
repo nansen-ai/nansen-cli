@@ -19,6 +19,12 @@ export const MULTIPLIER_SWITCH_AHEAD_SEC = 3600;
 export const MULTIPLIER_SWITCH_BEHIND_SEC = 300;
 
 const U64_MAX = (1n << 64n) - 1n;
+// Token-2022's amount_to_ui_amount displays a scaled amount in two f64 steps:
+// n = trunc(f64(raw) × multiplier), then n / 10^decimals printed to `decimals`
+// places. Casting raw to f64 is exact only below 2^53; the division and
+// printing return n exactly only when n has at most 15 significant digits.
+const F64_EXACT_LIMIT = 2n ** 53n;
+const DISPLAY_UNITS_LIMIT = 10n ** 15n;
 
 /** A positive plain decimal string ("6.0048") as { num, scale }: value = num / 10^scale. */
 function parsePositiveDecimal(str) {
@@ -125,5 +131,13 @@ export function scaledUiAmountToRaw(amountStr, decimals, config, nowSec, mint = 
     );
   }
   if (raw > U64_MAX) throw new Error(`Amount ${str} is larger than any token balance can be`);
+  // raw is cast to f64 first; the requested amount in displayed base units
+  // (amountNum × 10^decimals / 10^amountScale) must survive / 10^decimals and printing.
+  if (raw >= F64_EXACT_LIMIT || amountNum * 10n ** BigInt(decimals) >= DISPLAY_UNITS_LIMIT * 10n ** amountScale) {
+    throw new Error(
+      `Amount ${str} is too large to convert exactly for this token: wallets compute its displayed amount in floating point, ` +
+      'which is exact only up to 15 significant digits. Nothing was signed or sent. Send it in smaller parts.',
+    );
+  }
   return raw;
 }
