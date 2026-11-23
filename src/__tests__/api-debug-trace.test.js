@@ -132,15 +132,20 @@ describe('request() tracing', () => {
     expect(output).not.toContain(FAKE_API_KEY);
   });
 
-  it('never prints a header value that undici quotes in its fetch error', async () => {
+  // A codeless failure on a retry:false request is REQUEST_INDETERMINATE (it
+  // cannot be proven unsent); either way the quoted value must not leak.
+  it.each([
+    ['retryable', {}, 'NETWORK_ERROR'],
+    ['retry:false', { retry: false }, 'REQUEST_INDETERMINATE'],
+  ])('never prints a header value that undici quotes in its fetch error (%s)', async (_label, options, code) => {
     // A malformed API key is now rejected before fetch; this guards any other
     // header error that still reaches fetch with the value in its message.
     vi.stubGlobal('fetch', vi.fn(async () => { throw headerError(); }));
     const api = new NansenAPI(FAKE_API_KEY, BASE_URL, FAST_RETRY);
 
-    const error = await api.request('/api/v1/demo', {}, { retry: false }).catch(e => e);
+    const error = await api.request('/api/v1/demo', {}, options).catch(e => e);
 
-    expect(error.code).toBe('NETWORK_ERROR');
+    expect(error.code).toBe(code);
     expect(error.message).toContain('(TypeError)');
     expect(error.details.originalError).toBe('TypeError');
     for (const text of [error.message, JSON.stringify(error.details), traced()]) {

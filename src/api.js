@@ -350,6 +350,30 @@ function networkFailureReason(err) {
   return reason === 'AbortError' || reason === 'TimeoutError' ? 'timed out' : reason;
 }
 
+// Fetch failures raised before a connection exists (the host did not resolve,
+// or the connection was refused), so the request never left this machine. Any
+// other failure, such as a reset, a closed socket or an undici timeout, can
+// happen after the server has read the whole request.
+const NOT_SENT_FAILURES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED']);
+
+/**
+ * REQUEST_INDETERMINATE for a non-idempotent request whose connection failed
+ * after it may have been received. Never NETWORK_ERROR: that code says the
+ * request was not sent and is marked retryable, so a retry could apply it twice.
+ */
+function indeterminateRequestError(baseUrl, err, { redact, whileReading, advice, requestId }) {
+  let origin = baseUrl;
+  try { origin = new URL(baseUrl).origin; } catch { /* keep the raw value */ }
+  const reason = networkFailureReason(err);
+  const when = whileReading ? 'while its response was read' : 'after the request was sent';
+  return new NansenError(
+    `The connection to the Nansen API at ${origin} failed${redact ? '' : ` (${reason})`} ${when}, so it may or may not have been applied. ${advice || 'Check whether it took effect before retrying.'}`,
+    ErrorCode.REQUEST_INDETERMINATE,
+    null,
+    { ...(!redact && { originalError: reason }), ...(requestId && { requestId }) },
+  );
+}
+
 /**
  * NETWORK_ERROR message. It says plainly that the credential was never
  * checked, so a caller fixes the connection instead of replacing a valid key.
@@ -1238,6 +1262,10 @@ export class NansenAPI {
     const useCache = options.cache !== false && this.cacheOptions.enabled;
     const cacheTtl = options.cacheTtl ?? this.cacheOptions.ttl;
     const method = options.method || 'POST';
+    // retry:false marks a request that must not be sent twice. A connection
+    // lost after it went out leaves its outcome unknown, so say that instead of
+    // "could not reach", which tells the caller to retry.
+    const indeterminateOnLoss = !shouldRetry && method !== 'GET';
     // Defer identity hashing to keep the uncached (default) path free of crypto work.
     // cacheContext is therefore null unless caching is on; the `&& cacheContext`
     // guards below ensure that null never reaches getCacheKey, where a missing
@@ -1308,6 +1336,9 @@ export class NansenAPI {
         // Network-level errors - retry these too
         const reason = networkFailureReason(err);
         traceError({ method, url, durationMs: Date.now() - startedAt, attempt: attempt + 1, error: this.redactAuthDiagnostics ? 'API request failed' : reason });
+        if (indeterminateOnLoss && !NOT_SENT_FAILURES.has(transportFailure(err))) {
+          throw indeterminateRequestError(this.baseUrl, err, { redact: this.selection.kind === 'session', advice: options.indeterminateAdvice });
+        }
         lastError = new NansenError(
           networkErrorMessage(this.baseUrl, err, { redact: this.selection.kind === 'session' }),
           ErrorCode.NETWORK_ERROR,
@@ -1339,6 +1370,13 @@ export class NansenAPI {
       try {
         data = await readBody(response);
       } catch (err) {
+        // The body stream failed (reset, closed socket, body timeout) rather
+        // than failing to parse: the server already has the request.
+        if (indeterminateOnLoss && !(err instanceof SyntaxError) && err?.rawBody === undefined) {
+          // The headers' request id lets support find what the server did.
+          const meta = this.selection.kind === 'session' ? browserSessionResponseMeta(response) : readResponseMeta(response);
+          throw indeterminateRequestError(this.baseUrl, err, { redact: this.selection.kind === 'session', whileReading: true, advice: options.indeterminateAdvice, requestId: meta?.requestId });
+        }
         // Non-JSON response (rare, usually server errors)
         const meta = this.selection.kind === 'session' ? browserSessionResponseMeta(response) : readResponseMeta(response);
         this.lastResponseMeta = meta;

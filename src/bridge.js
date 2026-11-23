@@ -161,11 +161,19 @@ async function getBridgeQuote(apiInstance, params) {
 // /authorize and to Hyperliquid's /exchange, so an automatic re-send on a 500
 // or 502 can submit the same signed action twice. hl-client.js's submitExchange
 // documents the same reasoning for the direct path; this is the proxied one.
-async function postBridgeExecute(apiInstance, targetUrl, body) {
+async function postBridgeExecute(apiInstance, targetUrl, body, requestId) {
+  // Name the request id: `bridge status` needs it, and nothing else prints it.
+  const statusCommand = requestId ? `nansen bridge status --request-id ${requestId}` : 'nansen bridge status';
   return apiInstance.request(
     '/api/v1/perp/bridge/execute',
     { target_url: targetUrl, body },
-    { cache: false, retry: false },
+    {
+      cache: false,
+      retry: false,
+      // A connection lost after this POST went out leaves the step's outcome
+      // unknown (REQUEST_INDETERMINATE); the quote is consumed either way.
+      indeterminateAdvice: `Check "${statusCommand}" and your balances before requesting a new quote.`,
+    },
   );
 }
 
@@ -1320,7 +1328,7 @@ async function processEvmStep(step, { chain, privateKeyHex, signerAddress, log, 
   }
 }
 
-async function processSignatureStepLocal(step, { privateKeyHex, log, apiInstance, onBroadcast, intent }) {
+async function processSignatureStepLocal(step, { privateKeyHex, log, apiInstance, onBroadcast, intent, requestId }) {
   for (const item of step.items || []) {
     if (item.status === 'complete') continue;
     const { data: signData } = item;
@@ -1354,7 +1362,7 @@ async function processSignatureStepLocal(step, { privateKeyHex, log, apiInstance
       // clean pre-forward rejection. Consume the quote before rethrowing so a
       // re-execute can't resubmit this leg.
       try {
-        await postBridgeExecute(apiInstance, targetUrl, postBody);
+        await postBridgeExecute(apiInstance, targetUrl, postBody, requestId);
       } catch (sendErr) {
         onBroadcast?.(step.id, null);
         throw sendErr;
@@ -1402,7 +1410,7 @@ async function processSignatureStepLocal(step, { privateKeyHex, log, apiInstance
       // try: that is a definitive no-op, so it must NOT consume the quote.
       let result;
       try {
-        result = await postBridgeExecute(apiInstance, 'https://api.hyperliquid.xyz/exchange', hlBody);
+        result = await postBridgeExecute(apiInstance, 'https://api.hyperliquid.xyz/exchange', hlBody, requestId);
       } catch (sendErr) {
         onBroadcast?.(step.id, null);
         throw sendErr;
@@ -1419,7 +1427,7 @@ async function processSignatureStepLocal(step, { privateKeyHex, log, apiInstance
   }
 }
 
-async function processSignatureStepPrivy(step, { privyClient, walletId, log, apiInstance, onBroadcast, intent }) {
+async function processSignatureStepPrivy(step, { privyClient, walletId, log, apiInstance, onBroadcast, intent, requestId }) {
   for (const item of step.items || []) {
     if (item.status === 'complete') continue;
     const { data: signData } = item;
@@ -1483,7 +1491,7 @@ async function processSignatureStepPrivy(step, { privyClient, walletId, log, api
       // Fail closed on any submit failure — see the local path for the rationale
       // (an ambiguous forward must not leave the quote reusable).
       try {
-        await postBridgeExecute(apiInstance, targetUrl, postBody);
+        await postBridgeExecute(apiInstance, targetUrl, postBody, requestId);
       } catch (sendErr) {
         onBroadcast?.(step.id, null);
         throw sendErr;
@@ -1501,7 +1509,7 @@ async function processSignatureStepPrivy(step, { privyClient, walletId, log, api
       // definitive no-op that must NOT consume the quote.
       let result;
       try {
-        result = await postBridgeExecute(apiInstance, 'https://api.hyperliquid.xyz/exchange', hlBody);
+        result = await postBridgeExecute(apiInstance, 'https://api.hyperliquid.xyz/exchange', hlBody, requestId);
       } catch (sendErr) {
         onBroadcast?.(step.id, null);
         throw sendErr;
@@ -2171,6 +2179,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
                 apiInstance,
                 onBroadcast,
                 intent: hlIntent,
+                requestId: request_id,
               });
               markBroadcast(index);
             }
@@ -2182,6 +2191,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
                 apiInstance,
                 onBroadcast,
                 intent: hlIntent,
+                requestId: request_id,
               });
               markBroadcast(index);
             }

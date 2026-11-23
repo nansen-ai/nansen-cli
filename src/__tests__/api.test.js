@@ -4535,7 +4535,7 @@ describe('NansenAPI', () => {
       await vi.runAllTimersAsync();
       await promise;
 
-      expect(thrownError?.code).toBe('NETWORK_ERROR');
+      expect(thrownError?.code).toBe('REQUEST_INDETERMINATE');
       expect(createdAlerts).toBe(1);
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
@@ -4562,7 +4562,7 @@ describe('NansenAPI', () => {
       await vi.runAllTimersAsync();
       await promise;
 
-      expect(thrownError?.code).toBe('NETWORK_ERROR');
+      expect(thrownError?.code).toBe('REQUEST_INDETERMINATE');
       expect(patches).toBe(1);
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
