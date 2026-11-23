@@ -202,6 +202,9 @@ describe('bridge request options', () => {
     for (const { options } of executeCalls) {
       expect(options.retry).toBe(false);
       expect(options.cache).toBe(false);
+      // A connection lost after the POST is REQUEST_INDETERMINATE; this is
+      // the advice it prints.
+      expect(options.indeterminateAdvice).toContain('nansen bridge status --request-id req-r1');
     }
   });
 });

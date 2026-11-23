@@ -73,6 +73,7 @@ export const ERROR_CODES = {
 
   // ── API, network and server ──
   NETWORK_ERROR: { group: 'api', description: 'The CLI could not reach the API (DNS, TLS, proxy, firewall or offline). The credential was not checked; do not replace the API key.', retry: true },
+  REQUEST_INDETERMINATE: { group: 'api', description: 'The connection was lost after a non-idempotent request (a bridge step, a smart-alert create or update) was sent, so the API may or may not have applied it. Check its outcome before retrying.' },
   TIMEOUT: { group: 'api', description: 'The request or query timed out.', retry: true },
   SERVER_ERROR: { group: 'api', description: 'The API failed with an internal error (HTTP 5xx). Quote `requestId` to support.', retry: true },
   SERVICE_UNAVAILABLE: { group: 'api', description: 'The API or an upstream service is temporarily unavailable (HTTP 503).', retry: true },

@@ -774,3 +774,30 @@ describe('bridge execute — Hyperliquid withdrawal leg count and destination', 
     expect(ethSignTypedDataV4).not.toHaveBeenCalled();
   });
 });
+
+// A connection lost after an execute POST is REQUEST_INDETERMINATE, and its
+// advice must name a `bridge status` command that works: that needs the
+// quote's request id, which nothing else prints. Both signer paths.
+describe('bridge execute — indeterminate advice names the request id', () => {
+  it.each([
+    ['local', { name: 'w', evm: WALLET, provider: 'local' }],
+    ['privy', { name: 'p', evm: WALLET, provider: 'privy', privyWalletIds: { evm: 'pw-1' } }],
+  ])('%s signer passes it on every execute POST', async (walletProvider, wallet) => {
+    writeQuote(`bridge-advice-${walletProvider}`, [authorizeStep(), depositStep()], { walletProvider });
+    showWallet.mockReturnValue(wallet);
+    const executes = [];
+    const recording = {
+      request: async (endpoint, body, options) => {
+        if (endpoint.includes('/perp/bridge/execute')) executes.push(options);
+        return api().request(endpoint, body);
+      },
+    };
+
+    await buildBridgeCommands({ log: () => {} }).execute([], recording, {}, { quote: `bridge-advice-${walletProvider}` });
+
+    expect(executes).toHaveLength(2);
+    for (const options of executes) {
+      expect(options.indeterminateAdvice).toBe('Check "nansen bridge status --request-id req-hl-intent" and your balances before requesting a new quote.');
+    }
+  });
+});

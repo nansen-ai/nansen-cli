@@ -83,6 +83,7 @@ A connection failure is `NETWORK_ERROR` and never `UNAUTHORIZED`: the CLI could 
 | Code | Meaning | Retry |
 | --- | --- | --- |
 | `NETWORK_ERROR` | The CLI could not reach the API (DNS, TLS, proxy, firewall or offline). The credential was not checked; do not replace the API key. | Yes |
+| `REQUEST_INDETERMINATE` | The connection was lost after a non-idempotent request (a bridge step, a smart-alert create or update) was sent, so the API may or may not have applied it. Check its outcome before retrying. | No |
 | `TIMEOUT` | The request or query timed out. | Yes |
 | `SERVER_ERROR` | The API failed with an internal error (HTTP 5xx). Quote `requestId` to support. | Yes |
 | `SERVICE_UNAVAILABLE` | The API or an upstream service is temporarily unavailable (HTTP 503). | Yes |
