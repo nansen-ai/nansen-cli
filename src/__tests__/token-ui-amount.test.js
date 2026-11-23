@@ -210,6 +210,10 @@ describe('scaledUiAmountToRaw', () => {
       const tenth = scaled({ multiplier: '0.1', newMultiplier: '0.1' });
       expect(scaledUiAmountToRaw('900719925474099', 0, tenth, AFTER)).toBe(9007199254740990n);
       expect(() => scaledUiAmountToRaw('900719925474100', 0, tenth, AFTER)).toThrow(/too large to convert exactly/);
+      // Exactly 2^53 raw units, with the displayed amount still below 10^15.
+      const sixteenth = scaled({ multiplier: '0.0625', newMultiplier: '0.0625' });
+      expect(scaledUiAmountToRaw('562949953421311', 0, sixteenth, AFTER)).toBe(9007199254740976n);
+      expect(() => scaledUiAmountToRaw('562949953421312', 0, sixteenth, AFTER)).toThrow(/too large to convert exactly/);
     });
   });
 
