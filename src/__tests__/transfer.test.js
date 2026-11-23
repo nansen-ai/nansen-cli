@@ -18,6 +18,8 @@ import {
   buildUnsignedSolanaTransaction,
   getTokenInfo,
   resolveSendToken,
+  displayedAmountToRaw,
+  describeScaledAmount,
 } from '../transfer.js';
 import { signSecp256k1, rlpEncode, toChecksumAddress } from '../crypto.js';
 import { RLP } from '@ethereumjs/rlp';
@@ -817,7 +819,7 @@ describe('sendTokens integration', () => {
 
     test('returns the owner program and parsed decimals', async () => {
       mockAccountInfo({ owner: TOKEN_2022, data: { parsed: { info: { decimals: 6 } } } });
-      await expect(getTokenInfo('https://rpc.test', MINT)).resolves.toEqual({ tokenProgram: TOKEN_2022, decimals: 6 });
+      await expect(getTokenInfo('https://rpc.test', MINT)).resolves.toEqual({ tokenProgram: TOKEN_2022, decimals: 6, uiAmountConfig: { kind: 'plain' } });
     });
 
     test('accepts a zero-decimal mint', async () => {
@@ -2223,5 +2225,36 @@ describe('Solana SPL source token balance read', () => {
       expect(result).toMatchObject({ dryRun: true, amount: '5' });
       expect(methods).not.toContain('sendTransaction');
     });
+  });
+});
+
+describe('displayedAmountToRaw', () => {
+  const NOW = 1790382600 + 86400; // a day after the fixture's multiplier switch
+  const scaledInfo = {
+    decimals: 8,
+    uiAmountConfig: { kind: 'scaled', multiplier: '6.004667790486', newMultiplier: '6.008873831153126', effectiveTimestamp: 1790382600 },
+  };
+
+  test('a plain mint is the decimals conversion, with parseAmount errors', () => {
+    expect(displayedAmountToRaw('1.5', { decimals: 6, uiAmountConfig: { kind: 'plain' } }, { mint: 'M' })).toBe(1500000n);
+    expect(displayedAmountToRaw('1.5', { decimals: 6 }, { mint: 'M' })).toBe(1500000n);
+    expect(() => displayedAmountToRaw('0.0000001', { decimals: 6, uiAmountConfig: { kind: 'plain' } }, { mint: 'M' })).toThrow(/below the smallest unit/);
+  });
+
+  test('a scaled mint divides by the multiplier in effect', () => {
+    expect(displayedAmountToRaw('1', scaledInfo, { mint: 'M', nowSec: NOW })).toBe(16642053n);
+  });
+
+  test.each([
+    ['interest-bearing', { kind: 'interest-bearing' }, /Token M is an interest-bearing Token-2022 token.*Nothing was signed or sent\. Use --max\.$/],
+    ['invalid', { kind: 'invalid', reason: 'the config is unreadable' }, /Token M has Token-2022 mint data the CLI cannot read \(the config is unreadable\).*Use --max\.$/],
+  ])('refuses an %s mint and appends the hint', (_label, uiAmountConfig, error) => {
+    expect(() => displayedAmountToRaw('1', { decimals: 6, uiAmountConfig }, { mint: 'M', hint: 'Use --max.' })).toThrow(error);
+  });
+
+  test('describeScaledAmount shows raw and displayed for a scaled mint only', () => {
+    expect(describeScaledAmount(16642053n, scaledInfo, NOW))
+      .toBe('16642053 base units = 0.99999996 as displayed in wallets (display multiplier 6.008873831153126)');
+    expect(describeScaledAmount(1n, { decimals: 6, uiAmountConfig: { kind: 'plain' } }, NOW)).toBeNull();
   });
 });
