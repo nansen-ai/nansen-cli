@@ -175,6 +175,26 @@ describe('scaledUiAmountToRaw', () => {
     expect(scaledUiAmountToRaw('1', 8, scaled({ multiplier: '6.5', newMultiplier: '6.50' }), SWITCH)).toBe(15384615n);
   });
 
+  describe('digits beyond the token decimals are dropped, as for plain mints', () => {
+    test('with a multiplier of one', () => {
+      const one = scaled({ multiplier: '1', newMultiplier: '1' });
+      expect(scaledUiAmountToRaw('1.239', 2, one, AFTER)).toBe(scaledUiAmountToRaw('1.23', 2, one, AFTER));
+    });
+
+    test('under the real multiplier', () => {
+      // 16642054 base units display as 1.00000002; without truncating first,
+      // 1.000000029 would convert to them rather than to 1.00000002's 16642053.
+      expect(scaledUiAmountToRaw('1.000000029', 8, scaled(), AFTER)).toBe(16642053n);
+      expect(scaledUiAmountToRaw('1.000000029', 8, scaled(), AFTER)).toBe(scaledUiAmountToRaw('1.00000002', 8, scaled(), AFTER));
+    });
+
+    test('refuses a request that truncates to zero, which f64 rounding would display as more than asked', () => {
+      // trunc(3 × 0.3333333333333333) is 1, more than 0.9999999999999999.
+      const third = { kind: 'scaled', multiplier: '0.3333333333333333', newMultiplier: '0.3333333333333333', effectiveTimestamp: 0 };
+      expect(() => scaledUiAmountToRaw('0.9999999999999999', 0, third, 10000)).toThrow(/Amount 0.9999999999999999 is below the smallest unit/);
+    });
+  });
+
   test.each([
     ['a negative amount', '-1', /must be positive/],
     ['a malformed amount', '1e3', /valid number/],

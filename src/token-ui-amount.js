@@ -100,7 +100,8 @@ export function scaledRawToUiAmount(raw, decimals, config, nowSec) {
 
 /**
  * Convert a displayed amount of a scaled-UI-amount mint to raw units, rounded
- * down so the transfer never exceeds what the user asked for.
+ * down so the transfer never exceeds what the user asked for. The amount is
+ * first truncated to `decimals` places, then
  * raw = floor(amount × 10^decimals / multiplier), in exact integer math.
  */
 export function scaledUiAmountToRaw(amountStr, decimals, config, nowSec, mint = 'this token') {
@@ -121,7 +122,12 @@ export function scaledUiAmountToRaw(amountStr, decimals, config, nowSec, mint = 
   }
 
   const m = parsePositiveDecimal(effectiveMultiplier(config, nowSec));
-  const [whole, frac = ''] = str.split('.');
+  // Drop digits beyond `decimals`, as parseAmount does for plain mints:
+  // Token-2022 multiplies in f64, which can round a fractional number of
+  // displayed base units up to the next whole one. A whole number of them
+  // below 10^15 cannot display as more than requested.
+  const [whole, fullFrac = ''] = str.split('.');
+  const frac = fullFrac.slice(0, decimals);
   const amountNum = BigInt(whole + frac);
   const amountScale = BigInt(frac.length);
   const raw = (amountNum * 10n ** BigInt(decimals) * 10n ** m.scale) / (10n ** amountScale * m.num);
