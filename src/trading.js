@@ -5589,7 +5589,7 @@ Check the status of a cross-chain bridge transaction.
 OPTIONS:
   --tx-hash <hash>          Source chain transaction hash
   --from-chain <chain>      Source chain (${TRADE_SOURCE_CHAIN_NAMES.join(', ')})
-  --to-chain <chain>        Destination chain (same list)
+  --to-chain <chain>        Destination chain (${TRADE_CHAIN_NAMES.join(', ')})
   --aggregator <name>       lifi or relay. Overrides auto-detection from the
                             local tx record. Use this when polling from a
                             different machine or after the record has expired.
@@ -5597,6 +5597,12 @@ OPTIONS:
 EXAMPLES:
   nansen trade bridge-status --tx-hash 0xabc... --from-chain base --to-chain solana
   nansen trade bridge-status --tx-hash 0xabc... --from-chain base --to-chain solana --aggregator relay`, 'MISSING_ARGS');
+      }
+      // A bridge can't start on a destination-only chain, so refuse before polling.
+      try {
+        assertTradeSourceChain(fromChain);
+      } catch (e) {
+        throw new CommandError(e.message, 'INVALID_INPUT');
       }
 
       try {

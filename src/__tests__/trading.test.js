@@ -6987,6 +6987,47 @@ describe('Relay aggregator: --aggregator override on bridge-status', () => {
   });
 });
 
+describe('bridge-status: HyperEVM is a destination only', () => {
+  it.each(['hyperevm', 'HyperEVM'])('refuses --from-chain %s before any request', async (fromChain) => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn();
+    try {
+      const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+      const err = await cmds['bridge-status']([], null, {}, {
+        'tx-hash': `0x${'1'.repeat(64)}`,
+        'from-chain': fromChain,
+        'to-chain': 'base',
+      }).catch((e) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toContain('HyperEVM is supported as a bridge destination only');
+      expect(err.code).toBe('INVALID_INPUT');
+      expect(global.fetch).not.toHaveBeenCalled();
+    } finally {
+      global.fetch = origFetch;
+    }
+  });
+
+  it('still accepts --to-chain hyperevm', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ status: 'PENDING' }),
+    });
+    try {
+      const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+      await cmds['bridge-status']([], null, {}, {
+        'tx-hash': `0x${'1'.repeat(64)}`,
+        'from-chain': 'base',
+        'to-chain': 'hyperevm',
+      });
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      global.fetch = origFetch;
+    }
+  });
+});
+
 describe('Solana execute: SOL fee balance check', () => {
   function encodeCompactU16(value) {
     if (value < 0x80) return Buffer.from([value]);
