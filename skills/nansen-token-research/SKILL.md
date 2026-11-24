@@ -68,6 +68,12 @@ nansen research token dex-trades --token <addr> --chain solana --limit 20
 nansen research token pnl --token <addr> --chain solana --sort total_pnl_usd:desc
 ```
 
+Top rows can be a handful of trades or mostly an open position. Check `nof_trades` and `pnl_usd_realised` vs `pnl_usd_unrealised` before treating a trader as skilled. To exclude small samples on the server, filter by trade count:
+
+```bash
+nansen research token pnl --token <addr> --chain solana --filters '{"nof_trades":{"min":10}}'
+```
+
 ## Perps (no --chain)
 
 ```bash
