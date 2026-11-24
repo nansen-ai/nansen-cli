@@ -147,6 +147,14 @@ describe('validateQuoteInput', () => {
   });
 
   describe('chain validation', () => {
+    it('lists only chains a trade can start on, and explains a destination-only chain', () => {
+      let message = '';
+      try { validateQuoteInput({ ...validSolana, chain: 'bnb' }); } catch (err) { message = err.message; }
+      expect(message).toMatch(/Supported chains: /);
+      expect(message).not.toContain('hyperevm');
+      expect(() => validateQuoteInput({ ...validSolana, chain: 'hyperevm' })).toThrow('bridge destination only');
+    });
+
     it('rejects unsupported chain', () => {
       expect(() => validateQuoteInput({
         ...validSolana,

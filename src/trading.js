@@ -1408,15 +1408,22 @@ export function resolveQuoteLegacyGasPrice(txData) {
 // time with no margin, so any base-fee rise before broadcast gets the
 // transaction rejected ("max fee per gas less than block base fee"; seen live
 // on Arbitrum). Arbitrum-stack chains charge only the base fee, so the margin is
-// free there; elsewhere it is a small tip.
+// free there; elsewhere the transaction pays it in full (as tip, on a type-2
+// transaction whose priority fee equals its max fee).
 const LEGACY_GAS_PRICE_HEADROOM_PCT = 125n;
+// The chain RPC's eth_gasPrice may raise the quoted price by at most this
+// factor. The RPC is an anonymous public node by default, so it can add
+// headroom when the network moved since the quote, but must not set the price:
+// an inflated reading would otherwise be capped only by --max-tx-fee.
+const LEGACY_GAS_PRICE_MAX_RPC_MULTIPLIER = 2n;
 // How long to wait for eth_gasPrice before padding the quoted price alone. The
 // lookup runs before signing, so an RPC that never answers must not hang execute.
 const LEGACY_GAS_PRICE_LOOKUP_TIMEOUT_MS = 5000;
 
 /**
  * Re-price a gasPrice-only EVM quote just before signing: the higher of the
- * quote's gasPrice and the chain's current eth_gasPrice, plus
+ * quote's gasPrice and the chain's current eth_gasPrice (capped at
+ * LEGACY_GAS_PRICE_MAX_RPC_MULTIPLIER times the quote's), plus
  * LEGACY_GAS_PRICE_HEADROOM_PCT. Quotes with an EIP-1559 maxFeePerGas, and
  * quotes whose gasPrice is not a positive integer (the signer refuses those),
  * are returned unchanged. An unreadable eth_gasPrice falls back to the quote's.
@@ -1440,6 +1447,8 @@ export async function withLegacyGasPriceHeadroom(chain, quote) {
   try {
     current = BigInt(await evmRpcCall(chain, 'eth_gasPrice', [], { timeoutMs: LEGACY_GAS_PRICE_LOOKUP_TIMEOUT_MS }));
   } catch { /* RPC unavailable: pad the quoted price alone */ }
+  const rpcCeiling = quoted * LEGACY_GAS_PRICE_MAX_RPC_MULTIPLIER;
+  if (current > rpcCeiling) current = rpcCeiling;
   const floor = quoted > current ? quoted : current;
   const gasPrice = (floor * LEGACY_GAS_PRICE_HEADROOM_PCT) / 100n;
   return { ...quote, transaction: { ...tx, gasPrice: '0x' + gasPrice.toString(16) } };
@@ -2080,11 +2089,13 @@ export async function checkErc20Allowance(chain, tokenAddress, ownerAddress, spe
  * Pre-approval allowance read for the execute paths. Zero-first tokens
  * (requiresZeroFirstApproval) cannot use checkErc20Allowance's treat-as-0
  * fallback: a real non-zero allowance would skip the required revoke and the
- * non-zero → non-zero approve() would revert. For those, return null on a
- * failed read so the caller signs nothing for this quote.
+ * non-zero → non-zero approve() would revert. Nor can chains without
+ * standalone approvals: a failed read would be reported as "needs an approval,
+ * which isn't supported" when the wallet may already have one. For those,
+ * return null on a failed read so the caller signs nothing for this quote.
  */
 async function readAllowanceForApproval(chain, tokenAddress, ownerAddress, spenderAddress) {
-  if (!requiresZeroFirstApproval(chain, tokenAddress)) {
+  if (!requiresZeroFirstApproval(chain, tokenAddress) && tradeChain(chain)?.standaloneApprovals !== false) {
     return checkErc20Allowance(chain, tokenAddress, ownerAddress, spenderAddress);
   }
   try {
@@ -2944,7 +2955,11 @@ export async function buildTradeExecutionPlan({
     ['Wallet', walletAddress || 'the wallet this quote was created for'],
     ['Recipient', request.recipient || null],
     ['Trading fee', quote.tradingFeeInUsd ? `$${quote.tradingFeeInUsd}` : null],
-    ['Network fee', quote.networkFeeInUsd ? `$${quote.networkFeeInUsd}` : null],
+    ['Network fee', quote.networkFeeInUsd
+      ? `$${quote.networkFeeInUsd}${chainConfig.type === 'evm' && quote.transaction?.gasPrice && !quote.transaction?.maxFeePerGas
+        ? ` at the quoted gas price; re-priced up to ${Number(LEGACY_GAS_PRICE_MAX_RPC_MULTIPLIER * LEGACY_GAS_PRICE_HEADROOM_PCT) / 100}x when signed (capped by --max-tx-fee)`
+        : ''}`
+      : null],
     ['Approval', approval],
     ['Simulation', simulation],
     ['Outcome check', noVerifyOutcome ? 'off (--no-verify-outcome)' : 'on, before broadcast'],
@@ -3064,12 +3079,17 @@ async function preflightTradeExecutionCandidate({
     encodeApproveCalldata(quote.approvalAddress, approveAmt, {
       maxAllowance: approvalCapForQuote(quoteData),
     });
-    const existingAllowance = await checkErc20Allowance(
+    // Same read as execute: where execute would skip the quote on a failed
+    // read, report the failed read instead of treating it as no allowance.
+    const existingAllowance = await readAllowanceForApproval(
       chain,
       quote.inputMint,
       walletAddress,
       quote.approvalAddress,
     );
+    if (existingAllowance === null) {
+      throw new CommandError(`Could not read this wallet's current allowance for ${quote.source || quote.metadata?.source || 'this quote'} on ${chain}. Retry, or set a custom RPC for the chain.`, 'ALL_QUOTES_FAILED');
+    }
     // Execute refuses an approval or revoke on chains without standalone
     // approvals (unsupportedApprovalMessage); fail the preview the same way.
     const { reuseAllowance, revokeReason } = resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance, { zeroFirst: requiresZeroFirstApproval(chain, quote.inputMint) });
@@ -5565,7 +5585,7 @@ Check the status of a cross-chain bridge transaction.
 
 OPTIONS:
   --tx-hash <hash>          Source chain transaction hash
-  --from-chain <chain>      Source chain (${TRADE_CHAIN_NAMES.join(', ')})
+  --from-chain <chain>      Source chain (${TRADE_SOURCE_CHAIN_NAMES.join(', ')})
   --to-chain <chain>        Destination chain (same list)
   --aggregator <name>       lifi or relay. Overrides auto-detection from the
                             local tx record. Use this when polling from a

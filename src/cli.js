@@ -33,7 +33,7 @@ import { creditWarning, noticeWarnings } from './response-meta.js';
 import { trackCommandSucceeded, trackCommandFailed, trackAuthCommand } from './telemetry.js';
 import { setDebugEnabled } from './debug.js';
 import { telemetryFlagNames, telemetryChain, telemetryErrorCode } from './telemetry-flags.js';
-import { TRADE_CHAIN_NAMES } from './trade-chains.js';
+import { TRADE_CHAIN_NAMES, TRADE_SOURCE_CHAIN_NAMES } from './trade-chains.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
 
@@ -1255,7 +1255,7 @@ DEBUG:   --debug (or NANSEN_DEBUG=1) traces each request on stderr: method, URL,
   nansen trade execute --quote <quoteId>
   nansen trade bridge-status --tx-hash <hash> --from-chain base --to-chain solana
   nansen trade limit-order create --from SOL --to USDC --amount 1.5 --trigger-mint SOL --trigger-condition below --trigger-price 80
-  Supports DEX swaps on ${TRADE_CHAIN_NAMES.join(', ')}, cross-chain bridges, and Solana limit orders.
+  Supports DEX swaps on ${TRADE_SOURCE_CHAIN_NAMES.join(', ')}, cross-chain bridges (also into ${TRADE_CHAIN_NAMES.filter((c) => !TRADE_SOURCE_CHAIN_NAMES.includes(c)).join(', ')}), and Solana limit orders.
 
 BRIDGE (Hyperliquid):
   nansen bridge quote --from-chain base --to-chain hyperliquid --from-token USDC --amount 1000000
@@ -1270,7 +1270,7 @@ EXAMPLES:
   nansen research token screener --chain solana --timeframe 24h
   nansen research profiler balance --address 0x... --chain ethereum`,
   chains: `Research chains: ${SCHEMA.chains.join(', ')}
-Trade chains: ${TRADE_CHAIN_NAMES.join(', ')}
+Trade chains: ${TRADE_SOURCE_CHAIN_NAMES.join(', ')} (bridge destination only: ${TRADE_CHAIN_NAMES.filter((c) => !TRADE_SOURCE_CHAIN_NAMES.includes(c)).join(', ')})
 Bridge routes: ${formatBridgeRoutes()}`,
   labels: `Labels: Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader (Smart Trader covers all windows; Fund is no longer a Smart Money label)`,
   deprecated: `DEPRECATED ALIASES (still work, will be removed in a future version):

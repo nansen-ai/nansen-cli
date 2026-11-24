@@ -11,9 +11,8 @@ import { base58Encode } from './wallet.js';
 import { parseTransactionMessage, resolveStaticAccount } from './solana-tx.js';
 import { SOL_SENTINEL } from './solana-simulation.js';
 import { EVM_NATIVE_SENTINEL } from './swap-simulation.js';
-import { TRADE_CHAIN_NAMES, assertTradeSourceChain, mapTradeChains } from './trade-chains.js';
+import { TRADE_CHAIN_NAMES, TRADE_SOURCE_CHAIN_NAMES, assertTradeSourceChain, mapTradeChains } from './trade-chains.js';
 
-const SUPPORTED_CHAINS = TRADE_CHAIN_NAMES;
 
 // SPL Token / Token-2022 instruction discriminators (first data byte) that can
 // move control of a user's token account without moving its balance — the
@@ -73,17 +72,18 @@ const MAX_PRIORITY_FEE_LAMPORTS = 10_000_000n; // 0.01 SOL sanity ceiling on the
 export function validateQuoteInput({ chain, toChain, from, to, amount }) {
   // 1. Chain must be supported
   const normalizedChain = chain?.toLowerCase();
-  if (!SUPPORTED_CHAINS.includes(normalizedChain)) {
+  // A destination-only chain is a known chain: assertTradeSourceChain explains it.
+  if (!TRADE_CHAIN_NAMES.includes(normalizedChain)) {
     throw new Error(
-      `Unsupported chain "${chain}". Supported chains: ${SUPPORTED_CHAINS.join(', ')}.`
+      `Unsupported chain "${chain}". Supported chains: ${TRADE_SOURCE_CHAIN_NAMES.join(', ')}.`
     );
   }
   assertTradeSourceChain(normalizedChain);
 
   const normalizedToChain = toChain ? toChain.toLowerCase() : normalizedChain;
-  if (toChain && !SUPPORTED_CHAINS.includes(normalizedToChain)) {
+  if (toChain && !TRADE_CHAIN_NAMES.includes(normalizedToChain)) {
     throw new Error(
-      `Unsupported destination chain "${toChain}". Supported chains: ${SUPPORTED_CHAINS.join(', ')}.`
+      `Unsupported destination chain "${toChain}". Supported chains: ${TRADE_CHAIN_NAMES.join(', ')}.`
     );
   }
 

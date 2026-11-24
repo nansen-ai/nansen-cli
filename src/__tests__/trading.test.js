@@ -34,6 +34,7 @@ import {
   requiresZeroFirstApproval,
   unsupportedApprovalMessage,
   withLegacyGasPriceHeadroom,
+  buildTradeExecutionPlan,
   approvalAmountForSwap,
   approvalCapForQuote,
   assertCompleteEvmRequestIntent,
@@ -6026,13 +6027,14 @@ describe('ERC-20 excessive allowance handling', () => {
 
     describe('chains where the trading service sends no standalone approvals (arbitrum)', () => {
       const ARB_USDC = '0xaf88d065e77c8cc2239327c5edb3a432268e5831';
-      async function runArbSell({ allowance, opts = {} }) {
+      async function runArbSell({ allowance, opts = {}, allowanceReadError = false }) {
         createWallet('default', 'testpass');
         process.env.NANSEN_WALLET_PASSWORD = 'testpass';
         const walletAddress = showWallet('default').evm;
         const quoteId = saveEthUsdtQuote(walletAddress, { chain: 'arbitrum', token: ARB_USDC });
         const { executeBodies } = mockLocalEvmExecute({
           allowance,
+          allowanceReadError,
           executeResponses: [{ status: 'Success', txHash: '0xAny', chainType: 'evm', broadcaster: 'test' }],
         });
         const logs = [];
@@ -6083,6 +6085,22 @@ describe('ERC-20 excessive allowance handling', () => {
         const { executeBodies, error } = await runArbSell({ allowance: 10n ** 30n, opts: { 'dry-run': true, 'no-revoke-excessive-allowance': true } });
         expect(error).toBeNull();
         expect(executeBodies).toHaveLength(0);
+      });
+
+      it('reports an unreadable allowance as such, not as a needed approval', async () => {
+        const { executeBodies, logs, error } = await runArbSell({ allowance: 200000n, allowanceReadError: true });
+        expect(executeBodies).toHaveLength(0);
+        expect(error?.code).toBe('ALL_QUOTES_FAILED');
+        expect(logs.join('\n')).toContain('Could not read the current allowance');
+        expect(error.message).not.toContain("aren't supported yet");
+      });
+
+      it('--dry-run reports an unreadable allowance as such, not as a needed approval', async () => {
+        const { executeBodies, error } = await runArbSell({ allowance: 200000n, allowanceReadError: true, opts: { 'dry-run': true } });
+        expect(executeBodies).toHaveLength(0);
+        expect(error?.code).toBe('ALL_QUOTES_FAILED');
+        expect(error.message).toContain('Could not read');
+        expect(error.message).not.toContain("aren't supported yet");
       });
 
       it('unsupportedApprovalMessage follows the registry', () => {
@@ -7717,6 +7735,27 @@ describe('exactOut max-input enforcement (adversarial)', () => {
   });
 });
 
+describe('buildTradeExecutionPlan network fee', () => {
+  const plan = (transaction) => buildTradeExecutionPlan({
+    quoteId: 'q1',
+    quoteData: { request: {} },
+    quote: { aggregator: 'lifi', networkFeeInUsd: '0.39', transaction },
+    chainConfig: { type: 'evm', name: 'Arbitrum' },
+    noSimulate: true,
+  });
+
+  it('says a gasPrice-only quote is re-priced when signed', async () => {
+    const text = String(await plan({ to: '0x1', data: '0x', gasPrice: '100' }));
+    expect(text).toContain('$0.39 at the quoted gas price; re-priced up to 2.5x when signed');
+  });
+
+  it('shows an EIP-1559 quote\'s fee as quoted', async () => {
+    const text = String(await plan({ to: '0x1', data: '0x', maxFeePerGas: '100' }));
+    expect(text).toContain('$0.39');
+    expect(text).not.toContain('re-priced');
+  });
+});
+
 describe('withLegacyGasPriceHeadroom', () => {
   const quote = (tx) => ({ aggregator: 'lifi', transaction: { to: '0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE', data: '0xabcd', ...tx } });
   const gasPriceRpc = (result) => vi.fn().mockResolvedValue({
@@ -7775,6 +7814,12 @@ describe('withLegacyGasPriceHeadroom', () => {
       expect(await withLegacyGasPriceHeadroom('ethereum', q)).toBe(q);
     }
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('lets eth_gasPrice raise the quoted price at most 2x before padding', async () => {
+    global.fetch = gasPriceRpc('0x' + (2000n * 10n ** 9n).toString(16));
+    const out = await withLegacyGasPriceHeadroom('ethereum', quote({ gasPrice: String(2n * 10n ** 9n) }));
+    expect(BigInt(out.transaction.gasPrice)).toBe(5n * 10n ** 9n);
   });
 
   it('does not mutate the stored quote', async () => {

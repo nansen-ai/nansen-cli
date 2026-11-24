@@ -113,7 +113,10 @@ export const TRADE_CHAINS = {
     ],
     extraSymbols: {},
     minGas: 0.0005,
-    feeBuffer: 0.001,
+    // A max native sell keeps back the swap's upfront gas, gasLimit x gasPrice.
+    // LI.FI swaps run up to ~500k gas, and the signed gasPrice is up to 2.5x the
+    // quoted one (withLegacyGasPriceHeadroom), so 0.003 ETH covers a 2.4 gwei quote.
+    feeBuffer: 0.003,
     standaloneApprovals: true,
   },
   arbitrum: {
