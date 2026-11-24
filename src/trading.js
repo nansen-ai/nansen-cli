@@ -1426,7 +1426,9 @@ const LEGACY_GAS_PRICE_LOOKUP_TIMEOUT_MS = 5000;
  * LEGACY_GAS_PRICE_MAX_RPC_MULTIPLIER times the quote's), plus
  * LEGACY_GAS_PRICE_HEADROOM_PCT. Quotes with an EIP-1559 maxFeePerGas, and
  * quotes whose gasPrice is not a positive integer (the signer refuses those),
- * are returned unchanged. An unreadable eth_gasPrice falls back to the quote's.
+ * are returned unchanged, as is any quote on a chain without
+ * `legacyGasPriceHeadroom` in the trade-chain registry (no RPC call).
+ * An unreadable eth_gasPrice falls back to the quote's.
  * The fee cap (--max-tx-fee) is checked later against the re-priced value.
  *
  * @param {string} chain - chain key
@@ -1435,6 +1437,7 @@ const LEGACY_GAS_PRICE_LOOKUP_TIMEOUT_MS = 5000;
  */
 export async function withLegacyGasPriceHeadroom(chain, quote) {
   const tx = quote?.transaction;
+  if (!tradeChain(chain)?.legacyGasPriceHeadroom) return quote;
   if (!tx || tx.maxFeePerGas || !tx.gasPrice) return quote;
   let quoted;
   try {
@@ -2956,7 +2959,7 @@ export async function buildTradeExecutionPlan({
     ['Recipient', request.recipient || null],
     ['Trading fee', quote.tradingFeeInUsd ? `$${quote.tradingFeeInUsd}` : null],
     ['Network fee', quote.networkFeeInUsd
-      ? `$${quote.networkFeeInUsd}${chainConfig.type === 'evm' && quote.transaction?.gasPrice && !quote.transaction?.maxFeePerGas
+      ? `$${quote.networkFeeInUsd}${tradeChain(chain)?.legacyGasPriceHeadroom && quote.transaction?.gasPrice && !quote.transaction?.maxFeePerGas
         ? ` at the quoted gas price; re-priced up to ${Number(LEGACY_GAS_PRICE_MAX_RPC_MULTIPLIER * LEGACY_GAS_PRICE_HEADROOM_PCT) / 100}x when signed (capped by --max-tx-fee)`
         : ''}`
       : null],

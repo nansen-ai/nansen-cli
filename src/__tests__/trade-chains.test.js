@@ -22,6 +22,7 @@ const REQUIRED = {
   minGas: (v) => typeof v === 'number' && v > 0,
   feeBuffer: (v) => typeof v === 'number' && v > 0,
   standaloneApprovals: (v) => typeof v === 'boolean',
+  legacyGasPriceHeadroom: (v) => typeof v === 'boolean',
 };
 
 describe('trade-chain registry', () => {

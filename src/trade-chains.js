@@ -37,6 +37,10 @@ const EVM_NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
  *   /execute route, whose chain list is shorter than the quote chains; the
  *   standard route takes swaps only. Where false, a sell that needs an approval
  *   or revoke is refused before anything is signed.
+ * @property {boolean} legacyGasPriceHeadroom Whether a gasPrice-only quote is
+ *   re-priced before signing (withLegacyGasPriceHeadroom). LI.FI's gasPrice
+ *   quotes on these chains carry no margin over the base fee; elsewhere the
+ *   quote is signed as quoted.
  * @property {boolean} [destinationOnly] Accepted as --to-chain and in
  *   bridge-status only. Nothing is signed on it, so it needs no sim-capable RPC.
  */
@@ -68,6 +72,7 @@ export const TRADE_CHAINS = {
     minGas: 0.005,
     feeBuffer: 0.005,
     standaloneApprovals: true,
+    legacyGasPriceHeadroom: false,
   },
   base: {
     type: 'evm',
@@ -91,6 +96,7 @@ export const TRADE_CHAINS = {
     minGas: 0.000024,
     feeBuffer: 0.00004,
     standaloneApprovals: true,
+    legacyGasPriceHeadroom: false,
   },
   // Same-chain swaps here route through LI.FI (legacy gasPrice transactions).
   // Gas floors: mainnet fees swing by two orders of magnitude, so the floor is a
@@ -121,6 +127,7 @@ export const TRADE_CHAINS = {
     minGas: 0.001,
     feeBuffer: 0.003,
     standaloneApprovals: true,
+    legacyGasPriceHeadroom: true,
   },
   arbitrum: {
     type: 'evm',
@@ -141,6 +148,7 @@ export const TRADE_CHAINS = {
     minGas: 0.00003,
     feeBuffer: 0.00005,
     standaloneApprovals: false,
+    legacyGasPriceHeadroom: true,
   },
   polygon: {
     type: 'evm',
@@ -162,6 +170,7 @@ export const TRADE_CHAINS = {
     minGas: 0.2,
     feeBuffer: 0.5,
     standaloneApprovals: false,
+    legacyGasPriceHeadroom: true,
   },
   // Robinhood Chain (Arbitrum Orbit). The trading service refuses it by the
   // caller's region; that refusal surfaces as the service's own error.
@@ -184,6 +193,7 @@ export const TRADE_CHAINS = {
     minGas: 0.00003,
     feeBuffer: 0.00005,
     standaloneApprovals: false,
+    legacyGasPriceHeadroom: true,
   },
   // HyperEVM: a bridge destination only. Same-chain swaps get no quotes from the
   // trading service, and no public HyperEVM RPC serves eth_simulateV1, so a
@@ -208,6 +218,7 @@ export const TRADE_CHAINS = {
     minGas: 0.001,
     feeBuffer: 0.001,
     standaloneApprovals: false,
+    legacyGasPriceHeadroom: false,
     destinationOnly: true,
   },
 };

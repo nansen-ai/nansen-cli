@@ -7736,17 +7736,23 @@ describe('exactOut max-input enforcement (adversarial)', () => {
 });
 
 describe('buildTradeExecutionPlan network fee', () => {
-  const plan = (transaction) => buildTradeExecutionPlan({
+  const plan = (transaction, chain = 'arbitrum') => buildTradeExecutionPlan({
     quoteId: 'q1',
-    quoteData: { request: {} },
+    quoteData: { chain, request: {} },
     quote: { aggregator: 'lifi', networkFeeInUsd: '0.39', transaction },
-    chainConfig: { type: 'evm', name: 'Arbitrum' },
+    chainConfig: resolveChain(chain),
     noSimulate: true,
   });
 
   it('says a gasPrice-only quote is re-priced when signed', async () => {
     const text = String(await plan({ to: '0x1', data: '0x', gasPrice: '100' }));
     expect(text).toContain('$0.39 at the quoted gas price; re-priced up to 2.5x when signed');
+  });
+
+  it('does not say a Base gasPrice-only quote is re-priced (Base is signed as quoted)', async () => {
+    const text = String(await plan({ to: '0x1', data: '0x', gasPrice: '100' }, 'base'));
+    expect(text).toContain('$0.39');
+    expect(text).not.toContain('re-priced');
   });
 
   it('shows an EIP-1559 quote\'s fee as quoted', async () => {
@@ -7813,6 +7819,13 @@ describe('withLegacyGasPriceHeadroom', () => {
       const q = quote(tx);
       expect(await withLegacyGasPriceHeadroom('ethereum', q)).toBe(q);
     }
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('returns a Base gasPrice-only quote unchanged, without an RPC call', async () => {
+    global.fetch = vi.fn();
+    const q = quote({ gasPrice: '1000000000', gasLimit: '210000' });
+    expect(await withLegacyGasPriceHeadroom('base', q)).toBe(q);
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
