@@ -2687,8 +2687,10 @@ const KNOWN_DECIMALS = {
   '11111111111111111111111111111111': 9,              // Native SOL (Relay system-mint sentinel)
   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 6, // USDC
   'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 6,  // USDT
+  // EVM native-token sentinel, shared by every EVM chain (Ethereum, Arbitrum, Polygon,
+  // Robinhood, HyperEVM, Base): all 18 decimals, so one address-only key covers them all
+  '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee': 18,
   // Base (EVM) — lowercase for case-insensitive matching
-  '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee': 18, // ETH native
   '0x4200000000000000000000000000000000000006': 18, // WETH
   '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 6, // USDC
   '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2': 6, // USDT

@@ -109,6 +109,7 @@ function saveQuote(quoteResponse, ...rest) {
   );
 }
 import { CHAIN_RPCS, SIMULATION_RPCS } from '../rpc-urls.js';
+import { TRADE_CHAINS } from '../trade-chains.js';
 import { NATIVE_FEE_RENT_SLACK_LAMPORTS } from '../trade-validation.js';
 import { keccak256, rlpEncode } from '../crypto.js';
 import { base58Decode } from '../transfer.js';
@@ -3714,6 +3715,21 @@ describe('resolveTokenDecimals', () => {
     expect(await resolveTokenDecimals('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 'base')).toBe(18);
     expect(await resolveTokenDecimals('0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE', 'base')).toBe(18);
     expect(await resolveTokenDecimals('0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', 'base')).toBe(6);
+  });
+
+  it('resolves the native sentinel on every EVM trade chain without an RPC call', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockRejectedValue(new Error('fetch must not be called'));
+    try {
+      const evmChains = Object.entries(TRADE_CHAINS).filter(([, chain]) => chain.type === 'evm');
+      expect(evmChains.length).toBeGreaterThan(1);
+      for (const [name, chain] of evmChains) {
+        expect(await resolveTokenDecimals(chain.nativeAddress, name)).toBe(chain.nativeDecimals);
+      }
+      expect(global.fetch).not.toHaveBeenCalled();
+    } finally {
+      global.fetch = origFetch;
+    }
   });
 
   it('should fall back to Solana RPC for unknown tokens', async () => {
