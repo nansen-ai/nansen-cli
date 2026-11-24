@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.7.0
+
+### Minor Changes
+
+- [#879](https://github.com/nansen-ai/nansen-cli/pull/879) [`f0face3`](https://github.com/nansen-ai/nansen-cli/commit/f0face3fb3d6f3f2b46e8c0cd509a30378ea9835) Thanks [@kome12](https://github.com/kome12)! - `nansen trade quote --to-chain hyperevm` bridges into HyperEVM, and `nansen trade bridge-status` tracks it. HyperEVM is a destination only: `--chain hyperevm` is refused before any request, because the trading service has no same-chain HyperEVM swaps and the CLI cannot verify a transaction signed there.
+
+- [#879](https://github.com/nansen-ai/nansen-cli/pull/879) [`330ac86`](https://github.com/nansen-ai/nansen-cli/commit/330ac8669b8de22d5e4c90cdcc64f15cbb032c73) Thanks [@kome12](https://github.com/kome12)! - `nansen trade quote`, `execute` and `bridge-status` now support Ethereum, Arbitrum and Polygon, in addition to Solana and Base. Swap-outcome verification runs on those chains through their public RPC (override with `NANSEN_ETHEREUM_SIM_RPC`, `NANSEN_ARBITRUM_SIM_RPC`, `NANSEN_POLYGON_SIM_RPC`). A swap's anchor side may now be any stablecoin the chain lists (USDC, or USDT where listed, including Solana USDT), not only USDC. Ethereum USDT allowances are reset to 0 before a new approval, as the token requires. The default Polygon RPC moved from polygon-rpc.com, which now refuses anonymous calls, to publicnode. On Arbitrum and Polygon, `trade execute` can't send a token approval yet: a sell that needs one (or a revoke of an oversized allowance first) is refused before anything is signed. Native-token sells, and sells of a token already approved for the swap, work.
+
+- [#879](https://github.com/nansen-ai/nansen-cli/pull/879) [`87a11ee`](https://github.com/nansen-ai/nansen-cli/commit/87a11ee0f89d18299456d889c65fce056d9f9d94) Thanks [@kome12](https://github.com/kome12)! - `nansen trade` now supports Robinhood Chain (`--chain robinhood`), with USDG as its stablecoin anchor. Swap-outcome verification runs on its public RPC (override with `NANSEN_ROBINHOOD_SIM_RPC`, and the RPC itself with `NANSEN_ROBINHOOD_RPC`). The trading service refuses Robinhood Chain trades from some regions. Token addresses on robinhood are now checked for the 0x format. As on Arbitrum and Polygon, a sell that needs a token approval is refused before anything is signed.
+
 ## 2.6.3
 
 ### Patch Changes
