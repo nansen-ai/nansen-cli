@@ -112,10 +112,13 @@ export const TRADE_CHAINS = {
       { address: '0xdac17f958d2ee523a2206206994597c13d831ec7', symbol: 'USDT' },
     ],
     extraSymbols: {},
-    minGas: 0.0005,
-    // A max native sell keeps back the swap's upfront gas, gasLimit x gasPrice.
-    // LI.FI swaps run up to ~500k gas, and the signed gasPrice is up to 2.5x the
-    // quoted one (withLegacyGasPriceHeadroom), so 0.003 ETH covers a 2.4 gwei quote.
+    // A node checks a swap's upfront gas, gasLimit x gasPrice, not what it ends
+    // up paying. LI.FI swaps here signed at ~560k-650k gas (the API's padded
+    // limit; seen live 2026-11), and the signed gasPrice is up to 2.5x the quoted
+    // one (withLegacyGasPriceHeadroom). minGas covers ~650k gas at 1.5 gwei
+    // signed, so a wallet that can't pay a typical swap is refused at quote time,
+    // before an approval spends gas; feeBuffer covers a ~1.8 gwei quote.
+    minGas: 0.001,
     feeBuffer: 0.003,
     standaloneApprovals: true,
   },
