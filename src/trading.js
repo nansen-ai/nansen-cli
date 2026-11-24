@@ -2885,7 +2885,7 @@ export async function buildTradeExecutionPlan({
   probe = false,
 }) {
   const request = quoteData.request || {};
-  const chain = quoteData.chain;
+  const chain = quoteData.chain?.toLowerCase();
   const isNative = isNativeToken(quote.inputMint);
   const spender = quote.approvalAddress && quote.approvalAddress !== '' && !isNative
     ? quote.approvalAddress
@@ -2945,7 +2945,7 @@ export async function buildTradeExecutionPlan({
     }
   }
 
-  const toChain = quoteData.toChain;
+  const toChain = quoteData.toChain?.toLowerCase();
   const route = toChain && toChain !== chain
     ? `${chainConfig.name} → ${resolveChain(toChain).name}`
     : chainConfig.name;

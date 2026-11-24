@@ -7762,6 +7762,44 @@ describe('buildTradeExecutionPlan network fee', () => {
   });
 });
 
+describe('buildTradeExecutionPlan chain spelling', () => {
+  let origFetch;
+  beforeEach(() => { origFetch = global.fetch; });
+  afterEach(() => { global.fetch = origFetch; vi.restoreAllMocks(); });
+
+  // A quote stores --chain as typed; the plan must read through the same
+  // (lowercased) chain RPC as the real execute does.
+  it.each(['arbitrum', 'Arbitrum'])('reads the allowance through the arbitrum RPC for chain %s', async (chain) => {
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const allowance = '0x' + (10n ** 30n).toString(16).padStart(64, '0');
+    global.fetch = vi.fn(async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      const result = url === CHAIN_RPCS.arbitrum && body.method === 'eth_call' ? allowance : null;
+      return {
+        ok: true, status: 200,
+        text: async () => JSON.stringify({ jsonrpc: '2.0', id: body.id, result }),
+        json: async () => ({ jsonrpc: '2.0', id: body.id, result }),
+      };
+    });
+    const text = String(await buildTradeExecutionPlan({
+      quoteId: 'q1',
+      quoteData: { chain, request: {} },
+      quote: {
+        aggregator: 'lifi',
+        inputMint: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+        inAmount: '1000000',
+        approvalAddress: '0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE',
+        transaction: { to: '0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE', data: '0x' },
+      },
+      chainConfig: resolveChain('arbitrum'),
+      walletAddress: '0x' + '11'.repeat(20),
+      noSimulate: true,
+      probe: true,
+    }));
+    expect(text).toMatch(/already granted to 0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE/);
+  });
+});
+
 describe('withLegacyGasPriceHeadroom', () => {
   const quote = (tx) => ({ aggregator: 'lifi', transaction: { to: '0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE', data: '0xabcd', ...tx } });
   const gasPriceRpc = (result) => vi.fn().mockResolvedValue({
