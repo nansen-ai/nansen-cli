@@ -733,7 +733,7 @@ export const COUNTERPARTIES_BATCH_CHAINS = [
  * alphanumerics plus the separators bech32/NEAR/TON addresses use.
  *
  * COUNTERPARTIES_BATCH_CHAINS admits chains whose address format validateAddress
- * has no pattern for (arc, injective, mantra, near, robinhood, starknet, sui,
+ * has no pattern for (arc, injective, mantra, near, starknet, sui,
  * ton, tron), where it falls through to its permissive "any non-empty string"
  * branch. Accepting those chains must not turn a newline `--file` into a way to
  * post arbitrary lines as `wallet_addresses`, so this is the floor; the API does

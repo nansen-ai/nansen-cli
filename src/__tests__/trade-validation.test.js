@@ -147,10 +147,18 @@ describe('validateQuoteInput', () => {
   });
 
   describe('chain validation', () => {
+    it('lists only chains a trade can start on, and explains a destination-only chain', () => {
+      let message = '';
+      try { validateQuoteInput({ ...validSolana, chain: 'bnb' }); } catch (err) { message = err.message; }
+      expect(message).toMatch(/Supported chains: /);
+      expect(message).not.toContain('hyperevm');
+      expect(() => validateQuoteInput({ ...validSolana, chain: 'hyperevm' })).toThrow('bridge destination only');
+    });
+
     it('rejects unsupported chain', () => {
       expect(() => validateQuoteInput({
         ...validSolana,
-        chain: 'polygon',
+        chain: 'bnb',
       })).toThrow(/Unsupported chain/);
     });
 
@@ -221,13 +229,54 @@ describe('validateQuoteInput', () => {
     it('rejects BONK → JUP on Solana (neither side is native or USDC)', () => {
       expect(() => validateQuoteInput({
         chain: 'solana', from: BONK, to: JUP, amount: '1000000000',
-      })).toThrow(/USDC or the native token/);
+      })).toThrow('at least one token must be USDC/USDT or the native token (SOL)');
     });
 
     it('rejects cross-chain WETH → BONK (Base → Solana, neither anchor)', () => {
       expect(() => validateQuoteInput({
         chain: 'base', toChain: 'solana', from: WETH, to: BONK, amount: '1000000000000000000',
-      })).toThrow(/USDC or the native token/);
+      })).toThrow('a stablecoin or the native token on either side (USDC or ETH on base, USDC/USDT or SOL on solana)');
+    });
+
+    it('allows USDT as the anchor where the chain lists it (Solana USDT → BONK)', () => {
+      expect(() => validateQuoteInput({
+        chain: 'solana', from: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', to: BONK, amount: '1000000',
+      })).not.toThrow();
+    });
+
+    it('allows USDT as the anchor on Ethereum (USDT → WETH)', () => {
+      expect(() => validateQuoteInput({
+        chain: 'ethereum', from: '0xdAC17F958D2ee523a2206206994597C13D831ec7', to: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', amount: '1000000',
+      })).not.toThrow();
+    });
+
+    it('accepts USDG as the Robinhood anchor and names it in the error', () => {
+      const USDG = '0x5fc5360d0400a0fd4f2af552add042d716f1d168';
+      const OTHER = '0x1111111111111111111111111111111111111111';
+      expect(() => validateQuoteInput({ chain: 'robinhood', from: USDG, to: OTHER, amount: '1' })).not.toThrow();
+      expect(() => validateQuoteInput({ chain: 'robinhood', from: OTHER, to: '0x2222222222222222222222222222222222222222', amount: '1' }))
+        .toThrow('USDG or the native token (ETH)');
+      // Base → Robinhood with no anchor on either side names each side's stables.
+      expect(() => validateQuoteInput({ chain: 'base', toChain: 'robinhood', from: OTHER, to: OTHER, amount: '1' }))
+        .toThrow('(USDC or ETH on base, USDG or ETH on robinhood)');
+    });
+
+    it('rejects a non-0x token address on robinhood', () => {
+      expect(() => validateQuoteInput({ chain: 'robinhood', from: 'ETH', to: 'USDG', amount: '1' }))
+        .toThrow(/Invalid sell token address for robinhood/);
+    });
+
+    it('names POL as the native token in the Polygon anchor error', () => {
+      expect(() => validateQuoteInput({
+        chain: 'polygon', from: '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270', to: '0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39', amount: '1',
+      })).toThrow('USDC/USDT or the native token (POL)');
+    });
+
+    it('matches Solana anchors exactly: a case-changed USDC mint is not USDC', () => {
+      // Solana addresses are case-sensitive base58; only EVM compares case-insensitively.
+      expect(() => validateQuoteInput({
+        chain: 'solana', from: BONK, to: USDC_SOL.toLowerCase(), amount: '1000000000',
+      })).toThrow('at least one token must be');
     });
 
     it('allows mixed-case USDC on Base (case-insensitive anchor recognition)', () => {
@@ -1787,6 +1836,34 @@ describe('assertSwapOutcome', () => {
     const sim = { deltas: { [USDC]: -1000000n }, approvals: [] };
     expect(() => assertSwapOutcome(req, quote, sim, {}))
       .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*input and output tokens are the same/i);
+  });
+
+  describe('a native-to-native bridge between EVM chains (same address on each side)', () => {
+    const NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+    const req = { chain: 'base', toChain: 'ethereum', fromToken: NATIVE, toToken: NATIVE, swapMode: 'exactIn', amount: '1300000000000000', maxInputAmount: '1300000000000000' };
+    const quote = { inputMint: NATIVE, outputMint: NATIVE, inAmount: '1300000000000000', outAmount: '1270000000000000' };
+
+    it('verifies when only the bridged ETH leaves the wallet', () => {
+      const sim = { deltas: { [NATIVE]: -1300000000000000n }, approvals: [] };
+      expect(assertSwapOutcome(req, quote, sim, {})).toEqual({ verified: true, outputAssertionSkipped: true });
+    });
+
+    it('still rejects a sibling-token drain', () => {
+      const sim = { deltas: { [NATIVE]: -1300000000000000n, [USDC]: -1n }, approvals: [] };
+      expect(() => assertSwapOutcome(req, quote, sim, {}))
+        .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*other than the one you are selling/i);
+    });
+
+    it('still rejects an input outflow above the maximum', () => {
+      const sim = { deltas: { [NATIVE]: -1300000000000001n }, approvals: [] };
+      expect(() => assertSwapOutcome(req, quote, sim, {})).toThrow(/exceeding your maximum input/);
+    });
+
+    it('a same-chain request with the same token is still refused', () => {
+      const sim = { deltas: { [NATIVE]: -1300000000000000n }, approvals: [] };
+      expect(() => assertSwapOutcome({ ...req, toChain: 'base' }, quote, sim, {}))
+        .toThrow(/input and output tokens are the same/);
+    });
   });
 
   it('fails closed when an NFT leaves the wallet (assertion 3b)', () => {

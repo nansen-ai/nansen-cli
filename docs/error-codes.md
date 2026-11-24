@@ -184,6 +184,7 @@ A connection failure is `NETWORK_ERROR` and never `UNAUTHORIZED`: the CLI could 
 | `SIM_INNER_INSTRUCTIONS_UNAVAILABLE` | The Solana simulation RPC did not return inner instructions, so calls made from inside other programs could not be checked. Set NANSEN_SOLANA_SIM_RPC to an RPC that supports them. | No |
 | `NO_SIM_RPC` | No simulation RPC is configured for the chain. | No |
 | `NOT_SIM_CAPABLE` | The RPC does not support simulation. | No |
+| `SIM_WRONG_CHAIN` | The simulation endpoint configured for the chain simulates a different chain; the swap is not verified or sent. | No |
 | `RPC_UNCONFIGURED` | No RPC URL is configured for the chain. | No |
 | `RPC_HTTP_ERROR` | The RPC answered with an HTTP or JSON-RPC error. | No |
 | `RPC_JSON_ERROR` | The RPC answered with a body that is not JSON. | No |

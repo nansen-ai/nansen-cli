@@ -1,7 +1,7 @@
 /**
  * Nansen CLI - Trading Commands
  * Quote and execute DEX swaps via the Nansen Trading API.
- * Supports Solana and Base.
+ * Chains: see src/trade-chains.js.
  * Zero external dependencies — uses Node.js built-in crypto only.
  */
 
@@ -21,6 +21,7 @@ import { readCompactU16 } from './solana-tx.js';
 import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 export { readCompactU16 };
 import { CHAIN_RPCS } from './rpc-urls.js';
+import { TRADE_CHAINS, TRADE_CHAIN_NAMES, TRADE_SOURCE_CHAIN_NAMES, assertTradeSourceChain, mapTradeChains, tradeChain, tradeChainSymbols } from './trade-chains.js';
 import { simulateAssetChanges, SwapSimulationError, hasSimulationRpc } from './swap-simulation.js';
 import { simulateSolanaAssetChanges, SolanaSimulationError, hasSolanaSimulationRpc } from './solana-simulation.js';
 import { packageVersion, CommandError, telemetryHeaders } from './api.js';
@@ -55,10 +56,10 @@ function executionRoute() {
 // Solana's max transaction wire size (IPv6 MTU minus headers).
 const SOLANA_MAX_TX_SIZE = 1232;
 
-const CHAIN_MAP = {
-  solana:   { index: '501', type: 'solana', chainId: 501,  name: 'Solana',   explorer: 'https://solscan.io/tx/', lifiChainId: '1151111081099710' },
-  base:     { index: '8453', type: 'evm',   chainId: 8453, name: 'Base',     explorer: 'https://basescan.org/tx/', lifiChainId: '8453' },
-};
+// Derived from the trade-chain registry (src/trade-chains.js): add chains there.
+const CHAIN_MAP = mapTradeChains((c) => ({
+  index: c.index, type: c.type, chainId: c.chainId, name: c.name, explorer: c.explorer, lifiChainId: c.lifiChainId,
+}));
 
 // CHAIN_MAP is keyed lowercase, but a quote stores the chain exactly as the
 // user typed it (`--chain Base`) — only resolveChain() lowercases on the way
@@ -67,36 +68,21 @@ function chainConfigFor(name) {
   return name ? CHAIN_MAP[String(name).toLowerCase()] : undefined;
 }
 
-// Extend when adding new EVM chains (e.g. arbitrum WETH, polygon WMATIC)
-const WRAPPED_NATIVE_TOKENS = {
-  base:     { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', nativeSymbol: 'ETH' },
-};
+// Wrapped-native token per EVM chain, for the "did you mean the wrapped token"
+// hint. Derived from the trade-chain registry.
+const WRAPPED_NATIVE_TOKENS = Object.fromEntries(
+  Object.entries(TRADE_CHAINS)
+    .filter(([, c]) => c.wrappedNative)
+    .map(([name, c]) => [name, { ...c.wrappedNative, nativeSymbol: c.nativeSymbol }]),
+);
 
-// Common token symbol → address lookup per chain.
-// Native sentinels: Solana uses native mint, EVM uses 0xeee…eee.
-// Wrapped-native addresses (WETH) are derived from WRAPPED_NATIVE_TOKENS
-// to avoid duplication — keep that map as the single source of truth.
-const EVM_NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+// Common token symbol → address lookup per chain, derived from the trade-chain
+// registry. Native sentinels: Solana uses the native mint, EVM uses 0xeee…eee.
 // Relay returns the Solana System Program mint as the sentinel for native SOL.
 // Recognise it as native so approval/value validation behaves correctly when
 // cross-chain quotes route through Relay. (LiFi/Jupiter still use WSOL.)
 const NATIVE_SOL_SYSTEM_MINT = '11111111111111111111111111111111';
-const TOKEN_SYMBOLS = {
-  solana: {
-    SOL:  'So11111111111111111111111111111111111111112',
-    WSOL: 'So11111111111111111111111111111111111111112',
-    USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-    USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
-  },
-  base: {
-    ETH:  EVM_NATIVE,
-    WETH: WRAPPED_NATIVE_TOKENS.base.address,
-    USDC: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-    // NOTE: Legacy L2-bridged USDT on Base. If Tether deploys natively on Base
-    // (like Circle did with USDC), this address will need updating.
-    USDT: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
-  },
-};
+const TOKEN_SYMBOLS = mapTradeChains((c) => tradeChainSymbols(c));
 
 /**
  * Resolve a token symbol (e.g. "SOL", "USDC") to its canonical address
@@ -259,8 +245,10 @@ function toStandardBody(params) {
     // Honoured as sent: the backend ignores `simulate` on the EVM path when
     // `signedApprovalTransaction` is set, and the CLI never sets it (approvals
     // broadcast as their own executeTransaction call). Upstream EVM preflight
-    // coverage is Base-only, which costs us nothing — Base is the only EVM chain
-    // CHAIN_MAP trades.
+    // coverage is Base-only: on the other EVM trade chains the flag is accepted
+    // and does nothing. There the CLI's own eth_call revert check
+    // (simulateEvmCall) and swap-outcome simulation (verifySwapOutcome, on a
+    // public sim-capable RPC) are what stand between a bad quote and a broadcast.
     simulate: true,
   };
   if (cfg.type === 'evm') body.chainId = String(cfg.chainId);
@@ -1297,7 +1285,7 @@ const APPROVAL_GAS_LIMIT = 100000;
 const FALLBACK_SWAP_GAS_LIMIT = 210000;
 
 /**
- * Parse a --max-tx-fee value, in ETH, into wei. Converted digit-wise, like
+ * Parse a --max-tx-fee value, in the chain's native token (ETH, POL), into wei. Converted digit-wise, like
  * parseGweiToWei, so no float rounding is involved. 0 disables the cap.
  *
  * @param {string|undefined} raw - The option value, or undefined when not given
@@ -1310,7 +1298,7 @@ export function parseMaxTxFeeOption(raw) {
   // parses: `--max-tx-fee '[0]'` becomes "0" and silently disables the cap.
   if (typeof raw !== 'string' && typeof raw !== 'number') {
     throw new CommandError(
-      `--max-tx-fee takes a single value in ETH (e.g. 0.5), or 0 for no cap.`,
+      `--max-tx-fee takes a single value in the chain's native token (ETH, or POL on Polygon; e.g. 0.5), or 0 for no cap.`,
       'INVALID_INPUT',
     );
   }
@@ -1318,7 +1306,7 @@ export function parseMaxTxFeeOption(raw) {
   const match = /^(\d*)(?:\.(\d{1,18}))?$/.exec(s);
   if (!match || (match[1] === '' && match[2] === undefined)) {
     throw new CommandError(
-      `Invalid --max-tx-fee "${raw}". Give the most one transaction may pay for gas, in ETH (e.g. 0.5), or 0 for no cap.`,
+      `Invalid --max-tx-fee "${raw}". Give the most one transaction may pay for gas, in the chain's native token (ETH, or POL on Polygon; e.g. 0.5), or 0 for no cap.`,
       'INVALID_INPUT',
     );
   }
@@ -1356,7 +1344,7 @@ export function assertEvmFeeWithinCap(maxFeePerGas, gasLimit, label = 'transacti
   const worstCase = feePerGas * gas;
   if (worstCase > capWei) {
     throw new Error(
-      `Would pay up to ${worstCase} wei of gas for this ${label} (${feePerGas} wei per gas x ${gas} gas), above the ${capWei} wei fee cap. Refusing to sign. Use --max-tx-fee <eth> to raise the cap, or --max-tx-fee 0 to disable it.`,
+      `Would pay up to ${worstCase} wei of gas for this ${label} (${feePerGas} wei per gas x ${gas} gas), above the ${capWei} wei fee cap. Refusing to sign. Use --max-tx-fee <native amount> to raise the cap, or --max-tx-fee 0 to disable it.`,
     );
   }
 }
@@ -1413,6 +1401,60 @@ export function resolveQuoteLegacyGasPrice(txData) {
   const gasPrice = txData?.gasPrice || txData?.maxFeePerGas;
   if (!gasPrice) throw new Error(NO_QUOTE_FEE_MESSAGE);
   return gasPrice;
+}
+
+// Headroom applied to a legacy (gasPrice-only) quote before signing. LI.FI
+// quotes on Ethereum, Arbitrum and Polygon carry the network gas price at quote
+// time with no margin, so any base-fee rise before broadcast gets the
+// transaction rejected ("max fee per gas less than block base fee"; seen live
+// on Arbitrum). Arbitrum-stack chains charge only the base fee, so the margin is
+// free there; elsewhere the transaction pays it in full (as tip, on a type-2
+// transaction whose priority fee equals its max fee).
+const LEGACY_GAS_PRICE_HEADROOM_PCT = 125n;
+// The chain RPC's eth_gasPrice may raise the quoted price by at most this
+// factor. The RPC is an anonymous public node by default, so it can add
+// headroom when the network moved since the quote, but must not set the price:
+// an inflated reading would otherwise be capped only by --max-tx-fee.
+const LEGACY_GAS_PRICE_MAX_RPC_MULTIPLIER = 2n;
+// How long to wait for eth_gasPrice before padding the quoted price alone. The
+// lookup runs before signing, so an RPC that never answers must not hang execute.
+const LEGACY_GAS_PRICE_LOOKUP_TIMEOUT_MS = 5000;
+
+/**
+ * Re-price a gasPrice-only EVM quote just before signing: the higher of the
+ * quote's gasPrice and the chain's current eth_gasPrice (capped at
+ * LEGACY_GAS_PRICE_MAX_RPC_MULTIPLIER times the quote's), plus
+ * LEGACY_GAS_PRICE_HEADROOM_PCT. Quotes with an EIP-1559 maxFeePerGas, and
+ * quotes whose gasPrice is not a positive integer (the signer refuses those),
+ * are returned unchanged, as is any quote on a chain without
+ * `legacyGasPriceHeadroom` in the trade-chain registry (no RPC call).
+ * An unreadable eth_gasPrice falls back to the quote's.
+ * The fee cap (--max-tx-fee) is checked later against the re-priced value.
+ *
+ * @param {string} chain - chain key
+ * @param {object} quote - quote with a `transaction`
+ * @returns {Promise<object>} the same quote, or a copy with a re-priced transaction
+ */
+export async function withLegacyGasPriceHeadroom(chain, quote) {
+  const tx = quote?.transaction;
+  if (!tradeChain(chain)?.legacyGasPriceHeadroom) return quote;
+  if (!tx || tx.maxFeePerGas || !tx.gasPrice) return quote;
+  let quoted;
+  try {
+    quoted = BigInt(tx.gasPrice);
+  } catch {
+    return quote;
+  }
+  if (quoted <= 0n) return quote;
+  let current = 0n;
+  try {
+    current = BigInt(await evmRpcCall(chain, 'eth_gasPrice', [], { timeoutMs: LEGACY_GAS_PRICE_LOOKUP_TIMEOUT_MS }));
+  } catch { /* RPC unavailable: pad the quoted price alone */ }
+  const rpcCeiling = quoted * LEGACY_GAS_PRICE_MAX_RPC_MULTIPLIER;
+  if (current > rpcCeiling) current = rpcCeiling;
+  const floor = quoted > current ? quoted : current;
+  const gasPrice = (floor * LEGACY_GAS_PRICE_HEADROOM_PCT) / 100n;
+  return { ...quote, transaction: { ...tx, gasPrice: '0x' + gasPrice.toString(16) } };
 }
 
 /**
@@ -1784,10 +1826,11 @@ export async function simulateEvmCall(chain, { from, to, data, value, gas }) {
         const wantWei = BigInt(m[2]);
         const haveEth = (Number(haveWei) / 1e18).toFixed(6);
         const wantEth = (Number(wantWei) / 1e18).toFixed(6);
-        const fundHint = from ? ` Send ETH to ${from} before trading.` : '';
+        const native = tradeChain(chain)?.nativeSymbol || 'ETH';
+        const fundHint = from ? ` Send ${native} to ${from} before trading.` : '';
         return {
           success: false,
-          reason: `Insufficient ETH: wallet has ${haveEth} ETH but this trade needs ~${wantEth} ETH (amount + gas).${fundHint}`,
+          reason: `Insufficient ${native}: wallet has ${haveEth} ${native} but this trade needs ~${wantEth} ${native} (amount + gas).${fundHint}`,
         };
       }
       return { success: false, reason: rawReason };
@@ -2046,6 +2089,27 @@ export async function checkErc20Allowance(chain, tokenAddress, ownerAddress, spe
 }
 
 /**
+ * Pre-approval allowance read for the execute paths. Zero-first tokens
+ * (requiresZeroFirstApproval) cannot use checkErc20Allowance's treat-as-0
+ * fallback: a real non-zero allowance would skip the required revoke and the
+ * non-zero → non-zero approve() would revert. Nor can chains without
+ * standalone approvals: a failed read would be reported as "needs an approval,
+ * which isn't supported" when the wallet may already have one. For those,
+ * return null on a failed read so the caller signs nothing for this quote.
+ */
+async function readAllowanceForApproval(chain, tokenAddress, ownerAddress, spenderAddress) {
+  if (!requiresZeroFirstApproval(chain, tokenAddress) && tradeChain(chain)?.standaloneApprovals !== false) {
+    return checkErc20Allowance(chain, tokenAddress, ownerAddress, spenderAddress);
+  }
+  try {
+    return await readErc20AllowanceOrThrow(chain, tokenAddress, ownerAddress, spenderAddress);
+  } catch (err) {
+    process.stderr.write(`⚠️  Could not read ERC-20 allowance on ${chain} (${err.message}).\n`);
+    return null;
+  }
+}
+
+/**
  * A successful receipt only proves the revoke/approval call didn't revert —
  * not that approve() actually produced the allowance we expect (a
  * non-standard token or a race with another approval could still leave the
@@ -2168,11 +2232,54 @@ export function approvalCapForQuote(quoteData) {
 // existingAllowance >= approveAmt, so with the flag set reuseAllowance is always
 // true and the revoke/"after revoking (now 0)" paths (all in the else branch) are
 // never reached spuriously — keep that invariant if you add branches here.
-function resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance) {
-  const shouldRevoke = existingAllowance > 0n && needsAllowanceRevoke(existingAllowance, approveAmt);
+//
+// zeroFirst (requiresZeroFirstApproval): the token's approve() reverts when
+// changing one non-zero allowance to another, so a partial allowance must be
+// revoked to 0 before re-approving. That revoke is required, not cleanup, so
+// --no-revoke-excessive-allowance does not skip it; reuseAllowance is false
+// there (existing < approveAmt), which keeps the invariant above.
+function resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance, { zeroFirst = false } = {}) {
+  const excessive = existingAllowance > 0n && needsAllowanceRevoke(existingAllowance, approveAmt);
+  const partialZeroFirst = zeroFirst && existingAllowance > 0n && existingAllowance < approveAmt;
+  const shouldRevoke = excessive || partialZeroFirst;
   const reuseAllowance = existingAllowance >= approveAmt && existingAllowance > 0n
     && (noRevokeExcessiveAllowance || !shouldRevoke);
-  return { shouldRevoke, reuseAllowance };
+  return { shouldRevoke, reuseAllowance, revokeReason: partialZeroFirst ? 'zero-first' : (excessive ? 'excessive' : null) };
+}
+
+// Tokens whose approve() reverts on a non-zero → non-zero change (Tether USDT on
+// Ethereum mainnet). Keyed by chain, lowercased addresses.
+const ZERO_FIRST_APPROVAL_TOKENS = {
+  ethereum: new Set(['0xdac17f958d2ee523a2206206994597c13d831ec7']),
+};
+
+/** Whether a token must be approved down to 0 before a new non-zero approval. */
+export function requiresZeroFirstApproval(chain, tokenAddress) {
+  return Boolean(tokenAddress && ZERO_FIRST_APPROVAL_TOKENS[String(chain).toLowerCase()]?.has(String(tokenAddress).toLowerCase()));
+}
+
+/** The log line for a revoke resolveAllowanceAction asked for. */
+function allowanceRevokeMessage(revokeReason, existingAllowance, quoteName) {
+  if (revokeReason === 'zero-first') {
+    return `  ⚠ Existing allowance (${existingAllowance}) for ${quoteName} is below this trade, and this token only accepts a new approval from 0 — revoking before re-approving`;
+  }
+  return `  ⚠ Existing allowance (${existingAllowance}) for ${quoteName} is excessive (>${OVERSIZED_ALLOWANCE_MULTIPLIER}x this trade) — revoking before re-approving`;
+}
+
+/**
+ * Why an approval (and any revoke before it) can't be sent on this chain, or
+ * null when it can. The trading service broadcasts an approval or revoke sent
+ * on its own only on chains with `standaloneApprovals` (see trade-chains.js).
+ * Broadcasting it from the CLI's own RPC instead would skip the service's
+ * sanctions screening, so the sell is refused before anything is signed.
+ */
+export function unsupportedApprovalMessage(chain, quoteName, revokeReason) {
+  const config = tradeChain(chain);
+  if (!config || config.standaloneApprovals) return null;
+  if (revokeReason === 'excessive') {
+    return `${quoteName} would first revoke this wallet's oversized allowance, and approvals and revokes on ${config.name} aren't supported yet. Pass --no-revoke-excessive-allowance to use the existing allowance.`;
+  }
+  return `${quoteName} needs a token approval, and approvals on ${config.name} aren't supported yet. Sell the native token (${config.nativeSymbol}) or a token already approved for this swap.`;
 }
 
 export function assertCompleteEvmRequestIntent(request) {
@@ -2580,8 +2687,10 @@ const KNOWN_DECIMALS = {
   '11111111111111111111111111111111': 9,              // Native SOL (Relay system-mint sentinel)
   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 6, // USDC
   'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 6,  // USDT
+  // EVM native-token sentinel, shared by every EVM chain (Ethereum, Arbitrum, Polygon,
+  // Robinhood, HyperEVM, Base): all 18 decimals, so one address-only key covers them all
+  '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee': 18,
   // Base (EVM) — lowercase for case-insensitive matching
-  '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee': 18, // ETH native
   '0x4200000000000000000000000000000000000006': 18, // WETH
   '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 6, // USDC
   '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2': 6, // USDT
@@ -2778,7 +2887,7 @@ export async function buildTradeExecutionPlan({
   probe = false,
 }) {
   const request = quoteData.request || {};
-  const chain = quoteData.chain;
+  const chain = quoteData.chain?.toLowerCase();
   const isNative = isNativeToken(quote.inputMint);
   const spender = quote.approvalAddress && quote.approvalAddress !== '' && !isNative
     ? quote.approvalAddress
@@ -2802,6 +2911,9 @@ export async function buildTradeExecutionPlan({
           approvalPending = false;
         } else {
           approval += `; current allowance is ${existing}`;
+          if (existing > 0n && requiresZeroFirstApproval(chain, quote.inputMint)) {
+            approval += '; this token only accepts a new approval from 0, so a revoke transaction is sent first';
+          }
         }
       } catch (err) {
         approval += `; current allowance could not be read (${err.message})`;
@@ -2835,7 +2947,7 @@ export async function buildTradeExecutionPlan({
     }
   }
 
-  const toChain = quoteData.toChain;
+  const toChain = quoteData.toChain?.toLowerCase();
   const route = toChain && toChain !== chain
     ? `${chainConfig.name} → ${resolveChain(toChain).name}`
     : chainConfig.name;
@@ -2848,7 +2960,11 @@ export async function buildTradeExecutionPlan({
     ['Wallet', walletAddress || 'the wallet this quote was created for'],
     ['Recipient', request.recipient || null],
     ['Trading fee', quote.tradingFeeInUsd ? `$${quote.tradingFeeInUsd}` : null],
-    ['Network fee', quote.networkFeeInUsd ? `$${quote.networkFeeInUsd}` : null],
+    ['Network fee', quote.networkFeeInUsd
+      ? `$${quote.networkFeeInUsd}${tradeChain(chain)?.legacyGasPriceHeadroom && quote.transaction?.gasPrice && !quote.transaction?.maxFeePerGas
+        ? ` at the quoted gas price; re-priced up to ${Number(LEGACY_GAS_PRICE_MAX_RPC_MULTIPLIER * LEGACY_GAS_PRICE_HEADROOM_PCT) / 100}x when signed (capped by --max-tx-fee)`
+        : ''}`
+      : null],
     ['Approval', approval],
     ['Simulation', simulation],
     ['Outcome check', noVerifyOutcome ? 'off (--no-verify-outcome)' : 'on, before broadcast'],
@@ -2873,6 +2989,7 @@ async function preflightTradeExecutionCandidate({
   walletAddress,
   noSimulate,
   noVerifyOutcome,
+  noRevokeExcessiveAllowance,
   api,
   verifiedTargets,
   log,
@@ -2967,12 +3084,24 @@ async function preflightTradeExecutionCandidate({
     encodeApproveCalldata(quote.approvalAddress, approveAmt, {
       maxAllowance: approvalCapForQuote(quoteData),
     });
-    const existingAllowance = await checkErc20Allowance(
+    // Same read as execute: where execute would skip the quote on a failed
+    // read, report the failed read instead of treating it as no allowance.
+    const existingAllowance = await readAllowanceForApproval(
       chain,
       quote.inputMint,
       walletAddress,
       quote.approvalAddress,
     );
+    if (existingAllowance === null) {
+      throw new CommandError(`Could not read this wallet's current allowance for ${quote.source || quote.metadata?.source || 'this quote'} on ${chain}. Retry, or set a custom RPC for the chain.`, 'ALL_QUOTES_FAILED');
+    }
+    // Execute refuses an approval or revoke on chains without standalone
+    // approvals (unsupportedApprovalMessage); fail the preview the same way.
+    const { reuseAllowance, revokeReason } = resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance, { zeroFirst: requiresZeroFirstApproval(chain, quote.inputMint) });
+    if (!reuseAllowance) {
+      const approvalBlocked = unsupportedApprovalMessage(chain, quote.source || quote.metadata?.source || 'This quote', revokeReason);
+      if (approvalBlocked) throw new CommandError(approvalBlocked, 'ALL_QUOTES_FAILED');
+    }
     approvalPending = existingAllowance < approveAmt;
   }
 
@@ -3119,8 +3248,8 @@ PREREQUISITE:
   Authenticate with: nansen login (or set NANSEN_API_KEY)
 
 OPTIONS:
-  --chain <chain>           Source chain: solana, base
-  --to-chain <chain>        Destination chain for cross-chain swap (e.g. solana, base)
+  --chain <chain>           Source chain: ${TRADE_SOURCE_CHAIN_NAMES.join(', ')}
+  --to-chain <chain>        Destination chain for cross-chain swap: ${TRADE_CHAIN_NAMES.join(', ')}
   --from <symbol|address>   Input token (symbol like SOL, USDC or address)
   --to <symbol|address>     Output token (symbol like USDC, ETH or address)
   --amount <units>          Amount in BASE UNITS (e.g. lamports, wei)
@@ -3147,6 +3276,8 @@ EXAMPLES:
   nansen trade quote --chain base --from ETH --to USDC --amount 1000000000000000000
   nansen trade quote --chain base --to-chain solana --from USDC --to USDC --amount 1000000
   nansen trade quote --chain solana --to-chain base --from SOL --to ETH --amount 1000000000
+  nansen trade quote --chain arbitrum --from ETH --to USDC --amount 0.01 --amount-unit token
+  nansen trade quote --chain polygon --from POL --to USDC --amount 10 --amount-unit token
 
 CROSS-CHAIN NOTES (when using --to-chain):
   Supported combos:
@@ -3228,9 +3359,11 @@ CROSS-CHAIN NOTES (when using --to-chain):
       let usdTokenAmount; // token-unit amount after USD conversion (for balance pre-check)
       if (amountUnit === 'usd') {
         try {
+          // exactOut amounts are in the destination token, which lives on the destination chain.
           const tokenForPrice = swapMode === 'exactOut' ? to : from;
-          const price = await resolveUsdPrice(apiInstance, tokenForPrice, chain);
-          resolvedDecimals = await resolveTokenDecimals(tokenForPrice, chain);
+          const chainForPrice = swapMode === 'exactOut' ? effectiveToChain : chain;
+          const price = await resolveUsdPrice(apiInstance, tokenForPrice, chainForPrice);
+          resolvedDecimals = await resolveTokenDecimals(tokenForPrice, chainForPrice);
           // Convert USD to token amount, then to base units via string math.
           // Use toFixed() instead of String() to avoid scientific notation for small values.
           const tokenAmount = parseFloat(amount) / price;
@@ -3242,7 +3375,8 @@ CROSS-CHAIN NOTES (when using --to-chain):
       } else if (amountUnit === 'token') {
         try {
           const tokenForDecimals = swapMode === 'exactOut' ? to : from;
-          resolvedDecimals = await resolveTokenDecimals(tokenForDecimals, chain);
+          const chainForDecimals = swapMode === 'exactOut' ? effectiveToChain : chain;
+          resolvedDecimals = await resolveTokenDecimals(tokenForDecimals, chainForDecimals);
           resolvedAmount = convertToBaseUnits(amount, resolvedDecimals);
         } catch (err) {
           throw new CommandError(`Error resolving token decimals: ${err.message}`, 'INVALID_INPUT');
@@ -3567,7 +3701,7 @@ CROSS-CHAIN NOTES (when using --to-chain):
       // --max-tx-fee lands in flags, not options, so it would otherwise read as
       // "not given" and silently apply the default cap.
       if (flags['max-tx-fee']) {
-        throw new CommandError('--max-tx-fee requires a value in ETH (e.g. 0.5), or 0 for no cap.', 'INVALID_INPUT');
+        throw new CommandError('--max-tx-fee requires a value in the chain\'s native token (ETH, or POL on Polygon; e.g. 0.5), or 0 for no cap.', 'INVALID_INPUT');
       }
       const maxTxFeeWei = parseMaxTxFeeOption(options['max-tx-fee']);
       const guard = resolveExecuteGuard(flags, { env, isTTY });
@@ -3586,8 +3720,9 @@ OPTIONS:
   --no-verify-outcome       Skip swap-outcome verification (balance-delta check)
   --no-revoke-excessive-allowance
                             Skip auto-revoking an oversized/legacy allowance before re-approving
-  --max-tx-fee <eth>        Most one transaction may pay for gas (fee cap x gas limit).
-                            Default 1 ETH; 0 disables the check.
+  --max-tx-fee <amount>     Most one transaction may pay for gas (fee cap x gas limit),
+                            in the chain's native token. Default 1 (ETH, or POL on
+                            Polygon); 0 disables the check.
   --dry-run                 Validate and print what would be sent, then stop.
                             Nothing is signed or broadcast and the quote stays usable.
   --yes, -y                 Skip the confirmation prompt (same as NANSEN_YES=1).
@@ -3630,6 +3765,13 @@ EXAMPLES:
         const chain = quoteData.chain?.toLowerCase();
         const chainConfig = resolveChain(chain);
         const chainType = chainConfig.type;
+        // A quote can't be made on a destination-only chain, so this only trips on
+        // a hand-edited quote file; refuse before anything is signed.
+        try {
+          assertTradeSourceChain(chain);
+        } catch (e) {
+          throw new CommandError(e.message, 'INVALID_INPUT');
+        }
 
 
         // One correlation id per execute invocation, reused across the swap POST
@@ -3737,6 +3879,7 @@ EXAMPLES:
                 walletAddress: planWallet,
                 noSimulate,
                 noVerifyOutcome,
+                noRevokeExcessiveAllowance,
                 api: apiInstance,
                 verifiedTargets: verifiedPlanTargets,
                 log,
@@ -3915,8 +4058,11 @@ EXAMPLES:
 
         for (let qi = startIndex; qi < endIndex; qi++) {
           if (consentedCandidateIndexes && !consentedCandidateIndexes.has(qi)) continue;
-          const currentQuote = allQuotes[qi];
+          let currentQuote = allQuotes[qi];
           if (!currentQuote) continue;
+          // Before any fee check or signature, so the swap and any approval or
+          // revoke it needs are all signed at the re-priced fee.
+          if (chainType === 'evm') currentQuote = await withLegacyGasPriceHeadroom(chain, currentQuote);
 
           const quoteName = currentQuote.source || currentQuote.metadata?.source || `#${qi + 1}`;
 
@@ -4081,17 +4227,30 @@ EXAMPLES:
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   continue;
                 }
-                const existingAllowance = await checkErc20Allowance(
+                const existingAllowance = await readAllowanceForApproval(
                   chain, currentQuote.inputMint, walletAddress, currentQuote.approvalAddress
                 );
+                if (existingAllowance === null) {
+                  log(`  ❌ Could not read the current allowance for ${quoteName}; this token needs it before a new approval, skipping.`);
+                  lastQuoteError = `could not read the current allowance for ${quoteName}`;
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                  continue;
+                }
 
-                const { shouldRevoke, reuseAllowance } = resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance);
+                const { shouldRevoke, reuseAllowance, revokeReason } = resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance, { zeroFirst: requiresZeroFirstApproval(chain, currentQuote.inputMint) });
                 if (reuseAllowance) {
                   if (noRevokeExcessiveAllowance && shouldRevoke) {
                     log(`  ⚠ Existing allowance (${existingAllowance}) for ${quoteName} is excessive (>${OVERSIZED_ALLOWANCE_MULTIPLIER}x this trade), but --no-revoke-excessive-allowance was set`);
                   }
                   log(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
                 } else {
+                  const approvalBlocked = unsupportedApprovalMessage(chain, quoteName, revokeReason);
+                  if (approvalBlocked) {
+                    log(`  ❌ ${approvalBlocked}`);
+                    lastQuoteError = approvalBlocked;
+                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                    continue;
+                  }
                   const { maxFeePerGas: approvalMaxFee, maxPriorityFeePerGas: approvalPriorityFee } =
                     resolveQuoteEip1559Fees(currentQuote.transaction);
                   // One check covers the revoke and the approval (same fee, same
@@ -4099,7 +4258,7 @@ EXAMPLES:
                   assertEvmFeeWithinCap(approvalMaxFee, APPROVAL_GAS_LIMIT, shouldRevoke ? 'allowance revoke' : 'approval', maxTxFeeWei);
 
                   if (shouldRevoke) {
-                    log(`  ⚠ Existing allowance (${existingAllowance}) for ${quoteName} is excessive (>${OVERSIZED_ALLOWANCE_MULTIPLIER}x this trade) — revoking before re-approving`);
+                    log(allowanceRevokeMessage(revokeReason, existingAllowance, quoteName));
                     const revokeNonce = await getEvmNonce(chain, walletAddress);
                     const revokeData = encodeApproveCalldata(currentQuote.approvalAddress, 0n, { allowZero: true });
                     const revokeSignResult = await privyClient.signEvmTransaction(evmWalletId, {
@@ -4470,19 +4629,32 @@ EXAMPLES:
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   continue;
                 }
-                const existingAllowance = await checkErc20Allowance(
+                const existingAllowance = await readAllowanceForApproval(
                   chain, currentQuote.inputMint, wcAddress, currentQuote.approvalAddress
                 );
+                if (existingAllowance === null) {
+                  log(`  ❌ Could not read the current allowance for ${quoteName}; this token needs it before a new approval, skipping.`);
+                  lastQuoteError = `could not read the current allowance for ${quoteName}`;
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                  continue;
+                }
 
-                const { shouldRevoke, reuseAllowance } = resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance);
+                const { shouldRevoke, reuseAllowance, revokeReason } = resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance, { zeroFirst: requiresZeroFirstApproval(chain, currentQuote.inputMint) });
                 if (reuseAllowance) {
                   if (noRevokeExcessiveAllowance && shouldRevoke) {
                     log(`  ⚠ Existing allowance (${existingAllowance}) for ${quoteName} is excessive (>${OVERSIZED_ALLOWANCE_MULTIPLIER}x this trade), but --no-revoke-excessive-allowance was set`);
                   }
                   log(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
                 } else {
+                  const approvalBlocked = unsupportedApprovalMessage(chain, quoteName, revokeReason);
+                  if (approvalBlocked) {
+                    log(`  ❌ ${approvalBlocked}`);
+                    lastQuoteError = approvalBlocked;
+                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                    continue;
+                  }
                   if (shouldRevoke) {
-                    log(`  ⚠ Existing allowance (${existingAllowance}) for ${quoteName} is excessive (>${OVERSIZED_ALLOWANCE_MULTIPLIER}x this trade) — revoking before re-approving`);
+                    log(allowanceRevokeMessage(revokeReason, existingAllowance, quoteName));
                     log(`  Sending allowance revocation via WalletConnect (you'll be asked to approve this separately)...`);
                     let revokeTxHash;
                     try {
@@ -4868,21 +5040,34 @@ EXAMPLES:
                   if (qi + 1 < endIndex) log(`  Trying next quote...`);
                   continue;
                 }
-                const existingAllowance = await checkErc20Allowance(
+                const existingAllowance = await readAllowanceForApproval(
                   chain, currentQuote.inputMint, walletAddress, currentQuote.approvalAddress
                 );
+                if (existingAllowance === null) {
+                  log(`  ❌ Could not read the current allowance for ${quoteName}; this token needs it before a new approval, skipping.`);
+                  lastQuoteError = `could not read the current allowance for ${quoteName}`;
+                  if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                  continue;
+                }
 
-                const { shouldRevoke, reuseAllowance } = resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance);
+                const { shouldRevoke, reuseAllowance, revokeReason } = resolveAllowanceAction(existingAllowance, approveAmt, noRevokeExcessiveAllowance, { zeroFirst: requiresZeroFirstApproval(chain, currentQuote.inputMint) });
                 if (reuseAllowance) {
                   if (noRevokeExcessiveAllowance && shouldRevoke) {
                     log(`  ⚠ Existing allowance (${existingAllowance}) for ${quoteName} is excessive (>${OVERSIZED_ALLOWANCE_MULTIPLIER}x this trade), but --no-revoke-excessive-allowance was set`);
                   }
                   log(`  ✓ Sufficient allowance exists for ${quoteName}, skipping approval`);
                 } else {
+                  const approvalBlocked = unsupportedApprovalMessage(chain, quoteName, revokeReason);
+                  if (approvalBlocked) {
+                    log(`  ❌ ${approvalBlocked}`);
+                    lastQuoteError = approvalBlocked;
+                    if (qi + 1 < endIndex) log(`  Trying next quote...`);
+                    continue;
+                  }
                   const approvalGasPrice = resolveQuoteLegacyGasPrice(currentQuote.transaction);
 
                   if (shouldRevoke) {
-                    log(`  ⚠ Existing allowance (${existingAllowance}) for ${quoteName} is excessive (>${OVERSIZED_ALLOWANCE_MULTIPLIER}x this trade) — revoking before re-approving`);
+                    log(allowanceRevokeMessage(revokeReason, existingAllowance, quoteName));
                     log(`  Sending allowance revocation tx...`);
                     const revokeNonce = await getEvmNonce(chain, walletAddress);
                     const revokeTxHex = buildApprovalTransaction(
@@ -5405,8 +5590,8 @@ Check the status of a cross-chain bridge transaction.
 
 OPTIONS:
   --tx-hash <hash>          Source chain transaction hash
-  --from-chain <chain>      Source chain (solana or base)
-  --to-chain <chain>        Destination chain (solana or base)
+  --from-chain <chain>      Source chain (${TRADE_SOURCE_CHAIN_NAMES.join(', ')})
+  --to-chain <chain>        Destination chain (${TRADE_CHAIN_NAMES.join(', ')})
   --aggregator <name>       lifi or relay. Overrides auto-detection from the
                             local tx record. Use this when polling from a
                             different machine or after the record has expired.
@@ -5414,6 +5599,12 @@ OPTIONS:
 EXAMPLES:
   nansen trade bridge-status --tx-hash 0xabc... --from-chain base --to-chain solana
   nansen trade bridge-status --tx-hash 0xabc... --from-chain base --to-chain solana --aggregator relay`, 'MISSING_ARGS');
+      }
+      // A bridge can't start on a destination-only chain, so refuse before polling.
+      try {
+        assertTradeSourceChain(fromChain);
+      } catch (e) {
+        throw new CommandError(e.message, 'INVALID_INPUT');
       }
 
       try {

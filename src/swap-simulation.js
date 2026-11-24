@@ -16,7 +16,7 @@
  */
 
 import { AuthError } from './auth-credentials.js';
-import { SIMULATION_RPCS, isNansenHostedUrl } from './rpc-urls.js';
+import { NANSEN_HOSTED_SIM_CHAIN, SIMULATION_RPCS, isNansenHostedUrl } from './rpc-urls.js';
 
 // keccak256("Transfer(address,address,uint256)") — shared by ERC-20 and ERC-721.
 // ERC-20 indexes (from, to) and carries value in `data` (3 topics); ERC-721 also
@@ -66,8 +66,10 @@ const ETH_MOVING_FRAME_TYPES = new Set(['CALL', 'CALLCODE', 'CREATE', 'CREATE2']
  *   NOT_SIM_CAPABLE   - endpoint reachable but does not support any trace method
  *   SIM_RPC_ERROR     - transport/parse failure talking to the endpoint
  *   SIM_REVERTED      - the swap call itself reverted in simulation
+ *   SIM_WRONG_CHAIN   - the chain's endpoint is the Nansen-hosted proxy, which
+ *                       simulates Base only; its result would describe Base state
  * The first three are degrade conditions (warn, proceed per policy); the caller
- * decides. SIM_REVERTED is an outcome problem and should not be silently ignored.
+ * decides. SIM_REVERTED and SIM_WRONG_CHAIN must not be silently ignored.
  */
 export class SwapSimulationError extends Error {
   constructor(code, message) {
@@ -451,7 +453,7 @@ async function simulateViaDebugTraceCall(rpcUrl, auth, { from, to, data, value }
  * confirmed on-chain, so the live allowance is reflected on `latest` and a
  * single-transaction simulation matches what the broadcast swap will do.
  *
- * @param {string} chain - chain key (only 'base' is wired today)
+ * @param {string} chain - EVM chain key in SIMULATION_RPCS
  * @param {{ to: string, data: string, value?: string }} swapCall - the swap tx
  * @param {{ from: string, api?: object, timeoutMs?: number }} opts
  * @returns {Promise<{ deltas: Record<string,bigint>, approvals: Array<{token,spender,amount}>, nftOut: Array<{standard,token}>, nftApprovals: Array<{standard,token,operator}>, method: string }>}
@@ -464,6 +466,15 @@ export async function simulateAssetChanges(chain, swapCall, { from, api, timeout
   }
   if (!from) {
     throw new SwapSimulationError('SIM_RPC_ERROR', 'simulateAssetChanges requires a `from` address.');
+  }
+  // The hosted proxy forwards to a Base node whatever the request says, so on any
+  // other chain it would "verify" the swap against the wrong chain's state. Only
+  // reachable through a NANSEN_<CHAIN>_SIM_RPC override pointed at it.
+  if (chain !== NANSEN_HOSTED_SIM_CHAIN && isNansenHostedUrl(rpcUrl)) {
+    throw new SwapSimulationError(
+      'SIM_WRONG_CHAIN',
+      `The Nansen-hosted simulation endpoint simulates ${NANSEN_HOSTED_SIM_CHAIN} only, but it is configured for ${chain}. Unset the ${chain} simulation RPC override or point it at a ${chain} RPC.`,
+    );
   }
 
   const call = { from, to: swapCall.to, data: swapCall.data, value: swapCall.value };

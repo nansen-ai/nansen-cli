@@ -5,7 +5,7 @@
 
 > **Built by agents, for agents.** Command-line interface for the [Nansen API](https://docs.nansen.ai), designed for AI agents to research on-chain data, manage wallets, and trade through `nansen trade`.
 
-Use it for both analytics and execution: `nansen research ...` returns structured on-chain data, while `nansen trade quote` / `nansen trade execute` handle DEX swaps on Solana and Base, including cross-chain bridges.
+Use it for both analytics and execution: `nansen research ...` returns structured on-chain data, while `nansen trade quote` / `nansen trade execute` handle DEX swaps on Solana, Base, Ethereum, Arbitrum, Polygon and Robinhood Chain, including cross-chain bridges (HyperEVM as a bridge destination).
 
 ## Installation
 
@@ -169,7 +169,7 @@ The points leaderboard API has been removed. `nansen research points leaderboard
 
 Plus the `historical-*` point-in-time commands — run `nansen research help` for the full list.
 
-**Trade:** `quote`, `execute`, `bridge-status`, `limit-order` — DEX swaps on Solana and Base, cross-chain bridges, and Solana limit orders.
+**Trade:** `quote`, `execute`, `bridge-status`, `limit-order` — DEX swaps on Solana, Base, Ethereum, Arbitrum, Polygon and Robinhood Chain, cross-chain bridges, and Solana limit orders.
 
 **Wallet:** `create`, `list`, `show`, `export`, `default`, `delete`, `send`, `forget-password`, `secure` — local or Privy server-side wallets (EVM + Solana).
 
@@ -288,7 +288,7 @@ nansen trade limit-order cancel --order <id> --dry-run # does not request/consum
 
 `--dry-run` runs every sign-free preflight available from the cached quote, its public signer address, and read-only RPC calls; prints what *would* be sent (chain, tokens, amounts, recipient, approvals, fees); and stops before wallet credentials, signing, or broadcast — no wallet password needed, the quote stays usable, exit code 0. Real execution still resolves and revalidates the live signer before signing.
 
-On EVM, both commands refuse a transaction whose worst-case gas cost (fee cap × gas limit) is above 1 ETH, before anything is signed, approvals included. That is a backstop against an anomalous quote, the same kind of cap geth and reth apply to `eth_sendTransaction`. `--max-tx-fee <eth>` changes it, and `--max-tx-fee 0` turns it off. WalletConnect transactions are not checked, since the wallet shows the fee before signing.
+On EVM, both commands refuse a transaction whose worst-case gas cost (fee cap × gas limit) is above 1 unit of the chain's native token (1 ETH, or 1 POL on Polygon), before anything is signed, approvals included. That is a backstop against an anomalous quote, the same kind of cap geth and reth apply to `eth_sendTransaction`. `--max-tx-fee <amount>` changes it, and `--max-tx-fee 0` turns it off. WalletConnect transactions are not checked, since the wallet shows the fee before signing.
 
 For limit orders, `--dry-run` is a non-consuming intent preview built from locally validated arguments and the wallet's public address. It returns before limit-order authentication, custom-token metadata RPC lookups, transaction crafting, transaction signing, or final submission. Create preview does not submit an order; cancel preview does not request or consume the API's one-time cancellation transaction. Real execution performs the existing transaction and outcome validation after acknowledgement.
 
@@ -301,7 +301,7 @@ To make an agent stop for your go-ahead, set `NANSEN_REQUIRE_CONFIRM=1` in its e
 | `0` | Broadcast succeeded, or the dry run completed |
 | `1` | Declined at the confirmation prompt, refused by `NANSEN_REQUIRE_CONFIRM`, or the execution failed |
 
-Amounts are in base units (lamports, wei) by default — use `--amount-unit token|usd|percent` for friendlier inputs. Common symbols (`SOL`, `ETH`, `USDC`, `USDT`) resolve automatically. A wallet is required — set one with `nansen wallet default <name>`.
+Amounts are in base units (lamports, wei) by default — use `--amount-unit token|usd|percent` for friendlier inputs. Common symbols (`SOL`, `ETH`, `POL`, `USDC`, `USDT`) resolve automatically. A wallet is required — set one with `nansen wallet default <name>`.
 
 ## Limit Orders
 

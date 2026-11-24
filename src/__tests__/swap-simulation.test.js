@@ -94,7 +94,11 @@ describe('swap-simulation', () => {
       expect(hasSimulationRpc('base')).toBe(true);
       SIMULATION_RPCS.base = null;
       expect(hasSimulationRpc('base')).toBe(false);
-      expect(hasSimulationRpc('ethereum')).toBe(false);
+      expect(hasSimulationRpc('bnb')).toBe(false);
+    });
+
+    it('has an endpoint for every EVM trade chain', () => {
+      for (const chain of ['ethereum', 'arbitrum', 'polygon', 'robinhood']) expect(hasSimulationRpc(chain)).toBe(true);
     });
   });
 
@@ -272,6 +276,46 @@ describe('swap-simulation', () => {
       const { deltas } = await simulateAssetChanges('base', { to: ROUTER, data: '0x' }, { from: WALLET });
       expect(deltas[USDC]).toBe(-1000000n);
       expect(deltas[DAI]).toBe(5n);
+    });
+
+    it('hosted sim: throws SIM_WRONG_CHAIN for a non-Base chain pointed at the Nansen-hosted proxy, without calling it', async () => {
+      const orig = SIMULATION_RPCS.ethereum;
+      SIMULATION_RPCS.ethereum = 'https://api.nansen.ai/api/v1/trade/simulate-swap';
+      global.fetch = vi.fn();
+      try {
+        await expect(
+          simulateAssetChanges('ethereum', { to: ROUTER, data: '0x' }, { from: WALLET }),
+        ).rejects.toMatchObject({ code: 'SIM_WRONG_CHAIN' });
+        expect(global.fetch).not.toHaveBeenCalled();
+      } finally {
+        SIMULATION_RPCS.ethereum = orig;
+      }
+    });
+
+    it('hosted sim: still simulates Base itself through the Nansen-hosted proxy', async () => {
+      const orig = SIMULATION_RPCS.base;
+      SIMULATION_RPCS.base = 'https://api.nansen.ai/api/v1/trade/simulate-swap';
+      global.fetch = vi.fn().mockRejectedValue(new Error('offline'));
+      try {
+        const err = await simulateAssetChanges('base', { to: ROUTER, data: '0x' }, { from: WALLET }).then(() => null, (e) => e);
+        expect(err?.code).not.toBe('SIM_WRONG_CHAIN');
+        expect(global.fetch).toHaveBeenCalled();
+      } finally {
+        SIMULATION_RPCS.base = orig;
+      }
+    });
+
+    it('simulates a non-Base chain through its own (non-hosted) RPC', async () => {
+      const orig = SIMULATION_RPCS.arbitrum;
+      SIMULATION_RPCS.arbitrum = 'https://arbitrum-one-rpc.publicnode.com';
+      global.fetch = vi.fn().mockRejectedValue(new Error('offline'));
+      try {
+        const err = await simulateAssetChanges('arbitrum', { to: ROUTER, data: '0x' }, { from: WALLET }).then(() => null, (e) => e);
+        expect(err?.code).not.toBe('SIM_WRONG_CHAIN');
+        expect(global.fetch).toHaveBeenCalled();
+      } finally {
+        SIMULATION_RPCS.arbitrum = orig;
+      }
     });
 
     it('throws NO_SIM_RPC when no endpoint is configured', async () => {

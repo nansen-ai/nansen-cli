@@ -259,7 +259,7 @@ describe('parseMaxTxFeeOption', () => {
   // the cap without saying so.
   it('refuses a non-scalar value instead of coercing it', () => {
     for (const bad of [[0], [2], ['0'], {}, true]) {
-      expect(() => parseMaxTxFeeOption(bad), JSON.stringify(bad)).toThrow(/single value in ETH/);
+      expect(() => parseMaxTxFeeOption(bad), JSON.stringify(bad)).toThrow(/single value in the chain's native token/);
     }
   });
 });

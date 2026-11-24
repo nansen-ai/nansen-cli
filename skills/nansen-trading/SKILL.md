@@ -1,6 +1,6 @@
 ---
 name: nansen-trading
-description: Execute DEX swaps on Solana or Base (including cross-chain bridges) and Hyperliquid perpetual trades. Use when buying or selling a token, getting a swap quote, executing a trade, or opening/closing/managing a perp position.
+description: Execute DEX swaps on Solana, Base, Ethereum, Arbitrum, Polygon or Robinhood Chain (including cross-chain bridges) and Hyperliquid perpetual trades. Use when buying or selling a token, getting a swap quote, executing a trade, or opening/closing/managing a perp position.
 metadata:
   openclaw:
     requires:
@@ -41,11 +41,25 @@ nansen trade quote \
   --amount 1000000000
 ```
 
-Symbols resolve automatically: `SOL`, `ETH`, `USDC`, `USDT`, `WETH`. Raw addresses also work. Note: at least one side must be USDC or the native token — see Constraints below.
+Symbols resolve automatically: `SOL`, `ETH`, `POL`, `USDC`, `USDT`, `WETH`, `WPOL`. Raw addresses also work. Note: at least one side must be a listed stablecoin or the native token — see Constraints below.
 
 ## Constraints
 
-**Swap constraint:** At least one side of every swap must be **USDC** or the chain's **native token** (SOL on Solana, ETH on Base). Arbitrary token-to-token swaps (e.g. WETH→USDT, BONK→JUP) are rejected.
+**Swap constraint:** At least one side of every swap must be one of the chain's listed **stablecoins** or its **native token**. Arbitrary token-to-token swaps (e.g. WETH→DAI, BONK→JUP) are rejected.
+
+| Chain | Native | Stablecoins |
+|-------|--------|-------------|
+| solana | SOL | USDC, USDT |
+| base | ETH | USDC |
+| ethereum | ETH | USDC, USDT |
+| arbitrum | ETH | USDC, USDT |
+| polygon | POL | USDC, USDT |
+| robinhood | ETH | USDG |
+
+Robinhood Chain trades are refused from some regions; the error comes from the trading service.
+
+On arbitrum, polygon and robinhood, `trade execute` can't send a token approval yet. Selling the native token works, and so does selling a token the wallet has already approved for the swap's router. A sell that needs an approval, or a revoke of an oversized allowance first, is refused before anything is signed (`ALL_QUOTES_FAILED`); `--no-revoke-excessive-allowance` lets an oversized allowance be used instead.
+
 
 - USDC (Solana): `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`
 - USDC (Base): `0x833589fcd6edb6e08f4c7c32d4f71b54bda02913`
@@ -62,7 +76,7 @@ nansen trade execute --quote <quote-id> --dry-run   # preview only, nothing is b
 nansen trade execute --quote <quote-id> --yes       # skip the confirmation prompt
 ```
 
-**`--dry-run`** runs every sign-free preflight available from the cached quote, its public signer address, and read-only RPC calls; prints the trade that *would* be sent (chain, tokens, amounts, recipient, approval, fees); and stops before wallet credentials or signing. No wallet password is needed, the quote is not consumed, and the command exits 0. Real execution still resolves and revalidates the live signer. On Base, preview also reads the current token allowance and runs the pre-broadcast revert simulation when no approval is outstanding.
+**`--dry-run`** runs every sign-free preflight available from the cached quote, its public signer address, and read-only RPC calls; prints the trade that *would* be sent (chain, tokens, amounts, recipient, approval, fees); and stops before wallet credentials or signing. No wallet password is needed, the quote is not consumed, and the command exits 0. Real execution still resolves and revalidates the live signer. On EVM chains, preview also reads the current token allowance and runs the pre-broadcast revert simulation when no approval is outstanding.
 
 **Confirmation.** When stdin is an interactive terminal, `execute` prints the plan and asks `Broadcast this transaction? [y/N]` before broadcasting. Answering anything but `y`/`yes` aborts with exit code 1 and nothing signed. Pass `--yes` (`-y`), or set `NANSEN_YES=1`, to skip the question.
 
@@ -79,7 +93,7 @@ nansen trade execute --quote <quote-id> --yes       # skip the confirmation prom
 
 ## Cross-Chain Swap
 
-Bridge tokens between Solana and Base using `--to-chain`:
+Bridge tokens between chains using `--to-chain` (any two of solana, base, ethereum, arbitrum, polygon, robinhood; `hyperevm` as the destination only):
 
 ```bash
 nansen trade quote \
@@ -141,6 +155,13 @@ nansen trade execute --quote "$quote_id"
 | USDC | Solana | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` |
 | ETH | Base | `0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee` |
 | USDC | Base | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| ETH | Ethereum / Arbitrum | `0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee` |
+| USDC | Ethereum | `0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48` |
+| USDT | Ethereum | `0xdac17f958d2ee523a2206206994597c13d831ec7` |
+| USDC | Arbitrum | `0xaf88d065e77c8cc2239327c5edb3a432268e5831` |
+| POL | Polygon | `0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee` |
+| USDC | Polygon | `0x3c499c542cef5e3811e1192ce70d8cc03d5c3359` |
+| USDG | Robinhood | `0x5fc5360d0400a0fd4f2af552add042d716f1d168` |
 
 ## Amounts
 
@@ -169,7 +190,7 @@ If the user says "$20 worth of X", use `--amount-unit usd` directly — no manua
 
 | Flag | Purpose |
 |------|---------|
-| `--chain` | Source chain: `solana` or `base` |
+| `--chain` | Source chain: `solana`, `base`, `ethereum`, `arbitrum`, `polygon` or `robinhood` |
 | `--to-chain` | Destination chain for cross-chain swap (omit for same-chain) |
 | `--from` | Source token (symbol or address) |
 | `--to` | Destination token (symbol or address, resolved against destination chain) |
