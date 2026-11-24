@@ -272,6 +272,13 @@ describe('validateQuoteInput', () => {
       })).toThrow('USDC/USDT or the native token (POL)');
     });
 
+    it('matches Solana anchors exactly: a case-changed USDC mint is not USDC', () => {
+      // Solana addresses are case-sensitive base58; only EVM compares case-insensitively.
+      expect(() => validateQuoteInput({
+        chain: 'solana', from: BONK, to: USDC_SOL.toLowerCase(), amount: '1000000000',
+      })).toThrow('at least one token must be');
+    });
+
     it('allows mixed-case USDC on Base (case-insensitive anchor recognition)', () => {
       expect(() => validateQuoteInput({
         chain: 'base', from: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', to: WETH, amount: '1000000',
