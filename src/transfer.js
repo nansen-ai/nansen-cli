@@ -513,7 +513,10 @@ function assertNotSolanaSelfSend(fromAddress, to) {
  * "could not find account" reply means the account does not exist; a rate
  * limit, a network failure or a malformed reply is reported as a failed read,
  * so a wallet that holds the token is not told it doesn't.
- * Returns { amount: BigInt raw amount, uiAmountString }.
+ * Returns { amount: BigInt raw amount, uiAmountString }. Amounts the CLI sends
+ * or reports come from `amount`: for a Token-2022 mint with the ScaledUiAmount
+ * or InterestBearing extension, uiAmountString is the balance times the mint's
+ * multiplier (xStocks such as AAPLx), not amount / 10^decimals.
  */
 async function readSourceTokenBalance(rpcUrl, sourceAtaAddr) {
   let value;
@@ -566,7 +569,7 @@ export async function buildUnsignedSolanaTransaction({ to, amount, amountStr, to
     // Pre-check: SPL token balance
     const sourceBalance = await readSourceTokenBalance(rpcUrl, base58Encode(sourceATA));
     if (sourceBalance.amount < tokenAmount) {
-      throw new Error(`Insufficient token balance: have ${sourceBalance.uiAmountString}, need ${amountStr}`);
+      throw new Error(`Insufficient token balance: have ${formatAmount(sourceBalance.amount, decimals)}, need ${amountStr}`);
     }
 
     // TransferChecked instruction data: [12, amount u64 LE, decimals u8]
@@ -854,9 +857,9 @@ async function sendTokensViaPrivy({ to, amount, chain, token, max, dryRun, walle
       amount = formatAmount(maxAmount, 9);
     } else if (max && token) {
       const rpcUrl = CHAIN_RPCS.solana;
-      const { tokenProgram } = await getTokenInfo(rpcUrl, token);
+      const { tokenProgram, decimals } = await getTokenInfo(rpcUrl, token);
       const sourceATA = deriveATA(fromAddress, token, tokenProgram);
-      amount = (await readSourceTokenBalance(rpcUrl, base58Encode(sourceATA))).uiAmountString;
+      amount = formatAmount((await readSourceTokenBalance(rpcUrl, base58Encode(sourceATA))).amount, decimals);
     }
 
     // Build before the dry-run return: building does not sign, and it runs the
@@ -997,9 +1000,9 @@ export async function sendTokens({ to, amount, chain, token = null, wallet = nul
     } else if (max && token) {
       // Max SPL: full token balance
       const rpcUrl = CHAIN_RPCS.solana;
-      const { tokenProgram, decimals: _decimals } = await getTokenInfo(rpcUrl, token);
+      const { tokenProgram, decimals } = await getTokenInfo(rpcUrl, token);
       const sourceATA = deriveATA(walletData.solana.address, token, tokenProgram);
-      amount = (await readSourceTokenBalance(rpcUrl, base58Encode(sourceATA))).uiAmountString;
+      amount = formatAmount((await readSourceTokenBalance(rpcUrl, base58Encode(sourceATA))).amount, decimals);
       stderr(`  Max send: ${amount} (SPL token)`);
     }
     const amountRaw = token ? null : parseAmount(amount, 9);

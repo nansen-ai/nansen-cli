@@ -793,6 +793,67 @@ describe('sendTokens integration', () => {
       });
     });
 
+    // A Token-2022 mint with the ScaledUiAmount extension (xStocks such as
+    // AAPLx) or an InterestBearing rate: getTokenAccountBalance's uiAmount and
+    // uiAmountString are the balance times the multiplier, not amount / 10^decimals.
+    // The balance below is from a real mainnet reply for an AAPLx account
+    // (multiplier ~1.0038).
+    describe('Token-2022 mint whose UI amount is scaled', () => {
+      const TO = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+      const MINT = 'XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp';
+      const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+      function mockScaledSplRpc() {
+        fetch.mockImplementation(async (url, opts) => {
+          const body = JSON.parse(opts.body);
+          if (body.method === 'getAccountInfo' && body.params[0] === MINT) {
+            return { json: () => Promise.resolve({ result: { context: { slot: 1 }, value: { owner: TOKEN_2022, data: { parsed: { info: { decimals: 8 } } } } } }) };
+          }
+          const responses = {
+            'getTokenAccountBalance': { context: { slot: 1 }, value: { amount: '2297308', decimals: 8, uiAmount: 0.02306043, uiAmountString: '0.02306043' } },
+            'getLatestBlockhash': { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } },
+            'getBalance': { value: 1000000000 },
+            'sendTransaction': 'sol_sig_123',
+            'getSignatureStatuses': { value: [{ confirmationStatus: 'confirmed', slot: 12345, err: null }] },
+            'getAccountInfo': { context: { slot: 1 }, value: null }, // recipient and its ATA: no account yet
+          };
+          return { json: () => Promise.resolve({ result: responses[body.method] ?? null }) };
+        });
+      }
+      // TransferChecked data: [12, amount u64 LE, decimals u8].
+      const transferChecked = (amount, decimals) => {
+        const data = Buffer.alloc(10);
+        data[0] = 12;
+        data.writeBigUInt64LE(amount, 1);
+        data[9] = decimals;
+        return data;
+      };
+      const broadcastTx = () => {
+        const call = fetch.mock.calls.find(([, o]) => JSON.parse(o.body).method === 'sendTransaction');
+        return call && Buffer.from(JSON.parse(call[1].body).params[0], 'base64');
+      };
+
+      test('--max sends the whole balance in base units', async () => {
+        mockScaledSplRpc();
+        const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+        try {
+          const result = await sendTokens({ to: TO, amount: '0', chain: 'solana', token: MINT, max: true, password: 'test' });
+          expect(result.success).toBe(true);
+          expect(result.amount).toBe('0.02297308');
+          expect(broadcastTx().includes(transferChecked(2297308n, 8))).toBe(true);
+          expect(stderr).toHaveBeenCalledWith('  Max send: 0.02297308 (SPL token)\n');
+        } finally {
+          stderr.mockRestore();
+        }
+      });
+
+      test('reports the balance in the units --amount is read in', async () => {
+        mockScaledSplRpc();
+        await expect(sendTokens({ to: TO, amount: '0.023', chain: 'solana', token: MINT, password: 'test' }))
+          .rejects.toThrow('Insufficient token balance: have 0.02297308, need 0.023');
+        expect(broadcastTx()).toBeUndefined();
+      });
+    });
+
     test('rejects when SOL balance is insufficient', async () => {
       fetch.mockImplementation(async (url, opts) => {
         const body = JSON.parse(opts.body);
@@ -1849,8 +1910,9 @@ describe('sendTokens via Privy', () => {
 
     expect(result.success).toBe(true);
     expect(result.transactionHash).toBe('SplTxHash123');
-    // The amount returned should be the full token balance, not '0'
-    expect(result.amount).toBe('5.0');
+    // The amount returned should be the full token balance (5000000 base
+    // units at 6 decimals), not '0'
+    expect(result.amount).toBe('5');
   });
 
   describe('Solana dry run runs the balance checks the real send runs', () => {
@@ -1958,6 +2020,34 @@ describe('sendTokens via Privy', () => {
       })).rejects.toThrow(error);
 
       expect(signSpy).not.toHaveBeenCalled();
+    });
+
+    // A Token-2022 ScaledUiAmount mint (AAPLx): uiAmountString is the balance
+    // times the multiplier, so it is more than the account holds in base units.
+    test('previews a --max send of a scaled-UI Token-2022 balance in base units', async () => {
+      const AAPLX = 'XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp';
+      fetch.mockImplementation(async (_url, opts) => {
+        const body = typeof opts?.body === 'string' ? JSON.parse(opts.body) : null;
+        const reply = (result) => ({ json: () => Promise.resolve({ jsonrpc: '2.0', id: body?.id, result }) });
+        if (body?.method === 'getAccountInfo' && body.params?.[0] === AAPLX) {
+          return reply({ value: { owner: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb', data: { parsed: { info: { decimals: 8 } } } }, context: { slot: 1 } });
+        }
+        if (body?.method === 'getTokenAccountBalance') {
+          return reply({ value: { amount: '2297308', decimals: 8, uiAmount: 0.02306043, uiAmountString: '0.02306043' }, context: { slot: 1 } });
+        }
+        if (body?.method === 'getLatestBlockhash') {
+          return reply({ value: { blockhash: 'EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hq1k', lastValidBlockHeight: 1 }, context: { slot: 1 } });
+        }
+        if (body?.method === 'getAccountInfo') return reply({ value: null, context: { slot: 1 } });
+        return reply(null);
+      });
+
+      const result = await sendTokens({
+        to: '11111111111111111111111111111112',
+        amount: '0', chain: 'solana', wallet: 'pv', token: AAPLX, max: true, dryRun: true,
+      });
+
+      expect(result).toMatchObject({ dryRun: true, amount: '0.02297308', token: AAPLX });
     });
 
     test('rejects a --max dry run when the token balance is zero', async () => {
