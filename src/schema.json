@@ -729,6 +729,13 @@
                   "type": "string",
                   "description": "Smart money labels to include, comma-separated or repeated; sent as filters.include_smart_money_labels",
                   "repeatable": true
+                },
+                "token": {
+                  "type": "string",
+                  "aliases": [
+                    "token-address"
+                  ],
+                  "description": "Only this token (contract address); sent as filters.token_address, overriding a token_address in --filters"
                 }
               }
             },
@@ -859,7 +866,7 @@
                   "aliases": [
                     "token-address"
                   ],
-                  "description": "Only this token (contract address); sent as filters.token_address"
+                  "description": "Only this token (contract address); sent as filters.token_address, overriding a token_address in --filters"
                 }
               }
             },
