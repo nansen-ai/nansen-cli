@@ -464,7 +464,7 @@
         },
         "positions": {
           "endpoint": "/api/v1/perp/positions",
-          "description": "View open positions",
+          "description": "View open positions. Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA are not included. For HIP-3 positions, use research profiler perp-positions.",
           "options": {
             "wallet": {
               "type": "string",
@@ -474,7 +474,7 @@
         },
         "orders": {
           "endpoint": "/api/v1/perp/orders",
-          "description": "View open/resting orders",
+          "description": "View open/resting orders. Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA are not included.",
           "options": {
             "wallet": {
               "type": "string",
@@ -484,7 +484,7 @@
         },
         "account": {
           "endpoint": "/api/v1/perp/account",
-          "description": "View account state (account value, unrealized PnL, margin, withdrawable)",
+          "description": "View account state (account value, unrealized PnL, margin, withdrawable). Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA are not included. For HIP-3 positions, use research profiler perp-positions.",
           "options": {
             "wallet": {
               "type": "string",
@@ -494,7 +494,7 @@
         },
         "meta": {
           "endpoint": "/api/v1/perp/meta",
-          "description": "View available perp assets (id, size decimals, max leverage)",
+          "description": "View available perp assets (id, size decimals, max leverage). Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA are not included.",
           "options": {
             "filter": {
               "type": "string",
