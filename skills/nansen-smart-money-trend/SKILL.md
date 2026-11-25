@@ -26,7 +26,7 @@ API keys and browser sessions use the same automatic x402 payment behavior: a su
 ```bash
 TOKEN=<address> CHAIN=ethereum
 nansen research smart-money netflow --chain $CHAIN --token $TOKEN
-# → net_flow_1h_usd, net_flow_24h_usd, net_flow_7d_usd, net_flow_30d_usd (no row = no SM netflow for this token)
+# → net_flow_1h_usd, net_flow_24h_usd, net_flow_7d_usd, net_flow_30d_usd (an empty result means no matching row came back, not that SM activity is zero)
 # Native SOL/ETH: --token So11111111111111111111111111111111111111112 or 0xeeee…eeee, plus --filters '{"include_native_tokens":true}'
 nansen research token holders --token $TOKEN --chain $CHAIN --smart-money --limit 20
 # → address_label, value_usd, balance_change_24h, balance_change_7d, balance_change_30d
