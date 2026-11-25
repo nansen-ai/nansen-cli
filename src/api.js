@@ -695,7 +695,7 @@ export function getCacheDir() {
 
 // ============= Address Validation =============
 
-const ADDRESS_PATTERNS = {
+export const ADDRESS_PATTERNS = {
   // EVM chains: 0x followed by 40 hex chars
   evm: /^0x[a-fA-F0-9]{40}$/,
   // Solana: Base58, 32-44 chars (no 0, O, I, l)

@@ -6,7 +6,7 @@ import { readApiKeyInput } from './auth-key-input.js';
  * Extracted from index.js for coverage
  */
 
-import { NansenAPI, NansenError, CommandError, ErrorCode, getConfigFile, validateAddress, normalizeAddress, sleep } from './api.js';
+import { NansenAPI, NansenError, CommandError, ErrorCode, getConfigFile, validateAddress, normalizeAddress, sleep, ADDRESS_PATTERNS } from './api.js';
 import { buildWalletCommands, WALLET_SUBCOMMANDS } from './wallet.js';
 import { buildBridgeCommands, formatBridgeRoutes } from './bridge.js';
 import { buildPerpCommands } from './perp.js';
@@ -2052,7 +2052,28 @@ export function buildCommands(deps = {}) {
           if (search !== undefined && typeof search !== 'string') {
             throw new NansenError('--search must be a string', ErrorCode.INVALID_PARAMS);
           }
-          // When searching, fetch more results to filter from (API has no server-side search).
+          // A token address goes to the server as filters.token_address: one
+          // request with the normal pagination, and nothing ranked out of a
+          // local window. EVM (0x + 40 hex) and base58 (Solana, Tron) only;
+          // any other term keeps the local name/symbol search below, which
+          // still matches exact addresses on other chains.
+          const trimmedSearch = search?.trim();
+          if (trimmedSearch && (ADDRESS_PATTERNS.evm.test(trimmedSearch) || ADDRESS_PATTERNS.solana.test(trimmedSearch))) {
+            const addressFilters = { ...filters, token_address: normalizeFilterAddresses(trimmedSearch) };
+            const result = await apiInstance.tokenScreener({ chains, timeframe, filters: addressFilters, orderBy, pagination });
+            let rows;
+            if (Array.isArray(result?.data)) rows = result.data;
+            else if (Array.isArray(result?.data?.data)) rows = result.data.data;
+            else return result;
+            return {
+              ...result,
+              _meta: {
+                ...(result._meta || {}),
+                search: { query: search, filter: 'token_address', matched: rows.length, complete: true },
+              },
+            };
+          }
+          // When searching by name or symbol, fetch more results to filter from (API has no server-side search).
           // --page/--limit are applied client-side to the filtered list, so the
           // candidate fetch has to cover every page up to the requested one.
           const requestedLimit = pagination?.per_page || 100;
