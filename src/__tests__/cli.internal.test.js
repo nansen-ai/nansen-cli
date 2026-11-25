@@ -2983,6 +2983,78 @@ describe('buildCommands', () => {
       );
     });
 
+    describe('screener --search <token address> (server filter)', () => {
+      const PEPE_MIXED = '0x6982508145454Ce325dDbE47a25d4ec3d2311933';
+      const PEPE = PEPE_MIXED.toLowerCase();
+      const MINT = 'EsSzJa8xsyehSvVsNUy6t1KxMXgZYYaJKBAqyJxT3bid';
+      let errorOutput;
+      let cmds;
+      beforeEach(() => {
+        errorOutput = vi.fn();
+        cmds = buildCommands({ ...mockDeps, errorOutput });
+      });
+
+      it('sends a mixed-case EVM address as one lowercased token_address request', async () => {
+        const row = { token_address: PEPE, token_symbol: 'PEPE', chain: 'ethereum' };
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [row] }) };
+        const result = await cmds['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: PEPE_MIXED });
+
+        expect(mockApi.tokenScreener).toHaveBeenCalledTimes(1);
+        expect(mockApi.tokenScreener.mock.calls[0][0]).toEqual({
+          chains: ['ethereum'], timeframe: '24h', filters: { token_address: PEPE }, orderBy: undefined, pagination: undefined,
+        });
+        expect(result.data).toEqual([row]);
+        expect(result._meta.search).toEqual({ query: PEPE_MIXED, filter: 'token_address', matched: 1, complete: true });
+        expect(errorOutput).not.toHaveBeenCalled();
+      });
+
+      it('sends a Solana mint unchanged, keeps other filters and passes --limit/--page through', async () => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: { data: [], pagination: { page: 2 } } }) };
+        const result = await cmds['token'](['screener'], mockApi, {}, {
+          chain: 'solana', search: ` ${MINT} `, limit: '10', page: '2',
+          filters: { token_address: 'other', market_cap_usd: { min: 1 } },
+        });
+
+        expect(mockApi.tokenScreener.mock.calls[0][0]).toEqual({
+          chains: ['solana'], timeframe: '24h',
+          filters: { token_address: MINT, market_cap_usd: { min: 1 } },
+          orderBy: undefined,
+          pagination: { page: 2, per_page: 10 },
+        });
+        expect(result.data.data).toEqual([]);
+        expect(result.data.pagination).toEqual({ page: 2 });
+        expect(result._meta.search).toEqual({ query: ` ${MINT} `, filter: 'token_address', matched: 0, complete: true });
+        expect(errorOutput).not.toHaveBeenCalled();
+      });
+
+      it('keeps the server page size with --paginate', async () => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [] }) };
+        await cmds['token'](['screener'], mockApi, { paginate: true }, { chain: 'ethereum', search: PEPE, limit: '25' });
+        expect(mockApi.tokenScreener.mock.calls[0][0].pagination).toEqual({ page: 1, per_page: 25 });
+      });
+
+      it('does not mutate the API result', async () => {
+        const response = { data: [] };
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue(response) };
+        await cmds['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: PEPE });
+        expect(response).toEqual({ data: [] });
+      });
+
+      it.each([
+        ['a symbol', 'pepe'],
+        ['a short hex string', '0x1234'],
+        ['an EVM address one character short', PEPE.slice(0, -1)],
+        ['a Sui coin type', '0x2::sui::SUI'],
+      ])('keeps the local search for %s', async (_label, term) => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [] }) };
+        const result = await cmds['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: term });
+        const request = mockApi.tokenScreener.mock.calls[0][0];
+        expect(request.filters).toEqual({});
+        expect(request.pagination).toEqual({ page: 1, per_page: 500 });
+        expect(result._meta.search).toEqual({ query: term, searched: 0, matched: 0, complete: true });
+      });
+    });
+
     describe('screener --search window marker', () => {
       const rows = (n, prefix = 'PEPE') => Array.from({ length: n }, (_, i) => ({ token_symbol: `${prefix}${i}`, price_usd: i }));
       let errorOutput;
