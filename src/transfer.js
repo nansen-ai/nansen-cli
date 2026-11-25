@@ -9,6 +9,7 @@ import { keccak256, signSecp256k1, rlpEncode, toChecksumAddress } from './crypto
 import { getWalletConnectAddress, sendTransactionViaWalletConnect } from './walletconnect-trading.js';
 import { EVM_CHAIN_IDS } from './chain-ids.js';
 import { CHAIN_RPCS } from './rpc-urls.js';
+import { readUiAmountConfig, scaledUiAmountToRaw, scaledRawToUiAmount, effectiveMultiplier } from './token-ui-amount.js';
 
 // ============= Constants =============
 
@@ -491,7 +492,33 @@ export async function getTokenInfo(rpcUrl, mint) {
       `Could not determine decimals for token mint ${mint}: the RPC did not return parsed token data (owner ${owner ?? 'unknown'}). Check that the address is an SPL token mint, or try a different Solana RPC.`,
     );
   }
-  return { tokenProgram: owner, decimals };
+  return { tokenProgram: owner, decimals, uiAmountConfig: readUiAmountConfig(info.value.data.parsed.info) };
+}
+
+/**
+ * Convert an amount as wallets display it into raw units for `tokenInfo`
+ * (from getTokenInfo). A plain mint is raw / 10^decimals; a Token-2022 mint
+ * with a scaled UI amount also divides by its multiplier. Refuses a mint whose
+ * displayed amount the CLI cannot convert; `hint` names what still works.
+ */
+export function displayedAmountToRaw(amountStr, tokenInfo, { mint, hint = '', nowSec = Math.floor(Date.now() / 1000) } = {}) {
+  const { decimals, uiAmountConfig } = tokenInfo;
+  const kind = uiAmountConfig?.kind ?? 'plain';
+  if (kind === 'plain') return parseAmount(amountStr, decimals);
+  if (kind === 'scaled') return scaledUiAmountToRaw(amountStr, decimals, uiAmountConfig, nowSec, mint);
+  const why = kind === 'interest-bearing'
+    ? 'is an interest-bearing Token-2022 token: the amount wallets show grows with accrued interest'
+    : `has Token-2022 mint data the CLI cannot read (${uiAmountConfig.reason})`;
+  throw new Error(
+    `Token ${mint} ${why}, so the CLI cannot convert a displayed amount into base units. Nothing was signed or sent.${hint ? ` ${hint}` : ''}`,
+  );
+}
+
+/** "≈ X as displayed" for a scaled mint's raw amount, or null for any other mint. */
+export function describeScaledAmount(raw, tokenInfo, nowSec = Math.floor(Date.now() / 1000)) {
+  const config = tokenInfo.uiAmountConfig;
+  if (config?.kind !== 'scaled') return null;
+  return `${raw} base units = ${scaledRawToUiAmount(raw, tokenInfo.decimals, config, nowSec)} as displayed in wallets (display multiplier ${effectiveMultiplier(config, nowSec)})`;
 }
 
 /**
