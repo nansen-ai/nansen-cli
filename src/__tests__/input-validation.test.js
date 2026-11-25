@@ -817,6 +817,32 @@ describe('_meta.dateRange', () => {
     }
   });
 
+  // A window built a second time (an API method falling back to its own
+  // buildDateRange, or one inner call of trace/compare) gives the same dates
+  // unless UTC midnight passes in between. Here every clock read moves a day,
+  // so any second build sends dates that differ from the reported window.
+  it.each(daysLeaves.filter(([name]) => !SERVER_WINDOW[name] && name !== 'research historical-token-screener'))('%s sends the reported window even when the clock passes midnight', async (_name, words, leaf) => {
+    const RealDate = Date;
+    let clock = RealDate.parse('2025-11-25T23:59:59.000Z');
+    class SteppingDate extends RealDate {
+      constructor(...args) { super(...(args.length ? args : [clock += 86_400_000])); }
+      static now() { return (clock += 86_400_000); }
+    }
+    globalThis.Date = SteppingDate;
+    let captured;
+    try {
+      captured = await runCaptured([...words, ...argsFor(leaf)]);
+    } finally {
+      globalThis.Date = RealDate;
+    }
+    const { calls, exitCode, output } = captured;
+    expect(exitCode, JSON.stringify(output)).toBeNull();
+    const range = output.data._meta.dateRange;
+    const windows = sentWindows(calls);
+    expect(windows.length).toBeGreaterThan(0);
+    for (const sent of windows) expect(sent).toEqual({ from: range.from, to: range.to });
+  });
+
   it('counts back from --to-date for historical-token-screener, both ends included', async () => {
     const { output } = await runCaptured(['research', 'historical-token-screener', '--days', '7', '--to-date', '2025-01-02']);
     expect(output.data._meta.dateRange).toEqual({ from: '2024-12-26', to: '2025-01-02', days: 7, defaulted: false });
