@@ -43,7 +43,7 @@ nansen research token screener --chain $CHAIN --timeframe 24h --smart-money --li
 # widen with --limit 1000 or --paginate, or narrow with --filters.
 nansen research token screener --chain $CHAIN --search "bonk"
 
-# Search by token address (EVM or Solana): filtered on the server in one request, complete=true.
+# Search by token address (EVM or Solana): filtered on the server in one request.
 nansen research token screener --chain $CHAIN --search DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263
 
 # Smart money holdings — what SM wallets are holding

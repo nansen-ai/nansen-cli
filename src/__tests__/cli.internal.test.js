@@ -3033,6 +3033,28 @@ describe('buildCommands', () => {
         expect(mockApi.tokenScreener.mock.calls[0][0].pagination).toEqual({ page: 1, per_page: 25 });
       });
 
+      it('reports complete: false when --paginate stopped at --max-pages', async () => {
+        const pagination = { page: 1, per_page: 1, is_last_page: true, pages_fetched: 2, next_page: 3, complete: false };
+        const rows = [{ token_address: PEPE, chain: 'ethereum' }, { token_address: PEPE, chain: 'base' }];
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: rows, pagination }) };
+        const result = await cmds['token'](['screener'], mockApi, { paginate: true }, { chains: 'ethereum,base,arbitrum', search: PEPE, limit: '1' });
+        expect(result._meta.search).toEqual({ query: PEPE, filter: 'token_address', matched: 2, complete: false });
+        expect(result.pagination).toBe(pagination);
+      });
+
+      it('reports complete: false when the single page is not the last', async () => {
+        const pagination = { page: 1, per_page: 1, is_last_page: false };
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: { data: [{ token_address: PEPE }], pagination } }) };
+        const result = await cmds['token'](['screener'], mockApi, {}, { chains: 'ethereum,base', search: PEPE, limit: '1' });
+        expect(result._meta.search).toEqual({ query: PEPE, filter: 'token_address', matched: 1, complete: false });
+      });
+
+      it('reports complete: true when the page is the last one', async () => {
+        const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [], pagination: { page: 1, per_page: 10, is_last_page: true } }) };
+        const result = await cmds['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: PEPE });
+        expect(result._meta.search.complete).toBe(true);
+      });
+
       it('does not mutate the API result', async () => {
         const response = { data: [] };
         const mockApi = { tokenScreener: vi.fn().mockResolvedValue(response) };

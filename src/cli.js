@@ -1458,20 +1458,21 @@ function locatePaginationSummary(result) {
   return null;
 }
 
+// Whether the server had no rows past what was fetched, or undefined when the
+// response carries no pagination metadata.
+function paginationComplete(summary) {
+  // --paginate traversal summary (auto-paginate.js): false when --max-pages
+  // stopped the walk before the server ran out of rows. It also carries the
+  // first page's stale is_last_page, so it has to be checked first.
+  if (typeof summary?.complete === 'boolean') return summary.complete;
+  // Server metadata on a single page.
+  if (typeof summary?.is_last_page === 'boolean') return summary.is_last_page;
+  return undefined;
+}
+
 function describeSearchWindow({ query, candidates, matched, perPage, summary }) {
-  let complete;
-  if (typeof summary?.complete === 'boolean') {
-    // --paginate traversal summary (auto-paginate.js): false when --max-pages
-    // stopped the walk before the server ran out of rows. It also carries the
-    // first page's stale is_last_page, so it has to be checked first.
-    complete = summary.complete;
-  } else if (typeof summary?.is_last_page === 'boolean') {
-    // Server metadata on the single candidate page.
-    complete = summary.is_last_page;
-  } else {
-    // No metadata: a full page means the API may hold more rows beyond it.
-    complete = candidates.length < perPage;
-  }
+  // No metadata: a full page means the API may hold more rows beyond it.
+  const complete = paginationComplete(summary) ?? candidates.length < perPage;
   return { query, searched: candidates.length, matched, complete };
 }
 
@@ -2069,7 +2070,9 @@ export function buildCommands(deps = {}) {
               ...result,
               _meta: {
                 ...(result._meta || {}),
-                search: { query: search, filter: 'token_address', matched: rows.length, complete: true },
+                // The server filtered every row, so only pagination can leave
+                // matches unfetched (--max-pages, or a page that isn't the last).
+                search: { query: search, filter: 'token_address', matched: rows.length, complete: paginationComplete(locatePaginationSummary(result)) ?? true },
               },
             };
           }
