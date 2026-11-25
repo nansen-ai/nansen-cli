@@ -1848,8 +1848,9 @@ export function buildCommands(deps = {}) {
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
 
-      // `--token` narrows holdings to one token (the API filter token_address).
-      if (subcommand === 'holdings' && options.token !== undefined) {
+      // `--token` narrows holdings or netflow to one token (the API filter
+      // token_address). It overrides a token_address given in --filters.
+      if ((subcommand === 'holdings' || subcommand === 'netflow') && options.token !== undefined) {
         if (typeof options.token !== 'string' || !options.token.trim()) {
           throw new NansenError('--token requires a token address', ErrorCode.MISSING_PARAM);
         }

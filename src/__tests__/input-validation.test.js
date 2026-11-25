@@ -862,6 +862,34 @@ describe('runCLI failures always exit 1 with success:false (API-1080)', () => {
     expect(calls[0].body.filters).toEqual({ token_address: EVM });
   });
 
+  it('wires --token into smart-money netflow as a lowercased filter', async () => {
+    const { calls, exitCode, output } = await runCaptured(['research', 'smart-money', 'netflow', '--chain', 'ethereum', '--token', EVM_MIXED]);
+    expect(exitCode, JSON.stringify(output)).toBeNull();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body.filters).toEqual({ token_address: EVM });
+  });
+
+  it('sends a Solana netflow --token unchanged', async () => {
+    const mint = 'EsSzJa8xsyehSvVsNUy6t1KxMXgZYYaJKBAqyJxT3bid';
+    const { calls } = await runCaptured(['research', 'smart-money', 'netflow', '--chain', 'solana', '--token', mint]);
+    expect(calls[0].body.filters).toEqual({ token_address: mint });
+  });
+
+  it('lets netflow --token override token_address in --filters and keeps the other filters', async () => {
+    const { calls } = await runCaptured([
+      'research', 'smart-money', 'netflow', '--chain', 'solana', '--token', SOL_MINT,
+      '--filters', JSON.stringify({ token_address: 'other', include_stablecoins: false }),
+    ]);
+    expect(calls[0].body.filters).toEqual({ token_address: SOL_MINT, include_stablecoins: false });
+  });
+
+  it.each([' ', ''])('rejects a blank netflow --token %j without a request', async (value) => {
+    const { calls, exitCode, output } = await runCaptured(['research', 'smart-money', 'netflow', '--token', value]);
+    expect(exitCode).toBe(1);
+    expect(calls).toEqual([]);
+    expect(output.success).toBe(false);
+  });
+
   it('lowercases mixed-case EVM addresses in --filters', async () => {
     const { calls } = await runCaptured(['research', 'token', 'transfers', '--chain', 'ethereum', '--token', EVM, '--filters', JSON.stringify({ from_address: EVM_MIXED })]);
     expect(calls[0].body.filters.from_address).toBe(EVM);
