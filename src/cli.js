@@ -6,7 +6,7 @@ import { readApiKeyInput } from './auth-key-input.js';
  * Extracted from index.js for coverage
  */
 
-import { NansenAPI, NansenError, CommandError, ErrorCode, getConfigFile, validateAddress, normalizeAddress, sleep } from './api.js';
+import { NansenAPI, NansenError, CommandError, ErrorCode, getConfigFile, validateAddress, normalizeAddress, sleep, ADDRESS_PATTERNS } from './api.js';
 import { buildWalletCommands, WALLET_SUBCOMMANDS } from './wallet.js';
 import { buildBridgeCommands, formatBridgeRoutes } from './bridge.js';
 import { buildPerpCommands } from './perp.js';
@@ -1447,7 +1447,7 @@ export async function promptForConfirmation(question, { input = process.stdin, o
   });
 }
 
-// `token screener --search` filters client-side, so it can only find a token
+// `token screener --search <name or symbol>` filters client-side, so it can only find a token
 // among the candidate rows the API returned. These helpers describe that window
 // as `_meta.search: { query, searched, matched, complete }` so a short or empty
 // result can be told apart from "the token ranks below the rows we fetched".
@@ -1458,20 +1458,21 @@ function locatePaginationSummary(result) {
   return null;
 }
 
+// Whether the server had no rows past what was fetched, or undefined when the
+// response carries no pagination metadata.
+function paginationComplete(summary) {
+  // --paginate traversal summary (auto-paginate.js): false when --max-pages
+  // stopped the walk before the server ran out of rows. It also carries the
+  // first page's stale is_last_page, so it has to be checked first.
+  if (typeof summary?.complete === 'boolean') return summary.complete;
+  // Server metadata on a single page.
+  if (typeof summary?.is_last_page === 'boolean') return summary.is_last_page;
+  return undefined;
+}
+
 function describeSearchWindow({ query, candidates, matched, perPage, summary }) {
-  let complete;
-  if (typeof summary?.complete === 'boolean') {
-    // --paginate traversal summary (auto-paginate.js): false when --max-pages
-    // stopped the walk before the server ran out of rows. It also carries the
-    // first page's stale is_last_page, so it has to be checked first.
-    complete = summary.complete;
-  } else if (typeof summary?.is_last_page === 'boolean') {
-    // Server metadata on the single candidate page.
-    complete = summary.is_last_page;
-  } else {
-    // No metadata: a full page means the API may hold more rows beyond it.
-    complete = candidates.length < perPage;
-  }
+  // No metadata: a full page means the API may hold more rows beyond it.
+  const complete = paginationComplete(summary) ?? candidates.length < perPage;
   return { query, searched: candidates.length, matched, complete };
 }
 
@@ -1848,8 +1849,9 @@ export function buildCommands(deps = {}) {
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
 
-      // `--token` narrows holdings to one token (the API filter token_address).
-      if (subcommand === 'holdings' && options.token !== undefined) {
+      // `--token` narrows holdings or netflow to one token (the API filter
+      // token_address). It overrides a token_address given in --filters.
+      if ((subcommand === 'holdings' || subcommand === 'netflow') && options.token !== undefined) {
         if (typeof options.token !== 'string' || !options.token.trim()) {
           throw new NansenError('--token requires a token address', ErrorCode.MISSING_PARAM);
         }
@@ -2051,7 +2053,30 @@ export function buildCommands(deps = {}) {
           if (search !== undefined && typeof search !== 'string') {
             throw new NansenError('--search must be a string', ErrorCode.INVALID_PARAMS);
           }
-          // When searching, fetch more results to filter from (API has no server-side search).
+          // A token address goes to the server as filters.token_address: one
+          // request with the normal pagination, and nothing ranked out of a
+          // local window. EVM (0x + 40 hex) and base58 (Solana, Tron) only;
+          // any other term keeps the local name/symbol search below, which
+          // still matches exact addresses on other chains.
+          const trimmedSearch = search?.trim();
+          if (trimmedSearch && (ADDRESS_PATTERNS.evm.test(trimmedSearch) || ADDRESS_PATTERNS.solana.test(trimmedSearch))) {
+            const addressFilters = { ...filters, token_address: normalizeFilterAddresses(trimmedSearch) };
+            const result = await apiInstance.tokenScreener({ chains, timeframe, filters: addressFilters, orderBy, pagination });
+            let rows;
+            if (Array.isArray(result?.data)) rows = result.data;
+            else if (Array.isArray(result?.data?.data)) rows = result.data.data;
+            else return result;
+            return {
+              ...result,
+              _meta: {
+                ...(result._meta || {}),
+                // The server filtered every row, so only pagination can leave
+                // matches unfetched (--max-pages, or a page that isn't the last).
+                search: { query: search, filter: 'token_address', matched: rows.length, complete: paginationComplete(locatePaginationSummary(result)) ?? true },
+              },
+            };
+          }
+          // When searching by name or symbol, fetch more results to filter from (the API has no name or symbol search).
           // --page/--limit are applied client-side to the filtered list, so the
           // candidate fetch has to cover every page up to the requested one.
           const requestedLimit = pagination?.per_page || 100;

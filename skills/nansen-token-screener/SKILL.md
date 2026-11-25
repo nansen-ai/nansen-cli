@@ -38,10 +38,13 @@ nansen research token screener --chain $CHAIN --timeframe 24h --limit 20
 # Smart money only
 nansen research token screener --chain $CHAIN --timeframe 24h --smart-money --limit 20
 
-# Search within screener results (client-side filter over the fetched candidates).
+# Search by name or symbol (client-side filter over the fetched candidates).
 # Check _meta.search: complete=false means lower-ranked tokens were not searched —
 # widen with --limit 1000 or --paginate, or narrow with --filters.
 nansen research token screener --chain $CHAIN --search "bonk"
+
+# Search by token address (EVM or Solana): filtered on the server in one request.
+nansen research token screener --chain $CHAIN --search DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263
 
 # Smart money holdings — what SM wallets are holding
 nansen research smart-money holdings --chain $CHAIN --labels "Smart Trader" --limit 20

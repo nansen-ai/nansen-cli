@@ -1,0 +1,5 @@
+---
+"nansen-cli": minor
+---
+
+`research smart-money netflow` takes `--token <address>` (alias `--token-address`), sent as `filters.token_address` like `smart-money holdings --token`, so checking one token is one request instead of scanning `--limit 200`. `research token screener --search <token address>` (EVM `0x` + 40 hex, or base58 such as Solana) now sends the address as `filters.token_address`: one request with the normal `--limit`/`--page`, no 500-row candidate window and no stderr note, and `_meta.search` is `{ query, filter: "token_address", matched, complete }` (`complete` is false only when `--max-pages` or a non-last page left rows unfetched). Names and symbols keep the client-side search and its `_meta.search` shape. A Solana address typed in lowercase no longer matches (base58 is case-sensitive). Native SOL (`So11111111111111111111111111111111111111112`) and ETH (`0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`) rows come back only with `--filters '{"include_native_tokens":true}'`.
