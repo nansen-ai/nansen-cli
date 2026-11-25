@@ -841,6 +841,8 @@ describe('_meta.dateRange', () => {
     const windows = sentWindows(calls);
     expect(windows.length).toBeGreaterThan(0);
     for (const sent of windows) expect(sent).toEqual({ from: range.from, to: range.to });
+    // One clock read for both ends: the window spans exactly its days, never inverted.
+    expect((RealDate.parse(range.to) - RealDate.parse(range.from)) / 86_400_000).toBe(leaf.options.days.default);
   });
 
   it('counts back from --to-date for historical-token-screener, both ends included', async () => {

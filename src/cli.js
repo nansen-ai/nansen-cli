@@ -755,9 +755,11 @@ export function parseDateOption(dateOption, days = 30, valuelessDateFlag = false
   }
 
   if (dateOption === undefined) {
-    // Default: use days-based range only when --date was not supplied.
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    // Default: use days-based range only when --date was not supplied. One
+    // clock read for both ends, so UTC midnight can't fall between them.
+    const now = Date.now();
+    const to = new Date(now).toISOString().split('T')[0];
+    const from = new Date(now - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return { from, to };
   }
 

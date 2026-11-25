@@ -967,8 +967,10 @@ function requestIdOf(response) {
  * @returns {{from: string, to: string}} Date range with YYYY-MM-DD strings
  */
 export function buildDateRange(days) {
-  const to = new Date().toISOString().split('T')[0];
-  const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  // One clock read for both ends, so UTC midnight can't fall between them.
+  const now = Date.now();
+  const to = new Date(now).toISOString().split('T')[0];
+  const from = new Date(now - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   return { from, to };
 }
 
