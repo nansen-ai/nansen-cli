@@ -130,3 +130,14 @@ export function rejectBlankOption(value, name, example) {
     throw new CommandError(`--${name} requires a value. Usage: --${name} ${example}`, 'MISSING_PARAM');
   }
 }
+
+/**
+ * Report the date window a command used as `_meta.dateRange`
+ * (`{ from, to, days, defaulted }`), keeping the other `_meta` keys. Plain-object
+ * results only, like `_meta.search`; runCLI drops it again for --stream,
+ * --table and CSV, and --fields drops `_meta` unless asked for.
+ */
+export function withDateRangeMeta(result, dateRange) {
+  if (!dateRange || !result || typeof result !== 'object' || Array.isArray(result)) return result;
+  return { ...result, _meta: { ...result._meta, dateRange } };
+}
