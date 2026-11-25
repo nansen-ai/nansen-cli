@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { NansenAPI } from '../api.js';
 import { runCLI, SCHEMA, API_ENDPOINTS, withDefaultChainMeta } from '../cli.js';
+import { withDateRangeMeta } from '../query-options.js';
 import {
   similarity,
   closestMatch,
@@ -753,6 +754,135 @@ describe('_meta.defaults.chain', () => {
     const outputs = [];
     await runCLI(['research', 'token', 'indicators', '--help'], { output: line => outputs.push(line), errorOutput: () => {}, exit: () => {}, isTTY: false });
     expect(outputs.join('\n')).toContain('--chain (solana)');
+  });
+});
+
+// Every research command that takes --days reports the window it used. A
+// window the CLI builds must be the one it sends, so `from`/`to` are read back
+// from the request body; the server-built windows are checked on their own.
+describe('_meta.dateRange', () => {
+  const SECOND_EVM = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
+  const SERVER_WINDOW = { 'research chain-rank': 'time_frame', 'research smart-money-pnl-leaderboard': 'timeframe' };
+  const daysLeaves = researchLeaves()
+    .filter(([, leaf]) => leaf.options?.days)
+    .map(([words, leaf]) => [words.join(' '), words, leaf]);
+  const argsFor = leaf => requiredArgs(leaf, { skip: ['days'] })
+    .map(arg => (arg === EVM && leaf.options.addresses?.required ? `${EVM},${SECOND_EVM}` : arg));
+  const explicitDays = leaf => (leaf.options.days.enum
+    ? String(leaf.options.days.enum.find(value => value !== leaf.options.days.default))
+    : '7');
+  // The window each request carried: the request field for CLI-built windows.
+  const sentWindows = calls => calls
+    .map(call => call.body.date ?? call.body.date_range)
+    .filter(Boolean);
+
+  it('covers every --days command', () => {
+    expect(daysLeaves.map(([name]) => name)).toHaveLength(23);
+  });
+
+  it.each(daysLeaves.filter(([name]) => name !== 'research historical-token-screener'))('%s reports the default window when --days is left out', async (name, words, leaf) => {
+    const { calls, exitCode, output } = await runCaptured([...words, ...argsFor(leaf)]);
+    expect(exitCode, JSON.stringify(output)).toBeNull();
+    const range = output.data._meta?.dateRange;
+    expect(range, 'no _meta.dateRange').toBeDefined();
+    expect(range.days).toBe(leaf.options.days.default);
+    expect(range.defaulted).toBe(true);
+    if (SERVER_WINDOW[name]) {
+      expect(range).toMatchObject({ from: null, to: null });
+      expect(calls[0].body[SERVER_WINDOW[name]]).toBe(range.days);
+      return;
+    }
+    const windows = sentWindows(calls);
+    expect(windows.length, 'no date window sent').toBeGreaterThan(0);
+    for (const sent of windows) expect(sent).toEqual({ from: range.from, to: range.to });
+  });
+
+  it.each(daysLeaves)('%s reports an explicit --days as not defaulted', async (name, words, leaf) => {
+    const days = explicitDays(leaf);
+    const { calls, exitCode, output } = await runCaptured([...words, ...argsFor(leaf), '--days', days]);
+    expect(exitCode, JSON.stringify(output)).toBeNull();
+    const range = output.data._meta?.dateRange;
+    expect(range).toMatchObject({ days: Number(days), defaulted: false });
+    if (SERVER_WINDOW[name]) {
+      expect(range).toMatchObject({ from: null, to: null });
+      expect(calls[0].body[SERVER_WINDOW[name]]).toBe(Number(days));
+    } else if (name === 'research historical-token-screener') {
+      expect(calls[0].body).toMatchObject({ timeframe_days: Number(days), to_date: range.to });
+    } else {
+      const windows = sentWindows(calls);
+      expect(windows.length).toBeGreaterThan(0);
+      for (const sent of windows) expect(sent).toEqual({ from: range.from, to: range.to });
+      const spanDays = (Date.parse(range.to) - Date.parse(range.from)) / 86_400_000;
+      expect(spanDays).toBe(Number(days));
+    }
+  });
+
+  it('counts back from --to-date for historical-token-screener, both ends included', async () => {
+    const { output } = await runCaptured(['research', 'historical-token-screener', '--days', '7', '--to-date', '2025-01-02']);
+    expect(output.data._meta.dateRange).toEqual({ from: '2024-12-26', to: '2025-01-02', days: 7, defaulted: false });
+  });
+
+  it('reports --days 0 as a one-day window', async () => {
+    const { calls, output } = await runCaptured(['research', 'profiler', 'pnl-summary', '--address', EVM, '--days', '0']);
+    const range = output.data._meta.dateRange;
+    expect(range).toMatchObject({ days: 0, defaulted: false });
+    expect(range.from).toBe(range.to);
+    expect(calls[0].body.date).toEqual({ from: range.from, to: range.to });
+  });
+
+  it('reports a --date window with days: null', async () => {
+    const single = await runCaptured(['research', 'token', 'who-bought-sold', '--token', SOL_MINT, '--date', '2025-11-20']);
+    expect(single.output.data._meta.dateRange).toEqual({ from: '2025-11-20', to: '2025-11-20', days: null, defaulted: false });
+    expect(single.calls[0].body.date).toEqual({ from: '2025-11-20', to: '2025-11-20' });
+
+    const range = await runCaptured(['research', 'profiler', 'pnl', '--address', EVM, '--date', '{"from":"2025-11-01","to":"2025-11-10"}', '--days', '7']);
+    expect(range.output.data._meta.dateRange).toEqual({ from: '2025-11-01', to: '2025-11-10', days: null, defaulted: false });
+    expect(range.calls[0].body.date).toEqual({ from: '2025-11-01', to: '2025-11-10' });
+  });
+
+  it('treats the --timeframe-days alias as an explicit --days', async () => {
+    const { output } = await runCaptured(['research', 'smart-money-pnl-leaderboard', '--timeframe-days', '30']);
+    expect(output.data._meta.dateRange).toEqual({ from: null, to: null, days: 30, defaulted: false });
+  });
+
+  it('does not treat token transfers --from/--to (address filters) as a date', async () => {
+    const { calls, output } = await runCaptured(['research', 'token', 'transfers', '--token', SOL_MINT, '--from', EVM]);
+    expect(output.data._meta.dateRange).toMatchObject({ days: 30, defaulted: true });
+    expect(calls[0].body.filters.from_address).toBeDefined();
+  });
+
+  it('keeps the other _meta keys and an existing cache marker', async () => {
+    expect(withDateRangeMeta({ data: [], _meta: { fromCache: true, cacheAge: 3 } }, { from: 'a', to: 'b', days: 1, defaulted: false }))
+      .toEqual({ data: [], _meta: { fromCache: true, cacheAge: 3, dateRange: { from: 'a', to: 'b', days: 1, defaulted: false } } });
+    expect(withDateRangeMeta([1], { from: 'a' })).toEqual([1]);
+    expect(withDateRangeMeta({ data: [] }, undefined)).toEqual({ data: [] });
+
+    const { output } = await runCaptured(['research', 'profiler', 'pnl-summary', '--address', EVM, '--chain', 'ethereum']);
+    expect(Object.keys(output.data._meta)).toEqual(['dateRange']);
+  });
+
+  it('is kept with --paginate and on the deprecated top-level alias', async () => {
+    const paginated = await runCaptured(['research', 'token', 'pnl', '--token', SOL_MINT, '--paginate']);
+    expect(paginated.output.data._meta.dateRange).toMatchObject({ days: 30, defaulted: true });
+    const alias = await runCaptured(['profiler', 'pnl-summary', '--address', EVM]);
+    expect(alias.output.data._meta.dateRange).toMatchObject({ days: 30, defaulted: true });
+  });
+
+  it('is not added to --fields, --stream, --table or CSV output', async () => {
+    const summary = ['research', 'profiler', 'pnl-summary', '--address', EVM, '--chain', 'ethereum'];
+    const fields = await runCaptured([...summary, '--fields', 'token_symbol']);
+    expect(JSON.stringify(fields.output)).not.toContain('dateRange');
+    for (const flag of [['--stream'], ['--table'], ['--format', 'csv']]) {
+      const outputs = [];
+      class StubAPI extends NansenAPI {
+        constructor() { super('test-key', 'https://api.nansen.ai', { retry: { maxRetries: 0 }, cache: { enabled: false } }); }
+        async request() { return { data: { realized_pnl_usd: 1 } }; }
+      }
+      await runCLI([...summary, ...flag], { output: line => outputs.push(line), errorOutput: () => {}, exit: () => {}, NansenAPIClass: StubAPI, isTTY: false });
+      const text = outputs.join('\n');
+      expect(text, flag.join(' ')).toContain('realized_pnl_usd');
+      expect(text, flag.join(' ')).not.toContain('dateRange');
+    }
   });
 });
 
