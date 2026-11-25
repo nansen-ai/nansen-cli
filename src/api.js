@@ -967,8 +967,10 @@ function requestIdOf(response) {
  * @returns {{from: string, to: string}} Date range with YYYY-MM-DD strings
  */
 export function buildDateRange(days) {
-  const to = new Date().toISOString().split('T')[0];
-  const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  // One clock read for both ends, so UTC midnight can't fall between them.
+  const now = Date.now();
+  const to = new Date(now).toISOString().split('T')[0];
+  const from = new Date(now - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   return { from, to };
 }
 
@@ -1727,10 +1729,10 @@ export class NansenAPI {
   }
 
   async smartMoneyHistoricalHoldings(params = {}) {
-    const { chains = ['solana'], filters = {}, orderBy, pagination, days = 30 } = params;
+    const { chains = ['solana'], filters = {}, orderBy, pagination, days = 30, date } = params;
     return this.request('/api/v1/smart-money/historical-holdings', {
       chains,
-      date_range: buildDateRange(days),
+      date_range: date || buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -1849,12 +1851,12 @@ export class NansenAPI {
   }
 
   async addressHistoricalBalances(params = {}) {
-    const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30 } = params;
+    const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30, date } = params;
     if (address) requireValidAddress(address, chain);
     return this.request('/api/v1/profiler/address/historical-balances', {
       address,
       chain,
-      date: buildDateRange(days),
+      date: date || buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -1884,12 +1886,12 @@ export class NansenAPI {
   }
 
   async addressCounterparties(params = {}) {
-    const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30, requestOptions } = params;
+    const { address, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30, date, requestOptions } = params;
     if (address) requireValidAddress(address, chain);
     return this.request('/api/v1/profiler/address/counterparties', {
       address,
       chain,
-      date: buildDateRange(days),
+      date: date || buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -1902,7 +1904,7 @@ export class NansenAPI {
    * Defaults to chain 'all' (the ecosystem is auto-detected), matching the CLI.
    */
   async addressCounterpartiesBatch(params = {}) {
-    const { addresses, chain = 'all', filters = {}, orderBy, pagination, days = 30, sourceInput } = params;
+    const { addresses, chain = 'all', filters = {}, orderBy, pagination, days = 30, date, sourceInput } = params;
     const resolvedChain = resolveCounterpartiesBatchChain(chain);
     const list = Array.isArray(addresses) ? addresses : (addresses ? [addresses] : []);
     // Dedupe on the normalised form, because the server lowercases EVM addresses
@@ -1967,7 +1969,7 @@ export class NansenAPI {
     return this.request('/api/v1/profiler/address/counterparties/batch', {
       wallet_addresses: walletAddresses,
       chain: resolvedChain,
-      date: buildDateRange(days),
+      date: date || buildDateRange(days),
       source_input: sourceInput,
       filters,
       order_by: orderBy,
@@ -1978,12 +1980,12 @@ export class NansenAPI {
   async addressPnlSummary(params = {}) {
     // Note: pnl-summary endpoint is non-paginated (returns aggregate stats, not a list)
     // and has no order_by, so neither is sent.
-    const { address, chain = 'ethereum', days = 30 } = params;
+    const { address, chain = 'ethereum', days = 30, date } = params;
     if (address) requireValidAddress(address, chain);
     return this.request('/api/v1/profiler/address/pnl-summary', {
       wallet_address: address,
       chain,
-      date: buildDateRange(days)
+      date: date || buildDateRange(days)
     });
   }
 
@@ -1999,10 +2001,10 @@ export class NansenAPI {
   }
 
   async addressPerpTrades(params = {}) {
-    const { address, filters = {}, orderBy, pagination, days = 30 } = params;
+    const { address, filters = {}, orderBy, pagination, days = 30, date } = params;
     return this.request('/api/v1/profiler/perp-trades', {
       address,
-      date: buildDateRange(days),
+      date: date || buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -2086,7 +2088,7 @@ export class NansenAPI {
   }
 
   async tokenDexTrades(params = {}) {
-    const { tokenAddress, chain = 'solana', onlySmartMoney = false, filters = {}, orderBy, pagination, days = 7 } = params;
+    const { tokenAddress, chain = 'solana', onlySmartMoney = false, filters = {}, orderBy, pagination, days = 7, date } = params;
     if (tokenAddress) requireValidToken(tokenAddress, chain);
     // Apply smart money filter via filters object
     if (onlySmartMoney) {
@@ -2097,7 +2099,7 @@ export class NansenAPI {
     return this.request('/api/v1/tgm/dex-trades', {
       token_address: tokenAddress,
       chain,
-      date: buildDateRange(days),
+      date: date || buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -2105,12 +2107,12 @@ export class NansenAPI {
   }
 
   async tokenPnlLeaderboard(params = {}) {
-    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination, days = 30, withLabels } = params;
+    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination, days = 30, date, withLabels } = params;
     if (tokenAddress) requireValidToken(tokenAddress, chain);
     const body = {
       token_address: tokenAddress,
       chain,
-      date: buildDateRange(days),
+      date: date || buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -2145,12 +2147,12 @@ export class NansenAPI {
   }
 
   async tokenTransfers(params = {}) {
-    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination, days = 7 } = params;
+    const { tokenAddress, chain = 'solana', filters = {}, orderBy, pagination, days = 7, date } = params;
     if (tokenAddress) requireValidToken(tokenAddress, chain);
     return this.request('/api/v1/tgm/transfers', {
       token_address: tokenAddress,
       chain,
-      date: buildDateRange(days),
+      date: date || buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -2170,10 +2172,10 @@ export class NansenAPI {
   }
 
   async tokenPerpTrades(params = {}) {
-    const { tokenSymbol, filters = {}, orderBy, pagination, days = 30 } = params;
+    const { tokenSymbol, filters = {}, orderBy, pagination, days = 30, date } = params;
     return this.request('/api/v1/tgm/perp-trades', {
       token_symbol: tokenSymbol,
-      date: buildDateRange(days),
+      date: date || buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -2198,10 +2200,10 @@ export class NansenAPI {
   }
 
   async tokenPerpPnlLeaderboard(params = {}) {
-    const { tokenSymbol, filters = {}, orderBy, pagination, days = 30, withLabels } = params;
+    const { tokenSymbol, filters = {}, orderBy, pagination, days = 30, date, withLabels } = params;
     const body = {
       token_symbol: tokenSymbol,
-      date: buildDateRange(days),
+      date: date || buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -2249,9 +2251,9 @@ export class NansenAPI {
   // ============= Perp Endpoints =============
 
   async perpScreener(params = {}) {
-    const { filters = {}, orderBy, pagination, days = 30, traderType, sectorsFilter, smLabelFilter, traderLabelFilter } = params;
+    const { filters = {}, orderBy, pagination, days = 30, date, traderType, sectorsFilter, smLabelFilter, traderLabelFilter } = params;
     const body = {
-      date: buildDateRange(days),
+      date: date || buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination
@@ -2264,9 +2266,9 @@ export class NansenAPI {
   }
 
   async perpLeaderboard(params = {}) {
-    const { filters = {}, orderBy, pagination, days = 30, withLabels } = params;
+    const { filters = {}, orderBy, pagination, days = 30, date, withLabels } = params;
     const body = {
-      date: buildDateRange(days),
+      date: date || buildDateRange(days),
       filters,
       order_by: orderBy,
       pagination

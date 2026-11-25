@@ -5773,7 +5773,9 @@ describe('profiler counterparties-batch command', () => {
       chain: 'ethereum'
     });
 
-    expect(result).toEqual(response);
+    const { _meta, ...rest } = result;
+    expect(rest).toEqual(response);
+    expect(_meta).toEqual({ dateRange: expect.objectContaining({ days: 30, defaulted: true }) });
     expect(result.data.map(row => row.wallet_address)).toEqual([ADDR_A, ADDR_B]);
   });
 

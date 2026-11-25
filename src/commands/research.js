@@ -5,7 +5,7 @@
  */
 
 import { NansenError, ErrorCode } from '../api.js';
-import { buildPagination, parseSort, rejectBlankOption, parseFiltersOption } from '../query-options.js';
+import { buildPagination, parseSort, rejectBlankOption, parseFiltersOption, withDateRangeMeta } from '../query-options.js';
 import { unknownCommandError } from '../input-validation.js';
 
 const SUBCOMMANDS = [
@@ -52,6 +52,21 @@ function parseTimeframeDays(value) {
     throw new NansenError('--days must be a positive integer', ErrorCode.INVALID_PARAMS);
   }
   return parseInt(trimmed, 10);
+}
+
+// chain-rank and smart-money-pnl-leaderboard send only a day count; the server
+// picks the dates, so `from` and `to` are null.
+function serverDateRange(options, days) {
+  return { from: null, to: null, days, defaulted: options.days === undefined };
+}
+
+// historical-token-screener covers [to-date - days, to-date], both ends
+// included (the server filters block dates between the two).
+function trailingDateRange(toDate, days) {
+  const end = new Date(`${toDate}T00:00:00.000Z`);
+  if (Number.isNaN(end.getTime())) return undefined;
+  const from = new Date(end.getTime() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  return { from, to: toDate, days, defaulted: false };
 }
 
 function parseBooleanOption(options, flags, key) {
@@ -252,7 +267,7 @@ export function buildResearchCommands(deps = {}) {
             ErrorCode.INVALID_PARAMS,
           );
         }
-        return apiInstance.chainRank({ timeFrame, chainType });
+        return withDateRangeMeta(await apiInstance.chainRank({ timeFrame, chainType }), serverDateRange(options, timeFrame));
       }
 
       if (sub === 'address-premium-labels') {
@@ -272,11 +287,12 @@ export function buildResearchCommands(deps = {}) {
             ErrorCode.INVALID_PARAMS,
           );
         }
-        return apiInstance.smartMoneyPnlLeaderboard({
+        const result = await apiInstance.smartMoneyPnlLeaderboard({
           chains: parseChains(options) || ['solana'],
           timeframe,
           filters, orderBy, pagination,
         });
+        return withDateRangeMeta(result, serverDateRange(options, timeframe));
       }
 
       if (sub === 'position-intelligence') {
@@ -422,12 +438,13 @@ export function buildResearchCommands(deps = {}) {
       if (sub === 'historical-token-screener') {
         const timeframeDays = parseTimeframeDays(options.days);
         requireOptions({ days: timeframeDays, 'to-date': options['to-date'] }, ['days', 'to-date']);
-        return apiInstance.researchTokenScreener({
+        const result = await apiInstance.researchTokenScreener({
           chains: parseChains(options),
           timeframeDays,
           toDate: options['to-date'],
           filters, orderBy, pagination,
         });
+        return withDateRangeMeta(result, trailingDateRange(options['to-date'], timeframeDays));
       }
 
       if (sub === 'historical-wallet-balances') {

@@ -18,7 +18,7 @@ import { buildAgentCommands } from './commands/agent.js';
 import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
-import { buildPagination, parseSort, parseCsvOption, rejectBlankOption, parseFiltersOption } from './query-options.js';
+import { buildPagination, parseSort, parseCsvOption, rejectBlankOption, parseFiltersOption, withDateRangeMeta } from './query-options.js';
 import { resolveResearchCommand, validateResearchInput, validateDeclaredOptions, UNAVAILABLE_COMMANDS, SUBCOMMAND_ALIASES, validateOutputOptions, validateFieldSelection, unknownCommandError, normalizeFilterAddresses } from './input-validation.js';
 import { enableAutoPagination, DEFAULT_MAX_PAGES, MAX_PAGES_LIMIT, locateRows } from './auto-paginate.js';
 export { buildPagination, parseSort };
@@ -755,9 +755,11 @@ export function parseDateOption(dateOption, days = 30, valuelessDateFlag = false
   }
 
   if (dateOption === undefined) {
-    // Default: use days-based range only when --date was not supplied.
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    // Default: use days-based range only when --date was not supplied. One
+    // clock read for both ends, so UTC midnight can't fall between them.
+    const now = Date.now();
+    const to = new Date(now).toISOString().split('T')[0];
+    const from = new Date(now - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     return { from, to };
   }
 
@@ -785,6 +787,34 @@ export function parseDateOption(dateOption, days = 30, valuelessDateFlag = false
     '--date must be YYYY-MM-DD or a JSON object with a valid "from" date and optional "to" date',
     ErrorCode.INVALID_PARAMS,
   );
+}
+
+/**
+ * The date window a `--days` command sends, built once so the window reported
+ * in `_meta.dateRange` is the one in the request (no drift across UTC midnight).
+ * `date` goes in the request; `range` is the report: `days` is null when
+ * `--date` set the window, and `defaulted` is true when neither --days nor
+ * --date was given.
+ */
+export function resolveDateWindow(options, flags, days, { acceptsDate = false } = {}) {
+  const fromDateOption = acceptsDate && options.date !== undefined;
+  const date = parseDateOption(acceptsDate ? options.date : undefined, days, acceptsDate && flags.date);
+  return {
+    date,
+    range: {
+      from: date.from,
+      to: date.to,
+      days: fromDateOption ? null : days,
+      defaulted: options.days === undefined && !fromDateOption,
+    },
+  };
+}
+
+function withoutDateRangeMeta(result) {
+  if (!result?._meta?.dateRange || Array.isArray(result)) return result;
+  const { dateRange: _dropped, ...meta } = result._meta;
+  const { _meta: _old, ...rest } = result;
+  return Object.keys(meta).length ? { ...rest, _meta: meta } : rest;
 }
 
 // Enrich transfers with Nansen labels for from/to addresses
@@ -978,7 +1008,7 @@ function normalizeTraceWidth(raw) {
 }
 
 export async function traceCounterparties(api, params = {}) {
-  let { address, chain = 'ethereum', depth = 2, depthFlags = {}, width = 10, days = 30, delayMs = 1000 } = params;
+  let { address, chain = 'ethereum', depth = 2, depthFlags = {}, width = 10, days = 30, date, delayMs = 1000 } = params;
   if (!address) {
     throw new NansenError('address is required for trace', ErrorCode.MISSING_PARAM);
   }
@@ -1013,7 +1043,7 @@ export async function traceCounterparties(api, params = {}) {
 
     try {
       const result = await api.addressCounterparties({
-        address: addr, chain, days,
+        address: addr, chain, days, date,
         pagination: { page: 1, per_page: clampedWidth },
         requestOptions: { autoPaginate: false },
       });
@@ -1064,7 +1094,7 @@ export async function traceCounterparties(api, params = {}) {
 }
 
 export async function compareWallets(api, params = {}) {
-  const { addresses = [], chain = 'ethereum', days = 30, delayMs = 1000 } = params;
+  const { addresses = [], chain = 'ethereum', days = 30, date, delayMs = 1000 } = params;
   if (addresses.length !== 2) {
     throw new NansenError('Exactly 2 addresses are required for comparison', ErrorCode.INVALID_PARAMS);
   }
@@ -1082,10 +1112,10 @@ export async function compareWallets(api, params = {}) {
   const settle = (promise) => promise.then(value => ({ value }), error => ({ error }));
   const [cp1, cp2] = await Promise.all([
     settle(api.addressCounterparties({
-      address: addr1, chain, days, requestOptions: { autoPaginate: false },
+      address: addr1, chain, days, date, requestOptions: { autoPaginate: false },
     })),
     settle(api.addressCounterparties({
-      address: addr2, chain, days, requestOptions: { autoPaginate: false },
+      address: addr2, chain, days, date, requestOptions: { autoPaginate: false },
     })),
   ]);
   await sleep(delayMs);
@@ -1864,9 +1894,8 @@ export function buildCommands(deps = {}) {
         filters.include_smart_money_labels = labels;
       }
 
-      const days = subcommand === 'historical-holdings'
-        ? parseDaysOption(options, flags)
-        : 30;
+      const days = subcommand === 'historical-holdings' ? parseDaysOption(options, flags) : null;
+      const window = days === null ? null : resolveDateWindow(options, flags, days);
 
       const handlers = {
         'netflow': () => apiInstance.smartMoneyNetflow({ chains, filters, orderBy, pagination }),
@@ -1874,7 +1903,7 @@ export function buildCommands(deps = {}) {
         'perp-trades': () => apiInstance.smartMoneyPerpTrades({ filters, orderBy, pagination, onlyNewPositions: resolveBooleanOption(options, flags, 'only-new-positions') }),
         'holdings': () => apiInstance.smartMoneyHoldings({ chains, filters, orderBy, pagination }),
         'dcas': () => apiInstance.smartMoneyDcas({ filters, orderBy, pagination }),
-        'historical-holdings': () => apiInstance.smartMoneyHistoricalHoldings({ chains, filters, orderBy, pagination, days }),
+        'historical-holdings': () => apiInstance.smartMoneyHistoricalHoldings({ chains, filters, orderBy, pagination, days, date: window.date }),
         'help': () => ({
           commands: ['netflow', 'dex-trades', 'perp-trades', 'holdings', 'dcas', 'historical-holdings'],
           description: 'Smart Money analytics endpoints',
@@ -1886,7 +1915,7 @@ export function buildCommands(deps = {}) {
         throw unknownCommandError('smart-money subcommand', subcommand, Object.keys(handlers).filter(name => name !== 'help'));
       }
 
-      return handlers[subcommand]();
+      return withDateRangeMeta(await handlers[subcommand](), window?.range);
     },
 
     'profiler': async (args, apiInstance, flags, options) => {
@@ -1925,37 +1954,32 @@ export function buildCommands(deps = {}) {
         'compare',
       ].includes(subcommand)
         ? parseDaysOption(options, flags)
-        : 30;
+        : null;
+      const window = days === null
+        ? null
+        : resolveDateWindow(options, flags, days, { acceptsDate: ['transactions', 'pnl', 'dex-trades'].includes(subcommand) });
+      const date = window?.date;
 
       const handlers = {
         'balance': () => apiInstance.addressBalance({ address, entityName, chain, filters, orderBy, pagination }),
         'labels': () => apiInstance.addressLabels({ address, chain, pagination }),
-        'transactions': () => {
-          const date = parseDateOption(options.date, days, flags.date);
-          return apiInstance.addressTransactions({ address, chain, filters, orderBy, pagination, days, date });
-        },
-        'pnl': () => {
-          const date = parseDateOption(options.date, days, flags.date);
-          return apiInstance.addressPnl({ address, chain, date, days, filters, orderBy, pagination });
-        },
+        'transactions': () => apiInstance.addressTransactions({ address, chain, filters, orderBy, pagination, days, date }),
+        'pnl': () => apiInstance.addressPnl({ address, chain, date, days, filters, orderBy, pagination }),
         'search': () => apiInstance.entitySearch({ query: options.query }),
-        'historical-balances': () => apiInstance.addressHistoricalBalances({ address, chain, filters, orderBy, pagination, days }),
+        'historical-balances': () => apiInstance.addressHistoricalBalances({ address, chain, filters, orderBy, pagination, days, date }),
         'related-wallets': () => apiInstance.addressRelatedWallets({ address, chain, orderBy, pagination }),
         'first-funder': () => apiInstance.addressFirstFunder({ address }),
-        'counterparties': () => apiInstance.addressCounterparties({ address, chain, filters, orderBy, pagination, days }),
+        'counterparties': () => apiInstance.addressCounterparties({ address, chain, filters, orderBy, pagination, days, date }),
         'counterparties-batch': () => {
           const addresses = options.addresses
             ? parseAddressList(options.addresses)
             : (options.file ? readAddressFile(options.file) : []);
-          return apiInstance.addressCounterpartiesBatch({ addresses, chain, filters, orderBy, pagination, days });
+          return apiInstance.addressCounterpartiesBatch({ addresses, chain, filters, orderBy, pagination, days, date });
         },
-        'pnl-summary': () => apiInstance.addressPnlSummary({ address, chain, days }),
+        'pnl-summary': () => apiInstance.addressPnlSummary({ address, chain, days, date }),
         'perp-positions': () => apiInstance.addressPerpPositions({ address, filters, orderBy, pagination }),
-        'perp-trades': () => apiInstance.addressPerpTrades({ address, filters, orderBy, pagination, days }),
-        'dex-trades': () => {
-          const date = parseDateOption(options.date, days, flags.date);
-          return apiInstance.addressDexTrades({ address, chain, filters, orderBy, pagination, days, date });
-        },
+        'perp-trades': () => apiInstance.addressPerpTrades({ address, filters, orderBy, pagination, days, date }),
+        'dex-trades': () => apiInstance.addressDexTrades({ address, chain, filters, orderBy, pagination, days, date }),
         'batch': () => {
           rejectBlankOption(options.delay, 'delay', '1000');
           let addresses = [];
@@ -1978,11 +2002,11 @@ export function buildCommands(deps = {}) {
           const depth = options.depth;
           const width = parseNonNegativeSafeIntegerOption('width', options, flags, 10);
           const delayMs = parseNonNegativeSafeIntegerOption('delay', options, flags, 1000);
-          return traceCounterparties(apiInstance, { address, chain, depth, depthFlags: flags, width, days, delayMs });
+          return traceCounterparties(apiInstance, { address, chain, depth, depthFlags: flags, width, days, date, delayMs });
         },
         'compare': () => {
           const addrs = parseAddressList(options.addresses);
-          return compareWallets(apiInstance, { addresses: addrs, chain, days });
+          return compareWallets(apiInstance, { addresses: addrs, chain, days, date });
         },
         'help': () => ({
           commands: ['balance', 'labels', 'transactions', 'pnl', 'search', 'historical-balances', 'related-wallets', 'first-funder', 'counterparties', 'counterparties-batch', 'pnl-summary', 'perp-positions', 'perp-trades', 'dex-trades', 'batch', 'trace', 'compare'],
@@ -1995,7 +2019,7 @@ export function buildCommands(deps = {}) {
         throw unknownCommandError('profiler subcommand', subcommand, Object.keys(handlers).filter(name => name !== 'help'));
       }
 
-      const result = await handlers[subcommand]();
+      const result = withDateRangeMeta(await handlers[subcommand](), window?.range);
 
       // Attach ENS metadata so the caller knows the name was resolved
       return ensName && result && typeof result === 'object'
@@ -2030,7 +2054,11 @@ export function buildCommands(deps = {}) {
         'perp-pnl-leaderboard',
       ].includes(subcommand)
         ? parseDaysOption(options, flags)
-        : 30;
+        : null;
+      const window = days === null
+        ? null
+        : resolveDateWindow(options, flags, days, { acceptsDate: ['flows', 'who-bought-sold'].includes(subcommand) });
+      const date = window?.date;
 
       // Convenience filter for smart money only
       const onlySmartMoney = resolveBooleanOption(options, flags, 'smart-money') ?? false;
@@ -2137,17 +2165,15 @@ export function buildCommands(deps = {}) {
         },
         'holders': () => apiInstance.tokenHolders({ tokenAddress, chain, labelType: onlySmartMoney ? 'smart_money' : 'all_holders', filters, orderBy, pagination, withLabels: resolveBooleanOption(options, flags, 'premium-labels') }),
         'flows': () => {
-          const date = parseDateOption(options.date, days, flags.date);
           const label = options.label;
           return apiInstance.tokenFlows({ tokenAddress, chain, label, filters, orderBy, pagination, days, date });
         },
-        'dex-trades': () => apiInstance.tokenDexTrades({ tokenAddress, chain, onlySmartMoney, filters, orderBy, pagination, days }),
+        'dex-trades': () => apiInstance.tokenDexTrades({ tokenAddress, chain, onlySmartMoney, filters, orderBy, pagination, days, date }),
         'pnl': () => {
           const withLabels = resolveBooleanOption(options, flags, 'premium-labels');
-          return apiInstance.tokenPnlLeaderboard({ tokenAddress, chain, filters, orderBy, pagination, days, withLabels });
+          return apiInstance.tokenPnlLeaderboard({ tokenAddress, chain, filters, orderBy, pagination, days, date, withLabels });
         },
         'who-bought-sold': () => {
-          const date = parseDateOption(options.date, days, flags.date);
           const buyOrSellRaw = options['buy-or-sell'];
           if (buyOrSellRaw !== undefined && typeof buyOrSellRaw !== 'string') {
             throw new NansenError('--buy-or-sell must be BUY or SELL', ErrorCode.INVALID_PARAMS);
@@ -2163,14 +2189,14 @@ export function buildCommands(deps = {}) {
           // Inject --from/--to into filters
           if (options.from) filters.from_address = normalizeFilterAddresses(options.from);
           if (options.to) filters.to_address = normalizeFilterAddresses(options.to);
-          return apiInstance.tokenTransfers({ tokenAddress, chain, filters, orderBy, pagination, days });
+          return apiInstance.tokenTransfers({ tokenAddress, chain, filters, orderBy, pagination, days, date });
         },
         'jup-dca': () => apiInstance.tokenJupDca({ tokenAddress, filters, orderBy, pagination }),
-        'perp-trades': () => apiInstance.tokenPerpTrades({ tokenSymbol, filters, orderBy, pagination, days }),
+        'perp-trades': () => apiInstance.tokenPerpTrades({ tokenSymbol, filters, orderBy, pagination, days, date }),
         'perp-positions': () => apiInstance.tokenPerpPositions({ tokenSymbol, filters, orderBy, pagination }),
         'perp-pnl-leaderboard': () => {
           const withLabels = resolveBooleanOption(options, flags, 'premium-labels');
-          return apiInstance.tokenPerpPnlLeaderboard({ tokenSymbol, filters, orderBy, pagination, days, withLabels });
+          return apiInstance.tokenPerpPnlLeaderboard({ tokenSymbol, filters, orderBy, pagination, days, date, withLabels });
         },
         'top-tokens': () => {
           const marketCapGroup = options['market-cap'] || options['market-cap-group'];
@@ -2227,7 +2253,7 @@ export function buildCommands(deps = {}) {
         }
       }
 
-      return result;
+      return withDateRangeMeta(result, window?.range);
     },
 
     'portfolio': async (args, apiInstance, flags, options) => {
@@ -2257,9 +2283,9 @@ export function buildCommands(deps = {}) {
       const filters = parseFiltersOption(options.filters);
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
-      const days = ['screener', 'leaderboard'].includes(subcommand)
-        ? parseDaysOption(options, flags)
-        : 30;
+      const days = ['screener', 'leaderboard'].includes(subcommand) ? parseDaysOption(options, flags) : null;
+      const window = days === null ? null : resolveDateWindow(options, flags, days);
+      const date = window?.date;
 
       const handlers = {
         'screener': () => {
@@ -2267,11 +2293,11 @@ export function buildCommands(deps = {}) {
           const sectorsFilter = parseCsvOption(options['sectors-filter'], 'sectors-filter');
           const smLabelFilter = parseCsvOption(options['sm-label-filter'], 'sm-label-filter');
           const traderLabelFilter = parseCsvOption(options['trader-label-filter'], 'trader-label-filter');
-          return apiInstance.perpScreener({ filters, orderBy, pagination, days, traderType, sectorsFilter, smLabelFilter, traderLabelFilter });
+          return apiInstance.perpScreener({ filters, orderBy, pagination, days, date, traderType, sectorsFilter, smLabelFilter, traderLabelFilter });
         },
         'leaderboard': () => {
           const withLabels = resolveBooleanOption(options, flags, 'premium-labels');
-          return apiInstance.perpLeaderboard({ filters, orderBy, pagination, days, withLabels });
+          return apiInstance.perpLeaderboard({ filters, orderBy, pagination, days, date, withLabels });
         },
         'help': () => ({
           commands: ['screener', 'leaderboard'],
@@ -2284,7 +2310,7 @@ export function buildCommands(deps = {}) {
         throw unknownCommandError('perp analytics subcommand', subcommand, ['screener', 'leaderboard']);
       }
 
-      return handlers[subcommand]();
+      return withDateRangeMeta(await handlers[subcommand](), window?.range);
     },
 
     'search': async (args, apiInstance, flags, options) => {
@@ -3144,6 +3170,8 @@ export async function runCLI(rawArgs, deps = {}) {
       result = filterFields(result, fields);
     } else if (!stream && !table && !csv) {
       result = withDefaultChainMeta(result, researchCommand, options);
+    } else {
+      result = withoutDateRangeMeta(result);
     }
 
     // Alerts list with --table uses custom table format
