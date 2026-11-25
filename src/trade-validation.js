@@ -62,6 +62,18 @@ const SOLANA_BUILTIN_PROGRAMS = new Set([
   'Ed25519SigVerify111111111111111111111111111',
   'Vote111111111111111111111111111111111111111',
 ]);
+// Stake and nonce accounts the wallet controls hold SOL outside the balances
+// the swap checks count. A swap never calls the Stake program top-level with
+// the wallet in it, and every role the wallet can have there (staker,
+// withdrawer, custodian, recipient) is one a hostile transaction could abuse.
+const STAKE_PROGRAM = 'Stake11111111111111111111111111111111111111';
+// System instructions (u32 LE discriminator) that move a nonce account's SOL or
+// authority. The System program accepts the nonce authority from any signer of
+// the instruction, not a fixed position, so the wallet anywhere in them counts.
+const SYSTEM_NONCE_AUTHORITY_DISCRIMINATORS = new Set([
+  5, // WithdrawNonceAccount
+  7, // AuthorizeNonceAccount
+]);
 const MAX_PRIORITY_FEE_LAMPORTS = 10_000_000n; // 0.01 SOL sanity ceiling on the priority fee a
                                                 // single trade can be made to pay.
 
@@ -2054,6 +2066,21 @@ export function assertSolanaInstructionsSafe(txBase64, { walletAddress } = {}) {
             `${destination || 'an address only resolvable via an address lookup table'} instead of your wallet. Refusing to sign.`,
           );
         }
+      }
+    } else if (programId === STAKE_PROGRAM) {
+      // Signers are always static keys, so the wallet as authority can't hide
+      // behind a lookup-table entry.
+      if (ix.accountIndexes.some((_, i) => accountAt(ix, i) === walletAddress)) {
+        throw new Error(
+          'Solana transaction runs a Stake program instruction on your wallet\'s behalf (it could change who controls, or withdraw from, your stake account). Refusing to sign.',
+        );
+      }
+    } else if (programId === SYSTEM_PROGRAM) {
+      if (ix.data.length >= 4 && SYSTEM_NONCE_AUTHORITY_DISCRIMINATORS.has(ix.data.readUInt32LE(0))
+        && ix.accountIndexes.some((_, i) => accountAt(ix, i) === walletAddress)) {
+        throw new Error(
+          'Solana transaction changes the authority of, or withdraws from, a nonce account your wallet controls. Refusing to sign.',
+        );
       }
     } else if (programId === COMPUTE_BUDGET_PROGRAM) {
       if (ix.data.length === 0) continue; // no discriminator — not a valid ComputeBudget instruction

@@ -161,7 +161,7 @@ export const ERROR_CODES = {
   SIM_REVERTED: { group: 'trade', description: 'The transaction reverts in simulation.' },
   SIM_RPC_ERROR: { group: 'trade', description: 'The simulation RPC returned an error.' },
   SIM_RESULT_UNPARSEABLE: { group: 'trade', description: 'The simulation result could not be parsed.' },
-  SIM_ACCOUNT_CONTROL_CHANGED: { group: 'trade', description: 'The simulated transaction would hand control of one of your wallet accounts (owner, delegate, close authority) to someone else.' },
+  SIM_ACCOUNT_CONTROL_CHANGED: { group: 'trade', description: 'The simulated transaction would hand control of one of your wallet accounts (owner, delegate, close authority, or the authority of a stake or nonce account) to someone else, or withdraw from a stake or nonce account you control.' },
   SIM_INNER_INSTRUCTIONS_UNAVAILABLE: { group: 'trade', description: 'The Solana simulation RPC did not return inner instructions, so calls made from inside other programs could not be checked. Set NANSEN_SOLANA_SIM_RPC to an RPC that supports them.' },
   NO_SIM_RPC: { group: 'trade', description: 'No simulation RPC is configured for the chain.' },
   NOT_SIM_CAPABLE: { group: 'trade', description: 'The RPC does not support simulation.' },
