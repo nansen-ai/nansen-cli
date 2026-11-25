@@ -1447,7 +1447,7 @@ export async function promptForConfirmation(question, { input = process.stdin, o
   });
 }
 
-// `token screener --search` filters client-side, so it can only find a token
+// `token screener --search <name or symbol>` filters client-side, so it can only find a token
 // among the candidate rows the API returned. These helpers describe that window
 // as `_meta.search: { query, searched, matched, complete }` so a short or empty
 // result can be told apart from "the token ranks below the rows we fetched".
@@ -2073,7 +2073,7 @@ export function buildCommands(deps = {}) {
               },
             };
           }
-          // When searching by name or symbol, fetch more results to filter from (API has no server-side search).
+          // When searching by name or symbol, fetch more results to filter from (the API has no name or symbol search).
           // --page/--limit are applied client-side to the filtered list, so the
           // candidate fetch has to cover every page up to the requested one.
           const requestedLimit = pagination?.per_page || 100;

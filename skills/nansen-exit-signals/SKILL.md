@@ -37,8 +37,8 @@ nansen research token flow-intelligence --token $TOKEN --chain $CHAIN
 nansen research token who-bought-sold --token $TOKEN --chain $CHAIN --limit 20
 # → address, address_label, bought/sold_volume_usd, trade_volume_usd (total: bought + sold), net_volume_usd
 
-nansen research smart-money netflow --chain $CHAIN --limit 10
-# → token_symbol, net_flow_1h/24h/7d/30d_usd, trader_count
+nansen research smart-money netflow --chain $CHAIN --token $TOKEN
+# → token_symbol, net_flow_1h/24h/7d/30d_usd, trader_count for this token only
 
 nansen research token dex-trades --token $TOKEN --chain $CHAIN --limit 20
 # → block_timestamp, action (BUY/SELL), trader_address_label, estimated_value_usd
