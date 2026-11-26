@@ -415,6 +415,36 @@ describe('validateResearchInput', () => {
   });
 
   describe('chains', () => {
+    // Retired on 2026-11-25 and gone from every endpoint in the API spec.
+    // mantra, citrea and stellar retired too, but some endpoints still serve
+    // them, so they stay wherever the spec lists them.
+    const RETIRED_CHAINS = [
+      'algorand', 'aptos', 'bitlayer', 'chiliz', 'gravity', 'katana',
+      'plasma', 'sonic', 'stacks', 'ton', 'viction',
+    ];
+
+    it('lists no retired chain', () => {
+      expect(SCHEMA.chains.filter(chain => RETIRED_CHAINS.includes(chain))).toEqual([]);
+      const listed = Object.entries(API_ENDPOINTS)
+        .flatMap(([endpoint, { chains = [] }]) => chains.filter(c => RETIRED_CHAINS.includes(c)).map(c => `${endpoint} ${c}`));
+      expect(listed).toEqual([]);
+    });
+
+    // The global list is hand-written; the endpoint lists come from the API
+    // spec. A chain the API stops serving everywhere fails here after
+    // `npm run endpoints:sync`, so it is removed from the global list too.
+    it('advertises only chains that some endpoint serves', () => {
+      const served = new Set(Object.values(API_ENDPOINTS).flatMap(({ chains = [] }) => chains));
+      expect(SCHEMA.chains.filter(chain => !served.has(chain))).toEqual([]);
+    });
+
+    it.each(RETIRED_CHAINS)('rejects the retired chain %s locally, in --chain and --chains', chain => {
+      const single = check('research token holders', { token: SOL_MINT, chain });
+      expect(single.details.errors).toEqual([expect.objectContaining({ field: '--chain', code: 'invalid_field_value' })]);
+      const list = check('research smart-money netflow', { chains: `ethereum,${chain}` });
+      expect(list.details.errors).toEqual([expect.objectContaining({ field: '--chains', code: 'invalid_field_value' })]);
+    });
+
     it('rejects a chain the endpoint does not accept, with the supported list', () => {
       const error = check('research token flow-intelligence', { token: '1111111111111111111114oLvT2', chain: 'bitcoin' });
       expect(error.message).toMatch(/^Chain 'bitcoin' is not supported by nansen research token flow-intelligence\. Supported chains: arbitrum, /);

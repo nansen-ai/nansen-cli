@@ -716,7 +716,7 @@ export const COUNTERPARTIES_BATCH_MAX_DAYS = 90;
  *
  * Deliberately NOT derived from EVM_CHAINS. That list is this CLI's own
  * address-format/ENS set and omits every non-EVM chain the endpoint does serve
- * (bitcoin, tron, sui, ton, near, ...).
+ * (bitcoin, tron, sui, near, ...).
  * Mirrors ADDRESS_COUNTERPARTIES_BATCH_CHAINS on the MCP side (nansen-ra#3550),
  * which additionally drops `arc` and `starknet`; the spec enum is the contract
  * here, so they stay in.
@@ -724,40 +724,23 @@ export const COUNTERPARTIES_BATCH_MAX_DAYS = 90;
 export const COUNTERPARTIES_BATCH_CHAINS = [
   'all', 'arbitrum', 'arc', 'avalanche', 'base', 'bitcoin', 'bnb', 'ethereum',
   'hyperevm', 'injective', 'iotaevm', 'linea', 'mantle', 'mantra', 'monad',
-  'near', 'optimism', 'plasma', 'polygon', 'robinhood', 'sei', 'solana',
-  'sonic', 'starknet', 'sui', 'ton', 'tron',
+  'near', 'optimism', 'polygon', 'robinhood', 'sei', 'solana', 'starknet',
+  'sui', 'tron',
 ];
 
 /**
  * A token that is at least shaped like an address: 3-128 chars, no whitespace,
- * alphanumerics plus the separators bech32/NEAR/TON addresses use.
+ * alphanumerics plus the separators bech32/NEAR addresses use.
  *
  * COUNTERPARTIES_BATCH_CHAINS admits chains whose address format validateAddress
  * has no pattern for (arc, injective, mantra, near, starknet, sui,
- * ton, tron), where it falls through to its permissive "any non-empty string"
+ * tron), where it falls through to its permissive "any non-empty string"
  * branch. Accepting those chains must not turn a newline `--file` into a way to
  * post arbitrary lines as `wallet_addresses`, so this is the floor; the API does
  * the real per-chain check. Every valid EVM, Solana and Bitcoin address already
  * satisfies it, so it never fires on a chain that was strictly validated.
  */
 const ADDRESS_SHAPED = /^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$/;
-
-/**
- * TON's raw address form: a workchain id, ":", then 64 hex characters —
- * `0:` for the basechain, `-1:` for the masterchain. Both the ":" and the
- * leading "-" fail ADDRESS_SHAPED, so raw TON addresses were rejected with a
- * misleading error even though the endpoint serves them. Matched exactly here
- * rather than by adding ":" to ADDRESS_SHAPED, which would put a separator no
- * other supported chain uses back into the floor for every chain. Friendly
- * (base64url) TON addresses already clear ADDRESS_SHAPED.
- */
-const TON_RAW_ADDRESS = /^-?\d{1,10}:[0-9a-fA-F]{64}$/;
-
-/** Whether an address clears the shape floor for `chain`. */
-function isAddressShaped(address, chain) {
-  if (ADDRESS_SHAPED.test(address)) return true;
-  return chain === 'ton' && TON_RAW_ADDRESS.test(address);
-}
 
 /**
  * Resolve a caller-supplied chain to the spelling the batch endpoint accepts,
@@ -1953,11 +1936,8 @@ export class NansenAPI {
         // Strict where this CLI knows the format (EVM, Solana, Bitcoin); a
         // no-op elsewhere, where the shape floor is all there is.
         requireValidAddress(walletAddress, resolvedChain);
-        if (!isAddressShaped(walletAddress, resolvedChain)) {
-          const shape = 'an address-shaped token (3-128 characters, letters, digits, ".", "-" or "_")'
-            + (resolvedChain === 'ton'
-              ? ', or a raw TON address (workchain, ":" and 64 hex characters, e.g. "0:" or "-1:")'
-              : '');
+        if (!ADDRESS_SHAPED.test(walletAddress)) {
+          const shape = 'an address-shaped token (3-128 characters, letters, digits, ".", "-" or "_")';
           throw new NansenError(
             `Invalid address "${walletAddress}" for chain "${resolvedChain}": expected ${shape}. This CLI cannot check ${resolvedChain} address formats, so the API validates the rest.`,
             ErrorCode.INVALID_ADDRESS

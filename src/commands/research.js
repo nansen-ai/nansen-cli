@@ -157,7 +157,7 @@ USAGE:
 USAGE:
   nansen research transaction-with-token-transfer-lookup --transaction-hash <hash> [--chain <chain>] [--block-timestamp "YYYY-MM-DD HH:MM:SS"]
 
-NOTE: --block-timestamp is required for bitcoin, tron, ton, starknet, and sui.`,
+NOTE: --block-timestamp is required for bitcoin, tron, starknet, and sui.`,
   'historical-dex-trades': `nansen research historical-dex-trades — Historical DEX trades for a token
 
 USAGE:
@@ -350,7 +350,7 @@ export function buildResearchCommands(deps = {}) {
         requireOptions({ 'transaction-hash': options['transaction-hash'] }, ['transaction-hash']);
         // Chains the API rejects without block_timestamp. Every other enum value,
         // including 'all', near, and injective, accepts a timestamp-less lookup.
-        if (['bitcoin', 'tron', 'ton', 'starknet', 'sui'].includes(chain)) {
+        if (['bitcoin', 'tron', 'starknet', 'sui'].includes(chain)) {
           requireOptions({ 'block-timestamp': blockTimestamp }, ['block-timestamp']);
         }
         return apiInstance.transactionWithTokenTransferLookup({
