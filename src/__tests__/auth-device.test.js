@@ -35,7 +35,7 @@ describe('device contract', () => {
       expect(payload.nonce).toBe(`nonce-${requests.length - 1}`);
       const headers = { 'DPoP-Nonce': `nonce-${requests.length}` };
       if (url.endsWith('/authorize')) {
-        expect(JSON.parse(options.body)).toEqual({ audience: 'https://api.nansen.ai', scope: 'nansen:api', client_label: 'nansen CLI' });
+        expect(JSON.parse(options.body)).toEqual({ audience: 'https://api.nansen.ai', scope: 'nansen:api', client_label: 'nansen CLI', client_id: 'nansen-cli' });
         return response(200, grant(), headers);
       }
       if (++polls <= 2) return response(400, { error: 'slow_down' }, headers);
