@@ -416,8 +416,8 @@ describe('validateResearchInput', () => {
 
   describe('chains', () => {
     // Retired on 2026-11-25 and gone from every endpoint in the API spec.
-    // mantra, citrea and stellar retired too, but some endpoints still serve
-    // them, so they stay wherever the spec lists them.
+    // mantra and citrea retired too, but some endpoints still serve them, so
+    // they stay wherever the spec lists them.
     const RETIRED_CHAINS = [
       'algorand', 'aptos', 'bitlayer', 'chiliz', 'gravity', 'katana',
       'plasma', 'sonic', 'stacks', 'ton', 'viction',
