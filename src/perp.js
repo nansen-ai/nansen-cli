@@ -663,7 +663,8 @@ function assertOrderType(raw) {
 }
 
 // Resolve the asset symbol from --symbol (or its --coin alias), rejecting a
-// duplicated flag. Returns the upper-cased symbol, or '' when neither is set.
+// duplicated flag and HIP-3 markets. Returns the upper-cased symbol, or ''
+// when neither is set.
 function resolveCoin(options) {
   const symbol = scalar(options.symbol, 'symbol');
   const coin = scalar(options.coin, 'coin');
@@ -671,7 +672,14 @@ function resolveCoin(options) {
   if (symbol !== undefined && coin !== undefined) {
     throw invalid(`--symbol ${symbol} and --coin ${coin} are the same input (--coin is an alias of --symbol); pass one.`);
   }
-  return String(symbol ?? coin ?? '').toUpperCase();
+  const raw = String(symbol ?? coin ?? '');
+  // HIP-3 markets are named dex:SYMBOL; native perps never contain ':'. The
+  // asset metadata lists native perps only, so without this a HIP-3 symbol
+  // fails later as a misleading META_UNAVAILABLE.
+  if (raw.includes(':')) {
+    throw invalid(`--symbol ${raw} is a HIP-3 market (dex:SYMBOL). nansen perp trades native Hyperliquid perps only, so HIP-3 markets such as xyz:NVDA can't be traded here.`);
+  }
+  return raw.toUpperCase();
 }
 
 // ── Preview + confirmation (--dry-run / --yes) ───────────────────────

@@ -498,6 +498,21 @@ describe('perp --symbol, with --coin as its alias', () => {
     expect(err.code).toBe('INVALID_INPUT');
     expect(err.message).toMatch(new RegExp(`--symbol ETH and --coin ${coin} are the same input .*; pass one`));
   });
+
+  it.each(
+    ['order', 'cancel', 'close', 'leverage'].flatMap(sub => [[sub, 'symbol'], [sub, 'coin']]),
+  )('perp %s rejects a HIP-3 market given as --%s, before any request', async (sub, flag) => {
+    const { coin, ...noCoin } = baseOrder;
+    void coin;
+    const api = { request: vi.fn() };
+    submitExchange.mockClear();
+    const err = await cmds[sub]([], api, {}, { ...noCoin, [flag]: 'xyz:NVDA', oid: '1', leverage: '2' }).catch(e => e);
+    expect(err.code).toBe('INVALID_INPUT');
+    expect(err.message).toMatch(/HIP-3/);
+    expect(err.message).toContain('xyz:NVDA');
+    expect(api.request).not.toHaveBeenCalled();
+    expect(submitExchange).not.toHaveBeenCalled();
+  });
 });
 
 describe('perp password (6826 N4)', () => {
