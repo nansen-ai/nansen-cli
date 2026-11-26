@@ -1076,7 +1076,7 @@
                 "chain": {
                   "type": "string",
                   "default": "all",
-                  "description": "Chain to profile every address on: all, arbitrum, arc, avalanche, base, bitcoin, bnb, ethereum, hyperevm, injective, iotaevm, linea, mantle, mantra, monad, near, optimism, plasma, polygon, robinhood, sei, solana, sonic, starknet, sui, ton, tron ('bsc' is accepted and sent as 'bnb'). One ecosystem per request: EVM and Solana addresses cannot be mixed. The default 'all' auto-detects the ecosystem across EVM chains, or Solana for a Solana-only batch"
+                  "description": "Chain to profile every address on: all, arbitrum, arc, avalanche, base, bitcoin, bnb, ethereum, hyperevm, injective, iotaevm, linea, mantle, mantra, monad, near, optimism, polygon, robinhood, sei, solana, starknet, sui, tron ('bsc' is accepted and sent as 'bnb'). One ecosystem per request: EVM and Solana addresses cannot be mixed. The default 'all' auto-detects the ecosystem across EVM chains, or Solana for a Solana-only batch"
                 },
                 "days": {
                   "type": "integer",
@@ -2669,7 +2669,7 @@
               "description": "Chain the transaction was made on"
             },
             "block-timestamp": {
-              "description": "Block timestamp (required for bitcoin, tron, ton, starknet, and sui)",
+              "description": "Block timestamp (required for bitcoin, tron, starknet, and sui)",
               "type": "string"
             }
           },
@@ -4550,19 +4550,14 @@
     ]
   },
   "chains": [
-    "algorand",
-    "aptos",
     "arbitrum",
     "arc",
     "avalanche",
     "base",
     "bitcoin",
-    "bitlayer",
     "bnb",
-    "chiliz",
     "citrea",
     "ethereum",
-    "gravity",
     "hyperevm",
     "hyperliquid",
     "injective",
@@ -4573,19 +4568,14 @@
     "monad",
     "near",
     "optimism",
-    "plasma",
     "polygon",
     "robinhood",
     "sei",
     "solana",
-    "sonic",
-    "stacks",
     "starknet",
     "stellar",
     "sui",
-    "ton",
-    "tron",
-    "viction"
+    "tron"
   ],
   "smartMoneyLabels": [
     "Smart Trader",

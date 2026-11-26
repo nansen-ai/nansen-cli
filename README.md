@@ -536,7 +536,7 @@ Separately, the CLI checks the npm registry once a day for a newer version and p
 
 ## Supported Chains
 
-`algorand` `aptos` `arbitrum` `arc` `avalanche` `base` `bitcoin` `bitlayer` `bnb` `chiliz` `citrea` `ethereum` `gravity` `hyperevm` `hyperliquid` `injective` `iotaevm` `linea` `mantle` `mantra` `monad` `near` `optimism` `plasma` `polygon` `robinhood` `sei` `solana` `sonic` `stacks` `starknet` `stellar` `sui` `ton` `tron` `viction`
+`arbitrum` `arc` `avalanche` `base` `bitcoin` `bnb` `citrea` `ethereum` `hyperevm` `hyperliquid` `injective` `iotaevm` `linea` `mantle` `mantra` `monad` `near` `optimism` `polygon` `robinhood` `sei` `solana` `starknet` `stellar` `sui` `tron`
 
 > Run `nansen schema` to get the current chain list (source of truth).
 

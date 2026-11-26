@@ -1335,13 +1335,12 @@ describe('NansenAPI', () => {
         expect([...COUNTERPARTIES_BATCH_CHAINS].sort()).toEqual([
           'all', 'arbitrum', 'arc', 'avalanche', 'base', 'bitcoin', 'bnb',
           'ethereum', 'hyperevm', 'injective', 'iotaevm', 'linea', 'mantle',
-          'mantra', 'monad', 'near', 'optimism', 'plasma', 'polygon',
-          'robinhood', 'sei', 'solana', 'sonic', 'starknet', 'sui', 'ton',
-          'tron'
+          'mantra', 'monad', 'near', 'optimism', 'polygon', 'robinhood',
+          'sei', 'solana', 'starknet', 'sui', 'tron'
         ]);
       });
 
-      it.each(['scroll', 'ronin'])(
+      it.each(['scroll', 'ronin', 'plasma', 'sonic', 'ton'])(
         'should reject %s, a chain the endpoint no longer serves',
         async unsupported => {
           await expect(
@@ -1351,6 +1350,8 @@ describe('NansenAPI', () => {
         }
       );
 
+      // Tron addresses are case-sensitive, so this also pins that a non-EVM
+      // address is sent without lowercasing.
       it('should send a non-EVM chain the endpoint supports', async () => {
         setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
 
@@ -1364,58 +1365,9 @@ describe('NansenAPI', () => {
         expect(body.wallet_addresses).toEqual(['TQ5NMqJjhpQGK7YJbESmJxrhqrHmYgHgfF']);
       });
 
-      it('should not lowercase an address on a case-sensitive non-EVM chain', async () => {
-        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
-
-        await api.addressCounterpartiesBatch({
-          addresses: ['UQAbC-dEfGhIjKlMnOpQrStUvWxYz0123456789_AbCdEfGhIjKl'],
-          chain: 'ton'
-        });
-
-        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
-        expect(body.wallet_addresses).toEqual(['UQAbC-dEfGhIjKlMnOpQrStUvWxYz0123456789_AbCdEfGhIjKl']);
-      });
-
       it('should still reject arbitrary --file lines on a chain it cannot format-check', async () => {
         await expect(
           api.addressCounterpartiesBatch({ addresses: ['not an address, just a line'], chain: 'tron' })
-        ).rejects.toThrow(/address-shaped token/);
-        expectNoFetch();
-      });
-
-      // Raw TON addresses are `<workchain>:<64 hex>`; the ":" (and the leading
-      // "-" on the masterchain) fail the generic shape floor, so they get an
-      // explicit chain-aware pass. Both workchains are pinned here.
-      it.each([
-        ['basechain', '0:2cf3b5b8c891003f5d3bd9d5d2f3d1a9a5f1b2c3d4e5f60718293a4b5c6d7e8f'],
-        ['masterchain', '-1:2CF3B5B8C891003F5D3BD9D5D2F3D1A9A5F1B2C3D4E5F60718293A4B5C6D7E8F']
-      ])('should send a raw TON %s address unchanged', async (_label, rawAddress) => {
-        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
-
-        await api.addressCounterpartiesBatch({ addresses: [rawAddress], chain: 'ton' });
-
-        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
-        expect(body.chain).toBe('ton');
-        expect(body.wallet_addresses).toEqual([rawAddress]);
-      });
-
-      it.each([
-        ['a short hex tail', '0:abcdef'],
-        ['a non-numeric workchain', 'x:2cf3b5b8c891003f5d3bd9d5d2f3d1a9a5f1b2c3d4e5f60718293a4b5c6d7e8f'],
-        ['whitespace', '0:2cf3b5b8c891003f5d3bd9d5d2f3d1a9a5f1b2c3d4e5f60718293a4b5c6d7e8f extra']
-      ])('should still reject a raw-TON lookalike with %s', async (_label, bad) => {
-        await expect(
-          api.addressCounterpartiesBatch({ addresses: [bad], chain: 'ton' })
-        ).rejects.toThrow(/raw TON address/);
-        expectNoFetch();
-      });
-
-      it('should not accept a raw TON address on another chain', async () => {
-        await expect(
-          api.addressCounterpartiesBatch({
-            addresses: ['0:2cf3b5b8c891003f5d3bd9d5d2f3d1a9a5f1b2c3d4e5f60718293a4b5c6d7e8f'],
-            chain: 'tron'
-          })
         ).rejects.toThrow(/address-shaped token/);
         expectNoFetch();
       });

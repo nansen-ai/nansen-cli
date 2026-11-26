@@ -243,15 +243,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -284,15 +281,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -325,15 +319,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -344,7 +335,24 @@
       ],
       "chainField": "chain",
       "chains": [
-        "all"
+        "all",
+        "arbitrum",
+        "arc",
+        "avalanche",
+        "base",
+        "bnb",
+        "citrea",
+        "ethereum",
+        "hyperevm",
+        "iotaevm",
+        "linea",
+        "mantle",
+        "metis",
+        "monad",
+        "optimism",
+        "polygon",
+        "robinhood",
+        "sei"
       ]
     },
     "/api/v1/profiler/address/historical-balances": {
@@ -376,15 +384,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -447,12 +452,10 @@
         "mantle",
         "monad",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "tron"
       ]
     },
@@ -481,7 +484,6 @@
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "sui"
       ]
     },
@@ -508,7 +510,6 @@
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "sui"
       ]
     },
@@ -534,12 +535,10 @@
         "mantle",
         "monad",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "tron"
       ]
     },
@@ -568,15 +567,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -609,15 +605,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -647,15 +640,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -756,12 +746,10 @@
         "mantle",
         "monad",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
-        "solana",
-        "sonic"
+        "solana"
       ]
     },
     "/api/v1/smart-money/historical-holdings": {
@@ -806,12 +794,10 @@
         "mantle",
         "monad",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
-        "solana",
-        "sonic"
+        "solana"
       ]
     },
     "/api/v1/smart-money/holdings": {
@@ -836,12 +822,10 @@
         "mantle",
         "monad",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
-        "solana",
-        "sonic"
+        "solana"
       ]
     },
     "/api/v1/smart-money/netflow": {
@@ -866,12 +850,10 @@
         "mantle",
         "monad",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
-        "solana",
-        "sonic"
+        "solana"
       ]
     },
     "/api/v1/smart-money/perp-trades": {
@@ -906,12 +888,10 @@
         "mantle",
         "monad",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
-        "solana",
-        "sonic"
+        "solana"
       ]
     },
     "/api/v1/tgm/dex-trades": {
@@ -942,15 +922,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -977,15 +954,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -1017,15 +991,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -1104,15 +1075,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -1182,15 +1150,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -1217,15 +1182,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -1289,7 +1251,6 @@
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "sui"
       ]
     },
@@ -1322,15 +1283,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -1345,18 +1303,13 @@
       ],
       "chainField": "chain",
       "chains": [
-        "algorand",
-        "aptos",
         "arbitrum",
         "arc",
         "avalanche",
         "base",
         "bitcoin",
-        "bitlayer",
         "bnb",
-        "chiliz",
         "ethereum",
-        "gravity",
         "hyperevm",
         "hyperliquid",
         "injective",
@@ -1367,19 +1320,14 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
-        "stacks",
         "starknet",
         "stellar",
         "sui",
-        "ton",
-        "tron",
-        "viction"
+        "tron"
       ]
     },
     "/api/v1/tgm/transfers": {
@@ -1409,15 +1357,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -1449,15 +1394,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -1489,15 +1431,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -1526,13 +1465,10 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "robinhood",
         "sei",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     },
@@ -1588,15 +1524,12 @@
         "monad",
         "near",
         "optimism",
-        "plasma",
         "polygon",
         "robinhood",
         "sei",
         "solana",
-        "sonic",
         "starknet",
         "sui",
-        "ton",
         "tron"
       ]
     }
