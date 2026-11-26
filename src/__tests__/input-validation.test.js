@@ -430,6 +430,14 @@ describe('validateResearchInput', () => {
       expect(listed).toEqual([]);
     });
 
+    // The global list is hand-written; the endpoint lists come from the API
+    // spec. A chain the API stops serving everywhere fails here after
+    // `npm run endpoints:sync`, so it is removed from the global list too.
+    it('advertises only chains that some endpoint serves', () => {
+      const served = new Set(Object.values(API_ENDPOINTS).flatMap(({ chains = [] }) => chains));
+      expect(SCHEMA.chains.filter(chain => !served.has(chain))).toEqual([]);
+    });
+
     it.each(RETIRED_CHAINS)('rejects the retired chain %s locally, in --chain and --chains', chain => {
       const single = check('research token holders', { token: SOL_MINT, chain });
       expect(single.details.errors).toEqual([expect.objectContaining({ field: '--chain', code: 'invalid_field_value' })]);
