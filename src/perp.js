@@ -894,7 +894,8 @@ export function buildPerpCommands(deps = {}) {
 `Usage: nansen perp order --symbol <symbol> --side <buy|sell> --size <amount> --price <price> [options]
 
 OPTIONS:
-  --symbol        Asset symbol (BTC, ETH, etc.; alias --coin)
+  --symbol        Asset symbol (BTC, ETH, etc.; alias --coin). Native perps only;
+                  HIP-3 markets such as xyz:NVDA can't be traded
   --side          buy (long) or sell (short)
   --size          Position size in base asset units
   --price         Limit price (or mark price for market orders)

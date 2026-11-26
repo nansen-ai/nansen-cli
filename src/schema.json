@@ -181,13 +181,13 @@
             "/api/v1/perp/builder-fee",
             "/api/v1/sanctions/screen"
           ],
-          "description": "Place a perp order (limit or market, with optional take-profit/stop-loss)",
+          "description": "Place a perp order (limit or market, with optional take-profit/stop-loss). Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA can't be traded.",
           "options": {
             "symbol": {
               "type": "string",
               "aliases": ["coin"],
               "required": true,
-              "description": "Asset symbol, e.g. BTC, ETH"
+              "description": "Asset symbol, e.g. BTC, ETH. Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA can't be traded"
             },
             "side": {
               "type": "string",
@@ -266,13 +266,13 @@
             "/api/v1/perp/meta",
             "/api/v1/sanctions/screen"
           ],
-          "description": "Cancel an open order by order id",
+          "description": "Cancel an open order by order id. Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA can't be traded.",
           "options": {
             "symbol": {
               "type": "string",
               "aliases": ["coin"],
               "required": true,
-              "description": "Asset symbol"
+              "description": "Asset symbol. Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA can't be traded"
             },
             "oid": {
               "type": "string",
@@ -304,13 +304,13 @@
             "/api/v1/perp/builder-fee",
             "/api/v1/sanctions/screen"
           ],
-          "description": "Close a position (reduce-only market order)",
+          "description": "Close a position (reduce-only market order). Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA can't be traded.",
           "options": {
             "symbol": {
               "type": "string",
               "aliases": ["coin"],
               "required": true,
-              "description": "Asset symbol"
+              "description": "Asset symbol. Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA can't be traded"
             },
             "size": {
               "type": "string",
@@ -360,13 +360,13 @@
             "/api/v1/perp/meta",
             "/api/v1/sanctions/screen"
           ],
-          "description": "Set leverage and margin mode for an asset",
+          "description": "Set leverage and margin mode for an asset. Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA can't be traded.",
           "options": {
             "symbol": {
               "type": "string",
               "aliases": ["coin"],
               "required": true,
-              "description": "Asset symbol"
+              "description": "Asset symbol. Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA can't be traded"
             },
             "leverage": {
               "type": "string",
@@ -464,7 +464,7 @@
         },
         "positions": {
           "endpoint": "/api/v1/perp/positions",
-          "description": "View open positions",
+          "description": "View open positions. Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA are not included. For HIP-3 positions, use research profiler perp-positions.",
           "options": {
             "wallet": {
               "type": "string",
@@ -474,7 +474,7 @@
         },
         "orders": {
           "endpoint": "/api/v1/perp/orders",
-          "description": "View open/resting orders",
+          "description": "View open/resting orders. Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA are not included.",
           "options": {
             "wallet": {
               "type": "string",
@@ -484,7 +484,7 @@
         },
         "account": {
           "endpoint": "/api/v1/perp/account",
-          "description": "View account state (account value, unrealized PnL, margin, withdrawable)",
+          "description": "View account state (account value, unrealized PnL, margin, withdrawable). Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA are not included. For HIP-3 positions, use research profiler perp-positions.",
           "options": {
             "wallet": {
               "type": "string",
@@ -494,7 +494,7 @@
         },
         "meta": {
           "endpoint": "/api/v1/perp/meta",
-          "description": "View available perp assets (id, size decimals, max leverage)",
+          "description": "View available perp assets (id, size decimals, max leverage). Native Hyperliquid perps only; HIP-3 markets such as xyz:NVDA are not included.",
           "options": {
             "filter": {
               "type": "string",
@@ -776,7 +776,7 @@
             },
             "perp-trades": {
               "endpoint": "/api/v1/smart-money/perp-trades",
-              "description": "Perpetual trading on Hyperliquid",
+              "description": "Smart money perp trades on Hyperliquid, including HIP-3 markets such as xyz:NVDA",
               "options": {
                 "filters": {
                   "type": "string",
@@ -1232,7 +1232,7 @@
             },
             "perp-positions": {
               "endpoint": "/api/v1/profiler/perp-positions",
-              "description": "Current perpetual positions",
+              "description": "Current Hyperliquid perp positions, including HIP-3 markets such as xyz:NVDA",
               "options": {
                 "address": {
                   "type": "string",
@@ -1258,7 +1258,7 @@
             },
             "perp-trades": {
               "endpoint": "/api/v1/profiler/perp-trades",
-              "description": "Perpetual trading history",
+              "description": "Hyperliquid perp trade history, including HIP-3 markets such as xyz:NVDA",
               "options": {
                 "address": {
                   "type": "string",
@@ -1745,12 +1745,12 @@
             },
             "perp-pnl-leaderboard": {
               "endpoint": "/api/v1/tgm/perp-pnl-leaderboard",
-              "description": "Perp PnL leaderboard by token",
+              "description": "Perp PnL leaderboard by token, including HIP-3 markets such as xyz:NVDA",
               "options": {
                 "symbol": {
                   "type": "string",
                   "required": true,
-                  "description": "Perp symbol, e.g. BTC",
+                  "description": "Perp symbol, e.g. BTC. HIP-3 (builder-deployed) markets use dex:SYMBOL, e.g. xyz:NVDA (lowercase prefix; the symbol after it is case-sensitive)",
                   "aliases": ["token-symbol", "coin"]
                 },
                 "days": {
@@ -1785,12 +1785,12 @@
             },
             "perp-positions": {
               "endpoint": "/api/v1/tgm/perp-positions",
-              "description": "Open perp positions by token symbol",
+              "description": "Open perp positions by token symbol, including HIP-3 markets such as xyz:NVDA",
               "options": {
                 "symbol": {
                   "type": "string",
                   "required": true,
-                  "description": "Perp symbol, e.g. BTC",
+                  "description": "Perp symbol, e.g. BTC. HIP-3 (builder-deployed) markets use dex:SYMBOL, e.g. xyz:NVDA (lowercase prefix; the symbol after it is case-sensitive)",
                   "aliases": ["token-symbol", "coin"]
                 },
                 "filters": {
@@ -1815,12 +1815,12 @@
             },
             "perp-trades": {
               "endpoint": "/api/v1/tgm/perp-trades",
-              "description": "Perp trades by token symbol",
+              "description": "Perp trades by token symbol, including HIP-3 markets such as xyz:NVDA",
               "options": {
                 "symbol": {
                   "type": "string",
                   "required": true,
-                  "description": "Perp symbol, e.g. BTC",
+                  "description": "Perp symbol, e.g. BTC. HIP-3 (builder-deployed) markets use dex:SYMBOL, e.g. xyz:NVDA (lowercase prefix; the symbol after it is case-sensitive)",
                   "aliases": ["token-symbol", "coin"]
                 },
                 "days": {
@@ -1921,7 +1921,7 @@
             },
             "ohlcv": {
               "endpoint": "/api/v1/tgm/token-ohlcv",
-              "description": "OHLCV candle data for a token",
+              "description": "OHLCV candle data for a token, or a Hyperliquid perp such as BTC or xyz:NVDA with --chain hyperliquid",
               "options": {
                 "chain": {
                   "type": "string",
@@ -1931,7 +1931,7 @@
                 "token": {
                   "type": "string",
                   "required": true,
-                  "description": "Token contract address (mint address on Solana)",
+                  "description": "Token contract address (mint address on Solana). With --chain hyperliquid, a perp symbol such as BTC, or a HIP-3 market such as xyz:NVDA",
                   "aliases": [
                     "token-address"
                   ]
@@ -2076,7 +2076,7 @@
           "subcommands": {
             "screener": {
               "endpoint": "/api/v1/perp-screener",
-              "description": "Screen perpetual futures contracts",
+              "description": "Screen Hyperliquid perpetual futures, including HIP-3 markets such as xyz:NVDA",
               "options": {
                 "days": {
                   "type": "integer",
@@ -2128,7 +2128,7 @@
             },
             "leaderboard": {
               "endpoint": "/api/v1/perp-leaderboard",
-              "description": "Perpetual futures PnL leaderboard",
+              "description": "Hyperliquid perp trader PnL leaderboard, including PnL on HIP-3 markets such as xyz:NVDA. For one market, use token perp-pnl-leaderboard --symbol xyz:NVDA",
               "options": {
                 "days": {
                   "type": "integer",
@@ -2569,11 +2569,11 @@
         },
         "position-intelligence": {
           "endpoint": "/api/v1/tgm/position-intelligence",
-          "description": "Aggregate Hyperliquid positions by trader cohort",
+          "description": "Aggregate Hyperliquid positions by trader cohort, including HIP-3 markets such as xyz:NVDA",
           "options": {
             "symbol": {
               "required": true,
-              "description": "Hyperliquid asset symbol (--token-address is accepted as an alias)",
+              "description": "Hyperliquid asset symbol, e.g. BTC. HIP-3 (builder-deployed) markets use dex:SYMBOL, e.g. xyz:NVDA (lowercase prefix; the symbol after it is case-sensitive) (--token-address is accepted as an alias)",
               "type": "string",
               "aliases": ["token-address", "token", "coin"]
             }

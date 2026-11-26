@@ -293,7 +293,7 @@ describe('generateSubcommandHelp', () => {
     it('answers a research subcommand help request with that subcommand, not with the category listing', async () => {
       seedCosts({ '/api/v1/perp-screener': { free: 1, pro: 1 } });
       const combined = await runHelp(['research', 'perp', 'screener', '--help']);
-      expect(combined).toContain('perp screener — Screen perpetual futures contracts');
+      expect(combined).toContain('perp screener — Screen Hyperliquid perpetual futures');
       expect(combined).toContain('Options (* required):\n  --days (30) — ');
       expect(combined).toContain('Example: nansen research perp screener');
       // The old output was the category listing, which pointed the caller
