@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.8.0
+
+### Minor Changes
+
+- [#887](https://github.com/nansen-ai/nansen-cli/pull/887) [`27ba564`](https://github.com/nansen-ai/nansen-cli/commit/27ba564ec1429cc7d46e4202ff5d7938026279ec) Thanks [@tmlhendup02](https://github.com/tmlhendup02)! - Research commands that take `--days` now report the date window they used as `_meta.dateRange: { from, to, days, defaulted }` in JSON output. `defaulted` is `true` when neither `--days` nor `--date` was given, so a response that used the default window says so. With `--date`, `days` is `null`. `chain-rank` and `smart-money-pnl-leaderboard` send only a day count, so their `from` and `to` are `null`. `--fields`, `--stream`, `--table` and CSV output are unchanged.
+
+- [#885](https://github.com/nansen-ai/nansen-cli/pull/885) [`11d4b66`](https://github.com/nansen-ai/nansen-cli/commit/11d4b66895eb6a10f0f1356a6ae0f15059b4f1b9) Thanks [@tmlhendup02](https://github.com/tmlhendup02)! - `research smart-money netflow` takes `--token <address>` (alias `--token-address`), sent as `filters.token_address` like `smart-money holdings --token`, so checking one token is one request instead of scanning `--limit 200`. `research token screener --search <token address>` (EVM `0x` + 40 hex, or base58 such as Solana) now sends the address as `filters.token_address`: one request with the normal `--limit`/`--page`, no 500-row candidate window and no stderr note, and `_meta.search` is `{ query, filter: "token_address", matched, complete }` (`complete` is false only when `--max-pages` or a non-last page left rows unfetched). Names and symbols keep the client-side search and its `_meta.search` shape. A Solana address typed in lowercase no longer matches (base58 is case-sensitive). Native SOL (`So11111111111111111111111111111111111111112`) and ETH (`0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`) rows come back only with `--filters '{"include_native_tokens":true}'`.
+
+### Patch Changes
+
+- [#886](https://github.com/nansen-ai/nansen-cli/pull/886) [`8dfc311`](https://github.com/nansen-ai/nansen-cli/commit/8dfc3117691533ffd6c12cb05a8ec4de959fcfe6) Thanks [@kome12](https://github.com/kome12)! - Help text now names Hyperliquid HIP-3 (builder-deployed) markets. `research token perp-positions`, `perp-trades`, `perp-pnl-leaderboard`, `research position-intelligence` and `research token ohlcv --chain hyperliquid` show that a HIP-3 market is passed as `dex:SYMBOL`, for example `xyz:NVDA`. The `research perp`, `smart-money perp-trades` and `profiler perp-*` commands say their results include HIP-3 markets. `perp order`, `close`, `cancel` and `leverage` say they trade native perps only, and `perp positions`, `orders`, `account` and `meta` say they leave HIP-3 markets out.
+
+- [#889](https://github.com/nansen-ai/nansen-cli/pull/889) [`dc738cc`](https://github.com/nansen-ai/nansen-cli/commit/dc738cc96c21da5d73f6d72b54500368a4d08365) Thanks [@kome12](https://github.com/kome12)! - `nansen perp order`, `cancel`, `close` and `leverage` now reject a HIP-3 market symbol (`dex:SYMBOL`, such as `xyz:NVDA`) up front with `INVALID_INPUT`, saying that only native Hyperliquid perps can be traded, instead of failing with a misleading `META_UNAVAILABLE` error.
+
+- [#888](https://github.com/nansen-ai/nansen-cli/pull/888) [`ffcfd91`](https://github.com/nansen-ai/nansen-cli/commit/ffcfd919cb12f0991da64e99a3dc807a963ae53e) Thanks [@kome12](https://github.com/kome12)! - Stop accepting and listing the chains the Nansen API retired on 2026-11-25 (algorand, aptos, bitlayer, chiliz, gravity, katana, plasma, sonic, stacks, ton, viction): research commands now reject them before sending a request. mantra, citrea and stellar stay accepted on the endpoints that still serve them.
+
+- [#881](https://github.com/nansen-ai/nansen-cli/pull/881) [`fc6b88e`](https://github.com/nansen-ai/nansen-cli/commit/fc6b88e4316c5931d1b63ace0d5b1528106f664d) Thanks [@anhnt256](https://github.com/anhnt256)! - Sync vendored API endpoints with the live spec: drop `hyperevm` from the supported chains of `/api/v1/tgm/pnl-leaderboard`, which the API no longer lists for that endpoint.
+
+- [#890](https://github.com/nansen-ai/nansen-cli/pull/890) [`7cc8b99`](https://github.com/nansen-ai/nansen-cli/commit/7cc8b9971d30005c0346ae38b82c05ef8405bedf) Thanks [@kome12](https://github.com/kome12)! - `research token ohlcv` no longer accepts `--chain stellar`, matching the API, which never served OHLCV data for Stellar. `stellar` is also dropped from the research chain list, since no research endpoint accepts it as a chain input any more.
+
 ## 2.7.0
 
 ### Minor Changes
