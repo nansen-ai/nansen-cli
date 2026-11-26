@@ -499,18 +499,26 @@ describe('perp --symbol, with --coin as its alias', () => {
     expect(err.message).toMatch(new RegExp(`--symbol ETH and --coin ${coin} are the same input .*; pass one`));
   });
 
+  // flx:TsLa is mixed case and differs from the message's fixed xyz:NVDA
+  // example, so finding it in the error proves the input is echoed as typed.
   it.each(
-    ['order', 'cancel', 'close', 'leverage'].flatMap(sub => [[sub, 'symbol'], [sub, 'coin']]),
-  )('perp %s rejects a HIP-3 market given as --%s, before any request', async (sub, flag) => {
+    ['order', 'cancel', 'close', 'leverage'].flatMap(sub => [
+      [sub, 'symbol', 'flx:TsLa'],
+      [sub, 'coin', 'flx:TsLa'],
+      ...[':NVDA', 'xyz:', 'xyz:NVDA:extra'].map(s => [sub, 'symbol', s]),
+    ]),
+  )('perp %s rejects a HIP-3 market given as --%s %s, before any wallet or request', async (sub, flag, input) => {
     const { coin, ...noCoin } = baseOrder;
     void coin;
     const api = { request: vi.fn() };
     submitExchange.mockClear();
-    const err = await cmds[sub]([], api, {}, { ...noCoin, [flag]: 'xyz:NVDA', oid: '1', leverage: '2' }).catch(e => e);
+    showWallet.mockClear();
+    const err = await cmds[sub]([], api, {}, { ...noCoin, [flag]: input, oid: '1', leverage: '2' }).catch(e => e);
     expect(err.code).toBe('INVALID_INPUT');
     expect(err.message).toMatch(/HIP-3/);
-    expect(err.message).toContain('xyz:NVDA');
+    expect(err.message).toContain(`--symbol ${input} is a HIP-3 market`);
     expect(api.request).not.toHaveBeenCalled();
+    expect(showWallet).not.toHaveBeenCalled();
     expect(submitExchange).not.toHaveBeenCalled();
   });
 });
